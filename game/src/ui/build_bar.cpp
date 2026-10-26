@@ -14,7 +14,8 @@ struct CategoryButton {
 };
 constexpr CategoryButton CATEGORIES[]={
     {BuildCategory::Habitats,BuildIcon::CategoryHabitats,"HABITATS / INFRASTRUCTURE"},
-    {BuildCategory::Resources,BuildIcon::CategoryResources,"RESOURCE STRUCTURES"}
+    {BuildCategory::Resources,BuildIcon::CategoryResources,"RESOURCE STRUCTURES"},
+    {BuildCategory::Facilities,BuildIcon::CategoryFacilities,"FACILITIES"}
 };
 }
 
@@ -30,10 +31,10 @@ void GameApp::render_build_bar(Renderer& r){
     constexpr float category_gap=7.0f;
     constexpr float category_x=12.0f;
     const float category_y=y+(BUILD_BAR_H-category_size)*0.5f;
-    const float category_area_w=category_size*2.0f+category_gap+28.0f;
+    const float category_area_w=category_size*3.0f+category_gap*2.0f+28.0f;
 
     int hovered_category=-1;
-    for(int i=0;i<2;++i){
+    for(int i=0;i<(int)(sizeof(CATEGORIES)/sizeof(CATEGORIES[0]));++i){
         const Rect box={category_x+(category_size+category_gap)*(float)i,category_y,category_size,category_size};
         const bool hover=box.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
         const bool selected=build_catalog_.category()==CATEGORIES[i].category;
@@ -49,8 +50,10 @@ void GameApp::render_build_bar(Renderer& r){
         if(hover && ui_input_.left_pressed){
             build_catalog_.set_category(CATEGORIES[i].category);
             placement_rotation_degrees_=0.0f;
+            placement_habitat_size_=HabitatSizeTier::Standard;
             corridor_build_start_.reset();
             utility_build_start_.reset();
+            walkway_build_start_.reset();
             corridor_link_source_=-1;
             clear_world_selection();
         }
@@ -66,16 +69,28 @@ void GameApp::render_build_bar(Renderer& r){
         if(items[i].category==build_catalog_.category()) visible.push_back((int)i);
     }
 
-    const float total=visible.empty()?0.0f:visible.size()*BUILD_ICON_SIZE+(visible.size()-1)*BUILD_ICON_GAP;
+    // Keep large catalogs usable at lower resolutions / higher UI scales by
+    // shrinking only the build icons when needed. The normal 50 px size is
+    // retained whenever the category fits.
+    float icon_size=BUILD_ICON_SIZE;
+    float icon_gap=BUILD_ICON_GAP;
+    if(!visible.empty()){
+        const float natural=(float)visible.size()*icon_size+(float)(visible.size()-1)*icon_gap;
+        if(natural>build_area_w){
+            icon_gap=5.0f;
+            icon_size=std::max(20.0f,(build_area_w-icon_gap*(float)(visible.size()-1))/(float)visible.size());
+        }
+    }
+    const float total=visible.empty()?0.0f:(float)visible.size()*icon_size+(float)(visible.size()-1)*icon_gap;
     const float start_x=build_left+std::max(0.0f,(build_area_w-total)*0.5f);
-    const float icon_y=y+(BUILD_BAR_H-BUILD_ICON_SIZE)*0.5f;
+    const float icon_y=y+(BUILD_BAR_H-icon_size)*0.5f;
 
     int hovered_item=-1;
     for(size_t slot=0;slot<visible.size();++slot){
         const int item_index=visible[slot];
-        const Rect box={start_x+(BUILD_ICON_SIZE+BUILD_ICON_GAP)*(float)slot,icon_y,BUILD_ICON_SIZE,BUILD_ICON_SIZE};
+        const Rect box={start_x+(icon_size+icon_gap)*(float)slot,icon_y,icon_size,icon_size};
         const bool hover=box.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
-        const bool selected=item_index==build_catalog_.selected_index();
+        const bool selected=hovered_item==build_catalog_.selected_index();
         if(hover) hovered_item=item_index;
         r.draw_rect(box,hover?Color{0.12f,0.16f,0.19f,1.0f}:Color{0.065f,0.08f,0.10f,1.0f});
         const Color border=selected?theme_.accent:(hover?theme_.accent_hover:theme_.border);
@@ -90,8 +105,10 @@ void GameApp::render_build_bar(Renderer& r){
             build_catalog_.select(item_index);
             if(build_catalog_.selected_index()!=before){
                 placement_rotation_degrees_=0.0f;
+                placement_habitat_size_=HabitatSizeTier::Standard;
                 corridor_build_start_.reset();
                 utility_build_start_.reset();
+                walkway_build_start_.reset();
             }
             clear_world_selection();
             corridor_link_source_=-1;
@@ -105,6 +122,8 @@ void GameApp::render_build_bar(Renderer& r){
         const auto& item=items[(size_t)hovered_item];
         line1=item.name;
         line2="TYPE " + item.type;
+        if(item.kind==BuildObjectKind::Habitat && habitat_has_size_tiers(item.habitat_kind) && hovered_item==build_catalog_.selected_index())
+            line2 += " / SIZE " + std::string(habitat_size_name(placement_habitat_size_));
     }else if(hovered_category>=0){
         line1=CATEGORIES[hovered_category].name;
         line2="BUILD SUBMENU";

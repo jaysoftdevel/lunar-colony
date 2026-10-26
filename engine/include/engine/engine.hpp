@@ -26,6 +26,7 @@ struct InputState {
     bool escape_pressed{};
     bool key_n_pressed{};
     bool key_m_pressed{};
+    bool delete_pressed{};
 };
 
 class Renderer {

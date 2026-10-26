@@ -12,6 +12,10 @@ struct CorridorDoor {
     eng::Vec3 normal{1.0f,0.0f,0.0f};
     bool generated{false};
     int entrance_index{-1}; // built-in habitat entrance index; -1 for generated doors
+    // For generated entrances this stores the exact pressure-hull contact ring
+    // in world space. The vestibule transitions from these surface points to
+    // its outer door profile, so curved/faceted structures remain airtight.
+    std::vector<eng::Vec3> wall_profile{};
 };
 
 struct CorridorMesh {
@@ -38,9 +42,11 @@ struct CorridorEndpoint {
     eng::Vec3 position{}; // actual corridor centerline endpoint
     eng::Vec3 tangent{1.0f,0.0f,0.0f}; // outward direction from endpoint / new route
     eng::Vec3 host_tangent{0.0f,0.0f,0.0f}; // existing corridor direction at a corridor junction
+    eng::Vec3 host_position{}; // exact host corridor centerline point for surface-matched branches
     CorridorDoor door{}; // valid for habitat endpoints
     bool suppress_open_door{false}; // open corridor end consumed by a close corridor connection
     bool seamless_splice{false}; // corridor end-to-end splice: no junction/entrance fitting at this endpoint
+    bool surface_matched_junction{false}; // branch terminates on the exact host D-profile surface
 };
 
 enum class CorridorConnectionKind {
@@ -61,15 +67,6 @@ class CorridorNetwork {
 public:
     void clear(){ connections_.clear(); }
 
-    void connect_new_habitat(std::size_t new_index,
-                             const std::vector<PlacedHabitat>& habitats,
-                             const HabitatModelLibrary& library);
-
-    std::optional<CorridorConnection> preview_connection(
-        std::size_t new_index,
-        const std::vector<PlacedHabitat>& habitats,
-        const HabitatModelLibrary& library) const;
-
     std::optional<CorridorConnection> preview_corridor_link(
         std::size_t corridor_a,
         std::size_t corridor_b,
@@ -86,6 +83,8 @@ public:
         eng::Vec3 other,
         const std::vector<PlacedHabitat>& habitats,
         const HabitatModelLibrary& library) const;
+
+    CorridorMesh preview_endpoint_mesh(const CorridorEndpoint& endpoint) const;
 
     std::optional<CorridorConnection> preview_built_corridor(
         const CorridorBuildAnchor& a,
@@ -104,6 +103,8 @@ public:
     std::size_t habitat_connection_count(std::size_t habitat_index) const;
     bool habitat_entrance_connected(std::size_t habitat_index,std::size_t entrance_index) const;
     float connection_length(std::size_t corridor_index) const;
+    void remove_corridor(std::size_t corridor_index);
+    void remove_habitat(std::size_t habitat_index);
     const std::vector<CorridorConnection>& connections() const { return connections_; }
 
 private:

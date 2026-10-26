@@ -8,6 +8,7 @@
 #include "game/world/resource_mesh.hpp"
 #include "game/world/corridor_network.hpp"
 #include "game/world/utility_network.hpp"
+#include "game/world/walkway_network.hpp"
 #include <optional>
 #include <vector>
 
@@ -20,7 +21,7 @@ public:
 private:
     enum class Screen { MainMenu, NewGame, Settings, Credits, Playfield };
     enum class HabitatViewMode { Default, Full };
-    enum class SelectionKind { None, Habitat, Corridor, Resource, Utility };
+    enum class SelectionKind { None, Habitat, Corridor, Resource, Utility, Walkway };
     eng::Application& app_;
     Screen screen_=Screen::MainMenu;
     eng::InputState input_{};
@@ -32,6 +33,7 @@ private:
     float fps_=0.0f;
     float ui_scale_=1.5f;
     bool debug_frame_enabled_=true;
+    bool debug_crew_paths_enabled_=true;
     bool game_session_active_=false;
     int ui_scale_index_=2;
     std::vector<eng::DisplayMode> display_modes_{};
@@ -46,16 +48,20 @@ private:
     std::vector<PlacedResource> placed_resources_{};
     CorridorNetwork corridor_network_{};
     UtilityNetwork utility_network_{};
+    WalkwayNetwork walkway_network_{};
     float placement_rotation_degrees_=0.0f;
+    HabitatSizeTier placement_habitat_size_{HabitatSizeTier::Standard};
     HabitatViewMode habitat_view_mode_=HabitatViewMode::Default;
     SelectionKind selection_kind_=SelectionKind::None;
     int selected_habitat_=-1;
     int selected_corridor_=-1;
     int selected_resource_=-1;
     int selected_utility_=-1;
+    int selected_walkway_=-1;
     int corridor_link_source_=-1;
     std::optional<CorridorBuildAnchor> corridor_build_start_{};
     std::optional<UtilityBuildAnchor> utility_build_start_{};
+    std::optional<WalkwayBuildAnchor> walkway_build_start_{};
 
     void render_menu(eng::Renderer& r);
     void render_new_game(eng::Renderer& r);
@@ -66,32 +72,38 @@ private:
     void render_build_bar(eng::Renderer& r);
     void render_view_selector(eng::Renderer& r,float y,float logical_w);
     void render_debug_frame(eng::Renderer& r);
+    void render_debug_crew_paths(eng::Renderer& r);
     void render_build_icon(eng::Renderer& r,BuildIcon icon,eng::Rect rect,eng::Color color) const;
     void render_playfield_crosshair(eng::Renderer& r);
     void render_corridors(eng::Renderer& r);
     void render_habitats(eng::Renderer& r);
     void render_resources(eng::Renderer& r);
     void render_utilities(eng::Renderer& r);
+    void render_walkways(eng::Renderer& r);
     void render_selection_panel(eng::Renderer& r);
     void render_corridor_link_preview(eng::Renderer& r);
     void render_habitat_placement(eng::Renderer& r);
     void render_resource_placement(eng::Renderer& r);
     void render_utility_placement(eng::Renderer& r);
+    void render_walkway_placement(eng::Renderer& r);
     void render_corridor_placement(eng::Renderer& r);
     void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false) const;
     void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false) const;
-    bool placement_valid(HabitatKind kind,eng::Vec3 position,float rotation_degrees) const;
+    bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees) const;
     bool resource_placement_valid(ResourceKind kind,eng::Vec3 position,float rotation_degrees) const;
     void select_world_at(int screen_x,int screen_y);
     int pick_habitat(eng::Vec3 ground_hit) const;
     int pick_corridor(eng::Vec3 ground_hit,float radius=1.45f) const;
     int pick_resource(eng::Vec3 ground_hit) const;
     int pick_utility(eng::Vec3 ground_hit,float radius=0.70f) const;
+    int pick_walkway(eng::Vec3 ground_hit,float radius=0.95f) const;
     std::optional<UtilityBuildAnchor> utility_anchor_at(eng::Vec3 ground_hit,UtilityKind kind) const;
+    std::optional<WalkwayBuildAnchor> walkway_anchor_at(eng::Vec3 ground_hit,bool source_only) const;
     CorridorBuildAnchor corridor_anchor_at(eng::Vec3 ground_hit) const;
     eng::Rect selection_panel_rect() const;
     bool mouse_over_selection_panel(const eng::InputState& input) const;
     void clear_world_selection();
+    void delete_selected_world_object();
     void ensure_display_modes();
     float ui_width(const eng::Renderer& r) const { return (float)r.width()/ui_scale_; }
     float ui_height(const eng::Renderer& r) const { return (float)r.height()/ui_scale_; }

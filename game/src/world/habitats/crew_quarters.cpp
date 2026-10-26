@@ -1,5 +1,6 @@
 #include "game/world/habitat_builder.hpp"
 #include "game/world/habitats/habitat_generators.hpp"
+#include "game/world/habitats/habitat_interiors.hpp"
 
 namespace game::habitats {
 HabitatMesh make_crew_quarters(){
@@ -34,6 +35,7 @@ HabitatMesh make_crew_quarters(){
     b.supports(-4.0f,3.9f,1.7f,0.88f);
     b.supports(-4.0f,3.9f,-1.7f,0.88f);
     b.mesh.entrances.push_back({{6.65f,1.18f,0.0f},{1.0f,0.0f,0.0f}});
+    interiors::add_crew_quarters(b);
     return std::move(b.mesh);
 }
 } // namespace game::habitats

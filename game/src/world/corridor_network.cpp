@@ -68,56 +68,9 @@ void insert_shared_path_vertex(CorridorConnection& host,Vec3 point){
     }
     host.path.insert(host.path.begin()+(std::ptrdiff_t)best_i+1,snapped);
 }
-}
 
-void CorridorNetwork::connect_new_habitat(std::size_t new_index,
-                                          const std::vector<PlacedHabitat>& habitats,
-                                          const HabitatModelLibrary& library){
-    auto c=preview_connection(new_index,habitats,library);
-    if(!c) return;
-    for(const CorridorEndpoint* ep:{&c->endpoint_a,&c->endpoint_b}){
-        if(ep->kind!=CorridorEndpointKind::Corridor || ep->index>=connections_.size()) continue;
-        insert_shared_path_vertex(connections_[ep->index],ep->position);
-        connections_[ep->index].mesh=build_mesh(connections_[ep->index].endpoint_a,connections_[ep->index].endpoint_b,
-                                                connections_[ep->index].path,connections_);
-    }
-    connections_.push_back(std::move(*c));
-}
 
-std::optional<CorridorConnection> CorridorNetwork::preview_connection(
-    std::size_t new_index,const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library) const {
-    if(new_index>=habitats.size()) return std::nullopt;
 
-    const Vec3 newcomer=habitats[new_index].position;
-    float best=std::numeric_limits<float>::max();
-    CorridorBuildAnchor target{};
-    bool found=false;
-
-    // Existing habitats remain valid automatic targets.
-    for(std::size_t i=0;i<habitats.size();++i){
-        if(i==new_index) continue;
-        const float d=distance_xz(newcomer,habitats[i].position);
-        if(d<best){
-            best=d; found=true;
-            target={CorridorEndpointKind::Habitat,i,habitats[i].position};
-        }
-    }
-
-    // Existing corridors are also first-class targets. A newly placed habitat
-    // therefore joins the nearest part of the colony network, not necessarily
-    // the nearest building.
-    for(std::size_t i=0;i<connections_.size();++i){
-        const Vec3 p=nearest_path_point(connections_[i].path,newcomer);
-        const float d=distance_xz(newcomer,p);
-        if(d<best){
-            best=d; found=true;
-            target={CorridorEndpointKind::Corridor,i,p};
-        }
-    }
-
-    if(!found) return std::nullopt;
-    CorridorBuildAnchor source{CorridorEndpointKind::Habitat,new_index,newcomer};
-    return make_generic(source,target,CorridorConnectionKind::Automatic,habitats,library,connections_);
 }
 
 std::optional<CorridorEndpoint> CorridorNetwork::preview_anchor(
@@ -126,6 +79,12 @@ std::optional<CorridorEndpoint> CorridorNetwork::preview_anchor(
     if(anchor.kind==CorridorEndpointKind::Corridor && anchor.index>=connections_.size()) return std::nullopt;
     if(anchor.kind==CorridorEndpointKind::Habitat && anchor.index>=habitats.size()) return std::nullopt;
     return resolve_anchor(anchor,other,habitats,library,connections_);
+}
+
+CorridorMesh CorridorNetwork::preview_endpoint_mesh(const CorridorEndpoint& endpoint) const {
+    CorridorMesh mesh;
+    append_docking_collar(mesh,endpoint);
+    return mesh;
 }
 
 std::optional<CorridorConnection> CorridorNetwork::preview_built_corridor(
@@ -148,11 +107,13 @@ bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const Corridor
     // two nearly coincident segments that can leave a crack or overlap.
     for(const CorridorEndpoint* ep:{&c->endpoint_a,&c->endpoint_b}){
         if(ep->kind!=CorridorEndpointKind::Corridor || ep->index>=connections_.size()) continue;
-        insert_shared_path_vertex(connections_[ep->index],ep->position);
+        insert_shared_path_vertex(connections_[ep->index],
+                                  ep->surface_matched_junction?ep->host_position:ep->position);
         connections_[ep->index].mesh=build_mesh(connections_[ep->index].endpoint_a,connections_[ep->index].endpoint_b,
                                                 connections_[ep->index].path,connections_);
     }
     connections_.push_back(std::move(*c));
+    optimize_shared_entrance_groups(connections_,habitats,library);
     return true;
 }
 
@@ -207,7 +168,8 @@ bool CorridorNetwork::connect_corridors(std::size_t corridor_a,std::size_t corri
     if(!c) return false;
     for(const CorridorEndpoint* ep:{&c->endpoint_a,&c->endpoint_b}){
         if(ep->kind!=CorridorEndpointKind::Corridor || ep->index>=connections_.size()) continue;
-        insert_shared_path_vertex(connections_[ep->index],ep->position);
+        insert_shared_path_vertex(connections_[ep->index],
+                                  ep->surface_matched_junction?ep->host_position:ep->position);
         connections_[ep->index].mesh=build_mesh(connections_[ep->index].endpoint_a,connections_[ep->index].endpoint_b,
                                                 connections_[ep->index].path,connections_);
     }
@@ -247,5 +209,72 @@ float CorridorNetwork::connection_length(std::size_t corridor_index) const {
     return path_length(connections_[corridor_index].path);
 }
 
+
+
+void CorridorNetwork::remove_corridor(std::size_t corridor_index){
+    if(corridor_index>=connections_.size()) return;
+
+    std::vector<bool> removed(connections_.size(),false);
+    removed[corridor_index]=true;
+
+    // Network links can depend on another corridor by index. Remove those
+    // dependants recursively so no dangling junction endpoint survives.
+    bool changed=true;
+    while(changed){
+        changed=false;
+        for(std::size_t i=0;i<connections_.size();++i){
+            if(removed[i]) continue;
+            for(const CorridorEndpoint* ep:{&connections_[i].endpoint_a,&connections_[i].endpoint_b}){
+                if(ep->kind==CorridorEndpointKind::Corridor && ep->index<removed.size() && removed[ep->index]){
+                    removed[i]=true;
+                    changed=true;
+                    break;
+                }
+            }
+        }
+    }
+
+    const std::size_t invalid=std::numeric_limits<std::size_t>::max();
+    std::vector<std::size_t> remap(connections_.size(),invalid);
+    std::vector<CorridorConnection> kept;
+    kept.reserve(connections_.size());
+    for(std::size_t i=0;i<connections_.size();++i){
+        if(removed[i]) continue;
+        remap[i]=kept.size();
+        kept.push_back(std::move(connections_[i]));
+    }
+    for(auto& c:kept){
+        for(CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
+            if(ep->kind==CorridorEndpointKind::Corridor && ep->index<remap.size()) ep->index=remap[ep->index];
+        }
+    }
+    connections_=std::move(kept);
+    for(auto& c:connections_) c.mesh=build_mesh(c.endpoint_a,c.endpoint_b,c.path,connections_);
+}
+
+void CorridorNetwork::remove_habitat(std::size_t habitat_index){
+    for(auto& connection:connections_){
+        for(CorridorEndpoint* endpoint:{&connection.endpoint_a,&connection.endpoint_b}){
+            if(endpoint->kind!=CorridorEndpointKind::Habitat) continue;
+            if(endpoint->index==habitat_index){
+                // Preserve the corridor in place. Once its habitat disappears,
+                // the former docking end becomes a sealed free corridor end at
+                // the already-built terminal ring rather than deleting the run.
+                endpoint->kind=CorridorEndpointKind::OpenDoor;
+                endpoint->index=0;
+                endpoint->door=CorridorDoor{};
+                endpoint->suppress_open_door=false;
+                endpoint->seamless_splice=false;
+                endpoint->surface_matched_junction=false;
+                endpoint->host_tangent={0,0,0};
+                endpoint->host_position={};
+            }else if(endpoint->index>habitat_index){
+                --endpoint->index;
+            }
+        }
+    }
+    for(auto& connection:connections_)
+        connection.mesh=build_mesh(connection.endpoint_a,connection.endpoint_b,connection.path,connections_);
+}
 
 } // namespace game

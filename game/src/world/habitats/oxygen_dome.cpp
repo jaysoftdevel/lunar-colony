@@ -1,5 +1,6 @@
 #include "game/world/habitat_builder.hpp"
 #include "game/world/habitats/habitat_generators.hpp"
+#include "game/world/habitats/habitat_interiors.hpp"
 
 namespace game::habitats {
 HabitatMesh make_oxygen_dome(){
@@ -45,6 +46,7 @@ HabitatMesh make_oxygen_dome(){
         b.cylinder_y(b.mesh.details,{foot.x,0.09f,foot.z},0.18f,0.36f,10,true);
     }
     b.mesh.entrances.push_back({{5.70f,1.18f,0.0f},{1.0f,0.0f,0.0f}});
+    interiors::add_oxygen_dome(b);
     return std::move(b.mesh);
 }
 

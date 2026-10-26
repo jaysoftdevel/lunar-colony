@@ -395,7 +395,7 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
     int lastx=0,lasty=0;
     while(!p.quit){
         p.input.left_pressed=p.input.middle_pressed=p.input.right_pressed=false;
-        p.input.escape_pressed=p.input.key_n_pressed=p.input.key_m_pressed=false;
+        p.input.escape_pressed=p.input.key_n_pressed=p.input.key_m_pressed=p.input.delete_pressed=false;
         p.input.wheel=0; p.input.mouse_dx=0; p.input.mouse_dy=0;
         while(XPending(p.display)){
             XEvent e{}; XNextEvent(p.display,&e);
@@ -414,6 +414,7 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
                 if(k==XK_Escape) p.input.escape_pressed=true;
                 else if(k==XK_n || k==XK_N) p.input.key_n_pressed=true;
                 else if(k==XK_m || k==XK_M) p.input.key_m_pressed=true;
+                else if(k==XK_Delete) p.input.delete_pressed=true;
             }
         }
         auto now=std::chrono::steady_clock::now(); float dt=std::chrono::duration<float>(now-prev).count(); prev=now; if(dt>0.1f)dt=0.1f;

@@ -34,6 +34,16 @@ std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anch
     auto path=smooth_route(*a,*b,habitats,library);
     if(path.size()<2) return std::nullopt;
 
+    // A corridor extended from an existing open end must share the exact end
+    // ring plane. Pin the first/last sampled segment to the host terminal
+    // tangent; otherwise curve sampling can rotate the D-profile a few degrees
+    // and leave a wedge-shaped pressure gap.
+    if(path.size()>=3){
+        const float terminal=std::clamp(distance_xz(path.front(),path.back())*0.08f,0.05f,0.18f);
+        if(a->seamless_splice) path[1]=a->position+a->tangent*terminal;
+        if(b->seamless_splice) path[path.size()-2]=b->position+b->tangent*terminal;
+    }
+
     CorridorConnection out;
     out.kind=kind;
     out.endpoint_a=*a;

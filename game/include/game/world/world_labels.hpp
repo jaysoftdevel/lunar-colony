@@ -12,6 +12,11 @@ inline const char* habitat_name(HabitatKind kind){
         case HabitatKind::CantineDome: return "CANTINE DOME";
         case HabitatKind::BioDome: return "BIO DOME";
         case HabitatKind::CrewQuarters: return "CREW QUARTERS";
+        case HabitatKind::ProcessingFacility: return "PROCESSING FACILITY";
+        case HabitatKind::Factory: return "FACTORY";
+        case HabitatKind::Manufactory: return "MANUFACTORY";
+        case HabitatKind::SickBay: return "SICK BAY";
+        case HabitatKind::Laboratory: return "LABORATORY";
         default: return "HABITAT";
     }
 }
@@ -21,6 +26,10 @@ inline const char* resource_name(ResourceKind kind){
         case ResourceKind::WaterDriller: return "WATER DRILLER";
         case ResourceKind::PowerStorage: return "POWER STORAGE";
         case ResourceKind::WaterStorage: return "WATER STORAGE";
+        case ResourceKind::OreDriller: return "ORE DRILLER";
+        case ResourceKind::WaterPurifier: return "WATER PURIFIER";
+        case ResourceKind::Antenna: return "COMMUNICATION ANTENNA";
+        case ResourceKind::LandingPad: return "LANDING PAD";
         default: return "RESOURCE STRUCTURE";
     }
 }

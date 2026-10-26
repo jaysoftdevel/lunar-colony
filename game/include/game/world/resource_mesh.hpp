@@ -10,6 +10,10 @@ enum class ResourceKind {
     WaterDriller,
     PowerStorage,
     WaterStorage,
+    OreDriller,
+    WaterPurifier,
+    Antenna,
+    LandingPad,
     Count
 };
 

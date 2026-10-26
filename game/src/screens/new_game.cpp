@@ -49,13 +49,16 @@ void GameApp::render_new_game(Renderer& r){
         placed_resources_.clear();
         corridor_network_.clear();
         utility_network_.clear();
+        walkway_network_.clear();
         build_catalog_.clear_selection();
         placement_rotation_degrees_=0.0f;
+        placement_habitat_size_=HabitatSizeTier::Standard;
         habitat_view_mode_=HabitatViewMode::Default;
         clear_world_selection();
         corridor_link_source_=-1;
         corridor_build_start_.reset();
         utility_build_start_.reset();
+        walkway_build_start_.reset();
         game_session_active_=true;
         screen_=Screen::Playfield;
     }

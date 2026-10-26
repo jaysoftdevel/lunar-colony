@@ -1,5 +1,6 @@
 #include "game/world/habitat_builder.hpp"
 #include "game/world/habitats/habitat_generators.hpp"
+#include "game/world/habitats/habitat_interiors.hpp"
 
 namespace game::habitats {
 HabitatMesh make_bio_dome(){
@@ -35,6 +36,7 @@ HabitatMesh make_bio_dome(){
     b.supports(-4.2f,4.1f,2.65f,0.78f);
     b.supports(-4.2f,4.1f,-2.65f,0.78f);
     b.mesh.entrances.push_back({{7.00f,1.18f,0.0f},{1.0f,0.0f,0.0f}});
+    interiors::add_bio_dome(b);
     return std::move(b.mesh);
 }
 

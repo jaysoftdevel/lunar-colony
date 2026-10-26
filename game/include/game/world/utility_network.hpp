@@ -7,14 +7,17 @@
 
 namespace game {
 
+// v0.15.0 merges the former electrical and water build tools into one physical
+// supply channel. A channel carries both services through one shared tray/pipe
+// assembly; individual structures simply consume the services they need.
 enum class UtilityKind {
-    PowerCable = 0,
-    WaterPipe
+    SupplyChannel = 0
 };
 
 enum class UtilityEndpointKind {
     Habitat = 0,
-    Resource
+    Resource,
+    Open
 };
 
 struct UtilityBuildAnchor {
@@ -37,10 +40,13 @@ struct UtilityMesh {
 };
 
 struct UtilityConnection {
-    UtilityKind kind{UtilityKind::PowerCable};
+    UtilityKind kind{UtilityKind::SupplyChannel};
     UtilityEndpoint endpoint_a{};
     UtilityEndpoint endpoint_b{};
     std::vector<eng::Vec3> path{};
+    // Supply channels form a shared manifold wherever two channel centerlines
+    // cross. The junction is common to both power and water services.
+    std::vector<eng::Vec3> junctions{};
     UtilityMesh mesh{};
 };
 
@@ -52,6 +58,16 @@ public:
     bool anchor_compatible(UtilityKind kind,const UtilityBuildAnchor& anchor,
                            const std::vector<PlacedHabitat>& habitats,
                            const std::vector<PlacedResource>& resources) const;
+
+    // Resolve one snapped structure anchor to the actual mesh-surface service
+    // port used by a connection. This is also used before the first click so
+    // the source-port blueprint can float over the selected structure.
+    std::optional<UtilityEndpoint> preview_anchor(
+        UtilityKind kind,const UtilityBuildAnchor& anchor,eng::Vec3 toward,
+        const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
+        const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const;
+
+    UtilityMesh preview_endpoint_mesh(const UtilityEndpoint& endpoint) const;
 
     std::optional<UtilityConnection> preview_connection(
         UtilityKind kind,const UtilityBuildAnchor& a,const UtilityBuildAnchor& b,
@@ -65,8 +81,12 @@ public:
 
     float connection_length(std::size_t index) const;
     std::size_t endpoint_connection_count(UtilityEndpointKind kind,std::size_t index) const;
+    void remove_connection(std::size_t index);
+    void remove_habitat(std::size_t habitat_index);
+    void remove_resource(std::size_t resource_index);
 
 private:
+    void rebuild_supply_junctions();
     std::vector<UtilityConnection> connections_{};
 };
 

@@ -23,13 +23,28 @@ void GameApp::update(float dt,const InputState& in){
     }
 
     if(screen_==Screen::Playfield){
+        // RMB is a fast cancel for every active build/placement tool. Consume
+        // the click before camera panning so cancelling never nudges the view.
+        if(in.right_pressed && build_catalog_.selected()!=nullptr){
+            build_catalog_.clear_selection();
+            placement_rotation_degrees_=0.0f;
+            placement_habitat_size_=HabitatSizeTier::Standard;
+            corridor_build_start_.reset();
+            utility_build_start_.reset();
+            walkway_build_start_.reset();
+            corridor_link_source_=-1;
+            return;
+        }
+
         if(in.escape_pressed){
             // ESC cancels the most specific active gameplay operation first.
             if(build_catalog_.selected()!=nullptr){
                 build_catalog_.clear_selection();
                 placement_rotation_degrees_=0.0f;
+                placement_habitat_size_=HabitatSizeTier::Standard;
                 corridor_build_start_.reset();
                 utility_build_start_.reset();
+                walkway_build_start_.reset();
                 return;
             }
             if(corridor_link_source_>=0){
@@ -40,11 +55,29 @@ void GameApp::update(float dt,const InputState& in){
             return;
         }
 
+        if(in.delete_pressed && build_catalog_.selected()==nullptr && corridor_link_source_<0 && !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_){
+            delete_selected_world_object();
+            return;
+        }
+
         InputState camera_input=in;
         if(const BuildObjectDefinition* selected=build_catalog_.selected(); selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
             constexpr float step=15.0f;
-            if(in.wheel>0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
-            if(in.wheel<0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
+            const bool scalable_habitat=selected->kind==BuildObjectKind::Habitat && habitat_has_size_tiers(selected->habitat_kind);
+            if(scalable_habitat){
+                // Scalable habitats reserve the wheel exclusively for size selection.
+                // Rotation remains available on N/M so wheel input never has two meanings.
+                auto cycle_size=[&](int delta){
+                    int v=(int)placement_habitat_size_;
+                    v=(v+delta+3)%3;
+                    placement_habitat_size_=(HabitatSizeTier)v;
+                };
+                if(in.wheel>0.0f) cycle_size(+1);
+                if(in.wheel<0.0f) cycle_size(-1);
+            }else{
+                if(in.wheel>0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
+                if(in.wheel<0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
+            }
             if(in.key_n_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
             if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
             camera_input.wheel=0.0f;
@@ -60,16 +93,10 @@ void GameApp::update(float dt,const InputState& in){
             Vec3 hit{};
             if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
                 if(corridor_link_source_>=0){
-                    const int target=pick_corridor(hit,1.70f);
-                    if(target>=0 && target!=corridor_link_source_){
-                        if(corridor_network_.connect_corridors((std::size_t)corridor_link_source_,(std::size_t)target,placed_habitats_,habitat_models_)){
-                            selected_corridor_=(int)corridor_network_.connections().size()-1;
-                            selected_habitat_=-1;
-                            selected_resource_=-1;
-                            selection_kind_=SelectionKind::Corridor;
-                            corridor_link_source_=-1;
-                        }
-                    }
+                    // Manual corridor linking is committed from the render-side
+                    // blueprint path after the complete candidate connection has
+                    // been drawn. This guarantees every connection is blueprinted
+                    // before it becomes part of the world.
                 }else{
                     select_world_at(in.mouse_x,in.mouse_y);
                 }

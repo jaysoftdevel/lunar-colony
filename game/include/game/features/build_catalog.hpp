@@ -10,30 +10,42 @@ namespace game {
 enum class BuildIcon {
     CategoryHabitats,
     CategoryResources,
+    CategoryFacilities,
     AirLock,
     OxygenDome,
     CantineDome,
     BioDome,
     CrewQuarters,
+    ProcessingFacility,
+    Factory,
+    Manufactory,
+    SickBay,
+    Laboratory,
     Corridor,
     SolarPanel,
     WaterDriller,
     PowerStorage,
     WaterStorage,
-    PowerCable,
-    WaterPipe
+    OreDriller,
+    WaterPurifier,
+    Antenna,
+    LandingPad,
+    SupplyChannel,
+    Walkway
 };
 
 enum class BuildCategory {
     Habitats,
-    Resources
+    Resources,
+    Facilities
 };
 
 enum class BuildObjectKind {
     Habitat,
     Corridor,
     Resource,
-    Utility
+    Utility,
+    Walkway
 };
 
 struct BuildObjectDefinition {
@@ -44,8 +56,9 @@ struct BuildObjectDefinition {
     BuildCategory category{BuildCategory::Habitats};
     BuildObjectKind kind{BuildObjectKind::Habitat};
     HabitatKind habitat_kind{HabitatKind::AirLock};
+    HabitatSizeTier habitat_size{HabitatSizeTier::Standard};
     ResourceKind resource_kind{ResourceKind::SolarPanel};
-    UtilityKind utility_kind{UtilityKind::PowerCable};
+    UtilityKind utility_kind{UtilityKind::SupplyChannel};
 };
 
 class BuildCatalog {

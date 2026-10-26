@@ -1,5 +1,6 @@
 #include "game/world/habitat_builder.hpp"
 #include "game/world/habitats/habitat_generators.hpp"
+#include "game/world/habitats/habitat_interiors.hpp"
 
 namespace game::habitats {
 namespace {
@@ -74,6 +75,7 @@ HabitatMesh make_airlock(){
     b.mesh.entrances.push_back({{-5.25f,1.18f,0.0f},{-1.0f,0.0f,0.0f}});
     b.mesh.entrance_access.push_back(make_stairs(b.mesh.entrances[0]));
     b.mesh.entrance_access.push_back(make_stairs(b.mesh.entrances[1]));
+    interiors::add_airlock(b);
     return std::move(b.mesh);
 }
 

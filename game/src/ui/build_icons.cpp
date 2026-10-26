@@ -35,6 +35,17 @@ void GameApp::render_build_icon(Renderer& r,BuildIcon icon,Rect q,Color c) const
             r.draw_line({x+9,y+10},{x+w-9,y+h-10},c,1.6f);
             r.draw_line({x+w-9,y+10},{x+9,y+h-10},c,1.6f);
             break;
+        case BuildIcon::CategoryFacilities:
+            r.draw_rect({cx-12,cy-10,24,20},{c.r,c.g,c.b,0.08f});
+            r.draw_line({cx-12,cy+10},{cx+12,cy+10},c,2.0f);
+            r.draw_line({cx-12,cy-10},{cx+12,cy-10},c,2.0f);
+            r.draw_line({cx-12,cy-10},{cx-12,cy+10},c,2.0f);
+            r.draw_line({cx+12,cy-10},{cx+12,cy+10},c,2.0f);
+            r.draw_line({cx-5,cy-15},{cx-5,cy-10},c,2.0f);
+            r.draw_line({cx+5,cy-15},{cx+5,cy-10},c,2.0f);
+            r.draw_line({cx-7,cy},{cx+7,cy},c,1.8f);
+            r.draw_line({cx,cy-7},{cx,cy+7},c,1.8f);
+            break;
         case BuildIcon::AirLock:
             r.draw_rect({x+8,y+12,w-16,h-20},{c.r,c.g,c.b,0.10f});
             r.draw_line({x+8,y+12},{x+w-8,y+12},c,2.0f);
@@ -91,6 +102,53 @@ void GameApp::render_build_icon(Renderer& r,BuildIcon icon,Rect q,Color c) const
             r.draw_line({x+13,y+12},{x+13,y+h-7},c,1.0f);
             r.draw_line({x+w-13,y+12},{x+w-13,y+h-7},c,1.0f);
             break;
+        case BuildIcon::ProcessingFacility:
+            r.draw_rect({x+5,y+16,w-10,h-24},{c.r,c.g,c.b,0.08f});
+            for(int i=0;i<3;++i){
+                const float px=x+8.0f+i*10.0f;
+                r.draw_rect({px,y+20,7,13},{c.r,c.g,c.b,0.13f});
+                r.draw_line({px+3.5f,y+20},{px+3.5f,y+10},c,1.4f);
+            }
+            r.draw_line({x+7,y+h-9},{x+w-7,y+h-9},c,2.0f);
+            r.draw_line({x+9,y+h-13},{x+w-9,y+18},c,1.4f);
+            break;
+        case BuildIcon::Factory:
+            r.draw_rect({x+5,y+13,w-10,h-21},{c.r,c.g,c.b,0.08f});
+            r.draw_rect({x+9,y+18,w-18,h-29},{c.r,c.g,c.b,0.04f});
+            for(int i=0;i<2;++i){
+                const float px=x+15.0f+i*14.0f;
+                r.draw_line({px,y+h-12},{px,cy},c,1.8f);
+                r.draw_line({px,cy},{px+6,y+20},c,1.8f);
+                r.draw_line({px+6,y+20},{px+9,y+26},c,1.6f);
+            }
+            r.draw_line({x+5,y+13},{x+w-5,y+13},c,2.0f);
+            break;
+        case BuildIcon::Manufactory:
+            r.draw_rect({x+4,y+12,w-8,h-20},{c.r,c.g,c.b,0.08f});
+            r.draw_line({x+7,y+15},{x+7,y+h-8},c,2.0f);
+            r.draw_line({x+w-7,y+15},{x+w-7,y+h-8},c,2.0f);
+            r.draw_line({x+7,y+15},{x+w-7,y+15},c,2.0f);
+            r.draw_line({x+10,y+8},{x+w-12,y+8},c,1.6f);
+            r.draw_line({x+w-12,y+8},{x+w-5,y+18},c,1.6f);
+            r.draw_rect({cx-5,cy-2,10,8},{c.r,c.g,c.b,0.16f});
+            break;
+        case BuildIcon::SickBay:
+            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);
+            r.draw_line({x+7,y+h-9},{x+12,y+17},c,2.0f);
+            r.draw_line({x+12,y+17},{cx,y+8},c,2.0f);
+            r.draw_line({cx,y+8},{x+w-12,y+17},c,2.0f);
+            r.draw_line({x+w-12,y+17},{x+w-7,y+h-9},c,2.0f);
+            r.draw_line({cx,cy-7},{cx,cy+9},c,2.6f);
+            r.draw_line({cx-8,cy+1},{cx+8,cy+1},c,2.6f);
+            break;
+        case BuildIcon::Laboratory:
+            r.draw_rect({x+5,y+15,w-10,h-23},{c.r,c.g,c.b,0.07f});
+            r.draw_line({x+9,y+20},{x+w-9,y+20},c,1.5f);
+            r.draw_line({x+9,y+28},{x+w-9,y+28},c,1.5f);
+            r.draw_line({cx,y+8},{cx,y+15},c,2.0f);
+            r.draw_line({cx+8,y+6},{cx+8,y+16},c,1.5f);
+            r.draw_line({cx+13,y+11},{x+w-4,y+7},c,1.5f);
+            break;
         case BuildIcon::Corridor:
             r.draw_line({x+6,cy+8},{x+14,cy+8},c,2.0f);
             r.draw_line({x+14,cy+8},{x+20,cy-5},c,2.0f);
@@ -143,19 +201,69 @@ void GameApp::render_build_icon(Renderer& r,BuildIcon icon,Rect q,Color c) const
             }
             r.draw_line({x+5,y+h-6},{x+w-5,y+h-6},c,2.0f);
             break;
-        case BuildIcon::PowerCable:
-            r.draw_line({x+5,cy-7},{x+w-5,cy-7},c,2.0f);
-            r.draw_line({x+5,cy},{x+w-5,cy},c,2.0f);
-            r.draw_line({x+5,cy+7},{x+w-5,cy+7},c,2.0f);
-            r.draw_rect({x+4,cy-12,6,24},{c.r,c.g,c.b,0.10f});
-            r.draw_rect({x+w-10,cy-12,6,24},{c.r,c.g,c.b,0.10f});
+        case BuildIcon::OreDriller:
+            r.draw_line({cx-9,y+5},{cx-9,y+h-8},c,2.0f);
+            r.draw_line({cx+4,y+5},{cx+4,y+h-8},c,2.0f);
+            r.draw_line({cx-9,y+5},{cx+4,y+5},c,2.0f);
+            r.draw_line({cx-2,y+10},{cx-2,y+h-7},c,2.2f);
+            for(int i=0;i<5;++i){
+                const float yy=y+18.0f+i*5.0f;
+                r.draw_line({cx-7,yy},{cx+3,yy+3},c,1.2f);
+            }
+            r.draw_rect({x+w-13,y+22,9,12},{c.r,c.g,c.b,0.12f});
+            r.draw_line({x+5,y+h-7},{x+w-5,y+h-7},c,2.0f);
             break;
-        case BuildIcon::WaterPipe:
-            r.draw_line({x+5,cy},{x+w-5,cy},c,3.0f);
-            r.draw_line({x+9,cy-7},{x+9,cy+7},c,2.0f);
-            r.draw_line({x+w-9,cy-7},{x+w-9,cy+7},c,2.0f);
-            r.draw_line({cx-5,cy-5},{cx+5,cy-5},c,1.5f);
-            r.draw_line({cx-5,cy+5},{cx+5,cy+5},c,1.5f);
+        case BuildIcon::WaterPurifier:
+            for(int i=0;i<3;++i){
+                const float px=x+9.0f+i*10.0f;
+                r.draw_line({px-3,y+15},{px-3,y+h-10},c,1.5f);
+                r.draw_line({px+3,y+15},{px+3,y+h-10},c,1.5f);
+                r.draw_line({px-3,y+15},{px,y+10},c,1.5f);
+                r.draw_line({px,y+10},{px+3,y+15},c,1.5f);
+            }
+            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);
+            r.draw_line({x+7,cy+4},{x+w-7,cy+4},c,1.6f);
+            break;
+        case BuildIcon::Antenna:
+            r.draw_line({cx,y+h-7},{cx,y+11},c,2.2f);
+            r.draw_line({cx,y+16},{cx+10,y+8},c,1.8f);
+            r.draw_line({cx+10,y+8},{cx+16,y+14},c,1.8f);
+            r.draw_line({cx+16,y+14},{cx+9,y+20},c,1.8f);
+            r.draw_line({cx+9,y+20},{cx,y+16},c,1.8f);
+            r.draw_line({cx-8,y+h-7},{cx,y+h-16},c,1.8f);
+            r.draw_line({cx+8,y+h-7},{cx,y+h-16},c,1.8f);
+            break;
+        case BuildIcon::LandingPad:
+            r.draw_rect({x+5,y+10,w-10,h-18},{c.r,c.g,c.b,0.06f});
+            r.draw_line({x+5,y+10},{x+w-5,y+10},c,1.8f);
+            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,1.8f);
+            r.draw_line({x+5,y+10},{x+5,y+h-8},c,1.8f);
+            r.draw_line({x+w-5,y+10},{x+w-5,y+h-8},c,1.8f);
+            r.draw_line({cx-8,cy-8},{cx-8,cy+8},c,2.2f);
+            r.draw_line({cx+8,cy-8},{cx+8,cy+8},c,2.2f);
+            r.draw_line({cx-8,cy},{cx+8,cy},c,2.2f);
+            break;
+        case BuildIcon::SupplyChannel:
+            // Three electrical conductors plus one utility pipe inside the same carrier.
+            r.draw_line({x+5,cy-8},{x+w-5,cy-8},c,1.8f);
+            r.draw_line({x+5,cy-3},{x+w-5,cy-3},c,1.8f);
+            r.draw_line({x+5,cy+2},{x+w-5,cy+2},c,1.8f);
+            r.draw_line({x+5,cy+9},{x+w-5,cy+9},c,3.0f);
+            r.draw_line({x+9,cy+4},{x+9,cy+14},c,1.7f);
+            r.draw_line({x+w-9,cy+4},{x+w-9,cy+14},c,1.7f);
+            r.draw_rect({x+4,cy-13,6,20},{c.r,c.g,c.b,0.10f});
+            r.draw_rect({x+w-10,cy-13,6,20},{c.r,c.g,c.b,0.10f});
+            break;
+        case BuildIcon::Walkway:
+            r.draw_line({x+5,cy+5},{x+w-5,cy+5},c,2.4f);
+            r.draw_line({x+5,cy-7},{x+w-5,cy-7},c,1.5f);
+            r.draw_line({x+5,cy-7},{x+5,cy+5},c,1.5f);
+            r.draw_line({x+w-5,cy-7},{x+w-5,cy+5},c,1.5f);
+            for(int i=0;i<4;++i){
+                const float px=x+8.0f+i*((w-16.0f)/3.0f);
+                r.draw_line({px,cy-7},{px,cy+5},c,1.2f);
+            }
+            r.draw_line({x+7,cy+11},{x+w-7,cy+11},c,2.2f);
             break;
     }
 }

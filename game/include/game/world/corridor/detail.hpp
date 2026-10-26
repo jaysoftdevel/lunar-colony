@@ -70,6 +70,7 @@ void append_swept_shell(CorridorMesh& mesh,const std::vector<Vec3>& path);
 void append_walkway(CorridorMesh& mesh,const std::vector<Vec3>& path);
 void append_ring(CorridorMesh& mesh,Vec3 center,Vec3 tangent,float scale=1.055f);
 void append_ribs(CorridorMesh& mesh,const std::vector<Vec3>& path);
+void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint);
 
 std::optional<CorridorEndpoint> resolve_anchor(const CorridorBuildAnchor& anchor,Vec3 other,
                                                const std::vector<PlacedHabitat>& habitats,
@@ -89,5 +90,8 @@ Vec3 nearest_path_point(const std::vector<Vec3>& path,Vec3 p);
 Vec3 nearest_path_tangent(const std::vector<Vec3>& path,Vec3 p);
 std::pair<Vec3,Vec3> closest_pair(const std::vector<Vec3>& a,const std::vector<Vec3>& b);
 float path_length(const std::vector<Vec3>& path);
+void optimize_shared_entrance_groups(std::vector<CorridorConnection>& connections,
+                                     const std::vector<PlacedHabitat>& habitats,
+                                     const HabitatModelLibrary& library);
 
 } // namespace game::corridor_detail

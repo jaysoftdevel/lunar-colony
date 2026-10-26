@@ -19,7 +19,7 @@ bool GameApp::resource_placement_valid(ResourceKind kind,Vec3 position,float rot
     const auto candidate_box=footprint(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z);
     constexpr float clearance=0.45f;
     for(const auto& placed:placed_habitats_){
-        const HabitatMesh& other=habitat_models_.mesh(placed.kind);
+        const HabitatMesh& other=habitat_models_.mesh(placed);
         const auto other_box=footprint(placed.position,placed.rotation_degrees,other.footprint_x,other.footprint_z);
         if(overlaps(candidate_box,other_box,clearance)) return false;
     }

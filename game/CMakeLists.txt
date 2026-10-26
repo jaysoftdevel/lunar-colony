@@ -12,6 +12,7 @@ add_executable(game
 
     src/ui/status_bar.cpp
     src/ui/debug_frame.cpp
+    src/ui/debug_crew_paths.cpp
     src/ui/build_bar.cpp
     src/ui/view_selector.cpp
     src/ui/build_icons.cpp
@@ -21,6 +22,7 @@ add_executable(game
     src/features/habitat_placement.cpp
     src/features/resource_placement.cpp
     src/features/utility_builder.cpp
+    src/features/walkway_builder.cpp
     src/features/corridor_builder.cpp
 
     src/systems/gameplay_controller.cpp
@@ -32,16 +34,27 @@ add_executable(game
     src/world/habitat_mesh.cpp
     src/world/resource_mesh.cpp
     src/world/utility_network.cpp
+    src/world/walkway_network.cpp
     src/world/habitats/airlock.cpp
     src/world/habitats/oxygen_dome.cpp
     src/world/habitats/cantine_dome.cpp
     src/world/habitats/bio_dome.cpp
     src/world/habitats/crew_quarters.cpp
+    src/world/habitats/processing_facility.cpp
+    src/world/habitats/factory.cpp
+    src/world/habitats/manufactory.cpp
+    src/world/habitats/sick_bay.cpp
+    src/world/habitats/laboratory.cpp
+    src/world/habitats/interiors.cpp
 
     src/world/resources/solar_panel.cpp
     src/world/resources/water_driller.cpp
     src/world/resources/power_storage.cpp
     src/world/resources/water_storage.cpp
+    src/world/resources/ore_driller.cpp
+    src/world/resources/water_purifier.cpp
+    src/world/resources/antenna.cpp
+    src/world/resources/landing_pad.cpp
 
     src/world/corridor_network.cpp
     src/world/corridor/geometry.cpp
@@ -49,6 +62,7 @@ add_executable(game
     src/world/corridor/entrances.cpp
     src/world/corridor/routing.cpp
     src/world/corridor/factory.cpp
+    src/world/corridor/fan_optimizer.cpp
 )
 target_include_directories(game PRIVATE include)
 target_link_libraries(game PRIVATE game_engine)

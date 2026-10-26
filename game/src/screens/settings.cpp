@@ -53,7 +53,7 @@ void GameApp::render_settings(Renderer& r){
     const float logical_w=ui_width(r);
     const float logical_h=ui_height(r);
     const float w=std::min(820.0f,logical_w-2.0f*SCREEN_MARGIN);
-    const float h=std::min(260.0f,std::max(250.0f,logical_h-92.0f));
+    const float h=std::min(300.0f,std::max(286.0f,logical_h-92.0f));
     Rect p={(logical_w-w)*0.5f,70,w,h};
     ui::panel(r,p,theme_);
 
@@ -114,9 +114,14 @@ void GameApp::render_settings(Renderer& r){
     if(ui::button(r,ui_input_,{right_x+column_w-82,inner_y+27,82,34},debug_label,theme_)){
         debug_frame_enabled_=!debug_frame_enabled_;
     }
-    ui::label(r,{right_x,inner_y+78},"SHOW VERSION + FPS IN GAME",0.76f,theme_,true);
-    ui::label(r,{right_x,inner_y+105},"UI SCALE APPLIES TO ALL HUD",0.76f,theme_,true);
-    ui::label(r,{right_x,inner_y+132},"CROSSHAIR ONLY OVER PLAYFIELD",0.76f,theme_,true);
+    ui::label(r,{right_x+14,inner_y+78},"CREW ACCESS PATHS",0.86f,theme_);
+    const std::string crew_paths_label=debug_crew_paths_enabled_?"ON":"OFF";
+    if(ui::button(r,ui_input_,{right_x+column_w-82,inner_y+66,82,34},crew_paths_label,theme_)){
+        debug_crew_paths_enabled_=!debug_crew_paths_enabled_;
+    }
+    ui::label(r,{right_x+14,inner_y+113},"BLUE CONNECTED CREW ROUTES",0.72f,theme_,true);
+    ui::label(r,{right_x,inner_y+143},"UI SCALE APPLIES TO ALL HUD",0.76f,theme_,true);
+    ui::label(r,{right_x,inner_y+170},"CROSSHAIR ONLY OVER PLAYFIELD",0.76f,theme_,true);
 
     constexpr float back_w=130.0f;
     constexpr float back_h=38.0f;

@@ -11,8 +11,36 @@ enum class HabitatKind {
     CantineDome,
     BioDome,
     CrewQuarters,
+    ProcessingFacility,
+    Factory,
+    Manufactory,
+    SickBay,
+    Laboratory,
     Count
 };
+
+enum class HabitatSizeTier {
+    Standard = 0,
+    Mid,
+    Big,
+    Count
+};
+
+inline bool habitat_has_size_tiers(HabitatKind kind){
+    return kind==HabitatKind::OxygenGeneratorDome ||
+           kind==HabitatKind::CantineDome ||
+           kind==HabitatKind::BioDome ||
+           kind==HabitatKind::CrewQuarters;
+}
+
+inline const char* habitat_size_name(HabitatSizeTier size){
+    switch(size){
+        case HabitatSizeTier::Standard: return "STANDARD";
+        case HabitatSizeTier::Mid: return "MID";
+        case HabitatSizeTier::Big: return "BIG";
+        default: return "STANDARD";
+    }
+}
 
 struct HabitatEntrance {
     eng::Vec3 local_position{};
@@ -45,14 +73,16 @@ struct PlacedHabitat {
     HabitatKind kind{HabitatKind::AirLock};
     eng::Vec3 position{};
     float rotation_degrees{0.0f};
+    HabitatSizeTier size{HabitatSizeTier::Standard};
 };
 
 class HabitatModelLibrary {
 public:
     HabitatModelLibrary();
-    const HabitatMesh& mesh(HabitatKind kind) const;
+    const HabitatMesh& mesh(HabitatKind kind,HabitatSizeTier size=HabitatSizeTier::Standard) const;
+    const HabitatMesh& mesh(const PlacedHabitat& placed) const { return mesh(placed.kind,placed.size); }
 private:
-    std::array<HabitatMesh,(size_t)HabitatKind::Count> meshes_{};
+    std::array<std::array<HabitatMesh,(size_t)HabitatSizeTier::Count>,(size_t)HabitatKind::Count> meshes_{};
 };
 
 } // namespace game

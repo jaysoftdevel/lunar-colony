@@ -20,3 +20,16 @@
 0.11.4 -> 0.11.5 : airtight seamless corridor end splices; close links use matching host cross-section planes with no entrance/junction blocks
 0.11.5 -> 0.12.0 : resource structure meshes and Resource Structures build submenu; solar panel, water driller, power storage, water storage placement
 0.12.0 -> 0.13.0 : power-cable and water-pipe utility networks connecting resource structures and habitats
+0.13.0 -> 0.13.1 : Delete-key world removal with dependency cleanup + blueprint-first connection commits
+0.13.1 -> 0.14.0 : Detailed Processing/Factory/Manufactory/Sick Bay/Laboratory habitats + Ore Driller resource model/build entries
+0.14.0 -> 0.14.1 : Water pump redesign, power structure snapping/highlight, exact corridor-end splices, hull-surface generated entrances
+0.14.1 -> 0.14.2 : Non-overlapping power routing, exact mesh-surface cable ports, adjustable target attachment positions
+0.14.2 -> 0.14.3 : Conductive power-cable intersection junctions and RMB build/placement cancel
+0.14.3 -> 0.15.0 : merged power/water supply channels + mesh-snapped manual corridor endpoints + removed automatic habitat corridors
+0.15.0 -> 0.16.0 : facilities submenu (water purifier, antenna, landing pad) + role-specific detailed habitat interiors
+0.16.0 -> 0.16.1 : exact corridor surface junctions + exact habitat door-plane docking
+0.16.1 -> 0.17.0 : persistent detached networks + conformal airtight entrances + three habitat size tiers
+0.17.0 -> 0.17.1 : Bio Dome entrance blueprint fix + external walkways with integrated power/water supply
+0.17.1 -> 0.17.2 : mouse-wheel habitat size tiers + floating supply/corridor source blueprints + shared corridor entrance trunks
+0.17.2 -> 0.17.3 : curved non-pressurized walkways + landing-pad terminal + debug crew-access paths + four-way shared corridor entrance fans
+0.17.3 -> 0.17.4 : shared-entrance corridor topology optimizer; route reassignment, non-overlapping fan layout and full group rerouting

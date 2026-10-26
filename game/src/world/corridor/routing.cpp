@@ -7,7 +7,7 @@ bool segment_clear(Vec3 a,Vec3 b,const std::vector<PlacedHabitat>& habitats,cons
                    std::size_t ignore_a=NONE_INDEX,std::size_t ignore_b=NONE_INDEX){
     for(std::size_t i=0;i<habitats.size();++i){
         if(i==ignore_a || i==ignore_b) continue;
-        const auto& hm=library.mesh(habitats[i].kind);
+        const auto& hm=library.mesh(habitats[i]);
         const float radius=0.5f*std::sqrt(hm.footprint_x*hm.footprint_x+hm.footprint_z*hm.footprint_z)+CORRIDOR_HALF_WIDTH+ROUTE_CLEARANCE;
         if(point_segment_distance_xz(habitats[i].position,a,b)<radius) return false;
     }
@@ -59,7 +59,10 @@ std::vector<Vec3> smooth_route(const CorridorEndpoint& a,const CorridorEndpoint&
     const std::size_t ignore_b=b.kind==CorridorEndpointKind::Habitat?b.index:NONE_INDEX;
     if(a.kind==CorridorEndpointKind::Habitat && b.kind==CorridorEndpointKind::Habitat &&
        d<DIRECT_CORRIDOR_MAX_RASTERS && segment_clear(a.position,b.position,habitats,library,ignore_a,ignore_b)){
-        return {a.position,b.position};
+        // Keep the short/elevated connection, but preserve the exact doorway
+        // normals at both ends so the corridor D-profile shares the adapter's
+        // terminal planes instead of rotating directly toward the other door.
+        return seamless_end_splice_route(a.position,a.tangent,b.position,b.tangent);
     }
     const Vec3 direct=flat_normal(b.position-a.position);
     const Vec3 lateral=perp_xz(direct);

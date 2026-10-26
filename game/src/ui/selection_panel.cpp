@@ -27,15 +27,15 @@ void GameApp::render_selection_panel(Renderer& r){
         pos<<"POSITION "<<std::fixed<<std::setprecision(1)<<h.position.x<<" / "<<h.position.z;
         rot<<"ROTATION "<<(int)std::round(h.rotation_degrees)<<" DEG";
         conn<<"CORRIDORS "<<corridor_network_.habitat_connection_count((size_t)selected_habitat_);
-        utilities<<"UTILITIES "<<utility_network_.endpoint_connection_count(UtilityEndpointKind::Habitat,(size_t)selected_habitat_);
+        utilities<<"SUPPLY LINKS "<<(utility_network_.endpoint_connection_count(UtilityEndpointKind::Habitat,(size_t)selected_habitat_)+walkway_network_.endpoint_connection_count(WalkwayEndpointKind::Habitat,(size_t)selected_habitat_));
         game_label(r,{x,p.y+10},"HABITAT #"+std::to_string(selected_habitat_+1),0.64f,theme_,true);
-        game_label(r,{x,p.y+34},habitat_name(h.kind),0.76f,theme_);
+        game_label(r,{x,p.y+34},std::string(habitat_name(h.kind))+" / "+habitat_size_name(h.size),0.72f,theme_);
         game_label(r,{x,p.y+60},"STATUS  OPERATIONAL / SEALED",0.58f,theme_);
         game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+132},conn.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+154},utilities.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+188},"LMB SELECT OTHER OBJECT",0.50f,theme_,true);
+        game_label(r,{x,p.y+188},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
         return;
     }
 
@@ -44,14 +44,14 @@ void GameApp::render_selection_panel(Renderer& r){
         std::ostringstream pos,rot,utilities;
         pos<<"POSITION "<<std::fixed<<std::setprecision(1)<<item.position.x<<" / "<<item.position.z;
         rot<<"ROTATION "<<(int)std::round(item.rotation_degrees)<<" DEG";
-        utilities<<"UTILITIES "<<utility_network_.endpoint_connection_count(UtilityEndpointKind::Resource,(size_t)selected_resource_);
+        utilities<<"SUPPLY LINKS "<<(utility_network_.endpoint_connection_count(UtilityEndpointKind::Resource,(size_t)selected_resource_)+walkway_network_.endpoint_connection_count(WalkwayEndpointKind::Resource,(size_t)selected_resource_));
         game_label(r,{x,p.y+10},"RESOURCE #"+std::to_string(selected_resource_+1),0.64f,theme_,true);
         game_label(r,{x,p.y+34},resource_name(item.kind),0.76f,theme_);
         game_label(r,{x,p.y+60},"STATUS  PLACED / AVAILABLE",0.58f,theme_);
         game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+132},utilities.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+170},"LMB SELECT OTHER OBJECT",0.50f,theme_,true);
+        game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
         return;
     }
 
@@ -59,14 +59,34 @@ void GameApp::render_selection_panel(Renderer& r){
         const auto& u=utility_network_.connections()[(size_t)selected_utility_];
         std::ostringstream length,endpoints;
         length<<"LENGTH "<<std::fixed<<std::setprecision(1)<<utility_network_.connection_length((size_t)selected_utility_)<<" M";
-        endpoints<<utility_endpoint_name(u.endpoint_a.kind)<<" "<<(u.endpoint_a.index+1)<<" <-> "
-                 <<utility_endpoint_name(u.endpoint_b.kind)<<" "<<(u.endpoint_b.index+1);
+        endpoints<<utility_endpoint_name(u.endpoint_a.kind);
+        if(u.endpoint_a.kind!=UtilityEndpointKind::Open) endpoints<<" "<<(u.endpoint_a.index+1);
+        endpoints<<" <-> "<<utility_endpoint_name(u.endpoint_b.kind);
+        if(u.endpoint_b.kind!=UtilityEndpointKind::Open) endpoints<<" "<<(u.endpoint_b.index+1);
         game_label(r,{x,p.y+10},"UTILITY #"+std::to_string(selected_utility_+1),0.64f,theme_,true);
         game_label(r,{x,p.y+34},utility_kind_name(u.kind),0.76f,theme_);
-        game_label(r,{x,p.y+60},"STATUS  CONNECTED / ONLINE",0.58f,theme_);
+        const bool open_end=u.endpoint_a.kind==UtilityEndpointKind::Open || u.endpoint_b.kind==UtilityEndpointKind::Open;
+        game_label(r,{x,p.y+60},open_end?"STATUS  DISCONNECTED / CAPPED":"STATUS  CONNECTED / ONLINE",0.58f,theme_);
         game_label(r,{x,p.y+84},length.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},endpoints.str(),0.50f,theme_,true);
-        game_label(r,{x,p.y+170},"LMB SELECT OTHER OBJECT",0.50f,theme_,true);
+        game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
+        return;
+    }
+
+    if(selection_kind_==SelectionKind::Walkway && selected_walkway_>=0 && (size_t)selected_walkway_<walkway_network_.connections().size()){
+        const auto& w=walkway_network_.connections()[(size_t)selected_walkway_];
+        std::ostringstream length,endpoints;
+        length<<"LENGTH "<<std::fixed<<std::setprecision(1)<<walkway_network_.connection_length((size_t)selected_walkway_)<<" M";
+        endpoints<<walkway_endpoint_name(w.endpoint_a.kind);
+        if(w.endpoint_a.kind!=WalkwayEndpointKind::Open) endpoints<<" "<<(w.endpoint_a.index+1);
+        endpoints<<" <-> "<<walkway_endpoint_name(w.endpoint_b.kind);
+        if(w.endpoint_b.kind!=WalkwayEndpointKind::Open) endpoints<<" "<<(w.endpoint_b.index+1);
+        game_label(r,{x,p.y+10},"WALKWAY #"+std::to_string(selected_walkway_+1),0.64f,theme_,true);
+        game_label(r,{x,p.y+34},"EXTERNAL ACCESS WALKWAY",0.72f,theme_);
+        game_label(r,{x,p.y+60},"STATUS  ACCESS + POWER + WATER",0.56f,theme_);
+        game_label(r,{x,p.y+84},length.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+108},endpoints.str(),0.50f,theme_,true);
+        game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
         return;
     }
 
@@ -84,6 +104,7 @@ void GameApp::render_selection_panel(Renderer& r){
         game_label(r,{x,p.y+82},length.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+105},segments.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+128},endpoints.str(),0.50f,theme_,true);
+        game_label(r,{x,p.y+150},"DEL REMOVE",0.48f,theme_,true);
 
         const bool linking=corridor_link_source_==selected_corridor_;
         const std::string label=linking?"CANCEL CONNECTION":"CONNECT TO CORRIDOR";

@@ -102,11 +102,24 @@ void GameApp::render_utilities(Renderer& r){
         const auto& link=links[i];
         const bool selected=selection_kind_==SelectionKind::Utility && selected_utility_==(int)i;
         const float boost=selected?1.55f:1.0f;
-        const Color shell=link.kind==UtilityKind::PowerCable?Color{0.78f,0.62f,0.24f,1.0f}:Color{0.28f,0.60f,0.82f,1.0f};
-        const Color details=link.kind==UtilityKind::PowerCable?Color{0.64f,0.48f,0.18f,0.96f}:Color{0.22f,0.48f,0.70f,0.96f};
+        const Color shell{0.48f,0.68f,0.80f,1.0f};
+        const Color details{0.70f,0.56f,0.24f,0.96f};
         mesh_wireframe::draw_layer(r,link.mesh.shell,shell,1.05f*boost);
         mesh_wireframe::draw_layer(r,link.mesh.details,details,1.00f*boost);
         r.draw_lines_3d(link.mesh.edges,selected?theme_.accent:Color{0.10f,0.14f,0.15f,1.0f},selected?2.5f:1.15f);
+    }
+}
+
+
+void GameApp::render_walkways(Renderer& r){
+    const auto& links=walkway_network_.connections();
+    for(size_t i=0;i<links.size();++i){
+        const auto& w=links[i];
+        const bool selected=selection_kind_==SelectionKind::Walkway && selected_walkway_==(int)i;
+        const float boost=selected?1.55f:1.0f;
+        mesh_wireframe::draw_layer(r,w.mesh.deck,{0.54f,0.64f,0.66f,1.0f},1.10f*boost);
+        mesh_wireframe::draw_layer(r,w.mesh.details,{0.72f,0.58f,0.25f,0.96f},1.00f*boost);
+        r.draw_lines_3d(w.mesh.edges,selected?theme_.accent:Color{0.10f,0.15f,0.16f,1.0f},selected?2.5f:1.15f);
     }
 }
 
@@ -134,7 +147,7 @@ void GameApp::render_corridors(Renderer& r){
 void GameApp::render_habitats(Renderer& r){
     for(size_t i=0;i<placed_habitats_.size();++i){
         const auto& instance=placed_habitats_[i];
-        const auto& mesh=habitat_models_.mesh(instance.kind);
+        const auto& mesh=habitat_models_.mesh(instance);
         const bool selected=selection_kind_==SelectionKind::Habitat && selected_habitat_==(int)i;
         render_habitat_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected);
 

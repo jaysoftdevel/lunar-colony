@@ -110,6 +110,19 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     r.draw_lines_3d(preview->mesh.edges,{0.36f,1.00f,0.76f,0.96f},1.9f);
     render_endpoint_highlight(r,preview->endpoint_a,theme_.accent,2.8f);
     render_endpoint_highlight(r,preview->endpoint_b,{0.42f,1.00f,0.66f,1.0f},2.8f);
+
+    // Commit only after the full candidate connection has been submitted as a
+    // blueprint in this frame. This keeps manual links consistent with corridor
+    // build mode, utility channels and automatic habitat corridor previews.
+    if(input_.left_pressed &&
+       corridor_network_.connect_corridors((std::size_t)corridor_link_source_,(std::size_t)target,placed_habitats_,habitat_models_)){
+        selected_corridor_=(int)corridor_network_.connections().size()-1;
+        selected_habitat_=-1;
+        selected_resource_=-1;
+        selected_utility_=-1;
+        selection_kind_=SelectionKind::Corridor;
+        corridor_link_source_=-1;
+    }
 }
 
 void GameApp::render_corridor_placement(Renderer& r){
@@ -124,12 +137,32 @@ void GameApp::render_corridor_placement(Renderer& r){
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
     const CorridorBuildAnchor hover=corridor_anchor_at(hit);
 
+    // Like supply channels, a corridor snaps to the complete habitat while the
+    // pointer chooses the exact door position on its pressure hull. Highlight
+    // the owning structure so source and destination are unambiguous.
+    const auto highlight_habitat_anchor=[&](const CorridorBuildAnchor& anchor){
+        if(anchor.kind!=CorridorEndpointKind::Habitat || anchor.index>=placed_habitats_.size()) return;
+        const auto& h=placed_habitats_[anchor.index];
+        render_habitat_mesh(r,habitat_models_.mesh(h),h.position,h.rotation_degrees,true,true,false);
+    };
+
     // Before the first click, highlight the exact structural element that would
     // become the corridor source: habitat entrance/vestibule, corridor branch
     // sleeve, or a free sealed end.
     if(!corridor_build_start_){
+        highlight_habitat_anchor(hover);
         if(auto candidate=corridor_network_.preview_anchor(hover,source_hint(hover,hit,placed_habitats_),placed_habitats_,habitat_models_)){
             const Color c=candidate->kind==CorridorEndpointKind::OpenDoor?Color{0.96f,0.67f,0.22f,1.0f}:theme_.accent;
+            // Always render the actual endpoint hardware before the first click.
+            // Generated entrances therefore float over the hull while built-in
+            // doors show their exact pressure adapter. Reused entrances resolve
+            // to their shared corridor manifold and show that junction instead.
+            if(candidate->kind==CorridorEndpointKind::Habitat){
+                const auto entrance_mesh=corridor_network_.preview_endpoint_mesh(*candidate);
+                mesh_wireframe::draw_layer(r,entrance_mesh.shell,{0.34f,1.00f,0.72f,0.88f},1.35f);
+                mesh_wireframe::draw_layer(r,entrance_mesh.details,{0.24f,0.88f,0.68f,0.82f},1.15f);
+                r.draw_lines_3d(entrance_mesh.edges,{0.34f,1.00f,0.72f,0.96f},1.8f);
+            }
             render_endpoint_highlight(r,*candidate,c,3.0f);
         }
     }
@@ -138,6 +171,8 @@ void GameApp::render_corridor_placement(Renderer& r){
     std::optional<CorridorEndpoint> source_endpoint;
     std::optional<CorridorEndpoint> destination_endpoint;
     if(corridor_build_start_){
+        highlight_habitat_anchor(*corridor_build_start_);
+        if(!(hover.kind==corridor_build_start_->kind && hover.index==corridor_build_start_->index)) highlight_habitat_anchor(hover);
         preview=corridor_network_.preview_built_corridor(*corridor_build_start_,hover,placed_habitats_,habitat_models_);
         if(preview){
             source_endpoint=preview->endpoint_a;
