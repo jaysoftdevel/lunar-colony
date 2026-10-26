@@ -1,5 +1,6 @@
 #pragma once
 #include "game/world/habitat_mesh.hpp"
+#include "game/world/construction.hpp"
 #include <cstddef>
 #include <optional>
 #include <vector>
@@ -61,6 +62,7 @@ struct CorridorConnection {
     CorridorEndpoint endpoint_b{};
     std::vector<eng::Vec3> path{};
     CorridorMesh mesh{};
+    StagedConstructionState construction{kCorridorConstructionSteps};
 };
 
 class CorridorNetwork {
@@ -105,6 +107,7 @@ public:
     float connection_length(std::size_t corridor_index) const;
     void remove_corridor(std::size_t corridor_index);
     void remove_habitat(std::size_t habitat_index);
+    void update_construction(float dt);
     const std::vector<CorridorConnection>& connections() const { return connections_; }
 
 private:

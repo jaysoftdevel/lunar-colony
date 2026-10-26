@@ -33,3 +33,5 @@
 0.17.1 -> 0.17.2 : mouse-wheel habitat size tiers + floating supply/corridor source blueprints + shared corridor entrance trunks
 0.17.2 -> 0.17.3 : curved non-pressurized walkways + landing-pad terminal + debug crew-access paths + four-way shared corridor entrance fans
 0.17.3 -> 0.17.4 : shared-entrance corridor topology optimizer; route reassignment, non-overlapping fan layout and full group rerouting
+0.17.4 -> 0.18.0 : ten-step modular construction sequences for all habitats, resource structures and facilities; one stage per second with construction status/progressive mesh assembly
+0.18.0 -> 0.18.1 : five-step corridor construction and three-step Supply Channel construction; one stage per second with progressive route assembly and construction status

@@ -600,6 +600,10 @@ bool UtilityNetwork::build_connection(
     return true;
 }
 
+void UtilityNetwork::update_construction(float dt){
+    for(auto& connection:connections_) connection.construction.update(dt);
+}
+
 float UtilityNetwork::connection_length(std::size_t index) const {
     if(index>=connections_.size()) return 0.0f;
     float total=0.0f;

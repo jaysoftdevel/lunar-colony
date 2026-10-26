@@ -84,6 +84,7 @@ void GameApp::update(float dt,const InputState& in){
         }
         camera_.update(camera_input,playfield_.size(),viewport_height_);
         status_.update(dt);
+        update_construction(dt);
 
         // World selection and manual corridor linking use the playfield ray.
         // HUD clicks are excluded so buttons never select geometry behind them.

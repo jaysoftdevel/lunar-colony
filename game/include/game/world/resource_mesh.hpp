@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/engine.hpp"
+#include "game/world/construction.hpp"
 #include <array>
 #include <vector>
 
@@ -31,6 +32,7 @@ struct PlacedResource {
     ResourceKind kind{ResourceKind::SolarPanel};
     eng::Vec3 position{};
     float rotation_degrees{0.0f};
+    ConstructionState construction{};
 };
 
 class ResourceModelLibrary {

@@ -29,10 +29,12 @@ add_executable(game
     src/systems/world_selection.cpp
     src/systems/camera_controller.cpp
     src/systems/colony_status.cpp
+    src/systems/construction_system.cpp
 
     src/world/playfield.cpp
     src/world/habitat_mesh.cpp
     src/world/resource_mesh.cpp
+    src/world/construction_sequence.cpp
     src/world/utility_network.cpp
     src/world/walkway_network.cpp
     src/world/habitats/airlock.cpp

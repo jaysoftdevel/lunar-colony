@@ -177,6 +177,10 @@ bool CorridorNetwork::connect_corridors(std::size_t corridor_a,std::size_t corri
     return true;
 }
 
+void CorridorNetwork::update_construction(float dt){
+    for(auto& connection:connections_) connection.construction.update(dt);
+}
+
 Vec3 CorridorNetwork::nearest_point_on_corridor(std::size_t corridor_index,Vec3 p) const {
     if(corridor_index>=connections_.size()) return p;
     return nearest_path_point(connections_[corridor_index].path,p);

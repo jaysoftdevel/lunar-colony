@@ -2,6 +2,7 @@
 #include "engine/engine.hpp"
 #include "game/world/habitat_mesh.hpp"
 #include "game/world/resource_mesh.hpp"
+#include "game/world/construction.hpp"
 #include <optional>
 #include <vector>
 
@@ -48,6 +49,7 @@ struct UtilityConnection {
     // cross. The junction is common to both power and water services.
     std::vector<eng::Vec3> junctions{};
     UtilityMesh mesh{};
+    StagedConstructionState construction{kSupplyConstructionSteps};
 };
 
 class UtilityNetwork {
@@ -84,6 +86,7 @@ public:
     void remove_connection(std::size_t index);
     void remove_habitat(std::size_t habitat_index);
     void remove_resource(std::size_t resource_index);
+    void update_construction(float dt);
 
 private:
     void rebuild_supply_junctions();

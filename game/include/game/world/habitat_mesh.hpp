@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/engine.hpp"
+#include "game/world/construction.hpp"
 #include <array>
 #include <vector>
 
@@ -74,6 +75,7 @@ struct PlacedHabitat {
     eng::Vec3 position{};
     float rotation_degrees{0.0f};
     HabitatSizeTier size{HabitatSizeTier::Standard};
+    ConstructionState construction{};
 };
 
 class HabitatModelLibrary {

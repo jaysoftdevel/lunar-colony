@@ -10,6 +10,7 @@
 #include "game/world/utility_network.hpp"
 #include "game/world/walkway_network.hpp"
 #include <optional>
+#include <cstdint>
 #include <vector>
 
 namespace game {
@@ -87,8 +88,8 @@ private:
     void render_utility_placement(eng::Renderer& r);
     void render_walkway_placement(eng::Renderer& r);
     void render_corridor_placement(eng::Renderer& r);
-    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false) const;
-    void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false) const;
+    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,std::uint8_t construction_step=10) const;
+    void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,std::uint8_t construction_step=10) const;
     bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees) const;
     bool resource_placement_valid(ResourceKind kind,eng::Vec3 position,float rotation_degrees) const;
     void select_world_at(int screen_x,int screen_y);
@@ -104,6 +105,7 @@ private:
     bool mouse_over_selection_panel(const eng::InputState& input) const;
     void clear_world_selection();
     void delete_selected_world_object();
+    void update_construction(float dt);
     void ensure_display_modes();
     float ui_width(const eng::Renderer& r) const { return (float)r.width()/ui_scale_; }
     float ui_height(const eng::Renderer& r) const { return (float)r.height()/ui_scale_; }

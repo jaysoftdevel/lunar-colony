@@ -30,7 +30,13 @@ void GameApp::render_selection_panel(Renderer& r){
         utilities<<"SUPPLY LINKS "<<(utility_network_.endpoint_connection_count(UtilityEndpointKind::Habitat,(size_t)selected_habitat_)+walkway_network_.endpoint_connection_count(WalkwayEndpointKind::Habitat,(size_t)selected_habitat_));
         game_label(r,{x,p.y+10},"HABITAT #"+std::to_string(selected_habitat_+1),0.64f,theme_,true);
         game_label(r,{x,p.y+34},std::string(habitat_name(h.kind))+" / "+habitat_size_name(h.size),0.72f,theme_);
-        game_label(r,{x,p.y+60},"STATUS  OPERATIONAL / SEALED",0.58f,theme_);
+        if(h.construction.complete()){
+            game_label(r,{x,p.y+60},"STATUS  OPERATIONAL / SEALED",0.58f,theme_);
+        }else{
+            std::ostringstream build;
+            build<<"CONSTRUCTION  STEP "<<(int)h.construction.step<<" / "<<(int)kConstructionSteps<<"  "<<(int)std::lround(h.construction.progress()*100.0f)<<"%";
+            game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
+        }
         game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+132},conn.str(),0.58f,theme_,true);
@@ -47,7 +53,13 @@ void GameApp::render_selection_panel(Renderer& r){
         utilities<<"SUPPLY LINKS "<<(utility_network_.endpoint_connection_count(UtilityEndpointKind::Resource,(size_t)selected_resource_)+walkway_network_.endpoint_connection_count(WalkwayEndpointKind::Resource,(size_t)selected_resource_));
         game_label(r,{x,p.y+10},"RESOURCE #"+std::to_string(selected_resource_+1),0.64f,theme_,true);
         game_label(r,{x,p.y+34},resource_name(item.kind),0.76f,theme_);
-        game_label(r,{x,p.y+60},"STATUS  PLACED / AVAILABLE",0.58f,theme_);
+        if(item.construction.complete()){
+            game_label(r,{x,p.y+60},"STATUS  PLACED / AVAILABLE",0.58f,theme_);
+        }else{
+            std::ostringstream build;
+            build<<"CONSTRUCTION  STEP "<<(int)item.construction.step<<" / "<<(int)kConstructionSteps<<"  "<<(int)std::lround(item.construction.progress()*100.0f)<<"%";
+            game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
+        }
         game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+132},utilities.str(),0.58f,theme_,true);
@@ -66,7 +78,14 @@ void GameApp::render_selection_panel(Renderer& r){
         game_label(r,{x,p.y+10},"UTILITY #"+std::to_string(selected_utility_+1),0.64f,theme_,true);
         game_label(r,{x,p.y+34},utility_kind_name(u.kind),0.76f,theme_);
         const bool open_end=u.endpoint_a.kind==UtilityEndpointKind::Open || u.endpoint_b.kind==UtilityEndpointKind::Open;
-        game_label(r,{x,p.y+60},open_end?"STATUS  DISCONNECTED / CAPPED":"STATUS  CONNECTED / ONLINE",0.58f,theme_);
+        if(u.construction.complete()){
+            game_label(r,{x,p.y+60},open_end?"STATUS  DISCONNECTED / CAPPED":"STATUS  CONNECTED / ONLINE",0.58f,theme_);
+        }else{
+            std::ostringstream build;
+            build<<"CONSTRUCTION  STEP "<<(int)u.construction.step<<" / "<<(int)kSupplyConstructionSteps
+                 <<"  "<<(int)std::lround(u.construction.progress()*100.0f)<<"%";
+            game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
+        }
         game_label(r,{x,p.y+84},length.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},endpoints.str(),0.50f,theme_,true);
         game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
@@ -100,7 +119,14 @@ void GameApp::render_selection_panel(Renderer& r){
                                (c.kind==CorridorConnectionKind::NetworkLink?"NETWORK LINK":"BUILT SECTION");
         game_label(r,{x,p.y+10},"CORRIDOR #"+std::to_string(selected_corridor_+1),0.64f,theme_,true);
         game_label(r,{x,p.y+34},kind_label,0.74f,theme_);
-        game_label(r,{x,p.y+59},"STATUS  PRESSURIZED / WALKABLE",0.56f,theme_);
+        if(c.construction.complete()){
+            game_label(r,{x,p.y+59},"STATUS  PRESSURIZED / WALKABLE",0.56f,theme_);
+        }else{
+            std::ostringstream build;
+            build<<"CONSTRUCTION  STEP "<<(int)c.construction.step<<" / "<<(int)kCorridorConstructionSteps
+                 <<"  "<<(int)std::lround(c.construction.progress()*100.0f)<<"%";
+            game_label(r,{x,p.y+59},build.str(),0.56f,theme_);
+        }
         game_label(r,{x,p.y+82},length.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+105},segments.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+128},endpoints.str(),0.50f,theme_,true);
