@@ -1,0 +1,6 @@
+2026-10-26T09:31:01Z | legacy-unversioned -> 0.4.0 | version tracking + gameplay debug frame
+2026-10-26T09:36:13Z | 0.4.0 -> 0.4.1 | repair engine/display/camera API mismatch
+2026-10-26T09:41:07Z | 0.4.1 -> 0.4.2 | common resolution selector + scaled in-game HUD
+2026-10-26T09:48:34Z | 0.4.2 -> 0.4.3 | inverted tilt Y + reliable fullscreen resolution switching + larger base font
+2026-10-26T10:06:40Z | 0.4.3 -> 0.4.4 | 150% base font + playfield-only crosshair + compact UI spacing
+2026-10-26T10:12:03Z | 0.4.4 -> 0.4.5 | larger in-game fonts + camera diagnostics moved to debug frame

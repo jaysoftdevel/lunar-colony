@@ -8,5 +8,6 @@ add_executable(game
 )
 target_include_directories(game PRIVATE include)
 target_link_libraries(game PRIVATE game_engine)
+target_compile_definitions(game PRIVATE GAME_VERSION="${PROJECT_VERSION}")
 target_compile_options(game PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(game PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

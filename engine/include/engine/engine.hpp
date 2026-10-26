@@ -9,6 +9,12 @@
 namespace eng {
 struct Color { float r{},g{},b{},a{1.0f}; };
 struct Rect { float x{},y{},w{},h{}; bool contains(float px,float py) const { return px>=x&&px<=x+w&&py>=y&&py<=y+h; } };
+struct DisplayMode {
+    int width{};
+    int height{};
+    int refresh_millihz{};
+    bool operator==(const DisplayMode& r) const { return width==r.width && height==r.height; }
+};
 
 enum class MouseButton { Left, Middle, Right };
 struct InputState {
@@ -28,7 +34,7 @@ public:
     virtual void begin_frame(Color clear)=0;
     virtual void end_frame()=0;
     virtual void set_3d(const Mat4& view_proj)=0;
-    virtual void set_2d()=0;
+    virtual void set_2d(float scale=1.0f)=0;
     virtual void draw_lines_3d(const std::vector<Vec3>& vertices, Color color, float width=1.0f)=0;
     virtual void draw_triangles_3d(const std::vector<Vec3>& vertices, Color color)=0;
     virtual void draw_rect(Rect r, Color color)=0;
@@ -61,6 +67,11 @@ public:
     void request_quit();
     void set_fullscreen(bool enabled);
     bool fullscreen() const;
+    std::vector<DisplayMode> display_modes() const;
+    DisplayMode current_display_mode() const;
+    bool set_display_mode(int width,int height);
+    void set_cursor_visible(bool visible);
+    bool cursor_visible() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
@@ -75,6 +86,11 @@ struct Theme {
     Color accent{0.22f,0.72f,0.82f,1.0f};
     Color accent_hover{0.34f,0.83f,0.91f,1.0f};
     Color border{0.20f,0.25f,0.30f,1.0f};
+    // Independent from Renderer::set_2d() / UI geometry scaling.
+    // Base text size is 50% larger than the original prototype without
+    // changing panel/control geometry. Renderer::set_2d() remains the
+    // independent user-configurable UI geometry scale.
+    float font_scale{1.50f};
 };
 void panel(Renderer& r, Rect rect, const Theme& t);
 bool button(Renderer& r,const InputState& input,Rect rect,const std::string& label,const Theme& t,bool enabled=true);

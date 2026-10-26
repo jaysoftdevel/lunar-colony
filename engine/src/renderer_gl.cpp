@@ -1,4 +1,5 @@
 #include "engine/engine.hpp"
+#include <algorithm>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <dlfcn.h>
@@ -57,7 +58,11 @@ public:
     void begin_frame(Color c) override { gl_.glClearColor(c.r,c.g,c.b,c.a); gl_.glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); gl_.glEnable(GL_DEPTH_TEST); gl_.glEnable(GL_BLEND); gl_.glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA); }
     void end_frame() override { gl_.glXSwapBuffers(d_,w_); }
     void set_3d(const Mat4& vp) override { mvp_=vp; gl_.glEnable(GL_DEPTH_TEST); }
-    void set_2d() override { mvp_=ortho(0,(float)width_,(float)height_,0,-1,1); gl_.glDisable(GL_DEPTH_TEST); }
+    void set_2d(float scale=1.0f) override {
+        scale=std::max(0.25f,scale);
+        mvp_=ortho(0,(float)width_/scale,(float)height_/scale,0,-1,1);
+        gl_.glDisable(GL_DEPTH_TEST);
+    }
     void draw_lines_3d(const std::vector<Vec3>& v,Color c,float width) override { if(v.empty())return; upload_and_draw((const float*)v.data(),v.size()*3,GL_LINES,c,width); }
     void draw_triangles_3d(const std::vector<Vec3>& v,Color c) override { if(v.empty())return; upload_and_draw((const float*)v.data(),v.size()*3,GL_TRIANGLES,c,1); }
     void draw_rect(Rect r,Color c) override { float v[]={r.x,r.y,0,r.x+r.w,r.y,0,r.x+r.w,r.y+r.h,0, r.x,r.y,0,r.x+r.w,r.y+r.h,0,r.x,r.y+r.h,0}; upload_and_draw(v,18,GL_TRIANGLES,c); }
@@ -69,7 +74,7 @@ public:
 static const std::unordered_map<char,std::array<unsigned char,7>> FONT={
 {'A',{14,17,17,31,17,17,17}},{'B',{30,17,17,30,17,17,30}},{'C',{14,17,16,16,16,17,14}},{'D',{30,17,17,17,17,17,30}},{'E',{31,16,16,30,16,16,31}},{'F',{31,16,16,30,16,16,16}},{'G',{14,17,16,23,17,17,14}},{'H',{17,17,17,31,17,17,17}},{'I',{31,4,4,4,4,4,31}},{'J',{7,2,2,2,18,18,12}},{'K',{17,18,20,24,20,18,17}},{'L',{16,16,16,16,16,16,31}},{'M',{17,27,21,21,17,17,17}},{'N',{17,25,21,19,17,17,17}},{'O',{14,17,17,17,17,17,14}},{'P',{30,17,17,30,16,16,16}},{'Q',{14,17,17,17,21,18,13}},{'R',{30,17,17,30,20,18,17}},{'S',{15,16,16,14,1,1,30}},{'T',{31,4,4,4,4,4,4}},{'U',{17,17,17,17,17,17,14}},{'V',{17,17,17,17,17,10,4}},{'W',{17,17,17,21,21,21,10}},{'X',{17,17,10,4,10,17,17}},{'Y',{17,17,10,4,4,4,4}},{'Z',{31,1,2,4,8,16,31}},
 {'0',{14,17,19,21,25,17,14}},{'1',{4,12,4,4,4,4,14}},{'2',{14,17,1,2,4,8,31}},{'3',{30,1,1,14,1,1,30}},{'4',{2,6,10,18,31,2,2}},{'5',{31,16,16,30,1,1,30}},{'6',{14,16,16,30,17,17,14}},{'7',{31,1,2,4,8,8,8}},{'8',{14,17,17,14,17,17,14}},{'9',{14,17,17,15,1,1,14}},
-{'+',{0,4,4,31,4,4,0}},{'-',{0,0,0,31,0,0,0}},{'.',{0,0,0,0,0,12,12}},{':',{0,12,12,0,12,12,0}},{'/',{1,2,4,8,16,0,0}},{'x',{0,0,17,10,4,10,17}},{'X',{17,17,10,4,10,17,17}},{' ',{0,0,0,0,0,0,0}},{'<',{2,4,8,16,8,4,2}},{'>',{8,4,2,1,2,4,8}},{'=',{0,0,31,0,31,0,0}},{'(',{2,4,8,8,8,4,2}},{')',{8,4,2,2,2,4,8}}
+{'%',{17,2,4,4,8,16,17}},{'+',{0,4,4,31,4,4,0}},{'-',{0,0,0,31,0,0,0}},{'.',{0,0,0,0,0,12,12}},{':',{0,12,12,0,12,12,0}},{'/',{1,2,4,8,16,0,0}},{'x',{0,0,17,10,4,10,17}},{'X',{17,17,10,4,10,17,17}},{' ',{0,0,0,0,0,0,0}},{'<',{2,4,8,16,8,4,2}},{'>',{8,4,2,1,2,4,8}},{'=',{0,0,31,0,31,0,0}},{'(',{2,4,8,8,8,4,2}},{')',{8,4,2,2,2,4,8}}
 };
 void GLRenderer::draw_text(Vec2 p,const std::string& text,float scale,Color c){
     float ox=p.x; for(char raw:text){ char ch=(raw>='a'&&raw<='z')?(char)(raw-'a'+'A'):raw; if(ch=='\n'){ p.y+=8*scale; p.x=ox; continue;} auto it=FONT.find(ch); if(it==FONT.end()){p.x+=6*scale; continue;} const auto& rows=it->second; for(int y=0;y<7;++y) for(int x=0;x<5;++x) if(rows[y]&(1<<(4-x))) draw_rect({p.x+x*scale,p.y+y*scale,scale,scale},c); p.x+=6*scale; }
