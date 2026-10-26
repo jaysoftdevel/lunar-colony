@@ -394,7 +394,9 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
     auto prev=std::chrono::steady_clock::now();
     int lastx=0,lasty=0;
     while(!p.quit){
-        p.input.left_pressed=p.input.middle_pressed=p.input.right_pressed=false; p.input.escape_pressed=false; p.input.wheel=0; p.input.mouse_dx=0; p.input.mouse_dy=0;
+        p.input.left_pressed=p.input.middle_pressed=p.input.right_pressed=false;
+        p.input.escape_pressed=p.input.key_n_pressed=p.input.key_m_pressed=false;
+        p.input.wheel=0; p.input.mouse_dx=0; p.input.mouse_dy=0;
         while(XPending(p.display)){
             XEvent e{}; XNextEvent(p.display,&e);
             if(e.type==ClientMessage && (Atom)e.xclient.data.l[0]==p.wm_delete) p.quit=true;
@@ -407,7 +409,12 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
                 if(e.xbutton.button==4) p.input.wheel += 1.0f;
                 if(e.xbutton.button==5) p.input.wheel -= 1.0f;
             } else if(e.type==ButtonRelease){ if(e.xbutton.button==1)p.input.left_down=false; if(e.xbutton.button==2)p.input.middle_down=false; if(e.xbutton.button==3)p.input.right_down=false; }
-            else if(e.type==KeyPress){ KeySym k=XLookupKeysym(&e.xkey,0); if(k==XK_Escape) p.input.escape_pressed=true; }
+            else if(e.type==KeyPress){
+                KeySym k=XLookupKeysym(&e.xkey,0);
+                if(k==XK_Escape) p.input.escape_pressed=true;
+                else if(k==XK_n || k==XK_N) p.input.key_n_pressed=true;
+                else if(k==XK_m || k==XK_M) p.input.key_m_pressed=true;
+            }
         }
         auto now=std::chrono::steady_clock::now(); float dt=std::chrono::duration<float>(now-prev).count(); prev=now; if(dt>0.1f)dt=0.1f;
         game->update(dt,p.input); game->render(*p.renderer);

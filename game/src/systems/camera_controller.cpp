@@ -62,6 +62,12 @@ void CameraController::basis(Vec3& eye,Vec3& forward,Vec3& right,Vec3& up) const
     if(length(up)<0.0001f) up={0.0f,0.0f,-1.0f};
 }
 
+Vec3 CameraController::eye_position() const {
+    Vec3 eye,forward,right,up;
+    basis(eye,forward,right,up);
+    return eye;
+}
+
 Mat4 CameraController::view_projection(float aspect) const {
     Vec3 eye,forward,right,up;
     basis(eye,forward,right,up);

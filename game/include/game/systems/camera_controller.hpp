@@ -7,6 +7,7 @@ public:
     void reset(int playfield_size);
     void update(const eng::InputState& input,int playfield_size,int viewport_height);
     eng::Mat4 view_projection(float aspect) const;
+    eng::Vec3 eye_position() const;
     bool intersect_playfield(int screen_x,int screen_y,int viewport_width,int viewport_height,int playfield_size,eng::Vec3& hit) const;
     float distance() const { return distance_; }
     float elevation_degrees() const { return elevation_deg_; }

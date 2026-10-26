@@ -4,3 +4,11 @@
 2026-10-26T09:48:34Z | 0.4.2 -> 0.4.3 | inverted tilt Y + reliable fullscreen resolution switching + larger base font
 2026-10-26T10:06:40Z | 0.4.3 -> 0.4.4 | 150% base font + playfield-only crosshair + compact UI spacing
 2026-10-26T10:12:03Z | 0.4.4 -> 0.4.5 | larger in-game fonts + camera diagnostics moved to debug frame
+2026-10-26T10:24:58Z | 0.4.5 -> 0.5.0 | procedural lunar habitat meshes + build-menu placement system
+2026-10-26T10:31:20Z | 0.5.0 -> 0.5.1 | contextual ESC cancel/pause + habitat auto-deselect + resume game menu
+2026-10-26T10:42:51Z | 0.5.1 -> 0.6.0 | habitat rotation + entrance-aware automatic connection corridors + generated fallback doors
+2026-10-26T10:50:56Z | 0.6.0 -> 0.7.0 | bottom-bar habitat view modes + perspective/full hull transparency + opaque foundations + explicit interior meshes
+2026-10-26T10:58:22Z | 0.7.0 -> 0.8.0 | live corridor placement preview + sealed docking collars + bent orthogonal/dogleg corridor routing
+2026-10-26T11:08:14Z | 0.8.0 -> 0.8.1 | collision-free secondary habitat entrance vestibules + fully overlapped airtight corridor docking joints
+2026-10-26T11:21:23Z | 0.8.1 -> 0.9.0 | round corridor pressure tubes + corridor transparency + selectable habitat/corridor status + manual corridor linking/intersections
+0.9.0 -> 0.10.0 : curved flat-base walkable corridors, corridor builder, intersections, two-state view

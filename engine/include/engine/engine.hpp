@@ -24,6 +24,8 @@ struct InputState {
     bool left_down{}, middle_down{}, right_down{};
     bool left_pressed{}, middle_pressed{}, right_pressed{};
     bool escape_pressed{};
+    bool key_n_pressed{};
+    bool key_m_pressed{};
 };
 
 class Renderer {

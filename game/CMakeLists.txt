@@ -2,6 +2,8 @@ add_executable(game
     src/main.cpp
     src/game_app.cpp
     src/world/playfield.cpp
+    src/world/habitat_mesh.cpp
+    src/world/corridor_network.cpp
     src/systems/camera_controller.cpp
     src/systems/colony_status.cpp
     src/features/build_catalog.cpp
