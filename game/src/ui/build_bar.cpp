@@ -1,19 +1,22 @@
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
-#include "game/util/world_math.hpp"
-#include "game/world/world_labels.hpp"
-#include "game/version.hpp"
 #include <algorithm>
-#include <cmath>
-#include <iomanip>
-#include <limits>
-#include <sstream>
 
 namespace game {
 using namespace eng;
 using namespace layout;
-using namespace world_math;
-using namespace world_labels;
+
+namespace {
+struct CategoryButton {
+    BuildCategory category;
+    BuildIcon icon;
+    const char* name;
+};
+constexpr CategoryButton CATEGORIES[]={
+    {BuildCategory::Habitats,BuildIcon::CategoryHabitats,"HABITATS / INFRASTRUCTURE"},
+    {BuildCategory::Resources,BuildIcon::CategoryResources,"RESOURCE STRUCTURES"}
+};
+}
 
 void GameApp::render_build_bar(Renderer& r){
     const float logical_w=ui_width(r);
@@ -22,36 +25,73 @@ void GameApp::render_build_bar(Renderer& r){
     r.draw_rect({0,y,logical_w,BUILD_BAR_H},{0.025f,0.035f,0.045f,0.97f});
     r.draw_line({0,y},{logical_w,y},theme_.border,1.0f);
 
-    // Reserve the right side for the two-state view selector. Build objects
-    // stay horizontally arranged in the remaining area.
     constexpr float view_area_w=170.0f;
-    const float build_area_w=std::max(330.0f,logical_w-view_area_w-18.0f);
+    constexpr float category_size=42.0f;
+    constexpr float category_gap=7.0f;
+    constexpr float category_x=12.0f;
+    const float category_y=y+(BUILD_BAR_H-category_size)*0.5f;
+    const float category_area_w=category_size*2.0f+category_gap+28.0f;
+
+    int hovered_category=-1;
+    for(int i=0;i<2;++i){
+        const Rect box={category_x+(category_size+category_gap)*(float)i,category_y,category_size,category_size};
+        const bool hover=box.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
+        const bool selected=build_catalog_.category()==CATEGORIES[i].category;
+        if(hover) hovered_category=i;
+        r.draw_rect(box,hover?Color{0.11f,0.15f,0.18f,1.0f}:Color{0.055f,0.07f,0.09f,1.0f});
+        const Color border=selected?theme_.accent:(hover?theme_.accent_hover:theme_.border);
+        const float bw=selected?2.5f:1.3f;
+        r.draw_line({box.x,box.y},{box.x+box.w,box.y},border,bw);
+        r.draw_line({box.x+box.w,box.y},{box.x+box.w,box.y+box.h},border,bw);
+        r.draw_line({box.x+box.w,box.y+box.h},{box.x,box.y+box.h},border,bw);
+        r.draw_line({box.x,box.y+box.h},{box.x,box.y},border,bw);
+        render_build_icon(r,CATEGORIES[i].icon,{box.x+7,box.y+7,box.w-14,box.h-14},selected?theme_.accent:theme_.text);
+        if(hover && ui_input_.left_pressed){
+            build_catalog_.set_category(CATEGORIES[i].category);
+            placement_rotation_degrees_=0.0f;
+            corridor_build_start_.reset();
+            utility_build_start_.reset();
+            corridor_link_source_=-1;
+            clear_world_selection();
+        }
+    }
+
+    const float build_left=category_x+category_area_w;
+    const float build_right=logical_w-view_area_w-18.0f;
+    const float build_area_w=std::max(260.0f,build_right-build_left);
+
+    std::vector<int> visible;
     const auto& items=build_catalog_.items();
-    const float total=items.empty()?0.0f:items.size()*BUILD_ICON_SIZE+(items.size()-1)*BUILD_ICON_GAP;
-    const float start_x=std::max(12.0f,(build_area_w-total)*0.5f);
+    for(size_t i=0;i<items.size();++i){
+        if(items[i].category==build_catalog_.category()) visible.push_back((int)i);
+    }
+
+    const float total=visible.empty()?0.0f:visible.size()*BUILD_ICON_SIZE+(visible.size()-1)*BUILD_ICON_GAP;
+    const float start_x=build_left+std::max(0.0f,(build_area_w-total)*0.5f);
     const float icon_y=y+(BUILD_BAR_H-BUILD_ICON_SIZE)*0.5f;
 
-    int hovered=-1;
-    for(size_t i=0;i<items.size();++i){
-        const Rect box={start_x+(BUILD_ICON_SIZE+BUILD_ICON_GAP)*(float)i,icon_y,BUILD_ICON_SIZE,BUILD_ICON_SIZE};
+    int hovered_item=-1;
+    for(size_t slot=0;slot<visible.size();++slot){
+        const int item_index=visible[slot];
+        const Rect box={start_x+(BUILD_ICON_SIZE+BUILD_ICON_GAP)*(float)slot,icon_y,BUILD_ICON_SIZE,BUILD_ICON_SIZE};
         const bool hover=box.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
-        const bool selected=(int)i==build_catalog_.selected_index();
-        if(hover) hovered=(int)i;
-        const Color fill=hover?Color{0.12f,0.16f,0.19f,1.0f}:Color{0.065f,0.08f,0.10f,1.0f};
-        r.draw_rect(box,fill);
+        const bool selected=item_index==build_catalog_.selected_index();
+        if(hover) hovered_item=item_index;
+        r.draw_rect(box,hover?Color{0.12f,0.16f,0.19f,1.0f}:Color{0.065f,0.08f,0.10f,1.0f});
         const Color border=selected?theme_.accent:(hover?theme_.accent_hover:theme_.border);
         const float bw=selected?3.0f:1.5f;
         r.draw_line({box.x,box.y},{box.x+box.w,box.y},border,bw);
         r.draw_line({box.x+box.w,box.y},{box.x+box.w,box.y+box.h},border,bw);
         r.draw_line({box.x+box.w,box.y+box.h},{box.x,box.y+box.h},border,bw);
         r.draw_line({box.x,box.y+box.h},{box.x,box.y},border,bw);
-        render_build_icon(r,items[i].icon,{box.x+8,box.y+8,box.w-16,box.h-16},selected?theme_.accent:theme_.text);
+        render_build_icon(r,items[(size_t)item_index].icon,{box.x+8,box.y+8,box.w-16,box.h-16},selected?theme_.accent:theme_.text);
         if(hover && ui_input_.left_pressed){
             const int before=build_catalog_.selected_index();
-            build_catalog_.select((int)i);
+            build_catalog_.select(item_index);
             if(build_catalog_.selected_index()!=before){
                 placement_rotation_degrees_=0.0f;
                 corridor_build_start_.reset();
+                utility_build_start_.reset();
             }
             clear_world_selection();
             corridor_link_source_=-1;
@@ -60,10 +100,16 @@ void GameApp::render_build_bar(Renderer& r){
 
     render_view_selector(r,y,logical_w);
 
-    if(hovered>=0){
-        const auto& item=items[(size_t)hovered];
-        const std::string line1=item.name;
-        const std::string line2="TYPE " + item.type;
+    std::string line1,line2;
+    if(hovered_item>=0){
+        const auto& item=items[(size_t)hovered_item];
+        line1=item.name;
+        line2="TYPE " + item.type;
+    }else if(hovered_category>=0){
+        line1=CATEGORIES[hovered_category].name;
+        line2="BUILD SUBMENU";
+    }
+    if(!line1.empty()){
         const float tw=std::max(168.0f,std::max(text_width(line1,0.78f*GAME_FONT_BOOST,theme_),text_width(line2,0.60f*GAME_FONT_BOOST,theme_))+22.0f);
         const float tx=std::clamp((float)ui_input_.mouse_x-tw*0.5f,8.0f,logical_w-tw-8.0f);
         const Rect tip={tx,y-60.0f,tw,52.0f};

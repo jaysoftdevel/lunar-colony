@@ -27,6 +27,8 @@ constexpr float DOCK_DOOR_OVERLAP=0.28f;
 constexpr float DOCK_CORRIDOR_OVERLAP=0.42f;
 constexpr float ENTRANCE_MIN_SPACING=2.75f;
 constexpr float ROUTE_CLEARANCE=0.42f;
+constexpr float DIRECT_CORRIDOR_MAX_RASTERS=8.0f;
+constexpr float DIRECT_CORRIDOR_MIN_BASE_Y=0.58f;
 constexpr std::size_t NONE_INDEX=std::numeric_limits<std::size_t>::max();
 
 inline Vec3 rotate_y(Vec3 v,float degrees){
@@ -53,7 +55,7 @@ inline Vec3 closest_point_segment_xz(Vec3 p,Vec3 a,Vec3 b){
     const float den=dx*dx+dz*dz;
     if(den<0.0001f) return {a.x,0,a.z};
     const float t=std::clamp(((p.x-a.x)*dx+(p.z-a.z)*dz)/den,0.0f,1.0f);
-    return {a.x+dx*t,0,a.z+dz*t};
+    return {a.x+dx*t,a.y+(b.y-a.y)*t,a.z+dz*t};
 }
 inline bool endpoint_uses_habitat(const CorridorEndpoint& e,std::size_t index){
     return e.kind==CorridorEndpointKind::Habitat && e.index==index;
@@ -75,6 +77,7 @@ std::optional<CorridorEndpoint> resolve_anchor(const CorridorBuildAnchor& anchor
                                                const std::vector<CorridorConnection>& existing);
 std::vector<Vec3> smooth_route(const CorridorEndpoint& a,const CorridorEndpoint& b,
                                const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library);
+std::vector<Vec3> seamless_end_splice_route(Vec3 a,Vec3 outward_a,Vec3 b,Vec3 outward_b);
 CorridorMesh build_mesh(const CorridorEndpoint& a,const CorridorEndpoint& b,const std::vector<Vec3>& path,
                         const std::vector<CorridorConnection>& existing);
 std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anchor,const CorridorBuildAnchor& b_anchor,
@@ -83,6 +86,7 @@ std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anch
                                                const HabitatModelLibrary& library,
                                                const std::vector<CorridorConnection>& existing);
 Vec3 nearest_path_point(const std::vector<Vec3>& path,Vec3 p);
+Vec3 nearest_path_tangent(const std::vector<Vec3>& path,Vec3 p);
 std::pair<Vec3,Vec3> closest_pair(const std::vector<Vec3>& a,const std::vector<Vec3>& b);
 float path_length(const std::vector<Vec3>& path);
 

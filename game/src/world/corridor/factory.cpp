@@ -19,6 +19,18 @@ std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anch
     if(b_anchor.kind==CorridorEndpointKind::Habitat) b=resolve_anchor(b_anchor,a->position,habitats,library,existing);
     if(!a || !b) return std::nullopt;
 
+    // Habitat-to-habitat runs shorter than eight raster cells stay elevated
+    // and connect directly. The corridor walkway is aligned close to the door
+    // thresholds instead of dropping to the lunar surface and climbing again.
+    if(a->kind==CorridorEndpointKind::Habitat && b->kind==CorridorEndpointKind::Habitat &&
+       distance_xz(a->position,b->position)<DIRECT_CORRIDOR_MAX_RASTERS){
+        const float threshold_a=std::max(WALKWAY_Y,a->door.wall_position.y-0.30f);
+        const float threshold_b=std::max(WALKWAY_Y,b->door.wall_position.y-0.30f);
+        const float base=std::max(DIRECT_CORRIDOR_MIN_BASE_Y,std::min(threshold_a,threshold_b)-WALKWAY_Y);
+        a->position.y=base;
+        b->position.y=base;
+    }
+
     auto path=smooth_route(*a,*b,habitats,library);
     if(path.size()<2) return std::nullopt;
 

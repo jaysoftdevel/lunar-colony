@@ -2,31 +2,56 @@
 #include <array>
 
 namespace game::corridor_detail {
-struct AttachmentExtents {
-    float half_x{};
-    float half_z{};
-    bool rounded_xz{false};
-};
+float local_tangent_extent(const HabitatMesh& mesh,Vec3 local_normal){
+    return std::abs(local_normal.x)>0.5f?mesh.footprint_z*0.5f:mesh.footprint_x*0.5f;
+}
 
-AttachmentExtents attachment_extents(HabitatKind kind){
-    switch(kind){
-        case HabitatKind::AirLock: return {3.62f,2.16f,false};
-        case HabitatKind::OxygenGeneratorDome: return {4.38f,4.38f,true};
-        case HabitatKind::CantineDome: return {4.55f,4.55f,true};
-        case HabitatKind::BioDome: return {5.26f,3.31f,false};
-        case HabitatKind::CrewQuarters: return {5.42f,2.36f,false};
-        default: return {2.0f,2.0f,false};
+void consider_wall_vertices(const std::vector<Vec3>& vertices,Vec3 n,Vec3 t,float tangent,float band,
+                            float& best_n,float& best_diff,bool& found){
+    for(const Vec3& v:vertices){
+        if(v.y<0.30f || v.y>3.35f) continue;
+        const float tv=dot(flatten(v),t);
+        const float diff=std::abs(tv-tangent);
+        if(diff>band) continue;
+        const float nv=dot(flatten(v),n);
+        if(!found || nv>best_n+0.02f || (std::abs(nv-best_n)<=0.02f && diff<best_diff)){
+            best_n=nv; best_diff=diff; found=true;
+        }
     }
 }
 
-CorridorDoor transformed_default_door(const PlacedHabitat& habitat,const HabitatMesh& mesh){
+// Locate the actual pressure-envelope surface instead of relying on a
+// rectangular footprint approximation. Shell and glazing are both considered
+// because the bio/cantine domes carry part of their outer envelope in the
+// glazing layer. The generated vestibule therefore starts inside the real mesh
+// silhouette for every current habitat shape.
+Vec3 local_hull_wall_point(const HabitatMesh& mesh,Vec3 local_normal,float tangent){
+    local_normal=flat_normal(local_normal);
+    const Vec3 local_tangent=perp_xz(local_normal);
+    const float extent=std::max(0.5f,local_tangent_extent(mesh,local_normal));
+    const float band=std::max(0.55f,extent*0.18f);
+    float best_n=-std::numeric_limits<float>::max();
+    float best_diff=std::numeric_limits<float>::max();
+    bool found=false;
+    consider_wall_vertices(mesh.shell,local_normal,local_tangent,tangent,band,best_n,best_diff,found);
+    consider_wall_vertices(mesh.glazing,local_normal,local_tangent,tangent,band,best_n,best_diff,found);
+    if(!found){
+        // Conservative fallback: use the footprint support plane. The docking
+        // sleeve still penetrates it, so the connection cannot stop short.
+        best_n=std::abs(local_normal.x)>0.5f?mesh.footprint_x*0.5f:mesh.footprint_z*0.5f;
+    }
+    return local_normal*best_n+local_tangent*tangent+Vec3{0,1.18f,0};
+}
+
+CorridorDoor transformed_builtin_door(const PlacedHabitat& habitat,const HabitatMesh& mesh,std::size_t entrance_index){
     HabitatEntrance local{};
-    if(!mesh.entrances.empty()) local=mesh.entrances.front();
+    if(entrance_index<mesh.entrances.size()) local=mesh.entrances[entrance_index];
     CorridorDoor d;
     d.position=habitat.position+rotate_y(local.local_position,habitat.rotation_degrees);
     d.wall_position=d.position;
     d.normal=flat_normal(rotate_y(local.local_normal,habitat.rotation_degrees));
     d.generated=false;
+    d.entrance_index=(int)entrance_index;
     return d;
 }
 
@@ -43,8 +68,10 @@ bool door_occupied(std::size_t habitat_index,const CorridorDoor& candidate,const
 bool entrance_slot_clear(std::size_t habitat_index,const CorridorDoor& candidate,
                          const PlacedHabitat& habitat,const HabitatMesh& mesh,
                          const std::vector<CorridorConnection>& existing){
-    const CorridorDoor main=transformed_default_door(habitat,mesh);
-    if(distance_xz(candidate.wall_position,main.wall_position)<ENTRANCE_MIN_SPACING) return false;
+    for(std::size_t i=0;i<mesh.entrances.size();++i){
+        const CorridorDoor builtin=transformed_builtin_door(habitat,mesh,i);
+        if(distance_xz(candidate.wall_position,builtin.wall_position)<ENTRANCE_MIN_SPACING) return false;
+    }
     for(const auto& c:existing){
         for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
             if(!endpoint_uses_habitat(*ep,habitat_index)) continue;
@@ -55,31 +82,11 @@ bool entrance_slot_clear(std::size_t habitat_index,const CorridorDoor& candidate
     return true;
 }
 
-Vec3 local_wall_point(const AttachmentExtents& e,Vec3 local_normal,float tangent){
-    if(std::abs(local_normal.x)>0.5f){
-        const float z=std::clamp(tangent,-e.half_z*0.55f,e.half_z*0.55f);
-        float x=e.half_x;
-        if(e.rounded_xz){
-            const float q=std::clamp(z/e.half_z,-0.80f,0.80f);
-            x=e.half_x*std::sqrt(std::max(0.18f,1.0f-q*q));
-        }
-        return {local_normal.x>0.0f?x:-x,1.18f,z};
-    }
-    const float x=std::clamp(tangent,-e.half_x*0.55f,e.half_x*0.55f);
-    float z=e.half_z;
-    if(e.rounded_xz){
-        const float q=std::clamp(x/e.half_x,-0.80f,0.80f);
-        z=e.half_z*std::sqrt(std::max(0.18f,1.0f-q*q));
-    }
-    return {x,1.18f,local_normal.z>0.0f?z:-z};
-}
-
 std::optional<CorridorDoor> generated_face_door(std::size_t habitat_index,
                                                 const PlacedHabitat& habitat,
                                                 const HabitatMesh& mesh,
                                                 Vec3 target,
                                                 const std::vector<CorridorConnection>& existing){
-    const AttachmentExtents ext=attachment_extents(habitat.kind);
     const Vec3 target_dir=flat_normal(target-habitat.position);
     const std::array<Vec3,4> normals={Vec3{1,0,0},Vec3{-1,0,0},Vec3{0,0,1},Vec3{0,0,-1}};
     const std::array<float,7> slots={0.0f,0.30f,-0.30f,0.50f,-0.50f,0.68f,-0.68f};
@@ -89,13 +96,14 @@ std::optional<CorridorDoor> generated_face_door(std::size_t habitat_index,
     for(const Vec3 ln:normals){
         const Vec3 wn=flat_normal(rotate_y(ln,habitat.rotation_degrees));
         const float facing_penalty=(1.0f-dot(wn,target_dir))*4.0f;
-        const float tangent_extent=std::abs(ln.x)>0.5f?ext.half_z:ext.half_x;
+        const float tangent_extent=local_tangent_extent(mesh,ln);
         for(float factor:slots){
             CorridorDoor d;
-            d.wall_position=habitat.position+rotate_y(local_wall_point(ext,ln,factor*tangent_extent),habitat.rotation_degrees);
+            d.wall_position=habitat.position+rotate_y(local_hull_wall_point(mesh,ln,factor*tangent_extent),habitat.rotation_degrees);
             d.normal=wn;
             d.position=d.wall_position+d.normal*GENERATED_ENTRANCE_DEPTH;
             d.generated=true;
+            d.entrance_index=-1;
             if(!entrance_slot_clear(habitat_index,d,habitat,mesh,existing)) continue;
             const float score=distance_xz(d.position,target)+facing_penalty+std::abs(factor)*0.4f;
             if(score<best){ best=score; result=d; found=true; }
@@ -112,13 +120,14 @@ CorridorEndpoint resolve_open_or_corridor(const CorridorBuildAnchor& anchor,Vec3
     out.index=anchor.index;
     out.position=anchor.position;
     out.position.y=0;
-    out.tangent=flat_normal(other-out.position);
-    if(length(out.tangent)<0.001f) out.tangent={1,0,0};
     if(anchor.kind==CorridorEndpointKind::Corridor && anchor.index<existing.size()){
-        // Keep tangent aimed toward the new route; the junction hardware itself
-        // wraps the existing corridor at the exact selected midpoint.
-        out.position.y=0;
+        // Snap to the host centerline exactly. This prevents tiny visual gaps
+        // when a branch/link was selected a few pixels away from the line.
+        out.position=nearest_path_point(existing[anchor.index].path,anchor.position);
+        out.host_tangent=nearest_path_tangent(existing[anchor.index].path,out.position);
     }
+    out.tangent=flat_normal(other-out.position);
+    if(length(out.tangent)<0.001f) out.tangent=length(out.host_tangent)>0.001f?out.host_tangent:Vec3{1,0,0};
     return out;
 }
 
@@ -129,15 +138,29 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     if(anchor.index>=habitats.size()) return std::nullopt;
     const auto& habitat=habitats[anchor.index];
     const auto& mesh=library.mesh(habitat.kind);
-    CorridorDoor d=transformed_default_door(habitat,mesh);
-    const Vec3 toward=flat_normal(other-d.position);
-    const bool facing=length(toward)>0.001f && dot(d.normal,toward)>0.45f;
-    const bool available=!door_occupied(anchor.index,d,existing);
-    if(!facing || !available){
+
+    // Prefer a real built-in entrance that faces the target and is still free.
+    // This is especially important for the air lock, which has a front entry
+    // and a rear exit. A corridor approaching from behind must use the rear
+    // hatch instead of inventing a side vestibule.
+    bool found_builtin=false;
+    float best_score=std::numeric_limits<float>::max();
+    CorridorDoor d{};
+    for(std::size_t i=0;i<mesh.entrances.size();++i){
+        CorridorDoor candidate=transformed_builtin_door(habitat,mesh,i);
+        const Vec3 toward=flat_normal(other-candidate.position);
+        const float facing_dot=length(toward)>0.001f?dot(candidate.normal,toward):-1.0f;
+        if(facing_dot<=0.45f || door_occupied(anchor.index,candidate,existing)) continue;
+        const float score=distance_xz(candidate.position,other)+(1.0f-facing_dot)*1.5f;
+        if(score<best_score){ best_score=score; d=candidate; found_builtin=true; }
+    }
+
+    if(!found_builtin){
         auto generated=generated_face_door(anchor.index,habitat,mesh,other,existing);
         if(!generated) return std::nullopt;
         d=*generated;
     }
+
     CorridorEndpoint out;
     out.kind=CorridorEndpointKind::Habitat;
     out.index=anchor.index;

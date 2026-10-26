@@ -23,16 +23,49 @@ void GameApp::render_selection_panel(Renderer& r){
 
     if(selection_kind_==SelectionKind::Habitat && selected_habitat_>=0 && (size_t)selected_habitat_<placed_habitats_.size()){
         const auto& h=placed_habitats_[(size_t)selected_habitat_];
-        std::ostringstream pos,rot,conn;
+        std::ostringstream pos,rot,conn,utilities;
         pos<<"POSITION "<<std::fixed<<std::setprecision(1)<<h.position.x<<" / "<<h.position.z;
         rot<<"ROTATION "<<(int)std::round(h.rotation_degrees)<<" DEG";
         conn<<"CORRIDORS "<<corridor_network_.habitat_connection_count((size_t)selected_habitat_);
+        utilities<<"UTILITIES "<<utility_network_.endpoint_connection_count(UtilityEndpointKind::Habitat,(size_t)selected_habitat_);
         game_label(r,{x,p.y+10},"HABITAT #"+std::to_string(selected_habitat_+1),0.64f,theme_,true);
         game_label(r,{x,p.y+34},habitat_name(h.kind),0.76f,theme_);
         game_label(r,{x,p.y+60},"STATUS  OPERATIONAL / SEALED",0.58f,theme_);
         game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+132},conn.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+154},utilities.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+188},"LMB SELECT OTHER OBJECT",0.50f,theme_,true);
+        return;
+    }
+
+    if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 && (size_t)selected_resource_<placed_resources_.size()){
+        const auto& item=placed_resources_[(size_t)selected_resource_];
+        std::ostringstream pos,rot,utilities;
+        pos<<"POSITION "<<std::fixed<<std::setprecision(1)<<item.position.x<<" / "<<item.position.z;
+        rot<<"ROTATION "<<(int)std::round(item.rotation_degrees)<<" DEG";
+        utilities<<"UTILITIES "<<utility_network_.endpoint_connection_count(UtilityEndpointKind::Resource,(size_t)selected_resource_);
+        game_label(r,{x,p.y+10},"RESOURCE #"+std::to_string(selected_resource_+1),0.64f,theme_,true);
+        game_label(r,{x,p.y+34},resource_name(item.kind),0.76f,theme_);
+        game_label(r,{x,p.y+60},"STATUS  PLACED / AVAILABLE",0.58f,theme_);
+        game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+132},utilities.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+170},"LMB SELECT OTHER OBJECT",0.50f,theme_,true);
+        return;
+    }
+
+    if(selection_kind_==SelectionKind::Utility && selected_utility_>=0 && (size_t)selected_utility_<utility_network_.connections().size()){
+        const auto& u=utility_network_.connections()[(size_t)selected_utility_];
+        std::ostringstream length,endpoints;
+        length<<"LENGTH "<<std::fixed<<std::setprecision(1)<<utility_network_.connection_length((size_t)selected_utility_)<<" M";
+        endpoints<<utility_endpoint_name(u.endpoint_a.kind)<<" "<<(u.endpoint_a.index+1)<<" <-> "
+                 <<utility_endpoint_name(u.endpoint_b.kind)<<" "<<(u.endpoint_b.index+1);
+        game_label(r,{x,p.y+10},"UTILITY #"+std::to_string(selected_utility_+1),0.64f,theme_,true);
+        game_label(r,{x,p.y+34},utility_kind_name(u.kind),0.76f,theme_);
+        game_label(r,{x,p.y+60},"STATUS  CONNECTED / ONLINE",0.58f,theme_);
+        game_label(r,{x,p.y+84},length.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+108},endpoints.str(),0.50f,theme_,true);
         game_label(r,{x,p.y+170},"LMB SELECT OTHER OBJECT",0.50f,theme_,true);
         return;
     }

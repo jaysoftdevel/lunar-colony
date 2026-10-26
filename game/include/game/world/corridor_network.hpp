@@ -11,6 +11,7 @@ struct CorridorDoor {
     eng::Vec3 wall_position{};
     eng::Vec3 normal{1.0f,0.0f,0.0f};
     bool generated{false};
+    int entrance_index{-1}; // built-in habitat entrance index; -1 for generated doors
 };
 
 struct CorridorMesh {
@@ -35,8 +36,11 @@ struct CorridorEndpoint {
     CorridorEndpointKind kind{CorridorEndpointKind::OpenDoor};
     std::size_t index{};
     eng::Vec3 position{}; // actual corridor centerline endpoint
-    eng::Vec3 tangent{1.0f,0.0f,0.0f}; // outward direction from endpoint
+    eng::Vec3 tangent{1.0f,0.0f,0.0f}; // outward direction from endpoint / new route
+    eng::Vec3 host_tangent{0.0f,0.0f,0.0f}; // existing corridor direction at a corridor junction
     CorridorDoor door{}; // valid for habitat endpoints
+    bool suppress_open_door{false}; // open corridor end consumed by a close corridor connection
+    bool seamless_splice{false}; // corridor end-to-end splice: no junction/entrance fitting at this endpoint
 };
 
 enum class CorridorConnectionKind {
@@ -98,6 +102,7 @@ public:
     eng::Vec3 nearest_point_on_corridor(std::size_t corridor_index,eng::Vec3 p) const;
 
     std::size_t habitat_connection_count(std::size_t habitat_index) const;
+    bool habitat_entrance_connected(std::size_t habitat_index,std::size_t entrance_index) const;
     float connection_length(std::size_t corridor_index) const;
     const std::vector<CorridorConnection>& connections() const { return connections_; }
 

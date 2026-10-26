@@ -19,6 +19,11 @@ struct HabitatEntrance {
     eng::Vec3 local_normal{1.0f,0.0f,0.0f};
 };
 
+struct HabitatEntranceAccess {
+    std::vector<eng::Vec3> details;
+    std::vector<eng::Vec3> edges;
+};
+
 struct HabitatMesh {
     std::vector<eng::Vec3> shell;
     std::vector<eng::Vec3> foundation;
@@ -30,6 +35,10 @@ struct HabitatMesh {
     float footprint_z{1.0f};
     float height{1.0f};
     std::vector<HabitatEntrance> entrances{};
+    // Optional exterior access geometry indexed like entrances. This is kept
+    // separate from the permanent habitat mesh so stairs/ramps can disappear
+    // when that exact entrance is pressure-docked to a corridor.
+    std::vector<HabitatEntranceAccess> entrance_access{};
 };
 
 struct PlacedHabitat {

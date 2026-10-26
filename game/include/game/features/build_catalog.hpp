@@ -1,22 +1,39 @@
 #pragma once
 #include "game/world/habitat_mesh.hpp"
+#include "game/world/resource_mesh.hpp"
+#include "game/world/utility_network.hpp"
 #include <string>
 #include <vector>
 
 namespace game {
 
 enum class BuildIcon {
+    CategoryHabitats,
+    CategoryResources,
     AirLock,
     OxygenDome,
     CantineDome,
     BioDome,
     CrewQuarters,
-    Corridor
+    Corridor,
+    SolarPanel,
+    WaterDriller,
+    PowerStorage,
+    WaterStorage,
+    PowerCable,
+    WaterPipe
+};
+
+enum class BuildCategory {
+    Habitats,
+    Resources
 };
 
 enum class BuildObjectKind {
     Habitat,
-    Corridor
+    Corridor,
+    Resource,
+    Utility
 };
 
 struct BuildObjectDefinition {
@@ -24,8 +41,11 @@ struct BuildObjectDefinition {
     std::string name;
     std::string type;
     BuildIcon icon;
+    BuildCategory category{BuildCategory::Habitats};
     BuildObjectKind kind{BuildObjectKind::Habitat};
     HabitatKind habitat_kind{HabitatKind::AirLock};
+    ResourceKind resource_kind{ResourceKind::SolarPanel};
+    UtilityKind utility_kind{UtilityKind::PowerCable};
 };
 
 class BuildCatalog {
@@ -36,8 +56,15 @@ public:
     const BuildObjectDefinition* selected() const;
     void select(int index);
     void clear_selection(){ selected_index_=-1; }
+    BuildCategory category() const { return category_; }
+    void set_category(BuildCategory category){
+        if(category_==category) return;
+        category_=category;
+        selected_index_=-1;
+    }
 private:
     std::vector<BuildObjectDefinition> items_;
     int selected_index_=-1;
+    BuildCategory category_{BuildCategory::Habitats};
 };
 }

@@ -21,10 +21,14 @@ void GameApp::render_playfield(Renderer& r){
     r.draw_triangles_3d(playfield_.floor_triangles(),{0.055f,0.075f,0.088f,1});
     r.draw_lines_3d(playfield_.grid_lines(),{0.22f,0.43f,0.47f,1},1.0f);
     render_corridors(r);
+    render_utilities(r);
     render_habitats(r);
+    render_resources(r);
     render_corridor_link_preview(r);
     render_corridor_placement(r);
     render_habitat_placement(r);
+    render_resource_placement(r);
+    render_utility_placement(r);
     render_playfield_crosshair(r);
 
     r.set_2d(ui_scale_);
@@ -42,7 +46,9 @@ void GameApp::render_playfield(Renderer& r){
     const char* controls=corridor_link_source_>=0?"LMB TARGET CORRIDOR / ESC CANCEL":
         (active_build && active_build->kind==BuildObjectKind::Corridor?
             (corridor_build_start_?"LMB SET CORRIDOR END / ESC CANCEL":"LMB SET CORRIDOR START / ESC CANCEL"):
-        (active_build?"LMB PLACE / WHEEL OR N/M ROTATE / ESC CANCEL":"LMB SELECT / WHEEL ZOOM / MMB ORBIT / RMB PAN / ESC MENU"));
+        (active_build && active_build->kind==BuildObjectKind::Utility?
+            (utility_build_start_?"LMB CONNECT UTILITY TARGET / ESC CANCEL":"LMB SELECT UTILITY SOURCE / ESC CANCEL"):
+        (active_build?"LMB PLACE / WHEEL OR N/M ROTATE / ESC CANCEL":"LMB SELECT / WHEEL ZOOM / MMB ORBIT / RMB PAN / ESC MENU")));
     game_label(r,{info.x+12,info.y+31},controls,0.52f,theme_,true);
 }
 

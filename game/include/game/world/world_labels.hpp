@@ -1,5 +1,6 @@
 #pragma once
 #include "game/world/corridor_network.hpp"
+#include "game/world/resource_mesh.hpp"
 #include <sstream>
 #include <string>
 
@@ -12,6 +13,15 @@ inline const char* habitat_name(HabitatKind kind){
         case HabitatKind::BioDome: return "BIO DOME";
         case HabitatKind::CrewQuarters: return "CREW QUARTERS";
         default: return "HABITAT";
+    }
+}
+inline const char* resource_name(ResourceKind kind){
+    switch(kind){
+        case ResourceKind::SolarPanel: return "SOLAR PANEL";
+        case ResourceKind::WaterDriller: return "WATER DRILLER";
+        case ResourceKind::PowerStorage: return "POWER STORAGE";
+        case ResourceKind::WaterStorage: return "WATER STORAGE";
+        default: return "RESOURCE STRUCTURE";
     }
 }
 inline std::string corridor_endpoint_name(const CorridorEndpoint& endpoint){

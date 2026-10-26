@@ -23,7 +23,7 @@ std::vector<Vec2> corridor_cross_section(float scale){
 }
 
 Vec3 ring_vertex(Vec3 center,Vec3 side,const Vec2& q){
-    return {center.x+side.x*q.x,q.y,center.z+side.z*q.x};
+    return {center.x+side.x*q.x,center.y+q.y,center.z+side.z*q.x};
 }
 
 Vec3 path_tangent(const std::vector<Vec3>& path,std::size_t i){
@@ -42,8 +42,8 @@ void append_swept_shell(CorridorMesh& mesh,const std::vector<Vec3>& path){
         const Vec3 t1=path_tangent(path,i+1);
         const Vec3 s0=perp_xz(t0);
         const Vec3 s1=perp_xz(t1);
-        const Vec3 c0{path[i].x,0.0f,path[i].z};
-        const Vec3 c1{path[i+1].x,0.0f,path[i+1].z};
+        const Vec3 c0{path[i].x,path[i].y,path[i].z};
+        const Vec3 c1{path[i+1].x,path[i+1].y,path[i+1].z};
         for(std::size_t j=0;j<section.size();++j){
             const std::size_t k=(j+1)%section.size();
             const Vec3 a=ring_vertex(c0,s0,section[j]);
@@ -61,8 +61,8 @@ void append_walkway(CorridorMesh& mesh,const std::vector<Vec3>& path){
         const Vec3 t0=path_tangent(path,i),t1=path_tangent(path,i+1);
         const Vec3 s0=perp_xz(t0)*WALKWAY_HALF_WIDTH;
         const Vec3 s1=perp_xz(t1)*WALKWAY_HALF_WIDTH;
-        const Vec3 p0{path[i].x,WALKWAY_Y,path[i].z};
-        const Vec3 p1{path[i+1].x,WALKWAY_Y,path[i+1].z};
+        const Vec3 p0{path[i].x,path[i].y+WALKWAY_Y,path[i].z};
+        const Vec3 p1{path[i+1].x,path[i+1].y+WALKWAY_Y,path[i+1].z};
         tri(mesh.details,p0-s0,p1-s1,p1+s1);
         tri(mesh.details,p0-s0,p1+s1,p0+s0);
         edge(mesh.edges,p0-s0,p1-s1);

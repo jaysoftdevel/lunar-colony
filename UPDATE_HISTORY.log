@@ -14,3 +14,9 @@
 0.9.0 -> 0.10.0 : curved flat-base walkable corridors, corridor builder, intersections, two-state view
 0.10.0 -> 0.11.0 : source refactor into feature, UI, screen, habitat and corridor modules; behavior preserved
 0.11.0 -> 0.11.1 : corridor source/destination structural preview, full-height airtight door sleeves, automatic entrance stairs
+0.11.1 -> 0.11.2 : corrected air-lock stair direction, added rear exit hatch, per-entrance corridor docking hides exterior stairs
+0.11.2 -> 0.11.3 : shape-conforming habitat entrances, elevated direct corridors under 8 rasters, mesh-only placable rendering, exact corridor junction vertices
+0.11.3 -> 0.11.4 : close corridor-to-corridor links consume sealed end doors and connect directly
+0.11.4 -> 0.11.5 : airtight seamless corridor end splices; close links use matching host cross-section planes with no entrance/junction blocks
+0.11.5 -> 0.12.0 : resource structure meshes and Resource Structures build submenu; solar panel, water driller, power storage, water storage placement
+0.12.0 -> 0.13.0 : power-cable and water-pipe utility networks connecting resource structures and habitats

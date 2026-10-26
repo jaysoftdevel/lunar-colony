@@ -19,6 +19,8 @@ add_executable(game
 
     src/features/build_catalog.cpp
     src/features/habitat_placement.cpp
+    src/features/resource_placement.cpp
+    src/features/utility_builder.cpp
     src/features/corridor_builder.cpp
 
     src/systems/gameplay_controller.cpp
@@ -28,11 +30,18 @@ add_executable(game
 
     src/world/playfield.cpp
     src/world/habitat_mesh.cpp
+    src/world/resource_mesh.cpp
+    src/world/utility_network.cpp
     src/world/habitats/airlock.cpp
     src/world/habitats/oxygen_dome.cpp
     src/world/habitats/cantine_dome.cpp
     src/world/habitats/bio_dome.cpp
     src/world/habitats/crew_quarters.cpp
+
+    src/world/resources/solar_panel.cpp
+    src/world/resources/water_driller.cpp
+    src/world/resources/power_storage.cpp
+    src/world/resources/water_storage.cpp
 
     src/world/corridor_network.cpp
     src/world/corridor/geometry.cpp

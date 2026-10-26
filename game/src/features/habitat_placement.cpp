@@ -1,6 +1,7 @@
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
+#include "game/util/mesh_wireframe.hpp"
 #include "game/world/world_labels.hpp"
 #include "game/version.hpp"
 #include <algorithm>
@@ -30,6 +31,11 @@ bool GameApp::placement_valid(HabitatKind kind,Vec3 position,float rotation_degr
         const auto other_box=footprint(placed.position,placed.rotation_degrees,other.footprint_x,other.footprint_z);
         if(overlaps(candidate_box,other_box,clearance)) return false;
     }
+    for(const auto& placed:placed_resources_){
+        const ResourceMesh& other=resource_models_.mesh(placed.kind);
+        const auto other_box=footprint(placed.position,placed.rotation_degrees,other.footprint_x,other.footprint_z);
+        if(overlaps(candidate_box,other_box,clearance)) return false;
+    }
     return true;
 }
 
@@ -54,11 +60,10 @@ void GameApp::render_habitat_placement(Renderer& r){
         auto preview_habitats=placed_habitats_;
         preview_habitats.push_back({selected->habitat_kind,snapped,placement_rotation_degrees_});
         if(auto preview=corridor_network_.preview_connection(preview_habitats.size()-1,preview_habitats,habitat_models_)){
-            const Color shell_color=valid?Color{0.12f,0.72f,0.55f,0.28f}:Color{0.82f,0.20f,0.18f,0.24f};
             const Color detail_color=valid?Color{0.24f,0.88f,0.68f,0.38f}:Color{0.94f,0.30f,0.25f,0.34f};
             const Color edge_color=valid?Color{0.36f,1.00f,0.76f,0.92f}:Color{1.00f,0.40f,0.32f,0.90f};
-            r.draw_triangles_3d(preview->mesh.shell,shell_color);
-            r.draw_triangles_3d(preview->mesh.details,detail_color);
+            mesh_wireframe::draw_layer(r,preview->mesh.shell,edge_color,1.35f);
+            mesh_wireframe::draw_layer(r,preview->mesh.details,detail_color,1.15f);
             r.draw_lines_3d(preview->mesh.edges,edge_color,1.7f);
         }
     }

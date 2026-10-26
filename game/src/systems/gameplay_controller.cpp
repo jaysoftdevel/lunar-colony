@@ -29,6 +29,7 @@ void GameApp::update(float dt,const InputState& in){
                 build_catalog_.clear_selection();
                 placement_rotation_degrees_=0.0f;
                 corridor_build_start_.reset();
+                utility_build_start_.reset();
                 return;
             }
             if(corridor_link_source_>=0){
@@ -40,7 +41,7 @@ void GameApp::update(float dt,const InputState& in){
         }
 
         InputState camera_input=in;
-        if(const BuildObjectDefinition* selected=build_catalog_.selected(); selected && selected->kind==BuildObjectKind::Habitat){
+        if(const BuildObjectDefinition* selected=build_catalog_.selected(); selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
             constexpr float step=15.0f;
             if(in.wheel>0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
             if(in.wheel<0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
@@ -64,6 +65,7 @@ void GameApp::update(float dt,const InputState& in){
                         if(corridor_network_.connect_corridors((std::size_t)corridor_link_source_,(std::size_t)target,placed_habitats_,habitat_models_)){
                             selected_corridor_=(int)corridor_network_.connections().size()-1;
                             selected_habitat_=-1;
+                            selected_resource_=-1;
                             selection_kind_=SelectionKind::Corridor;
                             corridor_link_source_=-1;
                         }

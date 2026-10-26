@@ -62,7 +62,8 @@ void append_entrance_stairs(CorridorMesh& mesh,const CorridorEndpoint& endpoint)
     const CorridorDoor& door=endpoint.door;
     const Vec3 n=flat_normal(door.normal);
     const float threshold_y=std::clamp(door.wall_position.y-0.30f,WALKWAY_Y,1.05f);
-    const float rise=threshold_y-WALKWAY_Y;
+    const float corridor_walkway_y=endpoint.position.y+WALKWAY_Y;
+    const float rise=threshold_y-corridor_walkway_y;
     if(rise<0.16f) return;
 
     const float available=std::max(0.70f,distance_xz(door.position,endpoint.position)-0.12f);
@@ -107,11 +108,11 @@ void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
 }
 
 void append_open_end_door(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
-    if(endpoint.kind!=CorridorEndpointKind::OpenDoor) return;
+    if(endpoint.kind!=CorridorEndpointKind::OpenDoor || endpoint.suppress_open_door) return;
     const Vec3 n=flat_normal(endpoint.tangent);
     const Vec3 side=perp_xz(n);
     const auto section=corridor_cross_section(1.01f);
-    Vec3 center{endpoint.position.x,0,endpoint.position.z};
+    Vec3 center{endpoint.position.x,endpoint.position.y,endpoint.position.z};
     Vec3 centroid{center.x,1.0f,center.z};
     for(std::size_t j=0;j<section.size();++j){
         const std::size_t k=(j+1)%section.size();
@@ -123,23 +124,22 @@ void append_open_end_door(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
 }
 
 void append_corridor_junction(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
-    if(endpoint.kind!=CorridorEndpointKind::Corridor) return;
-    Vec3 t=flat_normal(endpoint.tangent);
-    if(length(t)<0.001f) t={1,0,0};
-    std::vector<Vec3> hub={endpoint.position-t*0.48f,endpoint.position+t*0.48f};
-    const auto section=corridor_cross_section(1.18f);
-    for(std::size_t i=0;i+1<hub.size();++i){
-        const Vec3 side=perp_xz(t);
-        for(std::size_t j=0;j<section.size();++j){
-            const std::size_t k=(j+1)%section.size();
-            const Vec3 a=ring_vertex(hub[i],side,section[j]);
-            const Vec3 b=ring_vertex(hub[i+1],side,section[j]);
-            const Vec3 c=ring_vertex(hub[i+1],side,section[k]);
-            const Vec3 d=ring_vertex(hub[i],side,section[k]);
-            tri(mesh.details,a,b,c); tri(mesh.details,a,c,d);
-        }
-    }
-    append_ring(mesh,endpoint.position,t,1.20f);
+    if(endpoint.kind!=CorridorEndpointKind::Corridor || endpoint.seamless_splice) return;
+    Vec3 branch=flat_normal(endpoint.tangent);
+    if(length(branch)<0.001f) branch={1,0,0};
+    Vec3 host=flat_normal(endpoint.host_tangent);
+    if(length(host)<0.001f) host=branch;
+
+    // Both tubes terminate at the exact same centerline point. Use shared rings
+    // instead of an oversized overlapping hub so the visual connection has no
+    // gap and no duplicate sleeve extending along either corridor.
+    append_ring(mesh,endpoint.position,branch,1.08f);
+    append_ring(mesh,endpoint.position,host,1.08f);
+    const Vec3 s0=perp_xz(branch)*WALKWAY_HALF_WIDTH;
+    const Vec3 s1=perp_xz(host)*WALKWAY_HALF_WIDTH;
+    const Vec3 c=endpoint.position+Vec3{0,WALKWAY_Y,0};
+    edge(mesh.edges,c-s0,c+s0);
+    edge(mesh.edges,c-s1,c+s1);
 }
 
 bool segment_intersection_xz(Vec3 a,Vec3 b,Vec3 c,Vec3 d,Vec3& out){
@@ -151,7 +151,7 @@ bool segment_intersection_xz(Vec3 a,Vec3 b,Vec3 c,Vec3 d,Vec3& out){
     const float t=(qx*s_z-qz*s_x)/den;
     const float u=(qx*r_z-qz*r_x)/den;
     if(t<=0.02f || t>=0.98f || u<=0.02f || u>=0.98f) return false;
-    out={a.x+r_x*t,0,a.z+r_z*t};
+    out={a.x+r_x*t,a.y+(b.y-a.y)*t,a.z+r_z*t};
     return true;
 }
 
@@ -165,6 +165,7 @@ void append_crossing_hubs(CorridorMesh& mesh,const std::vector<Vec3>& path,const
                     ep.kind=CorridorEndpointKind::Corridor;
                     ep.position=hit;
                     ep.tangent=flat_normal(path[i+1]-path[i]);
+                    ep.host_tangent=flat_normal(c.path[j+1]-c.path[j]);
                     append_corridor_junction(mesh,ep);
                 }
             }

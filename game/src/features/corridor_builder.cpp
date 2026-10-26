@@ -1,6 +1,7 @@
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
+#include "game/util/mesh_wireframe.hpp"
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -104,8 +105,8 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     if(target<0 || target==corridor_link_source_) return;
     auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_);
     if(!preview) return;
-    r.draw_triangles_3d(preview->mesh.shell,{0.12f,0.72f,0.55f,0.30f});
-    r.draw_triangles_3d(preview->mesh.details,{0.24f,0.88f,0.68f,0.46f});
+    mesh_wireframe::draw_layer(r,preview->mesh.shell,{0.36f,1.00f,0.76f,0.92f},1.35f);
+    mesh_wireframe::draw_layer(r,preview->mesh.details,{0.24f,0.88f,0.68f,0.84f},1.15f);
     r.draw_lines_3d(preview->mesh.edges,{0.36f,1.00f,0.76f,0.96f},1.9f);
     render_endpoint_highlight(r,preview->endpoint_a,theme_.accent,2.8f);
     render_endpoint_highlight(r,preview->endpoint_b,{0.42f,1.00f,0.66f,1.0f},2.8f);
@@ -141,8 +142,8 @@ void GameApp::render_corridor_placement(Renderer& r){
         if(preview){
             source_endpoint=preview->endpoint_a;
             destination_endpoint=preview->endpoint_b;
-            r.draw_triangles_3d(preview->mesh.shell,{0.12f,0.72f,0.55f,0.30f});
-            r.draw_triangles_3d(preview->mesh.details,{0.24f,0.88f,0.68f,0.52f});
+            mesh_wireframe::draw_layer(r,preview->mesh.shell,{0.36f,1.00f,0.76f,0.92f},1.35f);
+            mesh_wireframe::draw_layer(r,preview->mesh.details,{0.24f,0.88f,0.68f,0.88f},1.15f);
             r.draw_lines_3d(preview->mesh.edges,{0.36f,1.00f,0.76f,0.96f},1.9f);
         }else{
             // Even if the route is blocked, resolve both endpoint structures so
