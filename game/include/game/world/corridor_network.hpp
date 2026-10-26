@@ -77,6 +77,12 @@ public:
                            const std::vector<PlacedHabitat>& habitats,
                            const HabitatModelLibrary& library);
 
+    std::optional<CorridorEndpoint> preview_anchor(
+        const CorridorBuildAnchor& anchor,
+        eng::Vec3 other,
+        const std::vector<PlacedHabitat>& habitats,
+        const HabitatModelLibrary& library) const;
+
     std::optional<CorridorConnection> preview_built_corridor(
         const CorridorBuildAnchor& a,
         const CorridorBuildAnchor& b,

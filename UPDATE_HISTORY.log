@@ -12,3 +12,5 @@
 2026-10-26T11:08:14Z | 0.8.0 -> 0.8.1 | collision-free secondary habitat entrance vestibules + fully overlapped airtight corridor docking joints
 2026-10-26T11:21:23Z | 0.8.1 -> 0.9.0 | round corridor pressure tubes + corridor transparency + selectable habitat/corridor status + manual corridor linking/intersections
 0.9.0 -> 0.10.0 : curved flat-base walkable corridors, corridor builder, intersections, two-state view
+0.10.0 -> 0.11.0 : source refactor into feature, UI, screen, habitat and corridor modules; behavior preserved
+0.11.0 -> 0.11.1 : corridor source/destination structural preview, full-height airtight door sleeves, automatic entrance stairs
