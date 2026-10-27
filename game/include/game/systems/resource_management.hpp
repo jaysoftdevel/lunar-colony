@@ -53,6 +53,7 @@ public:
     bool can_consume(const ResourceBundle& cost) const;
     bool consume(const ResourceBundle& cost,bool allow_negative);
     void add(const ResourceBundle& amount);
+    void restore(const ResourceBundle& amount){ resources_=amount; }
 
 private:
     ResourceBundle resources_{};
@@ -60,5 +61,12 @@ private:
 
 const char* material_resource_name(MaterialResource resource);
 const char* material_resource_symbol(MaterialResource resource);
+
+// Logistics package limits. Resource amounts are kilograms. The current
+// testing balance applies a 10x carry/storage-per-box multiplier; visible box
+// dimensions still scale with each package's fill fraction.
+std::int64_t resource_package_capacity_kg(MaterialResource resource);
+float resource_package_half_width(MaterialResource resource,std::int64_t amount_kg);
+float resource_package_height(MaterialResource resource,std::int64_t amount_kg);
 
 } // namespace game

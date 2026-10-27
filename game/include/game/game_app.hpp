@@ -2,9 +2,11 @@
 #include "engine/engine.hpp"
 #include "game/features/build_catalog.hpp"
 #include "game/systems/camera_controller.hpp"
+#include "game/systems/first_person_controller.hpp"
 #include "game/systems/colony_status.hpp"
 #include "game/systems/resource_management.hpp"
 #include "game/world/playfield.hpp"
+#include "game/world/geometry_standards.hpp"
 #include "game/world/habitat_mesh.hpp"
 #include "game/world/resource_mesh.hpp"
 #include "game/world/corridor_network.hpp"
@@ -13,6 +15,7 @@
 #include <optional>
 #include <cstdint>
 #include <vector>
+#include <string>
 
 namespace game {
 
@@ -30,9 +33,16 @@ public:
     void update(float dt,const eng::InputState& input) override;
     void render(eng::Renderer& r) override;
 private:
-    enum class Screen { MainMenu, NewGame, Settings, Credits, Playfield };
+    enum class Screen { MainMenu, NewGame, SaveGame, LoadGame, Settings, Credits, Playfield };
     enum class HabitatViewMode { Default, Full };
+    enum class FirstPersonMode { Off, DropPending, Active };
     enum class SelectionKind { None, Habitat, Corridor, Resource, GroundResource, Utility, Walkway };
+
+    struct SaveGameEntry {
+        std::string name{};
+        std::string path{};
+        std::string version{};
+    };
     eng::Application& app_;
     Screen screen_=Screen::MainMenu;
     eng::InputState input_{};
@@ -50,6 +60,8 @@ private:
     int display_mode_index_=-1;
     Playfield playfield_{};
     CameraController camera_{};
+    FirstPersonController first_person_{};
+    FirstPersonMode first_person_mode_{FirstPersonMode::Off};
     ColonyStatus status_{};
     ResourceManagement resources_{};
     BuildCatalog build_catalog_{};
@@ -58,6 +70,10 @@ private:
     std::vector<PlacedHabitat> placed_habitats_{};
     std::vector<PlacedResource> placed_resources_{};
     std::vector<GroundResourcePile> ground_resource_piles_{};
+    std::optional<GroundResourcePile> first_person_carried_resource_{};
+    int first_person_hover_ground_resource_=-1;
+    int first_person_hover_storage_resource_=-1;
+    int first_person_hover_storage_box_=-1;
     CorridorNetwork corridor_network_{};
     UtilityNetwork utility_network_{};
     WalkwayNetwork walkway_network_{};
@@ -70,6 +86,11 @@ private:
     int selected_corridor_=-1;
     int selected_resource_=-1;
     int selected_ground_resource_=-1;
+    std::vector<int> selected_ground_resources_{};
+    bool selection_marquee_active_{false};
+    bool selection_marquee_dragged_{false};
+    int selection_marquee_start_x_{0};
+    int selection_marquee_start_y_{0};
     int selected_utility_=-1;
     int selected_walkway_=-1;
     int corridor_link_source_=-1;
@@ -77,9 +98,15 @@ private:
     std::optional<UtilityBuildAnchor> utility_build_start_{};
     std::optional<WalkwayBuildAnchor> walkway_build_start_{};
     std::optional<WalkwayBuildAnchor> walkway_build_target_{};
+    std::string save_game_name_{};
+    std::string save_status_message_{};
+    std::vector<SaveGameEntry> save_games_{};
+    int load_save_scroll_{0};
 
     void render_menu(eng::Renderer& r);
     void render_new_game(eng::Renderer& r);
+    void render_save_game(eng::Renderer& r);
+    void render_load_game(eng::Renderer& r);
     void render_settings(eng::Renderer& r);
     void render_credits(eng::Renderer& r);
     void render_playfield(eng::Renderer& r);
@@ -89,6 +116,7 @@ private:
     void render_debug_frame(eng::Renderer& r);
     void render_build_icon(eng::Renderer& r,BuildIcon icon,eng::Rect rect,eng::Color color) const;
     void render_playfield_crosshair(eng::Renderer& r);
+    void render_first_person_hud(eng::Renderer& r);
     void render_corridors(eng::Renderer& r);
     void render_habitats(eng::Renderer& r);
     void render_resources(eng::Renderer& r);
@@ -96,24 +124,25 @@ private:
     void render_utilities(eng::Renderer& r);
     void render_walkways(eng::Renderer& r);
     void render_selection_panel(eng::Renderer& r);
+    void render_selection_marquee(eng::Renderer& r);
     void render_corridor_link_preview(eng::Renderer& r);
     void render_habitat_placement(eng::Renderer& r);
     void render_resource_placement(eng::Renderer& r);
     void render_utility_placement(eng::Renderer& r);
     void render_walkway_placement(eng::Renderer& r);
     void render_corridor_placement(eng::Renderer& r);
-    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,std::uint8_t construction_step=10) const;
-    void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,std::uint8_t construction_step=10) const;
+    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,std::uint8_t construction_step=10,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
+    void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,std::uint8_t construction_step=10,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
     bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees) const;
     bool resource_placement_valid(ResourceKind kind,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees) const;
     eng::Vec3 snap_storage_dome(eng::Vec3 hit,StorageDomeSize size,float& rotation_degrees) const;
     void select_world_at(int screen_x,int screen_y);
     int pick_habitat(eng::Vec3 ground_hit) const;
-    int pick_corridor(eng::Vec3 ground_hit,float radius=1.45f) const;
+    int pick_corridor(eng::Vec3 ground_hit,float radius=geometry::kCorridorHalfWidth+0.18f) const;
     int pick_resource(eng::Vec3 ground_hit) const;
     int pick_ground_resource(eng::Vec3 ground_hit,float radius=0.45f) const;
     int pick_utility(eng::Vec3 ground_hit,float radius=0.70f) const;
-    int pick_walkway(eng::Vec3 ground_hit,float radius=0.95f) const;
+    int pick_walkway(eng::Vec3 ground_hit,float radius=geometry::kWalkwayHalfWidth+0.16f) const;
     std::optional<UtilityBuildAnchor> utility_anchor_at(eng::Vec3 ground_hit,UtilityKind kind) const;
     std::optional<WalkwayBuildAnchor> walkway_anchor_at(eng::Vec3 ground_hit,bool source_only) const;
     CorridorBuildAnchor corridor_anchor_at(eng::Vec3 ground_hit) const;
@@ -121,8 +150,24 @@ private:
     eng::Rect ground_resource_panel_rect() const;
     bool mouse_over_selection_panel(const eng::InputState& input) const;
     void clear_world_selection();
+    void finish_selection_marquee();
     void delete_selected_world_object();
     void update_construction(float dt);
+    void enter_first_person_drop_mode();
+    void exit_first_person_mode();
+    void update_first_person(float dt,const eng::InputState& input);
+    void update_first_person_resource_hover();
+    void first_person_grab_or_drop_resource();
+    void drop_first_person_carried_resource();
+    bool store_first_person_carried_resource();
+    void stored_resource_box_pose(const PlacedResource& structure,const ResourceMesh& mesh,std::size_t box_index,eng::Vec3& base,float& half_width,float& height) const;
+    bool first_person_spawn_valid(eng::Vec3 p) const;
+    bool first_person_move_allowed(eng::Vec3 from,eng::Vec3 to) const;
+    float first_person_floor_height(eng::Vec3 p) const;
+    std::string first_person_environment_label() const;
+    float first_person_door_open_fraction(eng::Vec3 door_position) const;
+    std::vector<CorridorDoor> habitat_doors(std::size_t habitat_index) const;
+    std::vector<CorridorDoor> storage_dome_doors(std::size_t resource_index) const;
     ResourceBundle committed_construction_resources() const;
     bool can_start_construction(const ConstructionResourcePlan& plan) const;
     void drop_structure_resources(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used);
@@ -132,6 +177,10 @@ private:
     bool move_ground_resource_to_storage(std::size_t pile_index);
     void consume_storage_inventory(const ResourceBundle& cost);
     void ensure_display_modes();
+    std::string save_game_directory() const;
+    void refresh_save_games();
+    bool save_game_to_name(const std::string& name,std::string& error);
+    bool load_game_from_file(const std::string& path,std::string& error);
     float ui_width(const eng::Renderer& r) const { return (float)r.width()/ui_scale_; }
     float ui_height(const eng::Renderer& r) const { return (float)r.height()/ui_scale_; }
     eng::Rect centered_button(eng::Renderer& r,float y,float w=360,float h=52) const;

@@ -2,6 +2,7 @@
 #include "game/systems/construction_costs.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
+#include "game/world/geometry_standards.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -52,12 +53,16 @@ bool GameApp::resource_placement_valid(ResourceKind kind,StorageDomeSize storage
         const auto pile_box=footprint(pile.position,0.0f,diameter,diameter);
         if(overlaps(candidate_box,pile_box,0.12f)) return false;
     }
-    // Storage domes may snap beside networks, but their pressure/storage shell
-    // itself must never cover an existing corridor or supply tray.
+    // No structure may be placed through an existing pressure corridor.
+    const float corridor_radius=0.5f*std::sqrt(candidate.footprint_x*candidate.footprint_x+
+                                                candidate.footprint_z*candidate.footprint_z)+
+                                geometry::kCorridorHalfWidth+geometry::kRouteClearance;
+    for(const auto& c:corridor_network_.connections()) for(std::size_t i=0;i+1<c.path.size();++i)
+        if(point_segment_distance_xz(position,c.path[i],c.path[i+1])<corridor_radius) return false;
+
+    // Storage domes also keep their pressure/storage shell clear of service trays.
     if(kind==ResourceKind::StorageDome){
         const float radius=std::max(candidate.footprint_x,candidate.footprint_z)*0.5f;
-        for(const auto& c:corridor_network_.connections()) for(std::size_t i=0;i+1<c.path.size();++i)
-            if(point_segment_distance_xz(position,c.path[i],c.path[i+1])<radius+1.15f) return false;
         for(const auto& u:utility_network_.connections()) for(std::size_t i=0;i+1<u.path.size();++i)
             if(point_segment_distance_xz(position,u.path[i],u.path[i+1])<radius+0.45f) return false;
     }

@@ -75,7 +75,7 @@ std::optional<Vec3> local_hull_wall_point(const HabitatMesh& mesh,Vec3 local_nor
 }
 
 std::optional<Vec3> local_hull_wall_point(const HabitatMesh& mesh,Vec3 local_normal,float tangent){
-    return local_hull_wall_point(mesh,local_normal,tangent,1.18f);
+    return local_hull_wall_point(mesh,local_normal,tangent,geometry::kEntranceSliceY);
 }
 
 std::vector<Vec2> generated_door_profile(){
@@ -134,6 +134,10 @@ CorridorDoor transformed_builtin_door(const PlacedHabitat& habitat,const Habitat
     if(entrance_index<mesh.entrances.size()) local=mesh.entrances[entrance_index];
     CorridorDoor d;
     d.position=habitat.position+rotate_y(local.local_position,habitat.rotation_degrees);
+    // Corridor and structure decks share one threshold level.  Keep the door
+    // anchor on that level even when the authored hull mesh contains an old
+    // elevated hatch marker.
+    d.position.y=geometry::kEntranceSliceY;
     d.wall_position=d.position;
     d.normal=flat_normal(rotate_y(local.local_normal,habitat.rotation_degrees));
     d.generated=false;
@@ -191,7 +195,7 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
     outward=normalize(outward);
     const Vec3 local_outward=flat_normal(rotate_y(outward,-habitat.rotation_degrees));
     const float radius=std::max(mesh.footprint_x,mesh.footprint_z)*0.75f+4.0f;
-    constexpr float DOOR_SLICE_Y=1.18f;
+    constexpr float DOOR_SLICE_Y=geometry::kEntranceSliceY;
     const Vec3 origin=local_outward*radius+Vec3{0,DOOR_SLICE_Y,0};
     const Vec3 direction=local_outward*-1.0f;
     float best_t=std::numeric_limits<float>::max();
@@ -211,6 +215,7 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
 
     CorridorDoor d;
     d.wall_position=habitat.position+rotate_y(local_hit,habitat.rotation_degrees);
+    d.wall_position.y=geometry::kEntranceSliceY;
     d.normal=flat_normal(rotate_y(local_normal,habitat.rotation_degrees));
     d.position=d.wall_position+d.normal*GENERATED_ENTRANCE_DEPTH;
     d.generated=true;
@@ -267,6 +272,7 @@ std::optional<CorridorDoor> generated_face_door(std::size_t habitat_index,
             if(!local_wall) continue; // never invent a door on a footprint plane with no pressure hull
             CorridorDoor d;
             d.wall_position=habitat.position+rotate_y(*local_wall,habitat.rotation_degrees);
+            d.wall_position.y=geometry::kEntranceSliceY;
             d.normal=wn;
             d.position=d.wall_position+d.normal*GENERATED_ENTRANCE_DEPTH;
             d.generated=true;
@@ -294,7 +300,7 @@ CorridorEndpoint resolve_open_or_corridor(const CorridorBuildAnchor& anchor,Vec3
         // pressure-tube extension. Snap to the host's terminal center/ring and
         // preserve its exact outward tangent. The new corridor therefore starts
         // with the same D-shaped cross-section plane.
-        constexpr float END_SNAP_RADIUS=1.45f;
+        constexpr float END_SNAP_RADIUS=0.42f;
         if(host.path.size()>=2 && host.endpoint_a.kind==CorridorEndpointKind::OpenDoor && !host.endpoint_a.suppress_open_door &&
            distance_xz(anchor.position,host.path.front())<=END_SNAP_RADIUS){
             out.position=host.path.front();
@@ -314,6 +320,10 @@ CorridorEndpoint resolve_open_or_corridor(const CorridorBuildAnchor& anchor,Vec3
             return out;
         }
 
+        // Every non-terminal point on a corridor is an exact selectable intersection.
+        // Only a very small click zone at an exposed end is treated as an end
+        // extension; everywhere else the branch uses the nearest centerline
+        // point so intersections can be created even close to corridor ends.
         // Mid-corridor branches no longer terminate on the host centerline.
         // Resolve the exact centerline point first, then leave the host
         // perpendicular to its local tangent. The normal corridor route ends a
@@ -326,8 +336,17 @@ CorridorEndpoint resolve_open_or_corridor(const CorridorBuildAnchor& anchor,Vec3
         if(length(side)<0.001f) side={0,0,1};
         if(dot(flatten(other-out.host_position),side)<0.0f) side=side*-1.0f;
         out.tangent=flat_normal(side);
-        constexpr float SURFACE_ADAPTER_RUN=0.42f;
-        out.position=out.host_position+out.tangent*(CORRIDOR_HALF_WIDTH+SURFACE_ADAPTER_RUN);
+
+        // Keep the branch ring outside the host pressure shell, but adapt the
+        // short surface sleeve to the actual available gap.  A fixed 0.42 m
+        // sleeve used to overshoot entrances that sit very close to an existing
+        // corridor and made otherwise valid connections self-intersect.  The
+        // host aperture still uses the exact centerline point, so this remains a
+        // true merged junction rather than overlapping pressure tubes.
+        const float center_gap=distance_xz(other,out.host_position);
+        const float free_gap=std::max(0.0f,center_gap-CORRIDOR_HALF_WIDTH);
+        const float surface_adapter_run=std::clamp(free_gap*0.45f,0.08f,0.42f);
+        out.position=out.host_position+out.tangent*(CORRIDOR_HALF_WIDTH+surface_adapter_run);
         out.position.y=out.host_position.y;
         out.surface_matched_junction=true;
         return out;
@@ -343,7 +362,7 @@ struct ExistingDoorUse {
     CorridorDoor door{};
 };
 
-std::optional<ExistingDoorUse> existing_door_use_near(std::size_t habitat_index,Vec3 point,
+std::optional<ExistingDoorUse> existing_door_use_near(CorridorEndpointKind owner_kind,std::size_t owner_index,Vec3 point,
                                                        const std::vector<CorridorConnection>& existing,
                                                        float radius){
     std::optional<ExistingDoorUse> best;
@@ -351,7 +370,9 @@ std::optional<ExistingDoorUse> existing_door_use_near(std::size_t habitat_index,
     for(std::size_t i=0;i<existing.size();++i){
         for(int side=0;side<2;++side){
             const CorridorEndpoint& ep=side==0?existing[i].endpoint_a:existing[i].endpoint_b;
-            if(!endpoint_uses_habitat(ep,habitat_index)) continue;
+            const bool owns=(owner_kind==CorridorEndpointKind::Habitat && endpoint_uses_habitat(ep,owner_index)) ||
+                            (owner_kind==CorridorEndpointKind::Resource && endpoint_uses_resource(ep,owner_index));
+            if(!owns) continue;
             const float d=distance_xz(point,ep.door.wall_position);
             if(d<best_distance){
                 best_distance=d;
@@ -391,28 +412,26 @@ Vec3 point_along_path_from_door(const CorridorConnection& c,bool endpoint_a,floa
 std::optional<CorridorEndpoint> branch_from_existing_door(const ExistingDoorUse& use,Vec3 other,
                                                           const std::vector<CorridorConnection>& existing){
     if(use.corridor_index>=existing.size()) return std::nullopt;
-    // One habitat entrance owns one sealed trunk.  Up to three additional
-    // branches may fan from that trunk (four corridor connections total at the
-    // entrance).  Count only branches near this particular end of the root
-    // corridor so a habitat at the opposite end can have its own independent
-    // four-way fan.
+    // A used entrance owns one sealed trunk.  Additional corridors always
+    // reuse that trunk instead of creating another coincident vestibule.  There
+    // is intentionally no fixed branch-count limit: the committed network fan
+    // optimizer extends/rebalances the trunk as more destinations are added.
     const auto& root=existing[use.corridor_index];
     const Vec3 root_end=(use.endpoint_a?root.path.front():root.path.back());
     int attached_branches=0;
+    constexpr float REUSE_FAN_ZONE=48.0f;
     for(std::size_t i=0;i<existing.size();++i){
         if(i==use.corridor_index || existing[i].kind!=CorridorConnectionKind::BuiltSection) continue;
         for(const CorridorEndpoint* ep:{&existing[i].endpoint_a,&existing[i].endpoint_b}){
             if(ep->kind!=CorridorEndpointKind::Corridor || ep->index!=use.corridor_index) continue;
-            if(distance_xz(ep->host_position,root_end)<=3.35f) ++attached_branches;
+            if(distance_xz(ep->host_position,root_end)<=REUSE_FAN_ZONE) ++attached_branches;
         }
     }
-    if(attached_branches>=3) return std::nullopt; // root + three branches = four total
 
-    // The committed network rebalances all branch points symmetrically.  Keep
-    // the newest preview on one of those final slots so blueprint-to-build
-    // movement is small and predictable.
-    constexpr std::array<float,3> NEW_BRANCH_SLOT={1.55f,1.90f,2.20f};
-    const float branch_run=NEW_BRANCH_SLOT[(std::size_t)attached_branches];
+    // Preview the new branch progressively farther down the common trunk.  The
+    // final optimizer will place left/right branches independently, but this
+    // avoids stacking every pre-build preview on the same junction point.
+    const float branch_run=1.75f+1.25f*(float)attached_branches;
     const Vec3 branch_point=point_along_path_from_door(root,use.endpoint_a,branch_run);
     CorridorBuildAnchor host{CorridorEndpointKind::Corridor,use.corridor_index,branch_point};
     return resolve_open_or_corridor(host,other,existing);
@@ -429,7 +448,7 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     // An already-used entrance remains a valid build source. Additional
     // corridors merge into the existing sealed trunk just outside that door
     // instead of creating another overlapping entrance/vestibule.
-    if(auto used=existing_door_use_near(anchor.index,anchor.position,existing,1.15f))
+    if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,anchor.position,existing,1.15f))
         return branch_from_existing_door(*used,other,existing);
 
     // Reuse a built-in hatch only when the cursor explicitly targets it. This
@@ -450,7 +469,7 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     }
 
     if(found_builtin){
-        if(auto used=existing_door_use_near(anchor.index,d.wall_position,existing,0.55f))
+        if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,d.wall_position,existing,0.55f))
             return branch_from_existing_door(*used,other,existing);
     }
 
@@ -461,8 +480,33 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
         // pressure-hull face instead of dropping the blueprint entrance. This
         // is especially important for the Bio Dome size variants.
         if(!generated) generated=generated_face_door(anchor.index,habitat,mesh,anchor.position,existing);
-        if(!generated) return std::nullopt;
-        d=*generated;
+        if(!generated){
+            // A crowded/faceted hull must never make a habitat unreachable. If
+            // no new generated opening fits, reuse an existing pressure entrance
+            // first. For a previously unconnected habitat, fall back to its
+            // nearest authored entrance even when the cursor was not directly on
+            // the hatch. This preserves "any structure can be connected" while
+            // still preferring the exact cursor-selected hull point whenever it
+            // is physically possible.
+            if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,anchor.position,existing,
+                                                std::numeric_limits<float>::max()))
+                return branch_from_existing_door(*used,other,existing);
+            if(!mesh.entrances.empty()){
+                float best_dist=std::numeric_limits<float>::max();
+                CorridorDoor fallback{};
+                for(std::size_t i=0;i<mesh.entrances.size();++i){
+                    CorridorDoor candidate=transformed_builtin_door(habitat,mesh,i);
+                    const float dist=distance_xz(candidate.wall_position,anchor.position);
+                    if(dist<best_dist){ best_dist=dist; fallback=candidate; }
+                }
+                d=fallback;
+                found_builtin=true;
+            }else{
+                return std::nullopt;
+            }
+        }else{
+            d=*generated;
+        }
     }
 
     // The route tangent must follow the actual door normal. The opposite point
@@ -472,15 +516,28 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     out.index=anchor.index;
     out.door=d;
     out.tangent=d.normal;
-    out.position=d.position+d.normal*DOCK_RUN;
+
+    // Fit the structure docking sleeve to the available gap when the selected
+    // destination is an already-existing corridor.  A fixed 1.75 m sleeve can
+    // otherwise extend through a corridor that runs directly past the entrance.
+    // Stopping just before the target pressure shell lets the corridor junction
+    // adapter own the final seam, so even very close doors merge without any
+    // coincident tube geometry.
+    float dock_run=DOCK_RUN;
+    const Vec3 rel=flatten(other-d.position);
+    const float forward=dot(rel,flat_normal(d.normal));
+    const float lateral=std::abs(dot(rel,perp_xz(d.normal)));
+    if(forward>0.0f && lateral<CORRIDOR_HALF_WIDTH*1.65f && forward<DOCK_RUN+CORRIDOR_HALF_WIDTH*2.2f)
+        dock_run=std::clamp(forward-CORRIDOR_HALF_WIDTH-0.10f,0.08f,DOCK_RUN);
+    out.position=d.position+d.normal*dock_run;
     out.position.y=0;
-    (void)other;
     return out;
 }
 
 std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& anchor,Vec3 other,
                                                      const std::vector<PlacedResource>& resources,
-                                                     const ResourceModelLibrary& library){
+                                                     const ResourceModelLibrary& library,
+                                                     const std::vector<CorridorConnection>& existing){
     if(anchor.index>=resources.size()) return std::nullopt;
     const auto& placed=resources[anchor.index];
     if(placed.kind!=ResourceKind::StorageDome) return std::nullopt;
@@ -505,16 +562,29 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
             if(score>best_dot){ best_dot=score; normal=n; wall=placed.position+n*wall_radius; }
         }
     }
+
+    // Storage-dome service doors are reusable pressure entrances too.  If the
+    // selected face already owns a corridor, branch from its common trunk
+    // rather than laying a second corridor through the same docking sleeve.
+    if(auto used=existing_door_use_near(CorridorEndpointKind::Resource,anchor.index,wall,existing,0.85f))
+        return branch_from_existing_door(*used,other,existing);
+
     CorridorEndpoint out;
     out.kind=CorridorEndpointKind::Resource;
     out.index=anchor.index;
     out.door.generated=false;
     out.door.entrance_index=-1;
     out.door.normal=normal;
-    out.door.wall_position=wall+Vec3{0,0.48f,0};
-    out.door.position=wall+Vec3{0,0.48f,0};
+    out.door.wall_position=wall+Vec3{0,geometry::kEntranceSliceY,0};
+    out.door.position=wall+Vec3{0,geometry::kEntranceSliceY,0};
     out.tangent=normal;
-    out.position=wall+normal*DOCK_RUN;
+    float dock_run=DOCK_RUN;
+    const Vec3 rel=flatten(other-wall);
+    const float forward=dot(rel,normal);
+    const float lateral=std::abs(dot(rel,perp_xz(normal)));
+    if(forward>0.0f && lateral<CORRIDOR_HALF_WIDTH*1.65f && forward<DOCK_RUN+CORRIDOR_HALF_WIDTH*2.2f)
+        dock_run=std::clamp(forward-CORRIDOR_HALF_WIDTH-0.10f,0.08f,DOCK_RUN);
+    out.position=wall+normal*dock_run;
     out.position.y=0.0f;
     return out;
 }
@@ -532,7 +602,7 @@ std::optional<CorridorEndpoint> resolve_anchor(const CorridorBuildAnchor& anchor
                                                const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
                                                const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                                                const std::vector<CorridorConnection>& existing){
-    if(anchor.kind==CorridorEndpointKind::Resource) return resolve_storage_dome(anchor,other,resources,resource_library);
+    if(anchor.kind==CorridorEndpointKind::Resource) return resolve_storage_dome(anchor,other,resources,resource_library,existing);
     return resolve_anchor(anchor,other,habitats,library,existing);
 }
 } // namespace game::corridor_detail

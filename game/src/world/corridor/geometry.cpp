@@ -16,7 +16,7 @@ std::vector<Vec2> corridor_cross_section(float scale){
     constexpr int ARC=10;
     for(int i=0;i<=ARC;++i){
         const float a=(float)i/(float)ARC*PI;
-        out.push_back({std::cos(a)*CORRIDOR_ROOF_RADIUS*scale,
+        out.push_back({std::cos(a)*CORRIDOR_HALF_WIDTH*scale,
                        CORRIDOR_SIDE_Y+std::sin(a)*CORRIDOR_ROOF_RADIUS*scale});
     }
     return out;

@@ -4,8 +4,10 @@
 #include "game/world/resource_mesh.hpp"
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
+#include <algorithm>
 #include <optional>
 #include <vector>
+#include <utility>
 
 namespace game {
 
@@ -57,7 +59,9 @@ struct UtilityConnection {
 class UtilityNetwork {
 public:
     void clear(){ connections_.clear(); }
+    void set_playfield_half_extent(float half_extent){ playfield_half_extent_=std::max(8.0f,half_extent); }
     const std::vector<UtilityConnection>& connections() const { return connections_; }
+    void restore_connections(std::vector<UtilityConnection> connections){ connections_=std::move(connections); }
 
     bool anchor_compatible(UtilityKind kind,const UtilityBuildAnchor& anchor,
                            const std::vector<PlacedHabitat>& habitats,
@@ -93,6 +97,7 @@ public:
 private:
     void rebuild_supply_junctions();
     std::vector<UtilityConnection> connections_{};
+    float playfield_half_extent_{32.0f};
 };
 
 const char* utility_kind_name(UtilityKind kind);

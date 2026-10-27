@@ -49,6 +49,43 @@ std::string used_material_cost(const ConstructionResourcePlan& plan,std::uint8_t
 
 void GameApp::render_selection_panel(Renderer& r){
     if(selection_kind_==SelectionKind::GroundResource){
+        if(selected_ground_resources_.size()>1){
+            const Rect p=selection_panel_rect();
+            ui::panel(r,p,theme_);
+            r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2.0f);
+            const float x=p.x+14.0f;
+            ResourceBundle totals{};
+            float condition_sum=0.0f;
+            std::size_t valid_count=0;
+            for(int index:selected_ground_resources_){
+                if(index<0 || (std::size_t)index>=ground_resource_piles_.size()) continue;
+                const auto& box=ground_resource_piles_[(std::size_t)index];
+                totals.amount(box.resource)+=box.amount;
+                condition_sum+=box.condition;
+                ++valid_count;
+            }
+            if(valid_count==0) return;
+            game_label(r,{x,p.y+10},"RESOURCE BOX SELECTION",0.62f,theme_,true);
+            game_label(r,{x,p.y+34},std::to_string(valid_count)+" BOXES SELECTED",0.70f,theme_);
+            std::ostringstream mass;
+            mass<<"TOTAL MASS  "<<totals.total_amount()<<" KG";
+            game_label(r,{x,p.y+58},mass.str(),0.52f,theme_);
+            std::ostringstream cond;
+            cond<<"AVERAGE CONDITION  "<<(int)std::lround((condition_sum/(float)valid_count)*100.0f)<<"%";
+            game_label(r,{x,p.y+78},cond.str(),0.47f,theme_,true);
+            float y=p.y+104.0f;
+            for(std::size_t i=0;i<kMaterialResourceCount;++i){
+                const auto material=static_cast<MaterialResource>(i);
+                const auto amount=totals.amount(material);
+                if(amount<=0) continue;
+                std::ostringstream line;
+                line<<material_resource_name(material)<<"  "<<amount<<" KG";
+                game_label(r,{x,y},line.str(),0.48f,theme_);
+                y+=19.0f;
+            }
+            game_label(r,{x,p.y+p.h-28.0f},debug_frame_enabled_?"DEL  MOVE SELECTED BOXES TO STORAGE":"DEBUG REQUIRED FOR DEL",0.43f,theme_,true);
+            return;
+        }
         if(selected_ground_resource_<0 || (std::size_t)selected_ground_resource_>=ground_resource_piles_.size()) return;
         const auto& box=ground_resource_piles_[(std::size_t)selected_ground_resource_];
         const Rect p=ground_resource_panel_rect();
@@ -67,7 +104,6 @@ void GameApp::render_selection_panel(Renderer& r){
         bool can_store=false;
         for(const auto& structure:placed_resources_){
             if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
-            // Physical boxes are the authoritative Storage Dome inventory.
             const std::int64_t used=stored_resource_box_totals(structure).total_amount();
             if(used+box.amount<=storage_dome_capacity_kg(structure.storage_size)){ can_store=true; break; }
         }

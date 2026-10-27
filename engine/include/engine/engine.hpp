@@ -26,7 +26,12 @@ struct InputState {
     bool escape_pressed{};
     bool key_n_pressed{};
     bool key_m_pressed{};
+    bool key_v_pressed{}, key_v_down{};
+    bool key_w_down{}, key_a_down{}, key_s_down{}, key_d_down{};
+    bool key_shift_down{};
     bool delete_pressed{};
+    bool backspace_pressed{}, enter_pressed{};
+    std::string text_input{};
 };
 
 class Renderer {
@@ -75,6 +80,8 @@ public:
     bool set_display_mode(int width,int height);
     void set_cursor_visible(bool visible);
     bool cursor_visible() const;
+    void set_relative_mouse_mode(bool enabled);
+    bool relative_mouse_mode() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

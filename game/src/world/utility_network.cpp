@@ -1,9 +1,13 @@
 #include "game/world/utility_network.hpp"
+#include "game/world/geometry_standards.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/util/world_math.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <array>
+#include <queue>
+#include <cstdint>
 
 namespace game {
 using namespace eng;
@@ -69,7 +73,7 @@ struct Builder {
     }
 };
 
-float channel_y(UtilityKind){ return 0.28f; }
+float channel_y(UtilityKind){ return geometry::kSupplyChannelY; }
 
 bool resource_supports(UtilityKind,ResourceKind){
     // A supply channel carries the common base services. Every external
@@ -270,9 +274,55 @@ std::optional<UtilityEndpoint> surface_endpoint(const UtilityBuildAnchor& anchor
     return out;
 }
 
-bool point_in_footprint(Vec3 p,Vec3 center,float rotation,float sx,float sz,float padding){
-    const Vec3 local=rotate_y(p-center,-rotation);
-    return std::abs(local.x)<sx*0.5f+padding && std::abs(local.z)<sz*0.5f+padding;
+float tri_area_xz(Vec3 a,Vec3 b,Vec3 c){
+    return (b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x);
+}
+
+bool point_in_triangle_projection(Vec3 p,Vec3 a,Vec3 b,Vec3 c){
+    const float area=tri_area_xz(a,b,c);
+    if(std::abs(area)<1.0e-6f) return false;
+    const float s0=tri_area_xz(a,b,p),s1=tri_area_xz(b,c,p),s2=tri_area_xz(c,a,p);
+    const bool neg=(s0<-1.0e-5f)||(s1<-1.0e-5f)||(s2<-1.0e-5f);
+    const bool pos=(s0> 1.0e-5f)||(s1> 1.0e-5f)||(s2> 1.0e-5f);
+    return !(neg&&pos);
+}
+
+bool point_near_mesh_projection(Vec3 local,const std::vector<Vec3>& tris,float clearance){
+    for(std::size_t i=0;i+2<tris.size();i+=3){
+        const Vec3 a=tris[i],b=tris[i+1],c=tris[i+2];
+        if(point_in_triangle_projection(local,a,b,c)) return true;
+        if(point_segment_distance_xz(local,a,b)<=clearance ||
+           point_segment_distance_xz(local,b,c)<=clearance ||
+           point_segment_distance_xz(local,c,a)<=clearance) return true;
+    }
+    return false;
+}
+
+bool point_hits_structure(Vec3 p,UtilityEndpointKind skip_kind_a,std::size_t skip_a,
+                          UtilityEndpointKind skip_kind_b,std::size_t skip_b,
+                          const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
+                          const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
+    constexpr float CLEARANCE=0.42f;
+    for(std::size_t h=0;h<habitats.size();++h){
+        if((skip_kind_a==UtilityEndpointKind::Habitat && h==skip_a) || (skip_kind_b==UtilityEndpointKind::Habitat && h==skip_b)) continue;
+        const auto& placed=habitats[h];
+        const auto& mesh=habitat_library.mesh(placed);
+        const Vec3 local=rotate_y(p-placed.position,-placed.rotation_degrees);
+        if(std::abs(local.x)>mesh.footprint_x*0.5f+CLEARANCE || std::abs(local.z)>mesh.footprint_z*0.5f+CLEARANCE) continue;
+        if(point_near_mesh_projection(local,mesh.shell,CLEARANCE) ||
+           point_near_mesh_projection(local,mesh.foundation,CLEARANCE) ||
+           point_near_mesh_projection(local,mesh.glazing,CLEARANCE)) return true;
+    }
+    for(std::size_t r=0;r<resources.size();++r){
+        if((skip_kind_a==UtilityEndpointKind::Resource && r==skip_a) || (skip_kind_b==UtilityEndpointKind::Resource && r==skip_b)) continue;
+        const auto& placed=resources[r];
+        const auto& mesh=resource_library.mesh(placed);
+        const Vec3 local=rotate_y(p-placed.position,-placed.rotation_degrees);
+        if(std::abs(local.x)>mesh.footprint_x*0.5f+CLEARANCE || std::abs(local.z)>mesh.footprint_z*0.5f+CLEARANCE) continue;
+        if(point_near_mesh_projection(local,mesh.body,CLEARANCE) ||
+           point_near_mesh_projection(local,mesh.foundation,CLEARANCE)) return true;
+    }
+    return false;
 }
 
 bool segment_hits_structure(Vec3 a,Vec3 b,UtilityEndpointKind skip_kind_a,std::size_t skip_a,
@@ -284,18 +334,7 @@ bool segment_hits_structure(Vec3 a,Vec3 b,UtilityEndpointKind skip_kind_a,std::s
     for(int i=1;i<steps;++i){
         const float t=(float)i/(float)steps;
         const Vec3 p=a+(b-a)*t;
-        for(std::size_t h=0;h<habitats.size();++h){
-            if((skip_kind_a==UtilityEndpointKind::Habitat && h==skip_a) || (skip_kind_b==UtilityEndpointKind::Habitat && h==skip_b)) continue;
-            const auto& placed=habitats[h];
-            const auto& mesh=habitat_library.mesh(placed);
-            if(point_in_footprint(p,placed.position,placed.rotation_degrees,mesh.footprint_x,mesh.footprint_z,0.28f)) return true;
-        }
-        for(std::size_t r=0;r<resources.size();++r){
-            if((skip_kind_a==UtilityEndpointKind::Resource && r==skip_a) || (skip_kind_b==UtilityEndpointKind::Resource && r==skip_b)) continue;
-            const auto& placed=resources[r];
-            const auto& mesh=resource_library.mesh(placed);
-            if(point_in_footprint(p,placed.position,placed.rotation_degrees,mesh.footprint_x,mesh.footprint_z,0.28f)) return true;
-        }
+        if(point_hits_structure(p,skip_kind_a,skip_a,skip_kind_b,skip_b,habitats,habitat_library,resources,resource_library)) return true;
     }
     return false;
 }
@@ -438,10 +477,129 @@ bool route_valid(UtilityKind /*kind*/,const std::vector<Vec3>& path,const Utilit
     return power_path_compatible(path,existing);
 }
 
+struct UtilityGridNode {
+    int index{};
+    float f{};
+    bool operator<(const UtilityGridNode& rhs) const { return f>rhs.f; }
+};
+
+std::vector<Vec3> utility_grid_route(UtilityKind kind,const UtilityEndpoint& a,const UtilityEndpoint& b,
+                                     const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
+                                     const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
+                                     const std::vector<UtilityConnection>& existing,float playfield_half_extent,float margin){
+    constexpr float STEP=0.90f;
+    const float y=channel_y(kind);
+    const Vec3 start_drop{a.position.x,y,a.position.z};
+    const Vec3 end_drop{b.position.x,y,b.position.z};
+    const Vec3 start=start_drop+a.normal*0.72f;
+    const Vec3 goal=end_drop+b.normal*0.72f;
+    const float min_x=std::max(-playfield_half_extent,std::min(start.x,goal.x)-margin);
+    const float max_x=std::min( playfield_half_extent,std::max(start.x,goal.x)+margin);
+    const float min_z=std::max(-playfield_half_extent,std::min(start.z,goal.z)-margin);
+    const float max_z=std::min( playfield_half_extent,std::max(start.z,goal.z)+margin);
+    if(max_x-min_x<STEP || max_z-min_z<STEP) return {};
+    const int nx=std::max(2,(int)std::floor((max_x-min_x)/STEP)+1);
+    const int nz=std::max(2,(int)std::floor((max_z-min_z)/STEP)+1);
+    const int total=nx*nz;
+    if(total>160000) return {};
+    const auto ix=[&](float x){ return std::clamp((int)std::lround((x-min_x)/STEP),0,nx-1); };
+    const auto iz=[&](float z){ return std::clamp((int)std::lround((z-min_z)/STEP),0,nz-1); };
+    const int si=iz(start.z)*nx+ix(start.x),gi=iz(goal.z)*nx+ix(goal.x);
+    const auto pos=[&](int idx){
+        if(idx==si) return start;
+        if(idx==gi) return goal;
+        return Vec3{min_x+(float)(idx%nx)*STEP,y,min_z+(float)(idx/nx)*STEP};
+    };
+
+    std::vector<std::int8_t> blocked((std::size_t)total,-1);
+    auto is_blocked=[&](int idx){
+        if(idx==si || idx==gi) return false;
+        auto& c=blocked[(std::size_t)idx];
+        if(c>=0) return c!=0;
+        const bool v=point_hits_structure(pos(idx),a.kind,a.index,b.kind,b.index,
+                                          habitats,habitat_library,resources,resource_library);
+        c=v?1:0; return v;
+    };
+
+    // Existing channels are soft obstacles. A brief transversal crossing costs
+    // little compared with following an occupied tray for many cells, so A*
+    // naturally creates clean junctions instead of parallel z-fighting runs.
+    std::vector<float> penalty((std::size_t)total,0.0f);
+    constexpr float SOFT=1.65f;
+    for(const auto& c:existing) for(std::size_t s=0;s+1<c.path.size();++s){
+        Vec3 p0=c.path[s],p1=c.path[s+1];
+        const int x0=std::clamp((int)std::floor((std::min(p0.x,p1.x)-SOFT-min_x)/STEP),0,nx-1);
+        const int x1=std::clamp((int)std::ceil ((std::max(p0.x,p1.x)+SOFT-min_x)/STEP),0,nx-1);
+        const int z0=std::clamp((int)std::floor((std::min(p0.z,p1.z)-SOFT-min_z)/STEP),0,nz-1);
+        const int z1=std::clamp((int)std::ceil ((std::max(p0.z,p1.z)+SOFT-min_z)/STEP),0,nz-1);
+        for(int z=z0;z<=z1;++z) for(int x=x0;x<=x1;++x){
+            const int idx=z*nx+x;
+            const float d=point_segment_distance_xz(pos(idx),p0,p1);
+            if(d>=SOFT) continue;
+            penalty[(std::size_t)idx]=std::max(penalty[(std::size_t)idx],5.5f*(SOFT-d)/SOFT);
+        }
+    }
+
+    std::vector<float> g((std::size_t)total,std::numeric_limits<float>::max());
+    std::vector<int> parent((std::size_t)total,-1);
+    std::vector<bool> closed((std::size_t)total,false);
+    auto h=[&](int idx){ return distance_xz(pos(idx),goal); };
+    std::priority_queue<UtilityGridNode> open;
+    g[(std::size_t)si]=0; open.push({si,h(si)});
+    constexpr std::array<std::array<int,2>,4> dirs{{{{1,0}},{{-1,0}},{{0,1}},{{0,-1}}}};
+    bool found=false;
+    while(!open.empty()){
+        const int cur=open.top().index; open.pop();
+        if(closed[(std::size_t)cur]) continue;
+        closed[(std::size_t)cur]=true;
+        if(cur==gi){ found=true; break; }
+        const int cx=cur%nx,cz=cur/nx;
+        for(const auto& d:dirs){
+            const int x=cx+d[0],z=cz+d[1];
+            if(x<0||x>=nx||z<0||z>=nz) continue;
+            const int next=z*nx+x;
+            if(closed[(std::size_t)next]||is_blocked(next)) continue;
+            const float ng=g[(std::size_t)cur]+STEP+penalty[(std::size_t)next];
+            if(ng>=g[(std::size_t)next]) continue;
+            g[(std::size_t)next]=ng; parent[(std::size_t)next]=cur;
+            open.push({next,ng+h(next)});
+        }
+    }
+    if(!found) return {};
+    std::vector<Vec3> raw;
+    for(int at=gi;at>=0;at=parent[(std::size_t)at]){
+        raw.push_back(pos(at));
+        if(at==si) break;
+    }
+    if(raw.empty() || distance_xz(raw.back(),start)>0.05f) return {};
+    std::reverse(raw.begin(),raw.end());
+
+    // Keep only actual Manhattan corners. Do not visibility-shortcut across a
+    // channel: the local A* penalty deliberately chose where to cross it.
+    std::vector<Vec3> corners;
+    corners.reserve(raw.size());
+    for(std::size_t i=0;i<raw.size();++i){
+        if(i==0 || i+1==raw.size()){ corners.push_back(raw[i]); continue; }
+        Vec3 d0=raw[i]-raw[i-1]; d0.y=0.0f; d0=normalize(d0);
+        Vec3 d1=raw[i+1]-raw[i]; d1.y=0.0f; d1=normalize(d1);
+        if(std::abs(dot(d0,d1))<0.999f) corners.push_back(raw[i]);
+    }
+    std::vector<Vec3> path;
+    path.push_back(a.position);
+    if(distance_xz(a.position,start_drop)>0.02f) path.push_back(start_drop);
+    if(distance_xz(path.back(),start)>0.02f) path.push_back(start);
+    for(std::size_t i=1;i+1<corners.size();++i) path.push_back(corners[i]);
+    if(distance_xz(path.back(),goal)>0.02f) path.push_back(goal);
+    if(distance_xz(path.back(),end_drop)>0.02f) path.push_back(end_drop);
+    if(distance_xz(path.back(),b.position)>0.02f || std::abs(path.back().y-b.position.y)>0.02f) path.push_back(b.position);
+    path=compact_path(std::move(path));
+    return route_valid(kind,path,a,b,habitats,habitat_library,resources,resource_library,existing)?path:std::vector<Vec3>{};
+}
+
 std::vector<Vec3> make_route(UtilityKind kind,const UtilityEndpoint& a,const UtilityEndpoint& b,
                              const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
                              const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
-                             const std::vector<UtilityConnection>& existing){
+                             const std::vector<UtilityConnection>& existing,float playfield_half_extent){
     // Always leave a structure along the selected surface normal. This prevents
     // the first cable segment from cutting back through the source/target mesh.
     constexpr float LEAD=0.72f;
@@ -476,7 +634,17 @@ std::vector<Vec3> make_route(UtilityKind kind,const UtilityEndpoint& a,const Uti
         const float len=path_length(candidate);
         if(len<best_length){ best_length=len; best=candidate; }
     }
-    return best;
+    if(!best.empty()) return best;
+
+    const float d=distance_xz(a.position,b.position);
+    const float primary=std::clamp(d*0.35f+8.0f,10.0f,34.0f);
+    const float secondary=std::min(playfield_half_extent,std::max(primary+10.0f,48.0f));
+    for(float margin:{primary,secondary}){
+        auto detour=utility_grid_route(kind,a,b,habitats,habitat_library,resources,resource_library,existing,playfield_half_extent,margin);
+        if(detour.size()>=2) return detour;
+        if(std::abs(secondary-primary)<1.0f) break;
+    }
+    return {};
 }
 
 void add_power_segment(Builder& b,Vec3 a,Vec3 c){
@@ -489,7 +657,7 @@ void add_power_segment(Builder& b,Vec3 a,Vec3 c){
     if(length(side)<0.001f) side={0,0,1};
     const Vec3 up=normalize(cross(side,axis));
     const Vec3 mid=(a+c)*0.5f;
-    b.oriented_box(b.mesh.shell,mid-up*0.05f,axis,up,side,{len,0.16f,0.52f},false);
+    b.oriented_box(b.mesh.shell,mid-up*0.05f,axis,up,side,{len,geometry::kSupplyTrayHeight,geometry::kSupplyTrayWidth},false);
     for(float s:{-0.17f,0.17f}) b.cylinder_between(b.mesh.details,a+side*s+up*0.05f,c+side*s+up*0.05f,0.045f,8,true);
     const int supports=std::max(1,(int)std::floor(len/1.4f));
     for(int i=0;i<=supports;++i){
@@ -500,7 +668,7 @@ void add_power_segment(Builder& b,Vec3 a,Vec3 c){
 }
 
 void add_water_segment(Builder& b,Vec3 a,Vec3 c){
-    b.cylinder_between(b.mesh.shell,a,c,0.17f,10,true);
+    b.cylinder_between(b.mesh.shell,a,c,geometry::kSupplyWaterRadius,10,true);
     Vec3 d=c-a; d.y=0;
     const float len=length(d);
     if(len<0.001f) return;
@@ -537,7 +705,7 @@ void add_power_junction(Builder& b,Vec3 p){
     // directly over the tray center so the intersecting cable meshes visibly
     // terminate into one common electrical junction rather than crossing loose.
     p.y=channel_y(UtilityKind::SupplyChannel);
-    b.box(b.mesh.details,p+Vec3{0,0.08f,0},{0.72f,0.30f,0.72f},true);
+    b.box(b.mesh.details,p+Vec3{0,0.08f,0},{geometry::kSupplyJunctionWidth,0.32f,geometry::kSupplyJunctionWidth},true);
     b.cylinder_between(b.mesh.details,p+Vec3{0,-0.03f,0},p+Vec3{0,0.34f,0},0.10f,8,true);
 }
 
@@ -568,7 +736,7 @@ UtilityMesh make_mesh(UtilityKind /*kind*/,const UtilityEndpoint& a,const Utilit
     // Mark bends with a compact service joint so orthogonal routes read as one
     // continuous channel instead of two unrelated line segments.
     for(std::size_t i=1;i+1<path.size();++i){
-        builder.box(builder.mesh.details,path[i]+Vec3{0,0.05f,0},{0.66f,0.34f,0.66f},true);
+        builder.box(builder.mesh.details,path[i]+Vec3{0,0.05f,0},{geometry::kSupplyJunctionWidth*0.92f,0.34f,geometry::kSupplyJunctionWidth*0.92f},true);
         builder.cylinder_between(builder.mesh.details,path[i]+Vec3{0,0.02f,0},path[i]+Vec3{0,0.30f,0},0.23f,12,true);
     }
     for(const Vec3 p:junctions) add_power_junction(builder,p);
@@ -579,6 +747,44 @@ bool same_anchor(const UtilityBuildAnchor& a,const UtilityBuildAnchor& b){
     if(a.kind!=b.kind) return false;
     if(a.kind==UtilityEndpointKind::Open) return distance_xz(a.hit,b.hit)<0.18f;
     return a.index==b.index;
+}
+
+
+struct UtilityDisjointSets {
+    std::vector<std::size_t> parent;
+    explicit UtilityDisjointSets(std::size_t n):parent(n){ for(std::size_t i=0;i<n;++i) parent[i]=i; }
+    std::size_t find(std::size_t x){ while(parent[x]!=x){ parent[x]=parent[parent[x]]; x=parent[x]; } return x; }
+    void unite(std::size_t a,std::size_t b){ a=find(a); b=find(b); if(a!=b) parent[b]=a; }
+};
+
+bool utility_endpoint_matches_anchor(const UtilityEndpoint& ep,const UtilityBuildAnchor& anchor){
+    return ep.kind==anchor.kind && ep.kind!=UtilityEndpointKind::Open && ep.index==anchor.index;
+}
+
+bool utility_endpoint_same_owner(const UtilityEndpoint& a,const UtilityEndpoint& b){
+    return a.kind==b.kind && a.kind!=UtilityEndpointKind::Open && a.index==b.index;
+}
+
+bool utility_anchors_already_connected(const UtilityBuildAnchor& a,const UtilityBuildAnchor& b,
+                                       const std::vector<UtilityConnection>& connections){
+    if(same_anchor(a,b)) return true;
+    if(connections.empty() || a.kind==UtilityEndpointKind::Open || b.kind==UtilityEndpointKind::Open) return false;
+    UtilityDisjointSets sets(connections.size());
+    for(std::size_t i=0;i<connections.size();++i) for(std::size_t j=i+1;j<connections.size();++j){
+        const bool same_owner=utility_endpoint_same_owner(connections[i].endpoint_a,connections[j].endpoint_a) ||
+                              utility_endpoint_same_owner(connections[i].endpoint_a,connections[j].endpoint_b) ||
+                              utility_endpoint_same_owner(connections[i].endpoint_b,connections[j].endpoint_a) ||
+                              utility_endpoint_same_owner(connections[i].endpoint_b,connections[j].endpoint_b);
+        if(same_owner || !power_intersections(connections[i].path,connections[j].path).empty()) sets.unite(i,j);
+    }
+    std::vector<std::size_t> ca,cb;
+    auto add=[&](std::vector<std::size_t>& dst,std::size_t i){ const auto c=sets.find(i); if(std::find(dst.begin(),dst.end(),c)==dst.end()) dst.push_back(c); };
+    for(std::size_t i=0;i<connections.size();++i){
+        if(utility_endpoint_matches_anchor(connections[i].endpoint_a,a) || utility_endpoint_matches_anchor(connections[i].endpoint_b,a)) add(ca,i);
+        if(utility_endpoint_matches_anchor(connections[i].endpoint_a,b) || utility_endpoint_matches_anchor(connections[i].endpoint_b,b)) add(cb,i);
+    }
+    for(auto x:ca) for(auto y:cb) if(x==y) return true;
+    return false;
 }
 
 } // namespace
@@ -619,7 +825,7 @@ std::optional<UtilityConnection> UtilityNetwork::preview_connection(
     const auto ea=surface_endpoint(a,center_b,kind,habitats,habitat_library,resources,resource_library);
     const auto eb=surface_endpoint(b,center_a,kind,habitats,habitat_library,resources,resource_library);
     if(!ea || !eb) return std::nullopt;
-    const std::vector<Vec3> path=make_route(kind,*ea,*eb,habitats,habitat_library,resources,resource_library,connections_);
+    const std::vector<Vec3> path=make_route(kind,*ea,*eb,habitats,habitat_library,resources,resource_library,connections_,playfield_half_extent_);
     if(path.size()<2) return std::nullopt;
 
     UtilityConnection out;
@@ -636,6 +842,10 @@ bool UtilityNetwork::build_connection(
     UtilityKind kind,const UtilityBuildAnchor& a,const UtilityBuildAnchor& b,
     const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
     const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
+    // Supply channels are one shared manifold. If both requested structures are
+    // already in the same manifold, the request is satisfied without laying a
+    // second parallel/overlapping tray.
+    if(utility_anchors_already_connected(a,b,connections_)) return true;
     auto preview=preview_connection(kind,a,b,habitats,habitat_library,resources,resource_library);
     if(!preview) return false;
     for(const auto& existing:connections_){
@@ -643,7 +853,7 @@ bool UtilityNetwork::build_connection(
                          existing.endpoint_b.kind==preview->endpoint_b.kind && existing.endpoint_b.index==preview->endpoint_b.index) ||
                         (existing.endpoint_a.kind==preview->endpoint_b.kind && existing.endpoint_a.index==preview->endpoint_b.index &&
                          existing.endpoint_b.kind==preview->endpoint_a.kind && existing.endpoint_b.index==preview->endpoint_a.index);
-        if(same) return false;
+        if(same) return true;
     }
     float route_length=0.0f;
     for(std::size_t i=0;i+1<preview->path.size();++i) route_length+=distance_xz(preview->path[i],preview->path[i+1]);

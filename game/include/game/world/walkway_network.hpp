@@ -8,6 +8,7 @@
 #include "game/systems/resource_management.hpp"
 #include <optional>
 #include <vector>
+#include <utility>
 
 namespace game {
 
@@ -78,6 +79,7 @@ class WalkwayNetwork {
 public:
     void clear(){ connections_.clear(); }
     const std::vector<WalkwayConnection>& connections() const { return connections_; }
+    void restore_connections(std::vector<WalkwayConnection> connections){ connections_=std::move(connections); }
 
     std::optional<WalkwayConnection> preview_connection(
         const WalkwayBuildAnchor& source,const WalkwayBuildAnchor& target,

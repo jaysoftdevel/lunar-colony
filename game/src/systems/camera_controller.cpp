@@ -20,6 +20,14 @@ void CameraController::reset(int playfield_size){
     azimuth_deg_=0.0f;
 }
 
+
+void CameraController::restore(const CameraState& state){
+    distance_=std::max(0.1f,state.distance);
+    elevation_deg_=std::clamp(state.elevation_degrees,0.0f,90.0f);
+    azimuth_deg_=wrap_degrees(state.azimuth_degrees);
+    target_=state.target;
+}
+
 void CameraController::update(const InputState& in,int playfield_size,int viewport_height){
     if(in.wheel!=0){
         const float factor=std::pow(0.88f,in.wheel);

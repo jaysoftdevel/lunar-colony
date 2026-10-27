@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -77,6 +78,17 @@ float recovered_resource_condition(MaterialResource material){
     return 1.0f;
 }
 
+bool project_world_to_screen(const Mat4& m,Vec3 p,int viewport_width,int viewport_height,float& sx,float& sy){
+    const float cx=m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12];
+    const float cy=m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13];
+    const float cw=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];
+    if(cw<=0.001f) return false;
+    const float nx=cx/cw, ny=cy/cw;
+    sx=(nx*0.5f+0.5f)*(float)viewport_width;
+    sy=(1.0f-(ny*0.5f+0.5f))*(float)viewport_height;
+    return sx>=0.0f && sx<=(float)viewport_width && sy>=0.0f && sy<=(float)viewport_height;
+}
+
 Vec3 point_along_path(const std::vector<Vec3>& path,float fraction,Vec3* tangent_out=nullptr){
     if(path.empty()) return {};
     if(path.size()==1){ if(tangent_out) *tangent_out={1.0f,0.0f,0.0f}; return path.front(); }
@@ -114,11 +126,12 @@ Rect GameApp::selection_panel_rect() const {
 }
 
 Rect GameApp::ground_resource_panel_rect() const {
+    if(selected_ground_resources_.size()>1) return selection_panel_rect();
     if(selected_ground_resource_<0 || (std::size_t)selected_ground_resource_>=ground_resource_piles_.size()) return {};
     const auto& pile=ground_resource_piles_[(std::size_t)selected_ground_resource_];
     const float aspect=(float)viewport_width_/std::max(1,viewport_height_);
     const Mat4 m=camera_.view_projection(aspect);
-    const Vec3 p=pile.position+Vec3{0.0f,0.85f,0.0f};
+    const Vec3 p=pile.position+Vec3{0.0f,resource_package_height(pile.resource,pile.amount)+0.18f,0.0f};
     const float cx=m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12];
     const float cy=m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13];
     const float cw=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];
@@ -147,6 +160,7 @@ void GameApp::clear_world_selection(){
     selected_corridor_=-1;
     selected_resource_=-1;
     selected_ground_resource_=-1;
+    selected_ground_resources_.clear();
     selected_utility_=-1;
     selected_walkway_=-1;
 }
@@ -353,6 +367,16 @@ int GameApp::pick_corridor(Vec3 hit,float radius) const {
 }
 
 CorridorBuildAnchor GameApp::corridor_anchor_at(Vec3 hit) const {
+    // Corridor construction is node-first: every visible point of every built
+    // corridor is a legal source/destination candidate.  Test the pressure
+    // network before broad structure picking; otherwise a docking sleeve or a
+    // corridor running very close to a habitat footprint can be stolen by the
+    // owning structure and the requested mid-run intersection becomes
+    // impossible to select.  Unoccupied structure entrances are still picked
+    // normally because there is no corridor under the pointer yet.
+    const int corridor=pick_corridor(hit,geometry::kCorridorHalfWidth+0.82f);
+    if(corridor>=0) return corridor_network_.corridor_anchor((size_t)corridor,hit);
+
     // Storage domes expose four fixed pressure docking faces. They participate
     // in corridor snapping like habitats, but remain resource/storage objects.
     const int resource=pick_resource(hit);
@@ -379,8 +403,6 @@ CorridorBuildAnchor GameApp::corridor_anchor_at(Vec3 hit) const {
     }
     if(snapped) return *snapped;
 
-    const int corridor=pick_corridor(hit,1.65f);
-    if(corridor>=0) return corridor_network_.corridor_anchor((size_t)corridor,hit);
     return {CorridorEndpointKind::OpenDoor,0,{std::round(hit.x),0.0f,std::round(hit.z)}};
 }
 
@@ -391,6 +413,7 @@ void GameApp::select_world_at(int screen_x,int screen_y){
     if(ground_resource>=0){
         selection_kind_=SelectionKind::GroundResource;
         selected_ground_resource_=ground_resource;
+        selected_ground_resources_.assign(1,ground_resource);
         selected_habitat_=-1; selected_corridor_=-1; selected_resource_=-1; selected_utility_=-1; selected_walkway_=-1;
         return;
     }
@@ -402,7 +425,7 @@ void GameApp::select_world_at(int screen_x,int screen_y){
         selected_habitat_=-1;
         selected_resource_=-1;
         selected_walkway_=-1;
-        selected_ground_resource_=-1;
+        selected_ground_resource_=-1; selected_ground_resources_.clear();
         return;
     }
     const int walkway=pick_walkway(hit);
@@ -413,7 +436,7 @@ void GameApp::select_world_at(int screen_x,int screen_y){
         selected_corridor_=-1;
         selected_habitat_=-1;
         selected_resource_=-1;
-        selected_ground_resource_=-1;
+        selected_ground_resource_=-1; selected_ground_resources_.clear();
         return;
     }
     const int corridor=pick_corridor(hit);
@@ -424,7 +447,7 @@ void GameApp::select_world_at(int screen_x,int screen_y){
         selected_resource_=-1;
         selected_utility_=-1;
         selected_walkway_=-1;
-        selected_ground_resource_=-1;
+        selected_ground_resource_=-1; selected_ground_resources_.clear();
         return;
     }
     const int habitat=pick_habitat(hit);
@@ -435,7 +458,7 @@ void GameApp::select_world_at(int screen_x,int screen_y){
         selected_resource_=-1;
         selected_utility_=-1;
         selected_walkway_=-1;
-        selected_ground_resource_=-1;
+        selected_ground_resource_=-1; selected_ground_resources_.clear();
         return;
     }
     const int resource=pick_resource(hit);
@@ -446,74 +469,141 @@ void GameApp::select_world_at(int screen_x,int screen_y){
         selected_corridor_=-1;
         selected_utility_=-1;
         selected_walkway_=-1;
-        selected_ground_resource_=-1;
+        selected_ground_resource_=-1; selected_ground_resources_.clear();
         return;
     }
     clear_world_selection();
 }
 
 
+void GameApp::finish_selection_marquee(){
+    const int dx=input_.mouse_x-selection_marquee_start_x_;
+    const int dy=input_.mouse_y-selection_marquee_start_y_;
+    const float drag_px=std::sqrt((float)(dx*dx+dy*dy));
+    selection_marquee_dragged_=selection_marquee_dragged_ || drag_px>=6.0f*ui_scale_;
+
+    if(!selection_marquee_dragged_){
+        select_world_at(selection_marquee_start_x_,selection_marquee_start_y_);
+        selection_marquee_active_=false;
+        selection_marquee_dragged_=false;
+        return;
+    }
+
+    const float min_x=(float)std::min(selection_marquee_start_x_,input_.mouse_x);
+    const float max_x=(float)std::max(selection_marquee_start_x_,input_.mouse_x);
+    const float min_y=(float)std::min(selection_marquee_start_y_,input_.mouse_y);
+    const float max_y=(float)std::max(selection_marquee_start_y_,input_.mouse_y);
+    const float aspect=(float)viewport_width_/std::max(1,viewport_height_);
+    const Mat4 vp=camera_.view_projection(aspect);
+
+    selected_ground_resources_.clear();
+    for(std::size_t i=0;i<ground_resource_piles_.size();++i){
+        const auto& pile=ground_resource_piles_[i];
+        const Vec3 center=pile.position+Vec3{0.0f,resource_package_height(pile.resource,pile.amount)*0.5f,0.0f};
+        float sx=0.0f,sy=0.0f;
+        if(!project_world_to_screen(vp,center,viewport_width_,viewport_height_,sx,sy)) continue;
+        if(sx>=min_x && sx<=max_x && sy>=min_y && sy<=max_y) selected_ground_resources_.push_back((int)i);
+    }
+
+    if(selected_ground_resources_.empty()){
+        clear_world_selection();
+    }else{
+        selection_kind_=SelectionKind::GroundResource;
+        selected_ground_resource_=selected_ground_resources_.front();
+        selected_habitat_=-1; selected_corridor_=-1; selected_resource_=-1; selected_utility_=-1; selected_walkway_=-1;
+    }
+    selection_marquee_active_=false;
+    selection_marquee_dragged_=false;
+}
+
+
 
 void GameApp::drop_structure_resources(Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used){
-    std::vector<MaterialResource> materials;
+    std::size_t total_boxes=0;
     for(std::size_t i=0;i<kMaterialResourceCount;++i){
         const auto material=static_cast<MaterialResource>(i);
-        if(used.amount(material)>0) materials.push_back(material);
+        const std::int64_t amount=std::max<std::int64_t>(0,used.amount(material));
+        const std::int64_t cap=resource_package_capacity_kg(material);
+        if(amount>0) total_boxes+=(std::size_t)((amount+cap-1)/cap);
     }
-    if(materials.empty()) return;
+    if(total_boxes==0) return;
 
-    const float rx=std::clamp(footprint_x*0.24f,0.48f,1.90f);
-    const float rz=std::clamp(footprint_z*0.24f,0.48f,1.90f);
-    for(std::size_t i=0;i<materials.size();++i){
-        const auto material=materials[i];
-        const std::int64_t amount=used.amount(material);
-        const float angle=2.0f*3.14159265358979323846f*(float)i/(float)materials.size();
-        const Vec3 local{std::sin(angle)*rx,0.0f,std::cos(angle)*rz};
-        GroundResourcePile pile;
-        pile.resource=material;
-        pile.amount=amount;
-        pile.position=position+rotate_y(local,rotation_degrees);
-        pile.position.y=0.0f;
-        pile.radius=std::clamp(0.30f+0.085f*std::log10((float)amount+1.0f),0.34f,0.72f);
-        pile.condition=recovered_resource_condition(material);
-        ground_resource_piles_.push_back(pile);
+    constexpr int target_stack_layers=5;
+    const std::size_t locations=(total_boxes+(std::size_t)target_stack_layers-1)/(std::size_t)target_stack_layers;
+    const int grid=std::max(1,(int)std::ceil(std::sqrt((double)locations)));
+    const float spacing=std::max(0.54f,std::min(0.88f,std::max(footprint_x,footprint_z)/(float)std::max(2,grid)));
+    std::vector<float> column_heights(std::max<std::size_t>(1,locations),0.0f);
+    std::size_t box_index=0;
+    for(std::size_t i=0;i<kMaterialResourceCount;++i){
+        const auto material=static_cast<MaterialResource>(i);
+        std::int64_t remaining=std::max<std::int64_t>(0,used.amount(material));
+        const std::int64_t cap=resource_package_capacity_kg(material);
+        while(remaining>0){
+            const std::int64_t amount=std::min(remaining,cap);
+            // Fill all ground cells before starting another layer. Each column
+            // tracks its actual package heights so the next box rests on top.
+            const std::size_t cell=box_index%column_heights.size();
+            const int gx=(int)(cell%(std::size_t)grid);
+            const int gz=(int)(cell/(std::size_t)grid);
+            const Vec3 local{((float)gx-(float)(grid-1)*0.5f)*spacing,
+                             column_heights[cell],
+                             ((float)gz-(float)(grid-1)*0.5f)*spacing};
+            GroundResourcePile pile;
+            pile.resource=material;
+            pile.amount=amount;
+            pile.position=position+rotate_y(local,rotation_degrees);
+            pile.condition=recovered_resource_condition(material);
+            pile.radius=resource_package_half_width(material,amount);
+            ground_resource_piles_.push_back(pile);
+            column_heights[cell]+=resource_package_height(material,amount)+0.02f;
+            remaining-=amount;
+            ++box_index;
+        }
     }
 }
 
 void GameApp::drop_path_resources(const std::vector<Vec3>& path,float lateral_width,const ResourceBundle& used){
     if(path.empty() || used.empty()) return;
-    constexpr std::int64_t kGroundBoxCapacityKg=2500;
 
     std::size_t total_boxes=0;
     for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
         const auto material=static_cast<MaterialResource>(ri);
         const std::int64_t amount=std::max<std::int64_t>(0,used.amount(material));
-        if(amount>0) total_boxes+=(std::size_t)((amount+kGroundBoxCapacityKg-1)/kGroundBoxCapacityKg);
+        const std::int64_t cap=resource_package_capacity_kg(material);
+        if(amount>0) total_boxes+=(std::size_t)((amount+cap-1)/cap);
     }
     if(total_boxes==0) return;
 
+    constexpr int target_stack_layers=4;
+    const std::size_t route_slots=(total_boxes+(std::size_t)target_stack_layers-1)/(std::size_t)target_stack_layers;
+    std::vector<float> column_heights(std::max<std::size_t>(1,route_slots),0.0f);
     std::size_t global_box=0;
     for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
         const auto material=static_cast<MaterialResource>(ri);
         std::int64_t remaining=std::max<std::int64_t>(0,used.amount(material));
+        const std::int64_t cap=resource_package_capacity_kg(material);
         while(remaining>0){
-            const std::int64_t amount=std::min(remaining,kGroundBoxCapacityKg);
-            const float fraction=((float)global_box+0.5f)/(float)total_boxes;
+            const std::int64_t amount=std::min(remaining,cap);
+            // Distribute the first layer along the route before stacking. This
+            // keeps recovered boxes as visible piles instead of one tall queue.
+            const std::size_t slot=global_box%column_heights.size();
+            const float fraction=((float)slot+0.5f)/(float)std::max<std::size_t>(1,route_slots);
             Vec3 tangent{};
             Vec3 position=point_along_path(path,fraction,&tangent);
             const Vec3 side{-tangent.z,0.0f,tangent.x};
-            const int lane=(int)(global_box%3)-1;
-            position=position+side*((float)lane*std::min(0.42f,std::max(0.18f,lateral_width*0.22f)));
-            position.y=0.0f;
+            const int lane=(int)(slot%3)-1;
+            position=position+side*((float)lane*std::min(0.50f,std::max(0.30f,lateral_width*0.24f)));
+            position.y+=column_heights[slot];
 
             GroundResourcePile pile;
             pile.resource=material;
             pile.amount=amount;
             pile.condition=recovered_resource_condition(material);
             pile.position=position;
-            pile.radius=std::clamp(0.30f+0.085f*std::log10((float)amount+1.0f),0.34f,0.72f);
+            pile.radius=resource_package_half_width(material,amount);
             ground_resource_piles_.push_back(pile);
 
+            column_heights[slot]+=resource_package_height(material,amount)+0.02f;
             remaining-=amount;
             ++global_box;
         }
@@ -521,7 +611,6 @@ void GameApp::drop_path_resources(const std::vector<Vec3>& path,float lateral_wi
 }
 
 ResourceBundle GameApp::store_resource_bundle(const ResourceBundle& recovered,float condition){
-    constexpr std::int64_t kRecoveredBoxCapacityKg=2500;
     ResourceBundle stored{};
 
     for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
@@ -541,7 +630,7 @@ ResourceBundle GameApp::store_resource_bundle(const ResourceBundle& recovered,fl
             }
             if(destination==nullptr) break;
 
-            const std::int64_t amount=std::min({remaining,free_capacity,kRecoveredBoxCapacityKg});
+            const std::int64_t amount=std::min({remaining,free_capacity,resource_package_capacity_kg(material)});
             destination->stored_boxes.push_back({material,amount,std::clamp(condition,0.0f,1.0f)});
             sync_stored_resource_totals(*destination);
             stored.amount(material)+=amount;
@@ -577,9 +666,15 @@ bool GameApp::move_ground_resource_to_storage(std::size_t pile_index){
         const std::int64_t used=structure.stored_resources.total_amount();
         if(used+pile.amount>storage_dome_capacity_kg(structure.storage_size)) continue;
 
-        // A debug DEL transfer moves the exact selected box; no rounding or
-        // reconstruction is performed, so amount and condition remain intact.
-        structure.stored_boxes.push_back({pile.resource,pile.amount,pile.condition});
+        // Preserve the selected amount exactly, but normalize legacy/oversized
+        // piles into human-portable packages before they enter the dome.
+        std::int64_t remaining=pile.amount;
+        const std::int64_t cap=resource_package_capacity_kg(pile.resource);
+        while(remaining>0){
+            const std::int64_t amount=std::min(remaining,cap);
+            structure.stored_boxes.push_back({pile.resource,amount,pile.condition});
+            remaining-=amount;
+        }
         sync_stored_resource_totals(structure);
         ResourceBundle added{};
         added.amount(pile.resource)=pile.amount;
@@ -619,22 +714,14 @@ void GameApp::delete_selected_world_object(){
                     // by those physical boxes.
                     if(!removed.stored_boxes.empty()){
                         const std::size_t box_count=removed.stored_boxes.size();
-                        const int columns=std::max(1,(int)std::ceil(std::sqrt((double)box_count/3.0)));
-                        const float spacing=std::clamp(std::min(mesh.footprint_x,mesh.footprint_z)/(float)(columns+2),0.72f,1.35f);
                         for(std::size_t bi=0;bi<box_count;++bi){
-                            const int slot=(int)(bi%(std::size_t)(columns*columns));
-                            const int layer=(int)(bi/(std::size_t)(columns*columns));
-                            const int sx=slot%columns;
-                            const int sz=slot/columns;
-                            const Vec3 local{((float)sx-(float)(columns-1)*0.5f)*spacing,
-                                             (float)layer*0.46f,
-                                             ((float)sz-(float)(columns-1)*0.5f)*spacing};
                             GroundResourcePile pile;
                             pile.resource=removed.stored_boxes[bi].resource;
                             pile.amount=removed.stored_boxes[bi].amount;
                             pile.condition=removed.stored_boxes[bi].condition;
-                            pile.position=removed.position+rotate_y(local,removed.rotation_degrees);
-                            pile.radius=std::clamp(0.30f+0.085f*std::log10((float)pile.amount+1.0f),0.34f,0.72f);
+                            float half=0.0f,height=0.0f;
+                            stored_resource_box_pose(removed,mesh,bi,pile.position,half,height);
+                            pile.radius=half;
                             ground_resource_piles_.push_back(pile);
                         }
                     }
@@ -654,10 +741,20 @@ void GameApp::delete_selected_world_object(){
             }
             break;
         case SelectionKind::GroundResource:
-            if(selected_ground_resource_>=0 && (std::size_t)selected_ground_resource_<ground_resource_piles_.size()){
+            if(!debug_frame_enabled_) return;
+            if(selected_ground_resources_.size()>1){
+                auto indices=selected_ground_resources_;
+                std::sort(indices.begin(),indices.end(),std::greater<int>());
+                bool moved_any=false;
+                for(int index:indices){
+                    if(index<0 || (std::size_t)index>=ground_resource_piles_.size()) continue;
+                    moved_any=move_ground_resource_to_storage((std::size_t)index) || moved_any;
+                }
+                if(!moved_any) return;
+            }else if(selected_ground_resource_>=0 && (std::size_t)selected_ground_resource_<ground_resource_piles_.size()){
                 // This direct box-to-dome transfer deliberately remains a debug-only
                 // convenience. The exact box amount and condition are preserved.
-                if(!debug_frame_enabled_ || !move_ground_resource_to_storage((std::size_t)selected_ground_resource_)) return;
+                if(!move_ground_resource_to_storage((std::size_t)selected_ground_resource_)) return;
             }else return;
             break;
         case SelectionKind::Corridor:

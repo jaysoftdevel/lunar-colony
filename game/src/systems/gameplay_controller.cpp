@@ -23,9 +23,52 @@ void GameApp::update(float dt,const InputState& in){
     }
 
     if(screen_==Screen::Playfield){
+        if(in.key_v_pressed){
+            selection_marquee_active_=false;
+            selection_marquee_dragged_=false;
+            if(first_person_mode_==FirstPersonMode::Off) enter_first_person_drop_mode();
+            else exit_first_person_mode();
+            return;
+        }
+
+        if(first_person_mode_==FirstPersonMode::DropPending){
+            status_.update(dt);
+            update_construction(dt);
+            if(in.escape_pressed){ exit_first_person_mode(); return; }
+            camera_.update(in,playfield_.size(),viewport_height_);
+            const float logical_y=(float)in.mouse_y/ui_scale_;
+            const bool over_world=logical_y>=STATUS_BAR_H && logical_y<((float)viewport_height_/ui_scale_-BUILD_BAR_H);
+            if(in.left_pressed && over_world){
+                Vec3 hit{};
+                if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
+                    // Drop the FPV onto the real walkable surface at the chosen
+                    // X/Z.  A click inside a habitat, Storage Dome, corridor or
+                    // exterior air-lock therefore starts at that interior deck
+                    // height instead of at lunar-ground Y=0.
+                    Vec3 spawn{hit.x,first_person_floor_height(hit),hit.z};
+                    if(first_person_spawn_valid(spawn)){
+                        first_person_.spawn(spawn,camera_.azimuth_degrees());
+                        first_person_mode_=FirstPersonMode::Active;
+                        app_.set_relative_mouse_mode(true);
+                    }
+                }
+            }
+            return;
+        }
+
+        if(first_person_mode_==FirstPersonMode::Active){
+            if(in.escape_pressed){ exit_first_person_mode(); return; }
+            status_.update(dt);
+            update_construction(dt);
+            update_first_person(dt,in);
+            return;
+        }
+
         // RMB is a fast cancel for every active build/placement tool. Consume
         // the click before camera panning so cancelling never nudges the view.
         if(in.right_pressed && build_catalog_.selected()!=nullptr){
+            selection_marquee_active_=false;
+            selection_marquee_dragged_=false;
             build_catalog_.clear_selection();
             placement_rotation_degrees_=0.0f;
             placement_habitat_size_=HabitatSizeTier::Standard;
@@ -39,6 +82,8 @@ void GameApp::update(float dt,const InputState& in){
         }
 
         if(in.escape_pressed){
+            selection_marquee_active_=false;
+            selection_marquee_dragged_=false;
             // ESC cancels the most specific active gameplay operation first.
             if(build_catalog_.selected()!=nullptr){
                 build_catalog_.clear_selection();
@@ -97,22 +142,28 @@ void GameApp::update(float dt,const InputState& in){
         status_.update(dt);
         update_construction(dt);
 
-        // World selection and manual corridor linking use the playfield ray.
-        // HUD clicks are excluded so buttons never select geometry behind them.
+        // World selection uses a click-or-drag marquee whenever no placement
+        // tool is active. A short click keeps the old single-object selection;
+        // dragging draws a screen-space pane and selects every ground resource
+        // package whose projected center lies inside it.
         const float logical_y=(float)in.mouse_y/ui_scale_;
         const bool over_world=logical_y>=STATUS_BAR_H && logical_y<((float)viewport_height_/ui_scale_-BUILD_BAR_H);
-        if(in.left_pressed && build_catalog_.selected()==nullptr && over_world && !mouse_over_selection_panel(in)){
+        const bool selection_idle=build_catalog_.selected()==nullptr && corridor_link_source_<0 &&
+                                  !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_;
+        if(selection_idle && in.left_pressed && over_world && !mouse_over_selection_panel(in)){
             Vec3 hit{};
             if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
-                if(corridor_link_source_>=0){
-                    // Manual corridor linking is committed from the render-side
-                    // blueprint path after the complete candidate connection has
-                    // been drawn. This guarantees every connection is blueprinted
-                    // before it becomes part of the world.
-                }else{
-                    select_world_at(in.mouse_x,in.mouse_y);
-                }
+                selection_marquee_active_=true;
+                selection_marquee_dragged_=false;
+                selection_marquee_start_x_=in.mouse_x;
+                selection_marquee_start_y_=in.mouse_y;
             }
+        }
+        if(selection_marquee_active_){
+            const int dx=in.mouse_x-selection_marquee_start_x_;
+            const int dy=in.mouse_y-selection_marquee_start_y_;
+            if(std::sqrt((float)(dx*dx+dy*dy))>=6.0f*ui_scale_) selection_marquee_dragged_=true;
+            if(!in.left_down) finish_selection_marquee();
         }
     } else if(in.escape_pressed && screen_!=Screen::MainMenu) {
         screen_=Screen::MainMenu;

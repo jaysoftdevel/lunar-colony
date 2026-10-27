@@ -2,6 +2,13 @@
 #include "engine/engine.hpp"
 
 namespace game {
+struct CameraState {
+    float distance{95.0f};
+    float elevation_degrees{55.0f};
+    float azimuth_degrees{0.0f};
+    eng::Vec3 target{};
+};
+
 class CameraController {
 public:
     void reset(int playfield_size);
@@ -13,6 +20,8 @@ public:
     float elevation_degrees() const { return elevation_deg_; }
     float azimuth_degrees() const { return azimuth_deg_; }
     eng::Vec3 target() const { return target_; }
+    CameraState state() const { return {distance_,elevation_deg_,azimuth_deg_,target_}; }
+    void restore(const CameraState& state);
 private:
     float distance_=95.0f;
     float elevation_deg_=55.0f;

@@ -136,7 +136,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     if(mouse_over_selection_panel(input_)) return;
     Vec3 hit{};
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
-    const int target=pick_corridor(hit,1.70f);
+    const int target=pick_corridor(hit,geometry::kCorridorHalfWidth+0.28f);
     if(target<0 || target==corridor_link_source_) return;
     auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_);
     if(!preview) return;
@@ -203,32 +203,37 @@ void GameApp::render_corridor_placement(Renderer& r){
             const CorridorBuildAnchor sample_end{CorridorEndpointKind::OpenDoor,0,candidate->position+dir*2.75f};
             sample=corridor_network_.preview_built_corridor(hover,sample_end,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
         }
-        const bool sample_valid=sample.has_value() && can_start_construction(corridor_plan(*sample));
+        // The first click selects a connection node, not a finished route.
+        // Never reject a valid entrance/corridor point just because the
+        // arbitrary one-section indicator happens to point into nearby
+        // geometry.  Route collision and resource checks belong to the second
+        // click, when the actual destination is known.
+        const bool start_valid=candidate.has_value();
         if(sample){
             mesh_wireframe::draw_layer(r,sample->mesh.shell,{0.30f,0.72f,1.00f,0.34f},1.35f);
             mesh_wireframe::draw_layer(r,sample->mesh.details,{0.24f,0.88f,0.68f,0.30f},1.10f);
             r.draw_lines_3d(sample->mesh.edges,{0.34f,0.82f,1.00f,0.96f},1.9f);
         }else{
-            draw_corridor_start_sample(r,candidate?candidate->position:hit,candidate?candidate->tangent:Vec3{1,0,0},false);
+            draw_corridor_start_sample(r,candidate?candidate->position:hit,candidate?candidate->tangent:Vec3{1,0,0},start_valid);
         }
         if(candidate){
-            const Color c=sample_valid?(candidate->kind==CorridorEndpointKind::OpenDoor?Color{0.96f,0.67f,0.22f,1.0f}:theme_.accent)
-                                      :Color{1.00f,0.28f,0.22f,1.0f};
+            const Color c=start_valid?(candidate->kind==CorridorEndpointKind::OpenDoor?Color{0.96f,0.67f,0.22f,1.0f}:theme_.accent)
+                                     :Color{1.00f,0.28f,0.22f,1.0f};
             // Always render the actual endpoint hardware before the first click.
             // Generated entrances therefore float over the hull while built-in
             // doors show their exact pressure adapter. Reused entrances resolve
             // to their shared corridor manifold and show that junction instead.
             if(candidate->kind==CorridorEndpointKind::Habitat || candidate->kind==CorridorEndpointKind::Resource){
                 const auto entrance_mesh=corridor_network_.preview_endpoint_mesh(*candidate);
-                const Color shell=sample_valid?Color{0.34f,1.00f,0.72f,0.88f}:Color{1.00f,0.24f,0.18f,0.80f};
-                const Color details=sample_valid?Color{0.24f,0.88f,0.68f,0.82f}:Color{1.00f,0.34f,0.24f,0.78f};
+                const Color shell=start_valid?Color{0.34f,1.00f,0.72f,0.88f}:Color{1.00f,0.24f,0.18f,0.80f};
+                const Color details=start_valid?Color{0.24f,0.88f,0.68f,0.82f}:Color{1.00f,0.34f,0.24f,0.78f};
                 mesh_wireframe::draw_layer(r,entrance_mesh.shell,shell,1.35f);
                 mesh_wireframe::draw_layer(r,entrance_mesh.details,details,1.15f);
                 r.draw_lines_3d(entrance_mesh.edges,c,1.8f);
             }
             render_endpoint_highlight(r,*candidate,c,3.0f);
         }
-        if(input_.left_pressed && sample_valid){
+        if(input_.left_pressed && start_valid){
             corridor_build_start_=hover;
             clear_world_selection();
             corridor_link_source_=-1;

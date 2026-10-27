@@ -39,6 +39,8 @@ void GameApp::render(Renderer& r){
         switch(screen_){
             case Screen::MainMenu: render_menu(r); break;
             case Screen::NewGame: render_new_game(r); break;
+            case Screen::SaveGame: render_save_game(r); break;
+            case Screen::LoadGame: render_load_game(r); break;
             case Screen::Settings: render_settings(r); break;
             case Screen::Credits: render_credits(r); break;
             case Screen::Playfield: break;

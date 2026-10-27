@@ -3,6 +3,8 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <X11/Xutil.h>
+#include <X11/XKBlib.h>
+#include <X11/keysym.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -136,6 +138,10 @@ struct Application::Impl {
     Cursor hidden_cursor=0;
     Cursor default_cursor=0;
     bool cursor_is_visible=true;
+    // relative_mouse_mode is the requested mode. The actual X11 pointer grab
+    // exists only while this window owns keyboard focus.
+    bool relative_mouse_mode=false;
+    bool window_focused=false;
 
     void ensure_cursors(){
         if(!display || !window) return;
@@ -148,13 +154,59 @@ struct Application::Impl {
             XFreePixmap(display,blank);
         }
     }
-    void set_cursor_visible(bool visible){
+    void define_cursor(bool visible){
         if(!display || !window || cursor_is_visible==visible) return;
         ensure_cursors();
         XDefineCursor(display,window,visible?default_cursor:hidden_cursor);
         XFlush(display);
         cursor_is_visible=visible;
     }
+
+    void set_cursor_visible(bool visible){
+        // Never hide the system pointer while another application owns focus.
+        // This also protects against render-side cursor requests that continue
+        // to run while the game is in the background.
+        if(!window_focused && !visible) visible=true;
+        define_cursor(visible);
+    }
+
+    void apply_relative_mouse_capture(){
+        if(!display || !window) return;
+        if(relative_mouse_mode && window_focused){
+            ensure_cursors();
+            const int grab=XGrabPointer(display,window,True,ButtonPressMask|ButtonReleaseMask|PointerMotionMask,
+                                        GrabModeAsync,GrabModeAsync,window,hidden_cursor,CurrentTime);
+            if(grab==GrabSuccess){
+                XWarpPointer(display,None,window,0,0,0,0,std::max(1,width)/2,std::max(1,height)/2);
+                define_cursor(false);
+            }else{
+                define_cursor(true);
+            }
+        }else{
+            XUngrabPointer(display,CurrentTime);
+            define_cursor(true);
+        }
+        XFlush(display);
+    }
+
+    void set_relative_mouse_mode(bool enabled){
+        if(!display || !window) return;
+        if(relative_mouse_mode==enabled){
+            apply_relative_mouse_capture();
+            return;
+        }
+        relative_mouse_mode=enabled;
+        apply_relative_mouse_capture();
+    }
+
+    void clear_held_input(){
+        input.left_down=input.middle_down=input.right_down=false;
+        input.key_v_down=false;
+        input.key_w_down=input.key_a_down=input.key_s_down=input.key_d_down=false;
+        input.key_shift_down=false;
+        input.mouse_dx=input.mouse_dy=0;
+    }
+
     void send_fullscreen(bool on){
         Atom state=XInternAtom(display,"_NET_WM_STATE",False); Atom fs=XInternAtom(display,"_NET_WM_STATE_FULLSCREEN",False);
         XEvent e{}; e.type=ClientMessage; e.xclient.window=window; e.xclient.message_type=state; e.xclient.format=32;
@@ -368,6 +420,7 @@ struct Application::Impl {
 
     ~Impl(){
         restore_mode();
+        if(display && relative_mouse_mode) XUngrabPointer(display,CurrentTime);
         if(display && hidden_cursor) XFreeCursor(display,hidden_cursor);
         if(display && default_cursor) XFreeCursor(display,default_cursor);
         if(display && window) XDestroyWindow(display,window);
@@ -382,11 +435,13 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
     impl_=std::make_unique<Impl>(); auto& p=*impl_; p.width=config.width; p.height=config.height;
     p.display=XOpenDisplay(nullptr); if(!p.display){ std::cerr<<"Unable to open X11 display. Set DISPLAY and run inside a graphical Linux session.\n"; return 2; }
     int s=DefaultScreen(p.display);
-    XSetWindowAttributes attrs{}; attrs.event_mask=ExposureMask|KeyPressMask|KeyReleaseMask|ButtonPressMask|ButtonReleaseMask|PointerMotionMask|StructureNotifyMask;
+    XSetWindowAttributes attrs{}; attrs.event_mask=ExposureMask|KeyPressMask|KeyReleaseMask|ButtonPressMask|ButtonReleaseMask|PointerMotionMask|StructureNotifyMask|FocusChangeMask;
     p.window=XCreateWindow(p.display,RootWindow(p.display,s),0,0,p.width,p.height,0,CopyFromParent,InputOutput,CopyFromParent,CWEventMask,&attrs);
     XStoreName(p.display,p.window,config.title.c_str());
     p.wm_delete=XInternAtom(p.display,"WM_DELETE_WINDOW",False); XSetWMProtocols(p.display,p.window,&p.wm_delete,1);
     XMapWindow(p.display,p.window); XFlush(p.display);
+    Bool detectable=False;
+    XkbSetDetectableAutoRepeat(p.display,True,&detectable);
     p.renderer=create_gl_renderer();
     if(!p.renderer->initialize(p.display,p.window,p.width,p.height)){ std::cerr<<"OpenGL renderer initialization failed.\n"; return 3; }
     if(config.fullscreen) p.send_fullscreen(true);
@@ -395,13 +450,40 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
     int lastx=0,lasty=0;
     while(!p.quit){
         p.input.left_pressed=p.input.middle_pressed=p.input.right_pressed=false;
-        p.input.escape_pressed=p.input.key_n_pressed=p.input.key_m_pressed=p.input.delete_pressed=false;
+        p.input.escape_pressed=p.input.key_n_pressed=p.input.key_m_pressed=p.input.key_v_pressed=p.input.delete_pressed=false;
+        p.input.backspace_pressed=p.input.enter_pressed=false;
+        p.input.text_input.clear();
         p.input.wheel=0; p.input.mouse_dx=0; p.input.mouse_dy=0;
         while(XPending(p.display)){
             XEvent e{}; XNextEvent(p.display,&e);
             if(e.type==ClientMessage && (Atom)e.xclient.data.l[0]==p.wm_delete) p.quit=true;
+            else if(e.type==FocusIn){
+                p.window_focused=true;
+                if(p.relative_mouse_mode) p.apply_relative_mouse_capture();
+            }
+            else if(e.type==FocusOut){
+                p.window_focused=false;
+                p.clear_held_input();
+                // Relative mode stays requested so FPV resumes naturally when
+                // the user returns, but the OS pointer is immediately released.
+                p.apply_relative_mouse_capture();
+            }
             else if(e.type==ConfigureNotify){ p.width=e.xconfigure.width; p.height=e.xconfigure.height; p.renderer->resize(p.width,p.height); }
-            else if(e.type==MotionNotify){ p.input.mouse_x=e.xmotion.x; p.input.mouse_y=e.xmotion.y; p.input.mouse_dx += e.xmotion.x-lastx; p.input.mouse_dy += e.xmotion.y-lasty; lastx=e.xmotion.x; lasty=e.xmotion.y; }
+            else if(e.type==MotionNotify){
+                if(p.relative_mouse_mode && p.window_focused){
+                    const int cx=std::max(1,p.width)/2, cy=std::max(1,p.height)/2;
+                    const int dx=e.xmotion.x-cx, dy=e.xmotion.y-cy;
+                    if(dx!=0 || dy!=0){
+                        p.input.mouse_dx += dx; p.input.mouse_dy += dy;
+                        XWarpPointer(p.display,None,p.window,0,0,0,0,cx,cy);
+                    }
+                    p.input.mouse_x=cx; p.input.mouse_y=cy; lastx=cx; lasty=cy;
+                }else{
+                    p.input.mouse_x=e.xmotion.x; p.input.mouse_y=e.xmotion.y;
+                    p.input.mouse_dx += e.xmotion.x-lastx; p.input.mouse_dy += e.xmotion.y-lasty;
+                    lastx=e.xmotion.x; lasty=e.xmotion.y;
+                }
+            }
             else if(e.type==ButtonPress){
                 if(e.xbutton.button==1){ p.input.left_down=true; p.input.left_pressed=true; }
                 if(e.xbutton.button==2){ p.input.middle_down=true; p.input.middle_pressed=true; }
@@ -410,11 +492,36 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
                 if(e.xbutton.button==5) p.input.wheel -= 1.0f;
             } else if(e.type==ButtonRelease){ if(e.xbutton.button==1)p.input.left_down=false; if(e.xbutton.button==2)p.input.middle_down=false; if(e.xbutton.button==3)p.input.right_down=false; }
             else if(e.type==KeyPress){
-                KeySym k=XLookupKeysym(&e.xkey,0);
+                KeySym k=NoSymbol;
+                char text[64]{};
+                const int text_len=XLookupString(&e.xkey,text,(int)sizeof(text),&k,nullptr);
                 if(k==XK_Escape) p.input.escape_pressed=true;
+                else if(k==XK_BackSpace) p.input.backspace_pressed=true;
+                else if(k==XK_Return || k==XK_KP_Enter) p.input.enter_pressed=true;
                 else if(k==XK_n || k==XK_N) p.input.key_n_pressed=true;
                 else if(k==XK_m || k==XK_M) p.input.key_m_pressed=true;
+                else if(k==XK_v || k==XK_V){ if(!p.input.key_v_down) p.input.key_v_pressed=true; p.input.key_v_down=true; }
+                else if(k==XK_w || k==XK_W) p.input.key_w_down=true;
+                else if(k==XK_a || k==XK_A) p.input.key_a_down=true;
+                else if(k==XK_s || k==XK_S) p.input.key_s_down=true;
+                else if(k==XK_d || k==XK_D) p.input.key_d_down=true;
+                else if(k==XK_Shift_L || k==XK_Shift_R) p.input.key_shift_down=true;
                 else if(k==XK_Delete) p.input.delete_pressed=true;
+
+                if(!(e.xkey.state&(ControlMask|Mod1Mask)) && text_len>0){
+                    for(int i=0;i<text_len;++i){
+                        const unsigned char ch=(unsigned char)text[i];
+                        if(ch>=32 && ch!=127) p.input.text_input.push_back((char)ch);
+                    }
+                }
+            } else if(e.type==KeyRelease){
+                KeySym k=XLookupKeysym(&e.xkey,0);
+                if(k==XK_v || k==XK_V) p.input.key_v_down=false;
+                else if(k==XK_w || k==XK_W) p.input.key_w_down=false;
+                else if(k==XK_a || k==XK_A) p.input.key_a_down=false;
+                else if(k==XK_s || k==XK_S) p.input.key_s_down=false;
+                else if(k==XK_d || k==XK_D) p.input.key_d_down=false;
+                else if(k==XK_Shift_L || k==XK_Shift_R) p.input.key_shift_down=false;
             }
         }
         auto now=std::chrono::steady_clock::now(); float dt=std::chrono::duration<float>(now-prev).count(); prev=now; if(dt>0.1f)dt=0.1f;
@@ -432,4 +539,6 @@ DisplayMode Application::current_display_mode() const { return impl_?impl_->curr
 bool Application::set_display_mode(int width,int height){ return impl_?impl_->set_mode(width,height):false; }
 void Application::set_cursor_visible(bool visible){ if(impl_) impl_->set_cursor_visible(visible); }
 bool Application::cursor_visible() const { return impl_?impl_->cursor_is_visible:true; }
+void Application::set_relative_mouse_mode(bool enabled){ if(impl_) impl_->set_relative_mouse_mode(enabled); }
+bool Application::relative_mouse_mode() const { return impl_?impl_->relative_mouse_mode:false; }
 }

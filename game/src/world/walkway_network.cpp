@@ -1,4 +1,5 @@
 #include "game/world/walkway_network.hpp"
+#include "game/world/geometry_standards.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/util/world_math.hpp"
 #include <algorithm>
@@ -11,17 +12,17 @@ using namespace eng;
 using namespace world_math;
 namespace {
 constexpr float PI=3.14159265358979323846f;
-constexpr float HALF_WIDTH=0.78f;
-constexpr float DECK_Y=0.20f;
-constexpr float CLEARANCE=0.55f;
-constexpr float CORRIDOR_HALF_WIDTH=1.08f;
+constexpr float HALF_WIDTH=geometry::kWalkwayHalfWidth;
+constexpr float DECK_Y=geometry::kWalkwayDeckY;
+constexpr float CLEARANCE=geometry::kWalkwayStructureClearance;
+constexpr float CORRIDOR_HALF_WIDTH=geometry::kCorridorHalfWidth;
 constexpr float CORRIDOR_OCCUPANCY=HALF_WIDTH+CORRIDOR_HALF_WIDTH+0.18f;
 constexpr float CORRIDOR_CROSS_MIN_SIN=0.42f;
 constexpr float CORRIDOR_CROSS_KEEP_CLEAR=2.55f;
 constexpr float SUPPLY_OCCUPANCY=HALF_WIDTH+0.34f+0.18f;
 constexpr float SUPPLY_CROSS_MIN_SIN=0.24f;
-constexpr float BRIDGE_RISE=0.92f;
-constexpr float BRIDGE_HALF_SPAN=3.00f;
+constexpr float BRIDGE_RISE=geometry::kWalkwayBridgeRise;
+constexpr float BRIDGE_HALF_SPAN=geometry::kWalkwayBridgeHalfSpan;
 
 Vec3 flat(Vec3 v){ v.y=0.0f; return v; }
 Vec3 flat_normal(Vec3 v){ v=flat(v); const float l=length(v); return l>0.0001f?v*(1.0f/l):Vec3{1,0,0}; }
@@ -69,7 +70,7 @@ bool door_clear(const CorridorDoor& door,const std::vector<WalkwayConnection>& e
     for(const auto& c:existing){
         for(const WalkwayEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
             if(ep->kind!=WalkwayEndpointKind::Habitat) continue;
-            if(dist_xz(ep->door.position,door.position)<2.35f) return false;
+            if(dist_xz(ep->door.position,door.position)<geometry::kEntranceMinSpacing*0.82f) return false;
         }
     }
     return true;
@@ -102,7 +103,7 @@ std::optional<WalkwayEndpoint> from_corridor_endpoint(const CorridorEndpoint& ep
     // needs a new exterior access opening. Store the surface-to-adapter span in
     // the door fields so the walkway mesh can draw that generated entrance.
     if(ep.surface_matched_junction){
-        constexpr float CORRIDOR_HALF_WIDTH=1.08f;
+        constexpr float CORRIDOR_HALF_WIDTH=geometry::kCorridorHalfWidth;
         out.generated_access=true;
         out.door.generated=true;
         out.door.normal=out.normal;
@@ -425,7 +426,7 @@ bool close_to_corridor_attachment(const WalkwayEndpoint& endpoint,std::size_t co
 
 bool corridor_access_spacing_clear(std::size_t corridor_index,Vec3 entrance_a,Vec3 entrance_b,
                                    const std::vector<WalkwayConnection>& existing){
-    constexpr float spacing=2.35f;
+    constexpr float spacing=geometry::kEntranceMinSpacing*0.82f;
     for(const auto& connection:existing){
         for(const WalkwayEndpoint* endpoint:{&connection.endpoint_a,&connection.endpoint_b}){
             if(endpoint->kind!=WalkwayEndpointKind::Corridor || endpoint->index!=corridor_index) continue;
@@ -718,7 +719,7 @@ float merge_radius_for_arms(const std::vector<Vec3>& arms){
 void append_generated_entrance(Builder& b,const CorridorDoor& door){
     if(!door.generated) return;
     const Vec3 n=flat_normal(door.normal),side=side_of(n);
-    constexpr float half=1.18f;
+    constexpr float half=geometry::kGeneratedEntranceHalfWidth;
     std::vector<Vec3> outer;
     if(!door.wall_profile.empty()){
         outer.reserve(door.wall_profile.size());
@@ -737,20 +738,20 @@ void append_generated_entrance(Builder& b,const CorridorDoor& door){
     }
     const Vec3 base{door.position.x,0.0f,door.position.z};
     b.line(base-side*half,base+side*half);
-    b.line(base-side*half,base-side*half+Vec3{0,2.65f,0});
-    b.line(base+side*half,base+side*half+Vec3{0,2.65f,0});
-    b.line(base-side*half+Vec3{0,2.65f,0},base+side*half+Vec3{0,2.65f,0});
+    b.line(base-side*half,base-side*half+Vec3{0,geometry::kGeneratedEntranceHeight,0});
+    b.line(base+side*half,base+side*half+Vec3{0,geometry::kGeneratedEntranceHeight,0});
+    b.line(base-side*half+Vec3{0,geometry::kGeneratedEntranceHeight,0},base+side*half+Vec3{0,geometry::kGeneratedEntranceHeight,0});
 }
 
 void append_resource_access(Builder& b,const WalkwayEndpoint& ep){
     if(ep.kind!=WalkwayEndpointKind::Resource || !ep.generated_access || ep.landing_pad) return;
     const Vec3 n=flat_normal(ep.normal),side=side_of(n),base=ep.position+Vec3{0,DECK_Y,0};
-    constexpr float half=0.92f;
+    constexpr float half=geometry::kWalkwayHalfWidth;
     // Open exterior access gate: clearly a crew access point, intentionally no
     // door leaf / pressure shell because walkways never provide atmosphere.
-    b.line(base-side*half,base-side*half+Vec3{0,1.35f,0});
-    b.line(base+side*half,base+side*half+Vec3{0,1.35f,0});
-    b.line(base-side*half+Vec3{0,1.35f,0},base+side*half+Vec3{0,1.35f,0});
+    b.line(base-side*half,base-side*half+Vec3{0,geometry::kDoorClearHeight,0});
+    b.line(base+side*half,base+side*half+Vec3{0,geometry::kDoorClearHeight,0});
+    b.line(base-side*half+Vec3{0,geometry::kDoorClearHeight,0},base+side*half+Vec3{0,geometry::kDoorClearHeight,0});
     b.line(base-side*half,base+side*half);
     b.cylinder(b.mesh.details,base-side*half-n*0.10f,base-side*half+n*0.10f,0.055f,6);
     b.cylinder(b.mesh.details,base+side*half-n*0.10f,base+side*half+n*0.10f,0.055f,6);
@@ -759,7 +760,7 @@ void append_resource_access(Builder& b,const WalkwayEndpoint& ep){
 void append_corridor_access(Builder& b,const WalkwayEndpoint& ep){
     if(ep.kind!=WalkwayEndpointKind::Corridor || !ep.generated_access || !ep.door.generated) return;
     const Vec3 n=flat_normal(ep.normal),side=side_of(n);
-    constexpr float half=0.82f;
+    constexpr float half=geometry::kDoorClearWidth*0.58f;
     const Vec3 inner=ep.door.wall_position+Vec3{0,DECK_Y,0};
     const Vec3 outer=ep.position+Vec3{0,DECK_Y,0};
     const Vec3 s=side*half;
@@ -771,7 +772,7 @@ void append_corridor_access(Builder& b,const WalkwayEndpoint& ep){
     // Generated non-pressurized access frame at the corridor shell. The actual
     // corridor remains the pressurized interior; this frame marks the new door
     // location that the walkway is allowed to use.
-    constexpr float h=2.35f;
+    constexpr float h=geometry::kWalkwayAccessHeight;
     b.line(inner-s,inner-s+Vec3{0,h,0});
     b.line(inner+s,inner+s+Vec3{0,h,0});
     b.line(inner-s+Vec3{0,h,0},inner+s+Vec3{0,h,0});
@@ -783,7 +784,7 @@ void append_corridor_crossing_access(Builder& b,const WalkwayCorridorCrossing& c
     // the walkway clearly enters and exits through deliberate openings.
     const Vec3 wt=flat_normal(crossing.walkway_tangent);
     constexpr float half=0.84f;
-    constexpr float height=2.35f;
+    constexpr float height=geometry::kWalkwayAccessHeight;
     for(int side_index=0;side_index<2;++side_index){
         const Vec3 position=side_index==0?crossing.entrance_a:crossing.entrance_b;
         const Vec3 outward=side_index==0?wt*-1.0f:wt;

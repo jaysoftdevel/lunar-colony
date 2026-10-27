@@ -1,6 +1,17 @@
 #pragma once
 
 namespace game {
+struct ColonyStatusState {
+    int day{1};
+    float hour{8.0f};
+    int power_current{72};
+    int power_capacity{100};
+    int water_current{840};
+    int water_capacity{1000};
+    int crew_current{6};
+    int crew_capacity{8};
+};
+
 class ColonyStatus {
 public:
     void reset();
@@ -14,6 +25,8 @@ public:
     int water_capacity() const { return water_capacity_; }
     int crew_current() const { return crew_current_; }
     int crew_capacity() const { return crew_capacity_; }
+    ColonyStatusState state() const;
+    void restore(const ColonyStatusState& state);
 private:
     int day_=1;
     float hour_=8.0f;

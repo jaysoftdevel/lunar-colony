@@ -7,7 +7,7 @@
 
 namespace game::corridor_detail {
 namespace {
-constexpr float FAN_ZONE=10.5f;
+constexpr float FAN_ZONE=48.0f;
 constexpr float FIRST_BRANCH_SLOT=2.15f;
 constexpr float SAME_SIDE_SPACING=2.65f;
 constexpr float TRUNK_AFTER_LAST_BRANCH=1.55f;
@@ -79,8 +79,10 @@ CorridorEndpoint make_surface_branch(std::size_t root_index,const CorridorConnec
     if(length(side)<0.001f) side={0,0,1};
     if(dot(flatten(other-out.host_position),side)<0.0f) side=side*-1.0f;
     out.tangent=flat_normal(side);
-    constexpr float SURFACE_ADAPTER_RUN=0.42f;
-    out.position=out.host_position+out.tangent*(CORRIDOR_HALF_WIDTH+SURFACE_ADAPTER_RUN);
+    const float center_gap=distance_xz(other,out.host_position);
+    const float free_gap=std::max(0.0f,center_gap-CORRIDOR_HALF_WIDTH);
+    const float surface_adapter_run=std::clamp(free_gap*0.45f,0.08f,0.42f);
+    out.position=out.host_position+out.tangent*(CORRIDOR_HALF_WIDTH+surface_adapter_run);
     out.position.y=out.host_position.y;
     out.surface_matched_junction=true;
     return out;
@@ -113,14 +115,56 @@ float segment_distance_approx(Vec3 a0,Vec3 a1,Vec3 b0,Vec3 b1){
 
 bool paths_conflict(const std::vector<Vec3>& a,const std::vector<Vec3>& b,Vec3 allowed_junction){
     if(a.size()<2 || b.size()<2) return false;
+    std::vector<Vec3> crossings;
+    for(std::size_t i=0;i+1<a.size();++i) for(std::size_t j=0;j+1<b.size();++j){
+        Vec3 hit{};
+        if(mergeable_corridor_crossing(a[i],a[i+1],b[j],b[j+1],hit)){
+            bool duplicate=false;
+            for(Vec3 p:crossings) if(distance_xz(p,hit)<0.25f){ duplicate=true; break; }
+            if(!duplicate) crossings.push_back(hit);
+        }
+    }
+    constexpr float AUTO_ZONE=CORRIDOR_HALF_WIDTH*1.75f;
     for(std::size_t i=0;i+1<a.size();++i){
         for(std::size_t j=0;j+1<b.size();++j){
             const Vec3 amid=(a[i]+a[i+1])*0.5f;
             const Vec3 bmid=(b[j]+b[j+1])*0.5f;
-            // The pressure tubes are expected to touch in the immediate
-            // shared-junction region. Everywhere else keep full-width clearance.
             if(distance_xz(amid,allowed_junction)<1.55f && distance_xz(bmid,allowed_junction)<1.55f) continue;
-            if(segment_distance_approx(a[i],a[i+1],b[j],b[j+1])<ROUTE_CLEARANCE_BETWEEN_CORRIDORS) return true;
+            if(segment_distance_approx(a[i],a[i+1],b[j],b[j+1])>=ROUTE_CLEARANCE_BETWEEN_CORRIDORS) continue;
+            bool merged=false;
+            for(Vec3 hit:crossings){
+                if((point_segment_distance_xz(hit,a[i],a[i+1])<0.05f || distance_xz(amid,hit)<AUTO_ZONE) &&
+                   (point_segment_distance_xz(hit,b[j],b[j+1])<0.05f || distance_xz(bmid,hit)<AUTO_ZONE)){
+                    merged=true; break;
+                }
+            }
+            if(!merged) return true;
+        }
+    }
+    return false;
+}
+
+std::optional<Vec3> shared_junction(const std::vector<CorridorConnection>& connections,std::size_t a,std::size_t b){
+    if(a>=connections.size() || b>=connections.size()) return std::nullopt;
+    for(const CorridorEndpoint* ep:{&connections[a].endpoint_a,&connections[a].endpoint_b}){
+        if(ep->kind==CorridorEndpointKind::Corridor && ep->index==b)
+            return ep->surface_matched_junction?ep->host_position:ep->position;
+    }
+    for(const CorridorEndpoint* ep:{&connections[b].endpoint_a,&connections[b].endpoint_b}){
+        if(ep->kind==CorridorEndpointKind::Corridor && ep->index==a)
+            return ep->surface_matched_junction?ep->host_position:ep->position;
+    }
+    return std::nullopt;
+}
+
+bool network_has_conflicts(const std::vector<CorridorConnection>& connections){
+    constexpr Vec3 FAR_AWAY{1000000.0f,0.0f,1000000.0f};
+    for(std::size_t a=0;a<connections.size();++a){
+        if(connections[a].path.size()<2) continue;
+        for(std::size_t b=a+1;b<connections.size();++b){
+            if(connections[b].path.size()<2) continue;
+            const auto junction=shared_junction(connections,a,b);
+            if(paths_conflict(connections[a].path,connections[b].path,junction.value_or(FAR_AWAY))) return true;
         }
     }
     return false;
@@ -162,7 +206,7 @@ void optimize_group(std::vector<CorridorConnection>& connections,std::size_t roo
     CorridorConnection& root=connections[root_index];
     if(root.path.size()<2) return;
     CorridorEndpoint& entrance=root_from_a?root.endpoint_a:root.endpoint_b;
-    if(entrance.kind!=CorridorEndpointKind::Habitat) return;
+    if(entrance.kind!=CorridorEndpointKind::Habitat && entrance.kind!=CorridorEndpointKind::Resource) return;
 
     const Vec3 entrance_pos=entrance.position;
     Vec3 entrance_dir=flat_normal(entrance.tangent);
@@ -193,7 +237,11 @@ void optimize_group(std::vector<CorridorConnection>& connections,std::size_t roo
         }
     }
     if(members.size()<=1) return;
-    if(members.size()>4) members.resize(4);
+
+    // Rebalancing is allowed to move several already-built legs. Keep a full
+    // topology snapshot so a candidate fan can be rolled back atomically if
+    // the new shared layout would collide with any corridor outside the fan.
+    const auto topology_snapshot=connections;
 
     // Optimize the whole destination set instead of preserving click order.
     // The destination most aligned with the door normal becomes the trunk
@@ -280,7 +328,10 @@ void optimize_group(std::vector<CorridorConnection>& connections,std::size_t roo
         Vec3 side=perp_xz(attach.host_tangent);
         if(m->side<0) side=side*-1.0f;
         attach.tangent=flat_normal(side);
-        attach.position=attach.host_position+attach.tangent*(CORRIDOR_HALF_WIDTH+0.42f);
+        const float center_gap=distance_xz(far.position,attach.host_position);
+        const float free_gap=std::max(0.0f,center_gap-CORRIDOR_HALF_WIDTH);
+        const float adapter_run=std::clamp(free_gap*0.45f,0.08f,0.42f);
+        attach.position=attach.host_position+attach.tangent*(CORRIDOR_HALF_WIDTH+adapter_run);
         branch_attach(c,m->attach_endpoint_a)=attach;
 
         auto path=smooth_route(c.endpoint_a,c.endpoint_b,habitats,library);
@@ -320,6 +371,14 @@ void optimize_group(std::vector<CorridorConnection>& connections,std::size_t roo
         CorridorConnection& c=connections[m->connection];
         c.mesh=build_mesh(c.endpoint_a,c.endpoint_b,c.path,connections);
     }
+
+    // Never trade an old valid topology for a prettier but intersecting fan.
+    // Explicit parent/branch junctions are exempted by network_has_conflicts();
+    // every other pair must retain full pressure-shell clearance.
+    if(network_has_conflicts(connections)){
+        connections=topology_snapshot;
+        return;
+    }
 }
 } // namespace
 
@@ -331,9 +390,11 @@ void optimize_shared_entrance_groups(std::vector<CorridorConnection>& connection
     // common trunk and are therefore optimized as one topology group.
     for(std::size_t i=0;i<connections.size();++i){
         if(connections[i].path.size()<2) continue;
-        if(connections[i].endpoint_a.kind==CorridorEndpointKind::Habitat)
+        if(connections[i].endpoint_a.kind==CorridorEndpointKind::Habitat ||
+           connections[i].endpoint_a.kind==CorridorEndpointKind::Resource)
             optimize_group(connections,i,true,habitats,library);
-        if(i<connections.size() && connections[i].endpoint_b.kind==CorridorEndpointKind::Habitat)
+        if(i<connections.size() && (connections[i].endpoint_b.kind==CorridorEndpointKind::Habitat ||
+                                    connections[i].endpoint_b.kind==CorridorEndpointKind::Resource))
             optimize_group(connections,i,false,habitats,library);
     }
 }

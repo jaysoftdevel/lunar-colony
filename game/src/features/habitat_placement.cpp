@@ -4,6 +4,7 @@
 #include "game/util/world_math.hpp"
 #include "game/util/mesh_wireframe.hpp"
 #include "game/world/world_labels.hpp"
+#include "game/world/geometry_standards.hpp"
 #include "game/version.hpp"
 #include <algorithm>
 #include <cmath>
@@ -41,6 +42,16 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
         const float diameter=std::max(0.20f,pile.radius*2.0f);
         const auto pile_box=footprint(pile.position,0.0f,diameter,diameter);
         if(overlaps(candidate_box,pile_box,0.12f)) return false;
+    }
+    // Structures cannot be placed over an already-built/planned pressure
+    // corridor.  Use the footprint circumradius so rotated long buildings are
+    // conservative rather than leaving a corner cutting through the shell.
+    const float corridor_clearance=0.5f*std::sqrt(candidate.footprint_x*candidate.footprint_x+
+                                                   candidate.footprint_z*candidate.footprint_z)+
+                                   geometry::kCorridorHalfWidth+geometry::kRouteClearance;
+    for(const auto& corridor:corridor_network_.connections()){
+        for(std::size_t i=0;i+1<corridor.path.size();++i)
+            if(point_segment_distance_xz(position,corridor.path[i],corridor.path[i+1])<corridor_clearance) return false;
     }
     return true;
 }

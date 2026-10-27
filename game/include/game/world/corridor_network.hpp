@@ -3,9 +3,11 @@
 #include "game/world/resource_mesh.hpp"
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <vector>
+#include <utility>
 
 namespace game {
 
@@ -72,6 +74,7 @@ struct CorridorConnection {
 class CorridorNetwork {
 public:
     void clear(){ connections_.clear(); }
+    void set_playfield_half_extent(float half_extent){ playfield_half_extent_=std::max(8.0f,half_extent); }
 
     std::optional<CorridorConnection> preview_corridor_link(
         std::size_t corridor_a,
@@ -115,9 +118,11 @@ public:
     void remove_resource(std::size_t resource_index);
     void update_construction(float dt,ResourceManagement& resources,bool allow_negative);
     const std::vector<CorridorConnection>& connections() const { return connections_; }
+    void restore_connections(std::vector<CorridorConnection> connections){ connections_=std::move(connections); }
 
 private:
     std::vector<CorridorConnection> connections_{};
+    float playfield_half_extent_{32.0f};
 };
 
 } // namespace game

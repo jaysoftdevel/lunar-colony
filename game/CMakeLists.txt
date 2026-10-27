@@ -4,6 +4,7 @@ add_executable(game
 
     src/screens/main_menu.cpp
     src/screens/new_game.cpp
+    src/screens/save_load.cpp
     src/screens/settings.cpp
     src/screens/credits.cpp
 
@@ -27,8 +28,11 @@ add_executable(game
     src/systems/gameplay_controller.cpp
     src/systems/world_selection.cpp
     src/systems/camera_controller.cpp
+    src/systems/first_person_controller.cpp
+    src/systems/first_person_mode.cpp
     src/systems/colony_status.cpp
     src/systems/resource_management.cpp
+    src/systems/save_game.cpp
     src/systems/construction_costs.cpp
     src/systems/construction_system.cpp
 

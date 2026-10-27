@@ -1,5 +1,6 @@
 #include "game/systems/resource_management.hpp"
 #include <algorithm>
+#include <cmath>
 
 namespace game {
 
@@ -138,6 +139,67 @@ const char* material_resource_symbol(MaterialResource resource){
         case MaterialResource::Count: break;
     }
     return "?";
+}
+
+std::int64_t resource_package_capacity_kg(MaterialResource resource){
+    // Testing/logistics multiplier: every portable cargo package now carries
+    // ten times the previous mass while retaining the same standardized box
+    // envelope. FPV carrying and Storage Dome packing both use this value.
+    switch(resource){
+        case MaterialResource::Iron: return 200;
+        case MaterialResource::Copper: return 200;
+        case MaterialResource::Silicon: return 150;
+        case MaterialResource::Plastic: return 120;
+        case MaterialResource::Water: return 200;
+        case MaterialResource::Food: return 120;
+        case MaterialResource::Medical: return 80;
+        case MaterialResource::Count: break;
+    }
+    return 150;
+}
+
+namespace {
+float package_nominal_half_width(MaterialResource resource){
+    switch(resource){
+        case MaterialResource::Iron: return 0.15f;
+        case MaterialResource::Copper: return 0.15f;
+        case MaterialResource::Silicon: return 0.19f;
+        case MaterialResource::Plastic: return 0.24f;
+        case MaterialResource::Water: return 0.18f;
+        case MaterialResource::Food: return 0.23f;
+        case MaterialResource::Medical: return 0.21f;
+        case MaterialResource::Count: break;
+    }
+    return 0.20f;
+}
+float package_nominal_height(MaterialResource resource){
+    switch(resource){
+        case MaterialResource::Iron: return 0.20f;
+        case MaterialResource::Copper: return 0.20f;
+        case MaterialResource::Silicon: return 0.24f;
+        case MaterialResource::Plastic: return 0.34f;
+        case MaterialResource::Water: return 0.36f;
+        case MaterialResource::Food: return 0.32f;
+        case MaterialResource::Medical: return 0.28f;
+        case MaterialResource::Count: break;
+    }
+    return 0.28f;
+}
+float package_fill_scale(MaterialResource resource,std::int64_t amount_kg){
+    const float cap=(float)std::max<std::int64_t>(1,resource_package_capacity_kg(resource));
+    const float fill=std::clamp((float)std::max<std::int64_t>(1,amount_kg)/cap,0.05f,1.0f);
+    // Containers do not collapse to zero size as they empty; scaling by cube
+    // root keeps the volume approximately proportional to contained mass.
+    return std::clamp(std::cbrt(fill),0.68f,1.0f);
+}
+}
+
+float resource_package_half_width(MaterialResource resource,std::int64_t amount_kg){
+    return package_nominal_half_width(resource)*package_fill_scale(resource,amount_kg);
+}
+
+float resource_package_height(MaterialResource resource,std::int64_t amount_kg){
+    return package_nominal_height(resource)*package_fill_scale(resource,amount_kg);
 }
 
 } // namespace game

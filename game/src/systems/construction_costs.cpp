@@ -174,10 +174,10 @@ ConstructionResourcePlan corridor_from_metrics(double length_m,double quarter_tu
     // branches into an existing corridor add a heavier pressure-rated junction fitting.
     const double terminal_collars=2.0;
     ResourceBundle total{
-        kg(m*82.0 + terminal_collars*38.0 + quarter_turns*28.0 + (double)network_junctions*52.0),
+        kg(m*112.0 + terminal_collars*46.0 + quarter_turns*36.0 + (double)network_junctions*66.0),
         kg(m*3.8  + terminal_collars*1.6  + quarter_turns*1.2  + (double)network_junctions*2.2),
         kg(m*0.8  + terminal_collars*0.5  + quarter_turns*0.5  + (double)network_junctions*1.0),
-        kg(m*15.5 + terminal_collars*5.5  + quarter_turns*6.0  + (double)network_junctions*8.0)
+        kg(m*19.0 + terminal_collars*6.5  + quarter_turns*7.0  + (double)network_junctions*10.0)
     };
     return distribute(kCorridorConstructionSteps,total,corridor_iron,corridor_copper,corridor_silicon,corridor_plastic);
 }
@@ -219,8 +219,8 @@ ConstructionResourcePlan supply_channel(const std::vector<eng::Vec3>& path,std::
 
 ConstructionResourcePlan walkway(float length_m){
     const double m=std::max(0.5,(double)length_m);
-    // 1.56 m wide open deck with beams/grating; no railing mass is included.
-    const ResourceBundle total{kg(m*36.0+24.0),kg(m*1.2+5.0),kg(m*0.2+2.0),kg(m*1.5+5.0)};
+    // 1.90 m wide open deck with beams/grating; no railing mass is included.
+    const ResourceBundle total{kg(m*44.0+28.0),kg(m*1.4+5.0),kg(m*0.22+2.0),kg(m*1.8+5.0)};
     return distribute(kWalkwayConstructionSteps,total,walkway_iron,walkway_copper,walkway_silicon,walkway_plastic);
 }
 

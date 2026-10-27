@@ -38,14 +38,44 @@ inline const char* storage_dome_size_name(StorageDomeSize size){
     }
 }
 
-inline constexpr std::int64_t storage_dome_capacity_kg(StorageDomeSize size){
+inline constexpr float storage_dome_diameter_m(StorageDomeSize size){
     switch(size){
-        case StorageDomeSize::Small: return 25000;
-        case StorageDomeSize::Mid: return 100000;
-        case StorageDomeSize::Big: return 250000;
-        case StorageDomeSize::Huge: return 600000;
-        default: return 25000;
+        case StorageDomeSize::Small: return 9.0f;
+        case StorageDomeSize::Mid: return 13.0f;
+        case StorageDomeSize::Big: return 18.0f;
+        case StorageDomeSize::Huge: return 24.0f;
+        default: return 9.0f;
     }
+}
+
+inline constexpr float storage_dome_height_m(StorageDomeSize size){
+    switch(size){
+        case StorageDomeSize::Small: return 5.3f;
+        case StorageDomeSize::Mid: return 7.0f;
+        case StorageDomeSize::Big: return 9.3f;
+        case StorageDomeSize::Huge: return 12.0f;
+        default: return 5.3f;
+    }
+}
+
+// Storage uses a conservative cylindrical volume completely inside the curved
+// pressure hull. This keeps even upper pallet layers away from the dome skin.
+inline constexpr float storage_dome_storage_radius_m(StorageDomeSize size){
+    return storage_dome_diameter_m(size)*0.30f;
+}
+inline constexpr float storage_dome_storage_height_m(StorageDomeSize size){
+    return storage_dome_height_m(size)*0.43f;
+}
+
+inline constexpr std::int64_t storage_dome_capacity_kg(StorageDomeSize size){
+    // Capacity follows the usable interior volume instead of arbitrary tier
+    // constants. 600 kg/m^3 represents mixed packaged cargo including aisles,
+    // pallets and handling clearance. Round down to whole metric tonnes.
+    constexpr float pi=3.14159265358979323846f;
+    const float r=storage_dome_storage_radius_m(size);
+    const float h=storage_dome_storage_height_m(size);
+    const float kg=pi*r*r*h*600.0f;
+    return static_cast<std::int64_t>(kg/1000.0f)*1000;
 }
 
 struct ResourceMesh {

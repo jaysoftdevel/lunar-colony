@@ -44,13 +44,21 @@ void GameApp::render_new_game(Renderer& r){
     if(ui::button(r,ui_input_,{right-action_w,action_y,action_w,action_h},"CREATE",theme_)){
         playfield_.rebuild(playfield_size_);
         camera_.reset(playfield_size_);
+        first_person_mode_=FirstPersonMode::Off;
+        app_.set_relative_mouse_mode(false);
         status_.reset();
         resources_.reset();
         placed_habitats_.clear();
         placed_resources_.clear();
         ground_resource_piles_.clear();
+        first_person_carried_resource_.reset();
+        first_person_hover_ground_resource_=-1;
+        first_person_hover_storage_resource_=-1;
+        first_person_hover_storage_box_=-1;
         corridor_network_.clear();
+        corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
         utility_network_.clear();
+        utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
         walkway_network_.clear();
         build_catalog_.clear_selection();
         placement_rotation_degrees_=0.0f;
@@ -58,6 +66,8 @@ void GameApp::render_new_game(Renderer& r){
         placement_storage_size_=StorageDomeSize::Small;
         habitat_view_mode_=HabitatViewMode::Default;
         clear_world_selection();
+        selection_marquee_active_=false;
+        selection_marquee_dragged_=false;
         corridor_link_source_=-1;
         corridor_build_start_.reset();
         utility_build_start_.reset();
