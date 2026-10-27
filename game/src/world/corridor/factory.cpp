@@ -23,7 +23,7 @@ float segment_distance_approx(Vec3 a0,Vec3 a1,Vec3 b0,Vec3 b1){
 
 bool near_allowed_junction(Vec3 route_mid,Vec3 host_mid,std::size_t host_index,
                            const CorridorEndpoint& a,const CorridorEndpoint& b){
-    constexpr float JUNCTION_ZONE=2.75f;
+    constexpr float JUNCTION_ZONE=CORRIDOR_HALF_WIDTH*2.0f+0.32f;
     for(const CorridorEndpoint* ep:{&a,&b}){
         if(ep->kind!=CorridorEndpointKind::Corridor || ep->index!=host_index) continue;
         const Vec3 junction=ep->surface_matched_junction?ep->host_position:ep->position;
@@ -60,14 +60,18 @@ bool route_overlaps_corridor(const std::vector<Vec3>& path,
             const Vec3 route_mid=(path[i]+path[i+1])*0.5f;
             for(std::size_t j=0;j+1<host.path.size();++j){
                 if(segment_distance_approx(path[i],path[i+1],host.path[j],host.path[j+1])>=CENTERLINE_CLEARANCE) continue;
-                const Vec3 host_mid=(host.path[j]+host.path[j+1])*0.5f;
-                if(near_allowed_junction(route_mid,host_mid,ci,a,b)) continue;
+                // Use the host point nearest this route sample rather than the
+                // midpoint of the whole host segment. Host paths may contain a
+                // long straight segment; using its midpoint makes an explicit
+                // branch junction fail everywhere except near that midpoint.
+                const Vec3 host_near=closest_point_segment_xz(route_mid,host.path[j],host.path[j+1]);
+                if(near_allowed_junction(route_mid,host_near,ci,a,b)) continue;
                 bool in_auto_junction=false;
                 for(const Vec3 hit:automatic_junctions){
                     if(point_segment_distance_xz(hit,path[i],path[i+1])<0.05f ||
                        distance_xz(route_mid,hit)<AUTO_JUNCTION_ZONE){
                         if(point_segment_distance_xz(hit,host.path[j],host.path[j+1])<0.05f ||
-                           distance_xz(host_mid,hit)<AUTO_JUNCTION_ZONE){
+                           distance_xz(host_near,hit)<AUTO_JUNCTION_ZONE){
                             in_auto_junction=true; break;
                         }
                     }

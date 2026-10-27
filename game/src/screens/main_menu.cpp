@@ -18,6 +18,7 @@ using namespace world_labels;
 void GameApp::render_menu(Renderer& r){
     ui::title(r,{32,26},game_session_active_?"GAME MENU":"GAME",theme_);
     ui::label(r,{34,67},game_session_active_?"CURRENT SESSION PAUSED":"C++ PLAYFIELD PROTOTYPE",1.0f,theme_,true);
+    ui::label(r,{ui_width(r)-190.0f,31.0f},"VERSION " + std::string(version::current),0.62f,theme_,true);
 
     constexpr float button_w=300.0f;
     constexpr float button_h=42.0f;

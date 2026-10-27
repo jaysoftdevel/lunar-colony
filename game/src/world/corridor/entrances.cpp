@@ -334,7 +334,20 @@ CorridorEndpoint resolve_open_or_corridor(const CorridorBuildAnchor& anchor,Vec3
         out.host_tangent=nearest_path_tangent(host.path,out.host_position);
         Vec3 side=perp_xz(out.host_tangent);
         if(length(side)<0.001f) side={0,0,1};
-        if(dot(flatten(other-out.host_position),side)<0.0f) side=side*-1.0f;
+
+        // Preserve the side the player actually pointed at.  The corridor
+        // anchor itself is snapped to the host centerline for a clean junction,
+        // but corridor_anchor() also stores the unsnapped mouse hit.  Use that
+        // lateral offset first so moving the cursor across the corridor flips
+        // the intersection to the opposite side.  Programmatic anchors and a
+        // pointer exactly on the centerline retain the old destination-based
+        // fallback, which keeps automatic routing deterministic.
+        float side_choice=0.0f;
+        if(anchor.has_cursor_position)
+            side_choice=dot(flatten(anchor.cursor_position-out.host_position),side);
+        if(std::abs(side_choice)<0.02f)
+            side_choice=dot(flatten(other-out.host_position),side);
+        if(side_choice<0.0f) side=side*-1.0f;
         out.tangent=flat_normal(side);
 
         // Keep the branch ring outside the host pressure shell, but adapt the

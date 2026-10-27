@@ -530,7 +530,11 @@ Vec3 CorridorNetwork::nearest_point_on_corridor(std::size_t corridor_index,Vec3 
 }
 
 CorridorBuildAnchor CorridorNetwork::corridor_anchor(std::size_t corridor_index,Vec3 near_point) const {
-    return {CorridorEndpointKind::Corridor,corridor_index,nearest_point_on_corridor(corridor_index,near_point)};
+    CorridorBuildAnchor anchor{CorridorEndpointKind::Corridor,corridor_index,nearest_point_on_corridor(corridor_index,near_point)};
+    anchor.cursor_position=near_point;
+    anchor.cursor_position.y=0.0f;
+    anchor.has_cursor_position=true;
+    return anchor;
 }
 
 std::size_t CorridorNetwork::habitat_connection_count(std::size_t habitat_index) const {

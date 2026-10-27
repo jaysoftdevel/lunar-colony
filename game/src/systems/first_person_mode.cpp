@@ -46,6 +46,12 @@ bool inside_elliptical_footprint(Vec3 p,Vec3 center,float rotation,float width,f
     return nx*nx+nz*nz<=1.0f;
 }
 
+bool near_rotated_footprint(Vec3 p,Vec3 center,float rotation,float width,float depth,float margin){
+    const Vec3 local=rotate_y(p-center,-rotation);
+    return std::abs(local.x)<=width*0.5f+margin &&
+           std::abs(local.z)<=depth*0.5f+margin;
+}
+
 bool projected_mesh_contains_body(const std::vector<Vec3>& triangles,Vec3 local,float radius);
 
 bool habitat_uses_elliptical_hull(HabitatKind kind){
@@ -108,19 +114,57 @@ bool movement_crosses_any_door(Vec3 from,Vec3 to,const std::vector<CorridorDoor>
     return false;
 }
 
-bool point_in_doorway_clearance(Vec3 p,const CorridorDoor& door,float body_radius){
-    Vec3 n=door.normal; n.y=0.0f; n=normalize(n);
-    if(length(n)<0.001f) return false;
-    const Vec3 side{-n.z,0.0f,n.x};
-    const Vec3 rel=p-door.wall_position;
-    const float longitudinal=std::abs(dot(Vec3{rel.x,0.0f,rel.z},n));
+bool point_in_portal_clearance(Vec3 p,Vec3 center,Vec3 normal,float half_width,float body_radius){
+    normal.y=0.0f;
+    normal=normalize(normal);
+    if(length(normal)<0.001f) return false;
+    const Vec3 side{-normal.z,0.0f,normal.x};
+    const Vec3 rel=p-center;
+    const float longitudinal=std::abs(dot(Vec3{rel.x,0.0f,rel.z},normal));
     const float lateral=std::abs(dot(Vec3{rel.x,0.0f,rel.z},side));
-    const float usable=std::max(0.16f,geometry::kDoorClearWidth*0.5f-body_radius*0.45f);
-    return longitudinal<=body_radius+0.26f && lateral<=usable;
+    const float usable=std::max(0.16f,half_width-body_radius*0.45f);
+    return longitudinal<=body_radius+0.62f && lateral<=usable;
+}
+
+bool point_in_doorway_clearance(Vec3 p,const CorridorDoor& door,float body_radius){
+    return point_in_portal_clearance(p,door.wall_position,door.normal,
+                                     geometry::kDoorClearWidth*0.5f,body_radius);
 }
 
 bool point_in_any_doorway_clearance(Vec3 p,const std::vector<CorridorDoor>& doors,float body_radius){
     for(const auto& door:doors) if(point_in_doorway_clearance(p,door,body_radius)) return true;
+    return false;
+}
+
+bool movement_uses_any_doorway(Vec3 from,Vec3 to,const std::vector<CorridorDoor>& doors,float body_radius){
+    if(movement_crosses_any_door(from,to,doors,body_radius)) return true;
+    // Authored hatch anchors are not always numerically coplanar with the
+    // projected outer shell (the visible frame/vestibule can sit a few
+    // decimetres outside it). If the structure occupancy changes while the
+    // body is already inside that narrow doorway clearance, it is still a
+    // legitimate hatch crossing rather than a wall escape.
+    return point_in_any_doorway_clearance(from,doors,body_radius) ||
+           point_in_any_doorway_clearance(to,doors,body_radius);
+}
+
+// Sample the whole FPV body footprint against a projected pressure/solid
+// volume.  Center-only tests let the avatar penetrate a wall by almost one
+// body radius while approaching it from outside; sampling two body rings makes
+// the same mesh boundary authoritative from both sides.
+template<class Contains>
+bool body_overlaps_region(Vec3 p,float radius,const Contains& contains){
+    if(contains(p)) return true;
+    if(radius<=0.015f) return false;
+    constexpr int samples=24;
+    for(float scale:{0.50f,1.0f}){
+        for(int i=0;i<samples;++i){
+            const float a=2.0f*3.14159265358979323846f*(float)i/(float)samples;
+            Vec3 q=p;
+            q.x+=std::cos(a)*radius*scale;
+            q.z+=std::sin(a)*radius*scale;
+            if(contains(q)) return true;
+        }
+    }
     return false;
 }
 
@@ -345,25 +389,57 @@ float GameApp::first_person_door_open_fraction(Vec3 door_position) const {
 }
 
 bool GameApp::first_person_spawn_valid(Vec3 p) const {
-    const float half=(float)playfield_.size()*0.5f-0.35f;
+    const float radius=first_person_.body_radius();
+    const float half=(float)playfield_.size()*0.5f-radius;
     if(p.x<-half || p.x>half || p.z<-half || p.z>half) return false;
+
+    // Solid, non-enterable structures are collision volumes from the outside.
+    // Test the whole body footprint rather than only the avatar center.
     for(const auto& item:placed_resources_){
+        if(!item.construction.complete() || item.kind==ResourceKind::StorageDome) continue;
         const auto& mesh=resource_models_.mesh(item);
-        if(item.construction.complete() && item.kind==ResourceKind::StorageDome){
-            if(inside_storage_hull(p,item,mesh,0.0f) &&
-               !inside_storage_hull(p,item,mesh,first_person_.body_radius())) return false;
-            continue;
-        }
-        if(inside_solid_resource_hull(p,item,mesh,first_person_.body_radius()*0.40f)) return false;
+        if(!near_rotated_footprint(p,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius)) continue;
+        if(body_overlaps_region(p,radius,[&](Vec3 q){
+            return inside_solid_resource_hull(q,item,mesh,0.0f);
+        })) return false;
     }
-    for(const auto& h:placed_habitats_){
+
+    // Enterable pressure structures may contain the spawn point, but the body
+    // must either fit completely inside the hull or straddle it exactly at a
+    // physical doorway. The same rule blocks exterior spawn points that clip
+    // through the shell.
+    for(std::size_t i=0;i<placed_habitats_.size();++i){
+        const auto& h=placed_habitats_[i];
+        if(!h.construction.complete()) continue;
         const auto& mesh=habitat_models_.mesh(h);
-        if(h.construction.complete()){
-            if(inside_habitat_hull(p,h,mesh,0.0f) &&
-               !inside_habitat_hull(p,h,mesh,first_person_.body_radius())) return false;
-            continue;
+        if(!near_rotated_footprint(p,h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+1.0f)) continue;
+        const auto doors=habitat_doors(i);
+        const bool center_inside=inside_habitat_hull(p,h,mesh,0.0f);
+        const bool doorway=point_in_any_doorway_clearance(p,doors,radius);
+        if(center_inside){
+            if(!inside_habitat_hull(p,h,mesh,radius) && !doorway) return false;
+        }else if(body_overlaps_region(p,radius,[&](Vec3 q){
+            return inside_habitat_hull(q,h,mesh,0.0f);
+        }) && !doorway){
+            return false;
         }
-        if(inside_habitat_hull(p,h,mesh,first_person_.body_radius()*0.40f)) return false;
+    }
+
+    for(std::size_t i=0;i<placed_resources_.size();++i){
+        const auto& item=placed_resources_[i];
+        if(!item.construction.complete() || item.kind!=ResourceKind::StorageDome) continue;
+        const auto& mesh=resource_models_.mesh(item);
+        if(!near_rotated_footprint(p,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+0.8f)) continue;
+        const auto doors=storage_dome_doors(i);
+        const bool center_inside=inside_storage_hull(p,item,mesh,0.0f);
+        const bool doorway=point_in_any_doorway_clearance(p,doors,radius);
+        if(center_inside){
+            if(!inside_storage_hull(p,item,mesh,radius) && !doorway) return false;
+        }else if(body_overlaps_region(p,radius,[&](Vec3 q){
+            return inside_storage_hull(q,item,mesh,0.0f);
+        }) && !doorway){
+            return false;
+        }
     }
     return true;
 }
@@ -415,7 +491,7 @@ float GameApp::first_person_floor_height(Vec3 p) const {
         // floor resolver so FPV can traverse every completed docking adapter.
         for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
             if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
-                const Vec3 q=closest_point_segment_xz(p,ep->position,ep->door.position);
+                const Vec3 q=closest_point_segment_xz(p,ep->position,ep->door.wall_position);
                 const float d=dist_xz_local(p,q);
                 const float sleeve_limit=std::max(0.20f,geometry::kDockSleeveHalfWidth-first_person_.body_radius());
                 if(d<best_corridor && d<=sleeve_limit){
@@ -471,117 +547,195 @@ float GameApp::first_person_floor_height(Vec3 p) const {
 }
 
 bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
-    const float half=(float)playfield_.size()*0.5f-first_person_.body_radius();
+    const float radius=first_person_.body_radius();
+    const float half=(float)playfield_.size()*0.5f-radius;
     if(to.x<-half || to.x>half || to.z<-half || to.z>half) return false;
-    const Vec3 mid=(from+to)*0.5f;
 
-    // Non-enterable machinery remains solid to the full FPV body envelope.
-    for(const auto& item:placed_resources_){
-        if(!item.construction.complete() || item.kind==ResourceKind::StorageDome) continue;
-        const auto& mesh=resource_models_.mesh(item);
-        if(inside_solid_resource_hull(to,item,mesh,first_person_.body_radius()) ||
-           inside_solid_resource_hull(mid,item,mesh,first_person_.body_radius())) return false;
-    }
+    struct CorridorOccupancy {
+        bool inside{false};       // full FPV body fits inside a pressure volume
+        bool overlaps{false};     // FPV body touches/intersects the pressure shell
+    };
 
-    // Habitats are bounded by their actual rounded/domed hulls. A transition
-    // between exterior and interior is legal only at a physical entrance.
-    for(std::size_t i=0;i<placed_habitats_.size();++i){
-        const auto& h=placed_habitats_[i];
-        if(!h.construction.complete()) continue;
-        const auto& mesh=habitat_models_.mesh(h);
-        const bool a_center=inside_habitat_hull(from,h,mesh,0.0f);
-        const bool b_center=inside_habitat_hull(to,h,mesh,0.0f);
-        const bool m_center=inside_habitat_hull(mid,h,mesh,0.0f);
-        const bool b_body=inside_habitat_hull(to,h,mesh,first_person_.body_radius());
-        const auto doors=habitat_doors(i);
-        const bool b_in_doorway=point_in_any_doorway_clearance(to,doors,first_person_.body_radius());
-        if(a_center && b_center && !b_body && !b_in_doorway) return false;
-        if(a_center!=b_center || (!a_center && !b_center && m_center)){
-            if(!movement_crosses_any_door(from,to,doors,first_person_.body_radius())) return false;
-            // The body may temporarily straddle the pressure shell while the
-            // centre passes through the actual door aperture. Once clear of
-            // the frame, full mesh-level body containment is required again.
-            if(b_center && !b_body && !b_in_doorway) return false;
-        }
-    }
-
-    // Storage Domes use their circular pressure hull rather than the square
-    // construction footprint. The body cannot escape the dome wall except via
-    // one of the four docking doors.
-    for(std::size_t i=0;i<placed_resources_.size();++i){
-        const auto& item=placed_resources_[i];
-        if(!item.construction.complete() || item.kind!=ResourceKind::StorageDome) continue;
-        const auto& mesh=resource_models_.mesh(item);
-        const bool a_center=inside_storage_hull(from,item,mesh,0.0f);
-        const bool b_center=inside_storage_hull(to,item,mesh,0.0f);
-        const bool m_center=inside_storage_hull(mid,item,mesh,0.0f);
-        const bool b_body=inside_storage_hull(to,item,mesh,first_person_.body_radius());
-        const auto doors=storage_dome_doors(i);
-        const bool b_in_doorway=point_in_any_doorway_clearance(to,doors,first_person_.body_radius());
-        if(a_center && b_center && !b_body && !b_in_doorway) return false;
-        if(a_center!=b_center || (!a_center && !b_center && m_center)){
-            if(!movement_crosses_any_door(from,to,doors,first_person_.body_radius())) return false;
-            if(b_center && !b_body && !b_in_doorway) return false;
-        }
-    }
-
-    auto corridor_state=[&](Vec3 p,float radius){
+    auto corridor_occupancy=[&](Vec3 p){
+        CorridorOccupancy state;
+        const auto consider=[&](Vec3 a,Vec3 b,float half_width,bool hard_caps=false){
+            float segment_t=0.0f;
+            if(hard_caps){
+                const float dx=b.x-a.x,dz=b.z-a.z;
+                const float den=dx*dx+dz*dz;
+                if(den>0.00001f){
+                    segment_t=((p.x-a.x)*dx+(p.z-a.z)*dz)/den;
+                    // Door planes are real pressure boundaries. Do not let the
+                    // usual rounded segment cap extend the corridor collision
+                    // volume through a structure wall or past an exterior
+                    // air-lock door.
+                    if(segment_t<0.0f || segment_t>1.0f) return;
+                }
+            }
+            const Vec3 q=closest_point_segment_xz(p,a,b);
+            const float d=dist_xz_local(p,q);
+            const float inner=std::max(0.12f,half_width-radius);
+            const float outer=half_width+radius;
+            if(d<=inner) state.inside=true;
+            if(d<=outer) state.overlaps=true;
+        };
         for(const auto& c:corridor_network_.connections()){
             if(!c.construction.complete() || c.path.size()<2) continue;
-            for(std::size_t j=0;j+1<c.path.size();++j){
-                const Vec3 q=closest_point_segment_xz(p,c.path[j],c.path[j+1]);
-                if(dist_xz_local(p,q)<=radius) return true;
-            }
-            // Treat the docking sleeve as part of the walkable corridor volume.
-            // Without this, the FPV left the corridor collision domain before
-            // reaching the structure door and could step sideways through the
-            // invisible side of the vestibule.
+            for(std::size_t j=0;j+1<c.path.size();++j)
+                consider(c.path[j],c.path[j+1],corridor_detail::CORRIDOR_HALF_WIDTH);
+
             for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
                 if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
-                    const Vec3 q=closest_point_segment_xz(p,ep->position,ep->door.position);
-                    const float sleeve_radius=std::max(0.18f,geometry::kDockSleeveHalfWidth-first_person_.body_radius());
-                    if(dist_xz_local(p,q)<=sleeve_radius) return true;
+                    // The complete docking pressure volume extends all the way
+                    // to the structure hull.  For generated entrances
+                    // door.position is the outer vestibule door while
+                    // wall_position is the real pressure-shell contact plane.
+                    // Using only door.position created a non-walkable gap.
+                    consider(ep->position,ep->door.wall_position,geometry::kDockSleeveHalfWidth,true);
                     continue;
                 }
                 if(ep->kind==CorridorEndpointKind::OpenDoor && !ep->suppress_open_door){
                     Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
                     if(length(n)<0.001f) continue;
                     const Vec3 outer=ep->position-n*geometry::kCorridorAirlockLength;
-                    const Vec3 q=closest_point_segment_xz(p,ep->position,outer);
-                    const float airlock_radius=std::max(0.18f,geometry::kCorridorAirlockHalfWidth-first_person_.body_radius());
-                    if(dist_xz_local(p,q)<=airlock_radius) return true;
+                    consider(ep->position,outer,geometry::kCorridorAirlockHalfWidth,true);
+                }
+            }
+        }
+        return state;
+    };
+
+    auto point_in_corridor_portal=[&](Vec3 p){
+        for(const auto& c:corridor_network_.connections()){
+            if(!c.construction.complete()) continue;
+            for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
+                if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
+                    if(point_in_doorway_clearance(p,ep->door,radius)) return true;
+                    continue;
+                }
+                if(ep->kind==CorridorEndpointKind::OpenDoor && !ep->suppress_open_door){
+                    Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
+                    if(length(n)<0.001f) continue;
+                    const Vec3 outer=ep->position-n*geometry::kCorridorAirlockLength;
+                    if(point_in_portal_clearance(p,outer,n,geometry::kDoorClearWidth*0.5f,radius)) return true;
                 }
             }
         }
         return false;
     };
-    const float corridor_center_limit=std::max(0.20f,corridor_detail::CORRIDOR_HALF_WIDTH-first_person_.body_radius());
-    const bool in_corridor_from=corridor_state(from,corridor_center_limit);
-    const bool in_corridor_to=corridor_state(to,corridor_center_limit);
-    const bool in_corridor_mid=corridor_state(mid,corridor_center_limit);
-    if(in_corridor_from!=in_corridor_to || (!in_corridor_from && !in_corridor_to && in_corridor_mid)){
-        bool transition=false;
+
+    auto crosses_corridor_portal=[&](Vec3 a,Vec3 b){
         for(const auto& c:corridor_network_.connections()){
             if(!c.construction.complete()) continue;
             for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
+                if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
+                    if(movement_crosses_doorway(a,b,ep->door,radius)) return true;
+                    continue;
+                }
                 if(ep->kind==CorridorEndpointKind::OpenDoor && !ep->suppress_open_door){
                     Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
-                    if(length(n)>0.001f){
-                        // Exterior transitions happen at the OUTER air-lock
-                        // door.  The corridor endpoint itself is the inner
-                        // pressure door and remains inside the corridor domain.
-                        const Vec3 outer=ep->position-n*geometry::kCorridorAirlockLength;
-                        transition=movement_crosses_portal(from,to,outer,n,
-                                                           geometry::kDoorClearWidth*0.5f,first_person_.body_radius());
-                    }
-                }else if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
-                    transition=movement_crosses_doorway(from,to,ep->door,first_person_.body_radius());
+                    if(length(n)<0.001f) continue;
+                    const Vec3 outer=ep->position-n*geometry::kCorridorAirlockLength;
+                    if(movement_crosses_portal(a,b,outer,n,geometry::kDoorClearWidth*0.5f,radius)) return true;
                 }
-                if(transition) break;
             }
-            if(transition) break;
         }
-        if(!transition) return false;
+        return false;
+    };
+
+    // Validate short samples along every requested movement.  This prevents a
+    // fast diagonal/Shift step from tunnelling through a thin shell and makes
+    // the exact same door rule apply when entering and when leaving.
+    const float move_distance=dist_xz_local(from,to);
+    const int samples=std::clamp((int)std::ceil(move_distance/0.06f),1,12);
+    Vec3 previous=from;
+    CorridorOccupancy previous_corridor=corridor_occupancy(previous);
+
+    for(int sample=1;sample<=samples;++sample){
+        const float t=(float)sample/(float)samples;
+        const Vec3 current=from+(to-from)*t;
+        if(current.x<-half || current.x>half || current.z<-half || current.z>half) return false;
+
+        // Non-enterable machinery/resources are solid from every direction.
+        // Body-ring sampling prevents the camera/body from clipping them while
+        // the avatar center is still technically outside the footprint.
+        for(const auto& item:placed_resources_){
+            if(!item.construction.complete() || item.kind==ResourceKind::StorageDome) continue;
+            const auto& mesh=resource_models_.mesh(item);
+            if(!near_rotated_footprint(current,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius)) continue;
+            if(body_overlaps_region(current,radius,[&](Vec3 q){
+                return inside_solid_resource_hull(q,item,mesh,0.0f);
+            })) return false;
+        }
+
+        // Habitat pressure shells are authoritative in both directions.  Inside
+        // the structure the whole body must remain within the projected shell;
+        // outside, no body sample may penetrate it.  Only actual door apertures
+        // are exempt while the avatar is physically straddling the hull.
+        for(std::size_t i=0;i<placed_habitats_.size();++i){
+            const auto& h=placed_habitats_[i];
+            if(!h.construction.complete()) continue;
+            const auto& mesh=habitat_models_.mesh(h);
+            const bool near_previous=near_rotated_footprint(previous,h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+1.0f);
+            const bool near_current=near_rotated_footprint(current,h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+1.0f);
+            if(!near_previous && !near_current) continue;
+            const auto doors=habitat_doors(i);
+            const bool was_inside=inside_habitat_hull(previous,h,mesh,0.0f);
+            const bool is_inside=inside_habitat_hull(current,h,mesh,0.0f);
+            const bool doorway=point_in_any_doorway_clearance(current,doors,radius);
+
+            if(is_inside){
+                if(!inside_habitat_hull(current,h,mesh,radius) && !doorway) return false;
+            }else if(body_overlaps_region(current,radius,[&](Vec3 q){
+                return inside_habitat_hull(q,h,mesh,0.0f);
+            }) && !doorway){
+                return false;
+            }
+
+            if(was_inside!=is_inside && !movement_uses_any_doorway(previous,current,doors,radius))
+                return false;
+        }
+
+        // Storage Domes use the same bidirectional pressure-shell rule and the
+        // four explicitly modelled docking faces as their only legal crossings.
+        for(std::size_t i=0;i<placed_resources_.size();++i){
+            const auto& item=placed_resources_[i];
+            if(!item.construction.complete() || item.kind!=ResourceKind::StorageDome) continue;
+            const auto& mesh=resource_models_.mesh(item);
+            const bool near_previous=near_rotated_footprint(previous,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+0.8f);
+            const bool near_current=near_rotated_footprint(current,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+0.8f);
+            if(!near_previous && !near_current) continue;
+            const auto doors=storage_dome_doors(i);
+            const bool was_inside=inside_storage_hull(previous,item,mesh,0.0f);
+            const bool is_inside=inside_storage_hull(current,item,mesh,0.0f);
+            const bool doorway=point_in_any_doorway_clearance(current,doors,radius);
+
+            if(is_inside){
+                if(!inside_storage_hull(current,item,mesh,radius) && !doorway) return false;
+            }else if(body_overlaps_region(current,radius,[&](Vec3 q){
+                return inside_storage_hull(q,item,mesh,0.0f);
+            }) && !doorway){
+                return false;
+            }
+
+            if(was_inside!=is_inside && !movement_uses_any_doorway(previous,current,doors,radius))
+                return false;
+        }
+
+        // Corridors, docking vestibules and air-locks form one connected
+        // pressure-volume union.  That union deliberately permits
+        // corridor-to-corridor movement at real merged junctions.  Its shell is
+        // still solid from the exterior, and transitions to exterior/structures
+        // are only legal at endpoint doors.
+        const CorridorOccupancy current_corridor=corridor_occupancy(current);
+        if(!current_corridor.inside && current_corridor.overlaps && !point_in_corridor_portal(current))
+            return false;
+        if(previous_corridor.inside!=current_corridor.inside &&
+           !crosses_corridor_portal(previous,current))
+            return false;
+
+        previous=current;
+        previous_corridor=current_corridor;
     }
     return true;
 }
@@ -609,6 +763,12 @@ std::string GameApp::first_person_environment_label() const {
                 return "CORRIDOR / PRESSURIZED";
         }
         for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
+            if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
+                const Vec3 q=closest_point_segment_xz(p,ep->position,ep->door.wall_position);
+                if(dist_xz_local(p,q)<=std::max(0.20f,geometry::kDockSleeveHalfWidth-first_person_.body_radius()))
+                    return "DOCKING / PRESSURIZED";
+                continue;
+            }
             if(ep->kind!=CorridorEndpointKind::OpenDoor || ep->suppress_open_door) continue;
             Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
             if(length(n)<0.001f) continue;
@@ -792,10 +952,20 @@ void GameApp::update_first_person(float dt,const InputState& input){
     const Vec3 displacement=first_person_.desired_displacement(input,dt);
     Vec3 current=first_person_.feet_position();
     if(length(displacement)>0.0001f){
-        Vec3 x_try{current.x+displacement.x,current.y,current.z};
-        if(first_person_move_allowed(current,x_try)) current=x_try;
-        Vec3 z_try{current.x,current.y,current.z+displacement.z};
-        if(first_person_move_allowed(current,z_try)) current=z_try;
+        // Try the actual movement vector first. This is essential for rotated
+        // doors: splitting a diagonal doorway crossing into world-X/world-Z
+        // moves can make each artificial half-step hit the frame even though
+        // the requested path goes cleanly through the opening. Preserve the
+        // old axis attempts only as wall-sliding fallbacks.
+        const Vec3 direct=current+displacement;
+        if(first_person_move_allowed(current,direct)){
+            current=direct;
+        }else{
+            Vec3 x_try{current.x+displacement.x,current.y,current.z};
+            if(first_person_move_allowed(current,x_try)) current=x_try;
+            Vec3 z_try{current.x,current.y,current.z+displacement.z};
+            if(first_person_move_allowed(current,z_try)) current=z_try;
+        }
     }
     const float target_floor=first_person_floor_height(current);
     const float max_step=std::max(0.08f,dt*2.8f);

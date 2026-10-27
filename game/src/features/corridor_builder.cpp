@@ -62,6 +62,51 @@ void append_d_profile(std::vector<Vec3>& out,Vec3 center,Vec3 tangent,float scal
     for(std::size_t i=0;i<pts.size();++i) line(out,pts[i],pts[(i+1)%pts.size()]);
 }
 
+
+Vec3 nearest_blueprint_center(Vec3 point,const std::vector<Vec3>& path){
+    if(path.empty()) return point;
+    if(path.size()==1) return path.front();
+    Vec3 best=path.front();
+    float best_d=1.0e30f;
+    for(std::size_t i=0;i+1<path.size();++i){
+        const Vec3 a=path[i],b=path[i+1];
+        const float dx=b.x-a.x,dz=b.z-a.z;
+        const float denom=dx*dx+dz*dz;
+        float t=0.0f;
+        if(denom>1.0e-7f) t=std::clamp(((point.x-a.x)*dx+(point.z-a.z)*dz)/denom,0.0f,1.0f);
+        const Vec3 q=a+(b-a)*t;
+        const float qx=point.x-q.x,qz=point.z-q.z;
+        const float d=qx*qx+qz*qz;
+        if(d<best_d){ best_d=d; best=q; }
+    }
+    return best;
+}
+
+std::vector<Vec3> scaled_blueprint_vertices(const std::vector<Vec3>& vertices,const std::vector<Vec3>& path,float scale){
+    std::vector<Vec3> out;
+    out.reserve(vertices.size());
+    for(const Vec3& v:vertices){
+        const Vec3 center=nearest_blueprint_center(v,path);
+        out.push_back(center+(v-center)*scale);
+    }
+    return out;
+}
+
+void draw_compact_corridor_blueprint(Renderer& r,const CorridorConnection& preview,bool affordable){
+    // The blueprint is deliberately smaller than the final pressure tube. It
+    // keeps dense connection nodes readable and leaves the exact endpoint
+    // highlights visible while still following the final routed centerline.
+    constexpr float BLUEPRINT_SCALE=0.62f;
+    const Color shell=affordable?Color{0.36f,1.00f,0.76f,0.84f}:Color{1.00f,0.24f,0.18f,0.78f};
+    const Color detail=affordable?Color{0.24f,0.88f,0.68f,0.76f}:Color{1.00f,0.34f,0.24f,0.72f};
+    const auto shell_vertices=scaled_blueprint_vertices(preview.mesh.shell,preview.path,BLUEPRINT_SCALE);
+    const auto detail_vertices=scaled_blueprint_vertices(preview.mesh.details,preview.path,BLUEPRINT_SCALE);
+    const auto edge_vertices=scaled_blueprint_vertices(preview.mesh.edges,preview.path,BLUEPRINT_SCALE);
+    mesh_wireframe::draw_layer(r,shell_vertices,shell,1.20f);
+    mesh_wireframe::draw_layer(r,detail_vertices,detail,1.00f);
+    r.draw_lines_3d(edge_vertices,shell,1.65f);
+}
+
 void render_endpoint_highlight(Renderer& r,const CorridorEndpoint& ep,Color color,float width){
     std::vector<Vec3> lines;
     if(ep.kind==CorridorEndpointKind::Habitat || ep.kind==CorridorEndpointKind::Resource){
@@ -111,8 +156,8 @@ Vec3 source_hint(const CorridorBuildAnchor& anchor,Vec3 hit,const std::vector<Pl
 void draw_corridor_start_sample(Renderer& r,Vec3 origin,Vec3 tangent,bool valid){
     tangent=flat_dir(tangent);
     const Vec3 side=side_of(tangent);
-    constexpr float length_m=2.35f;
-    constexpr float half_w=1.16f;
+    constexpr float length_m=1.55f;
+    constexpr float half_w=0.76f;
     constexpr float y=0.12f;
     const Vec3 a=origin+Vec3{0,y,0};
     const Vec3 b=origin+tangent*length_m+Vec3{0,y,0};
@@ -121,10 +166,10 @@ void draw_corridor_start_sample(Renderer& r,Vec3 origin,Vec3 tangent,bool valid)
     const Color edge_color=valid?Color{0.34f,0.82f,1.00f,0.96f}:Color{1.00f,0.28f,0.22f,0.96f};
     r.draw_triangles_3d({a-s,b-s,b+s,a-s,b+s,a+s},fill);
     std::vector<Vec3> lines;
-    append_d_profile(lines,origin,tangent,1.0f);
-    append_d_profile(lines,origin+tangent*length_m,tangent,1.0f);
+    append_d_profile(lines,origin,tangent,0.66f);
+    append_d_profile(lines,origin+tangent*length_m,tangent,0.66f);
     line(lines,a-s,b-s); line(lines,a+s,b+s);
-    line(lines,a+Vec3{0,1.72f,0},b+Vec3{0,1.72f,0});
+    line(lines,a+Vec3{0,1.12f,0},b+Vec3{0,1.12f,0});
     r.draw_lines_3d(lines,edge_color,2.0f);
 }
 } // namespace
@@ -141,11 +186,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_);
     if(!preview) return;
     const bool affordable=can_start_construction(corridor_plan(*preview));
-    const Color shell=affordable?Color{0.36f,1.00f,0.76f,0.92f}:Color{1.00f,0.24f,0.18f,0.82f};
-    const Color detail=affordable?Color{0.24f,0.88f,0.68f,0.84f}:Color{1.00f,0.34f,0.24f,0.78f};
-    mesh_wireframe::draw_layer(r,preview->mesh.shell,shell,1.35f);
-    mesh_wireframe::draw_layer(r,preview->mesh.details,detail,1.15f);
-    r.draw_lines_3d(preview->mesh.edges,shell,1.9f);
+    draw_compact_corridor_blueprint(r,*preview,affordable);
     render_endpoint_highlight(r,preview->endpoint_a,affordable?theme_.accent:Color{1.00f,0.28f,0.22f,1.0f},2.8f);
     render_endpoint_highlight(r,preview->endpoint_b,affordable?Color{0.42f,1.00f,0.66f,1.0f}:Color{1.00f,0.28f,0.22f,1.0f},2.8f);
 
@@ -210,9 +251,7 @@ void GameApp::render_corridor_placement(Renderer& r){
         // click, when the actual destination is known.
         const bool start_valid=candidate.has_value();
         if(sample){
-            mesh_wireframe::draw_layer(r,sample->mesh.shell,{0.30f,0.72f,1.00f,0.34f},1.35f);
-            mesh_wireframe::draw_layer(r,sample->mesh.details,{0.24f,0.88f,0.68f,0.30f},1.10f);
-            r.draw_lines_3d(sample->mesh.edges,{0.34f,0.82f,1.00f,0.96f},1.9f);
+            draw_compact_corridor_blueprint(r,*sample,true);
         }else{
             draw_corridor_start_sample(r,candidate?candidate->position:hit,candidate?candidate->tangent:Vec3{1,0,0},start_valid);
         }
@@ -256,11 +295,7 @@ void GameApp::render_corridor_placement(Renderer& r){
             source_endpoint=preview->endpoint_a;
             destination_endpoint=preview->endpoint_b;
             const bool affordable=can_start_construction(corridor_plan(*preview));
-            const Color shell=affordable?Color{0.36f,1.00f,0.76f,0.92f}:Color{1.00f,0.24f,0.18f,0.82f};
-            const Color detail=affordable?Color{0.24f,0.88f,0.68f,0.88f}:Color{1.00f,0.34f,0.24f,0.78f};
-            mesh_wireframe::draw_layer(r,preview->mesh.shell,shell,1.35f);
-            mesh_wireframe::draw_layer(r,preview->mesh.details,detail,1.15f);
-            r.draw_lines_3d(preview->mesh.edges,shell,1.9f);
+            draw_compact_corridor_blueprint(r,*preview,affordable);
         }else{
             // Even if the route is blocked, resolve both endpoint structures so
             // the player can see which existing/generated entrance is being

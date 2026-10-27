@@ -40,6 +40,11 @@ struct CorridorBuildAnchor {
     CorridorEndpointKind kind{CorridorEndpointKind::OpenDoor};
     std::size_t index{};
     eng::Vec3 position{};
+    // For corridor anchors, position is the snapped centerline point while
+    // cursor_position keeps the unsnapped pointer hit.  This preserves which
+    // side of the host corridor the player selected for a new intersection.
+    eng::Vec3 cursor_position{};
+    bool has_cursor_position{false};
 };
 
 struct CorridorEndpoint {
