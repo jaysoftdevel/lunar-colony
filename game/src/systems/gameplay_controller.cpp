@@ -41,10 +41,10 @@ void GameApp::update(float dt,const InputState& in){
             if(in.left_pressed && over_world){
                 Vec3 hit{};
                 if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
-                    // Drop the FPV onto the real walkable surface at the chosen
-                    // X/Z.  A click inside a habitat, Storage Dome, corridor or
-                    // exterior air-lock therefore starts at that interior deck
-                    // height instead of at lunar-ground Y=0.
+                    // POV placement is exterior-only.  We still resolve the
+                    // local surface height before validation so Air Lock access
+                    // stairs and terrain are entered at the correct elevation;
+                    // pressurised structures/corridors themselves are rejected.
                     Vec3 spawn{hit.x,first_person_floor_height(hit),hit.z};
                     if(first_person_spawn_valid(spawn)){
                         first_person_.spawn(spawn,camera_.azimuth_degrees());

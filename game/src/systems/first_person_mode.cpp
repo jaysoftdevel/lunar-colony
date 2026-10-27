@@ -338,27 +338,63 @@ void GameApp::exit_first_person_mode(){
     app_.set_cursor_visible(true);
 }
 
+bool GameApp::habitat_has_complete_corridor_connection(std::size_t habitat_index) const {
+    for(const auto& c:corridor_network_.connections()){
+        if(!c.construction.complete()) continue;
+        for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b})
+            if(ep->kind==CorridorEndpointKind::Habitat && ep->index==habitat_index) return true;
+    }
+    return false;
+}
+
+bool GameApp::habitat_exterior_access_enabled(std::size_t habitat_index,std::size_t entrance_index) const {
+    if(habitat_index>=placed_habitats_.size()) return false;
+    const auto& h=placed_habitats_[habitat_index];
+    if(!h.construction.complete() || h.kind!=HabitatKind::AirLock) return false;
+
+    // The dedicated Air Lock is the only structure permitted to expose a hatch
+    // to the exterior, and only after it actually belongs to a completed
+    // pressure/corridor network.  A hatch reserved by any corridor (including
+    // one still under construction) is never simultaneously an exterior exit.
+    if(!habitat_has_complete_corridor_connection(habitat_index)) return false;
+    return !corridor_network_.habitat_entrance_connected(habitat_index,entrance_index);
+}
+
 std::vector<CorridorDoor> GameApp::habitat_doors(std::size_t habitat_index) const {
     std::vector<CorridorDoor> doors;
     if(habitat_index>=placed_habitats_.size()) return doors;
     const auto& h=placed_habitats_[habitat_index];
     const auto& mesh=habitat_models_.mesh(h);
-    for(std::size_t i=0;i<mesh.entrances.size();++i){
-        const auto& e=mesh.entrances[i];
-        CorridorDoor d;
-        d.position=h.position+rotate_y(e.local_position,h.rotation_degrees);
-        d.wall_position=d.position;
-        d.normal=normalize(rotate_y(e.local_normal,h.rotation_degrees));
-        d.entrance_index=(int)i;
-        doors.push_back(d);
-    }
+
+    auto add_unique=[&](const CorridorDoor& door){
+        for(const auto& d:doors)
+            if(dist_xz_local(d.wall_position,door.wall_position)<0.35f) return;
+        doors.push_back(door);
+    };
+
+    // Ordinary structures expose no standalone exits.  Only a completed
+    // pressure connection carves/opens a hatch into their shell.
     for(const auto& c:corridor_network_.connections()){
         if(!c.construction.complete()) continue;
         for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
             if(ep->kind!=CorridorEndpointKind::Habitat || ep->index!=habitat_index) continue;
-            bool duplicate=false;
-            for(const auto& d:doors) if(dist_xz_local(d.wall_position,ep->door.wall_position)<0.35f){ duplicate=true; break; }
-            if(!duplicate) doors.push_back(ep->door);
+            add_unique(ep->door);
+        }
+    }
+
+    // A connected Air Lock is the sole legal exterior gateway.  Its unused
+    // authored hatch(es) remain surface-facing access points; all other habitat
+    // types keep unused authored hatches sealed as part of the pressure hull.
+    if(h.kind==HabitatKind::AirLock && habitat_has_complete_corridor_connection(habitat_index)){
+        for(std::size_t i=0;i<mesh.entrances.size();++i){
+            if(!habitat_exterior_access_enabled(habitat_index,i)) continue;
+            const auto& e=mesh.entrances[i];
+            CorridorDoor d;
+            d.position=h.position+rotate_y(e.local_position,h.rotation_degrees);
+            d.wall_position=d.position;
+            d.normal=normalize(rotate_y(e.local_normal,h.rotation_degrees));
+            d.entrance_index=(int)i;
+            add_unique(d);
         }
     }
     return doors;
@@ -369,15 +405,19 @@ std::vector<CorridorDoor> GameApp::storage_dome_doors(std::size_t resource_index
     if(resource_index>=placed_resources_.size()) return doors;
     const auto& item=placed_resources_[resource_index];
     if(item.kind!=ResourceKind::StorageDome) return doors;
-    const auto& mesh=resource_models_.mesh(item);
-    const float wall_radius=std::min(mesh.footprint_x,mesh.footprint_z)*0.40f;
-    const Vec3 local_normals[4]={{0,0,-1},{1,0,0},{0,0,1},{-1,0,0}};
-    for(Vec3 local:local_normals){
-        CorridorDoor d;
-        d.normal=normalize(rotate_y(local,item.rotation_degrees));
-        d.wall_position=item.position+d.normal*wall_radius+Vec3{0,geometry::kEntranceSliceY,0};
-        d.position=d.wall_position;
-        doors.push_back(d);
+
+    // Storage domes no longer expose their four candidate service faces as
+    // exits.  A face becomes a real doorway only when a completed corridor is
+    // pressure-docked to it.
+    for(const auto& c:corridor_network_.connections()){
+        if(!c.construction.complete()) continue;
+        for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
+            if(ep->kind!=CorridorEndpointKind::Resource || ep->index!=resource_index) continue;
+            bool duplicate=false;
+            for(const auto& d:doors)
+                if(dist_xz_local(d.wall_position,ep->door.wall_position)<0.35f){ duplicate=true; break; }
+            if(!duplicate) doors.push_back(ep->door);
+        }
     }
     return doors;
 }
@@ -417,7 +457,9 @@ bool GameApp::first_person_spawn_valid(Vec3 p) const {
         const bool center_inside=inside_habitat_hull(p,h,mesh,0.0f);
         const bool doorway=point_in_any_doorway_clearance(p,doors,radius);
         if(center_inside){
-            if(!inside_habitat_hull(p,h,mesh,radius) && !doorway) return false;
+            // POV placement is exterior-only.  Entering the pressure network
+            // must happen physically through a connected Air Lock afterwards.
+            return false;
         }else if(body_overlaps_region(p,radius,[&](Vec3 q){
             return inside_habitat_hull(q,h,mesh,0.0f);
         }) && !doorway){
@@ -434,11 +476,32 @@ bool GameApp::first_person_spawn_valid(Vec3 p) const {
         const bool center_inside=inside_storage_hull(p,item,mesh,0.0f);
         const bool doorway=point_in_any_doorway_clearance(p,doors,radius);
         if(center_inside){
-            if(!inside_storage_hull(p,item,mesh,radius) && !doorway) return false;
+            return false;
         }else if(body_overlaps_region(p,radius,[&](Vec3 q){
             return inside_storage_hull(q,item,mesh,0.0f);
         }) && !doorway){
             return false;
+        }
+    }
+
+    // Do not allow POV to be dropped directly into the pressure connection
+    // system.  This closes the last bypass around the Air Lock: corridors and
+    // docking sleeves can only be reached by walking through the Air Lock
+    // structure from the exterior.
+    for(const auto& c:corridor_network_.connections()){
+        if(!c.construction.complete() || c.path.size()<2) continue;
+        for(std::size_t j=0;j+1<c.path.size();++j){
+            float t=0.0f;
+            const Vec3 q=closest_point_segment_xz(p,c.path[j],c.path[j+1],&t);
+            if(t>=0.0f && t<=1.0f && dist_xz_local(p,q)<=corridor_detail::CORRIDOR_HALF_WIDTH+radius)
+                return false;
+        }
+        for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
+            if(ep->kind!=CorridorEndpointKind::Habitat && ep->kind!=CorridorEndpointKind::Resource) continue;
+            float t=0.0f;
+            const Vec3 q=closest_point_segment_xz(p,ep->position,ep->door.wall_position,&t);
+            if(t>=0.0f && t<=1.0f && dist_xz_local(p,q)<=geometry::kDockSleeveHalfWidth+radius)
+                return false;
         }
     }
     return true;
@@ -501,21 +564,6 @@ float GameApp::first_person_floor_height(Vec3 p) const {
                 }
                 continue;
             }
-            // Exterior corridor endpoints carry a real two-door air-lock beyond
-            // the route centerline. It uses the corridor deck elevation too.
-            if(ep->kind==CorridorEndpointKind::OpenDoor && !ep->suppress_open_door){
-                Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
-                if(length(n)<0.001f) continue;
-                const Vec3 outer=ep->position-n*geometry::kCorridorAirlockLength;
-                const Vec3 q=closest_point_segment_xz(p,ep->position,outer);
-                const float d=dist_xz_local(p,q);
-                const float airlock_limit=std::max(0.20f,geometry::kCorridorAirlockHalfWidth-first_person_.body_radius());
-                if(d<best_corridor && d<=airlock_limit){
-                    best_corridor=d;
-                    corridor_floor=ep->position.y+corridor_detail::WALKWAY_Y;
-                    floor_connection=&c;
-                }
-            }
         }
     }
     if(best_corridor<std::numeric_limits<float>::max()){
@@ -538,7 +586,7 @@ float GameApp::first_person_floor_height(Vec3 p) const {
         const auto& mesh=habitat_models_.mesh(h);
         const Vec3 local=rotate_y(p-h.position,-h.rotation_degrees);
         for(std::size_t ei=0;ei<mesh.entrance_access.size();++ei){
-            if(corridor_network_.habitat_entrance_connected(hi,ei)) continue;
+            if(!habitat_exterior_access_enabled(hi,ei)) continue;
             if(auto y=walkable_surface_height_at(mesh.entrance_access[ei].details,local,0.05f,1.65f))
                 return h.position.y+*y;
         }
@@ -558,19 +606,16 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
 
     auto corridor_occupancy=[&](Vec3 p){
         CorridorOccupancy state;
-        const auto consider=[&](Vec3 a,Vec3 b,float half_width,bool hard_caps=false){
-            float segment_t=0.0f;
-            if(hard_caps){
-                const float dx=b.x-a.x,dz=b.z-a.z;
-                const float den=dx*dx+dz*dz;
-                if(den>0.00001f){
-                    segment_t=((p.x-a.x)*dx+(p.z-a.z)*dz)/den;
-                    // Door planes are real pressure boundaries. Do not let the
-                    // usual rounded segment cap extend the corridor collision
-                    // volume through a structure wall or past an exterior
-                    // air-lock door.
-                    if(segment_t<0.0f || segment_t>1.0f) return;
-                }
+        const auto consider=[&](Vec3 a,Vec3 b,float half_width,bool hard_start=false,bool hard_end=false){
+            const float dx=b.x-a.x,dz=b.z-a.z;
+            const float den=dx*dx+dz*dz;
+            if(den>0.00001f && (hard_start || hard_end)){
+                const float segment_t=((p.x-a.x)*dx+(p.z-a.z)*dz)/den;
+                // Door/bulkhead planes are real pressure boundaries.  Rounded
+                // line-segment caps must not extend the navigable volume through
+                // a structure shell or beyond a sealed corridor dead end.
+                if(hard_start && segment_t<0.0f) return;
+                if(hard_end && segment_t>1.0f) return;
             }
             const Vec3 q=closest_point_segment_xz(p,a,b);
             const float d=dist_xz_local(p,q);
@@ -581,8 +626,11 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
         };
         for(const auto& c:corridor_network_.connections()){
             if(!c.construction.complete() || c.path.size()<2) continue;
-            for(std::size_t j=0;j+1<c.path.size();++j)
-                consider(c.path[j],c.path[j+1],corridor_detail::CORRIDOR_HALF_WIDTH);
+            for(std::size_t j=0;j+1<c.path.size();++j){
+                const bool sealed_start=(j==0 && c.endpoint_a.kind==CorridorEndpointKind::OpenDoor && !c.endpoint_a.suppress_open_door);
+                const bool sealed_end=(j+2==c.path.size() && c.endpoint_b.kind==CorridorEndpointKind::OpenDoor && !c.endpoint_b.suppress_open_door);
+                consider(c.path[j],c.path[j+1],corridor_detail::CORRIDOR_HALF_WIDTH,sealed_start,sealed_end);
+            }
 
             for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
                 if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
@@ -591,14 +639,8 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
                     // door.position is the outer vestibule door while
                     // wall_position is the real pressure-shell contact plane.
                     // Using only door.position created a non-walkable gap.
-                    consider(ep->position,ep->door.wall_position,geometry::kDockSleeveHalfWidth,true);
+                    consider(ep->position,ep->door.wall_position,geometry::kDockSleeveHalfWidth,true,true);
                     continue;
-                }
-                if(ep->kind==CorridorEndpointKind::OpenDoor && !ep->suppress_open_door){
-                    Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
-                    if(length(n)<0.001f) continue;
-                    const Vec3 outer=ep->position-n*geometry::kCorridorAirlockLength;
-                    consider(ep->position,outer,geometry::kCorridorAirlockHalfWidth,true);
                 }
             }
         }
@@ -613,12 +655,6 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
                     if(point_in_doorway_clearance(p,ep->door,radius)) return true;
                     continue;
                 }
-                if(ep->kind==CorridorEndpointKind::OpenDoor && !ep->suppress_open_door){
-                    Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
-                    if(length(n)<0.001f) continue;
-                    const Vec3 outer=ep->position-n*geometry::kCorridorAirlockLength;
-                    if(point_in_portal_clearance(p,outer,n,geometry::kDoorClearWidth*0.5f,radius)) return true;
-                }
             }
         }
         return false;
@@ -631,12 +667,6 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
                 if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
                     if(movement_crosses_doorway(a,b,ep->door,radius)) return true;
                     continue;
-                }
-                if(ep->kind==CorridorEndpointKind::OpenDoor && !ep->suppress_open_door){
-                    Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
-                    if(length(n)<0.001f) continue;
-                    const Vec3 outer=ep->position-n*geometry::kCorridorAirlockLength;
-                    if(movement_crosses_portal(a,b,outer,n,geometry::kDoorClearWidth*0.5f,radius)) return true;
                 }
             }
         }
@@ -769,13 +799,6 @@ std::string GameApp::first_person_environment_label() const {
                     return "DOCKING / PRESSURIZED";
                 continue;
             }
-            if(ep->kind!=CorridorEndpointKind::OpenDoor || ep->suppress_open_door) continue;
-            Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
-            if(length(n)<0.001f) continue;
-            const Vec3 outer=ep->position-n*geometry::kCorridorAirlockLength;
-            const Vec3 q=closest_point_segment_xz(p,ep->position,outer);
-            if(dist_xz_local(p,q)<=std::max(0.20f,geometry::kCorridorAirlockHalfWidth-first_person_.body_radius()))
-                return "AIRLOCK / PRESSURE BUFFER";
         }
     }
     return "EXTERIOR / VACUUM";

@@ -158,56 +158,36 @@ void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
     append_ring(mesh,endpoint.position,n,1.0f);
 }
 
-void append_pressure_door_cap(CorridorMesh& mesh,Vec3 center,Vec3 normal){
-    normal=flat_normal(normal);
-    const Vec3 side=perp_xz(normal);
-    const auto section=corridor_cross_section(1.01f);
-    Vec3 centroid{center.x,center.y+1.0f,center.z};
-    for(std::size_t j=0;j<section.size();++j){
-        const std::size_t k=(j+1)%section.size();
-        tri(mesh.details,centroid,ring_vertex(center,side,section[j]),ring_vertex(center,side,section[k]));
-    }
-    append_ring(mesh,center,normal,1.08f);
-    append_door_frame(mesh,center,normal,geometry::kDoorFrameHalfWidth,geometry::kDoorFrameHeight);
-    append_oriented_box(mesh.details,
-                        center-normal*0.035f+Vec3{0,geometry::kDoorClearHeight*0.5f,0},
-                        normal,0.055f,geometry::kDoorClearWidth*0.46f,geometry::kDoorClearHeight*0.44f);
-}
-
-void append_open_end_airlock(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
+void append_sealed_open_end(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
     if(endpoint.kind!=CorridorEndpointKind::OpenDoor || endpoint.suppress_open_door) return;
     Vec3 n=flat_normal(endpoint.tangent);
     if(length(n)<0.001f) n={1,0,0};
     const Vec3 side=perp_xz(n);
-    const Vec3 inner=endpoint.position;
-    const Vec3 outward=n*-1.0f;
-    const Vec3 outer=inner+outward*geometry::kCorridorAirlockLength;
-
-    // The air-lock is a real pressure extension of the corridor, not an
-    // overlapping decorative box.  Reusing the corridor profile guarantees a
-    // single coincident ring at the corridor/air-lock boundary.
     const auto section=corridor_cross_section();
-    append_profile_transition(mesh,inner,outer,n,section,section);
+    if(section.size()<3) return;
 
-    // Crew deck through the chamber.  Keep the threshold strips short so the
-    // FPV door-aperture carving does not remove the whole air-lock floor.
-    const float inset=0.78f;
-    const Vec3 a=inner+outward*std::min(inset,geometry::kCorridorAirlockLength*0.25f)+Vec3{0,WALKWAY_Y,0};
-    const Vec3 b=outer-outward*std::min(inset,geometry::kCorridorAirlockLength*0.25f)+Vec3{0,WALKWAY_Y,0};
-    const Vec3 sw=side*WALKWAY_HALF_WIDTH;
-    if(distance_xz(a,b)>0.08f){
-        tri(mesh.details,a-sw,b-sw,b+sw);
-        tri(mesh.details,a-sw,b+sw,a+sw);
-        edge(mesh.edges,a-sw,b-sw);
-        edge(mesh.edges,a+sw,b+sw);
+    std::vector<Vec3> ring;
+    ring.reserve(section.size());
+    Vec3 centroid{};
+    for(const Vec2 q:section){
+        const Vec3 p=ring_vertex(endpoint.position,side,q);
+        ring.push_back(p);
+        centroid=centroid+p;
     }
+    centroid=centroid*(1.0f/(float)ring.size());
 
-    // Two independently rendered sliding pressure doors make the exterior
-    // connection an actual air-lock.  The renderer interlocks the panels in
-    // FPV so both doors cannot be open at the same time.
-    append_pressure_door_cap(mesh,inner,n);
-    append_pressure_door_cap(mesh,outer,n);
-    append_ring(mesh,inner+outward*(geometry::kCorridorAirlockLength*0.50f),outward,1.02f);
+    // A dead-end corridor terminates in a structural pressure bulkhead, not a
+    // hatch.  The cap lives in the shell itself so FPV cannot carve or animate
+    // it as a door and there is no exterior vestibule/deck beyond the endpoint.
+    for(std::size_t i=0;i<ring.size();++i){
+        const std::size_t j=(i+1)%ring.size();
+        tri(mesh.shell,centroid,ring[i],ring[j]);
+        edge(mesh.edges,ring[i],ring[j]);
+    }
+    append_ring(mesh,endpoint.position,n,1.08f);
+    append_oriented_box(mesh.details,
+                        endpoint.position-n*0.055f+Vec3{0,1.12f,0},
+                        n,0.07f,0.48f,0.58f);
 }
 
 float host_half_width_at_height(float y){
@@ -487,8 +467,8 @@ CorridorMesh build_mesh(const CorridorEndpoint& a,const CorridorEndpoint& b,cons
     append_docking_collar(mesh,b);
     append_corridor_junction(mesh,a);
     append_corridor_junction(mesh,b);
-    append_open_end_airlock(mesh,a);
-    append_open_end_airlock(mesh,b);
+    append_sealed_open_end(mesh,a);
+    append_sealed_open_end(mesh,b);
     // Only committed parent/branch apertures depend on a stable self index.
     carve_host_junction_apertures(mesh,self_index,existing);
     // Transversal path crossings are true shared junctions. Carve both pressure

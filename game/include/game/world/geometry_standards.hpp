@@ -46,13 +46,9 @@ inline constexpr float kGeneratedEntranceHalfWidth = 1.16f;
 inline constexpr float kGeneratedEntranceHeight = 2.68f;
 inline constexpr float kRouteClearance = 0.55f;
 
-// Every pressurised corridor endpoint exposed directly to the exterior is
-// terminated by a two-door air-lock chamber.  The chamber extends beyond the
-// routed corridor centerline; connecting another corridor to that endpoint
-// consumes the air-lock and restores a seamless pressure-tube splice.
-inline constexpr float kCorridorAirlockLength = 3.60f;
-inline constexpr float kCorridorAirlockHalfWidth = 1.34f;
-inline constexpr float kCorridorAirlockDoorSpacing = 3.60f;
+// Exposed corridor endpoints are hard-sealed pressure bulkheads.  Exterior
+// crew access to the pressurised structural network is intentionally provided
+// only by the dedicated Air Lock habitat.
 
 // Exterior crew walkway: wide enough for two suited crew members to pass, but
 // deliberately open and railing-free per the game design.

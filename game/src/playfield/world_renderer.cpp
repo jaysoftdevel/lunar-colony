@@ -400,50 +400,16 @@ void GameApp::render_corridors(Renderer& r){
 
         const Color shell_color{0.50f,0.62f,0.66f,1.0f};
         const Color detail_color{0.42f,0.54f,0.58f,0.95f};
-        auto corridor_details=connection.mesh.details;
-        std::vector<CorridorDoor> open_end_doors;
-        if(first_person_mode_==FirstPersonMode::Active){
-            for(const CorridorEndpoint* ep:{&connection.endpoint_a,&connection.endpoint_b}){
-                if(ep->kind!=CorridorEndpointKind::OpenDoor || ep->suppress_open_door) continue;
-                Vec3 n=ep->tangent; n.y=0.0f; n=normalize(n);
-                if(length(n)<0.001f) n={1,0,0};
-                CorridorDoor inner;
-                inner.position=ep->position;
-                inner.wall_position=ep->position+Vec3{0,1.18f,0};
-                inner.normal=n;
-                CorridorDoor outer=inner;
-                outer.position=ep->position-n*geometry::kCorridorAirlockLength;
-                outer.wall_position=outer.position+Vec3{0,1.18f,0};
-                open_end_doors.push_back(inner);
-                open_end_doors.push_back(outer);
-            }
-            corridor_details=carve_door_apertures(corridor_details,open_end_doors);
-        }
-        mesh_wireframe::draw_layer(r,corridor_details,detail_color,1.00f*boost);
+        // Open corridor endpoints are permanent sealed pressure bulkheads.
+        // Exterior access is provided only by a connected Air Lock habitat, so
+        // corridor meshes never carve/open a door at an exposed endpoint.
+        mesh_wireframe::draw_layer(r,connection.mesh.details,detail_color,1.00f*boost);
         if(habitat_view_mode_==HabitatViewMode::Default || first_person_mode_==FirstPersonMode::Active){
             mesh_wireframe::draw_layer(r,connection.mesh.shell,shell_color,1.10f*boost);
         }else{
             mesh_wireframe::draw_layer(r,connection.mesh.shell,{shell_color.r,shell_color.g,shell_color.b,0.14f},0.80f);
         }
         r.draw_lines_3d(connection.mesh.edges,edge_color,(selected||link_source)?2.5f:1.15f);
-        if(first_person_mode_==FirstPersonMode::Active){
-            // Open-end doors are stored as inner/outer pairs.  Interlock them:
-            // if the proximity volumes overlap, only the nearer panel may open.
-            const Vec3 feet=first_person_.feet_position();
-            for(std::size_t di=0;di<open_end_doors.size();di+=2){
-                const CorridorDoor& inner=open_end_doors[di];
-                const CorridorDoor& outer=open_end_doors[di+1];
-                float fi=first_person_door_open_fraction(inner.wall_position);
-                float fo=first_person_door_open_fraction(outer.wall_position);
-                if(fi>0.0f && fo>0.0f){
-                    const float dix=feet.x-inner.wall_position.x,diz=feet.z-inner.wall_position.z;
-                    const float dox=feet.x-outer.wall_position.x,doz=feet.z-outer.wall_position.z;
-                    if(dix*dix+diz*diz<=dox*dox+doz*doz) fo=0.0f; else fi=0.0f;
-                }
-                draw_sliding_door(r,inner,fi);
-                draw_sliding_door(r,outer,fo);
-            }
-        }
     }
 }
 
@@ -462,12 +428,12 @@ void GameApp::render_habitats(Renderer& r){
         render_habitat_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.step,fpv_ptr);
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
 
-        // Entrance-specific exterior access stays visible only while that hatch
-        // opens directly to the lunar surface. Once a corridor docks to the
-        // same built-in entrance, remove the stairs so they cannot intersect
-        // the airtight corridor sleeve/walkway.
+        // Exterior stairs/ramps exist only on the dedicated Air Lock and only
+        // for an authored hatch that is currently the surface side of a
+        // completed pressure network.  Ordinary structures never expose unused
+        // entrances directly to the lunar surface.
         if(instance.construction.step>=9) for(size_t entrance_index=0;entrance_index<mesh.entrance_access.size();++entrance_index){
-            if(corridor_network_.habitat_entrance_connected(i,entrance_index)) continue;
+            if(!habitat_exterior_access_enabled(i,entrance_index)) continue;
             const auto& access=mesh.entrance_access[entrance_index];
             if(entrance_access_hits_corridor(access,instance.position,instance.rotation_degrees,corridor_network_)) continue;
             const float access_fraction=instance.construction.complete()?1.0f:0.5f;

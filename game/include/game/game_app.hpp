@@ -168,6 +168,8 @@ private:
     float first_person_door_open_fraction(eng::Vec3 door_position) const;
     std::vector<CorridorDoor> habitat_doors(std::size_t habitat_index) const;
     std::vector<CorridorDoor> storage_dome_doors(std::size_t resource_index) const;
+    bool habitat_has_complete_corridor_connection(std::size_t habitat_index) const;
+    bool habitat_exterior_access_enabled(std::size_t habitat_index,std::size_t entrance_index) const;
     ResourceBundle committed_construction_resources() const;
     bool can_start_construction(const ConstructionResourcePlan& plan) const;
     void drop_structure_resources(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used);

@@ -585,20 +585,6 @@ std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anch
     // invalidates the chosen lane, fail rather than introducing an overlap.
     if(!route_is_valid(path,habitats,library,resources,resource_library,existing,*a,*b)) return std::nullopt;
 
-    // An exposed corridor end includes a full exterior air-lock beyond the
-    // routed endpoint. Reserve that pressure volume during placement too; an
-    // otherwise valid corridor is rejected if its mandatory air-lock would
-    // intersect another structure or corridor.
-    for(const CorridorEndpoint* ep:{&*a,&*b}){
-        if(ep->kind!=CorridorEndpointKind::OpenDoor || ep->suppress_open_door) continue;
-        Vec3 inward=flat_normal(ep->tangent);
-        if(length(inward)<0.001f) continue;
-        const Vec3 outer=ep->position-inward*geometry::kCorridorAirlockLength;
-        const std::vector<Vec3> airlock_path{ep->position,outer};
-        if(route_overlaps_structures(airlock_path,habitats,library,resources,resource_library,*a,*b)) return std::nullopt;
-        if(route_overlaps_corridor(airlock_path,existing,*a,*b)) return std::nullopt;
-    }
-
     CorridorConnection out;
     out.kind=kind;
     out.endpoint_a=*a;
