@@ -60,6 +60,9 @@ inline Vec3 closest_point_segment_xz(Vec3 p,Vec3 a,Vec3 b){
 inline bool endpoint_uses_habitat(const CorridorEndpoint& e,std::size_t index){
     return e.kind==CorridorEndpointKind::Habitat && e.index==index;
 }
+inline bool endpoint_uses_resource(const CorridorEndpoint& e,std::size_t index){
+    return e.kind==CorridorEndpointKind::Resource && e.index==index;
+}
 
 
 void tri(std::vector<Vec3>& dst,Vec3 a,Vec3 b,Vec3 c);
@@ -73,8 +76,11 @@ void append_ribs(CorridorMesh& mesh,const std::vector<Vec3>& path);
 void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint);
 
 std::optional<CorridorEndpoint> resolve_anchor(const CorridorBuildAnchor& anchor,Vec3 other,
-                                               const std::vector<PlacedHabitat>& habitats,
-                                               const HabitatModelLibrary& library,
+                                               const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                                               const std::vector<CorridorConnection>& existing);
+std::optional<CorridorEndpoint> resolve_anchor(const CorridorBuildAnchor& anchor,Vec3 other,
+                                               const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                                               const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                                                const std::vector<CorridorConnection>& existing);
 std::vector<Vec3> smooth_route(const CorridorEndpoint& a,const CorridorEndpoint& b,
                                const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library);
@@ -83,8 +89,8 @@ CorridorMesh build_mesh(const CorridorEndpoint& a,const CorridorEndpoint& b,cons
                         const std::vector<CorridorConnection>& existing);
 std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anchor,const CorridorBuildAnchor& b_anchor,
                                                CorridorConnectionKind kind,
-                                               const std::vector<PlacedHabitat>& habitats,
-                                               const HabitatModelLibrary& library,
+                                               const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                                               const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                                                const std::vector<CorridorConnection>& existing);
 Vec3 nearest_path_point(const std::vector<Vec3>& path,Vec3 p);
 Vec3 nearest_path_tangent(const std::vector<Vec3>& path,Vec3 p);

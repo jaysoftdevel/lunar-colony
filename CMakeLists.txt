@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" GAME_VERSION LIMIT_COUNT 1)
-if(NOT GAME_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
-    message(FATAL_ERROR "VERSION must contain a semantic version such as 0.4.0")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" GAME_VERSION_FULL LIMIT_COUNT 1)
+if(NOT GAME_VERSION_FULL MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "VERSION must contain release.major.minor, e.g. 0.19.2")
 endif()
-
-project(game_workspace VERSION ${GAME_VERSION} LANGUAGES CXX)
+project(game_workspace VERSION ${GAME_VERSION_FULL} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

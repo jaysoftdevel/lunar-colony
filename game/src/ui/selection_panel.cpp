@@ -15,7 +15,43 @@ using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
+namespace {
+std::string next_material_cost(const ConstructionResourcePlan& plan,std::uint8_t completed_steps){
+    const ResourceBundle& c=plan.next_step_cost(completed_steps);
+    std::ostringstream out;
+    out<<"NEXT  FE "<<c.iron<<"  CU "<<c.copper<<"  SI "<<c.silicon<<"  P "<<c.plastic;
+    return out.str();
+}
+}
+
 void GameApp::render_selection_panel(Renderer& r){
+    if(selection_kind_==SelectionKind::GroundResource){
+        if(selected_ground_resource_<0 || (std::size_t)selected_ground_resource_>=ground_resource_piles_.size()) return;
+        const auto& box=ground_resource_piles_[(std::size_t)selected_ground_resource_];
+        const Rect p=ground_resource_panel_rect();
+        ui::panel(r,p,theme_);
+        r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2.0f);
+        const float x=p.x+11.0f;
+        const int condition=(int)std::lround(std::clamp(box.condition,0.0f,1.0f)*100.0f);
+        const char* grade=condition>=95?"EXCELLENT":(condition>=85?"GOOD":(condition>=70?"WORN":"DAMAGED"));
+        std::ostringstream amount,cond;
+        amount<<"AMOUNT  "<<box.amount<<" KG";
+        cond<<"CONDITION  "<<condition<<"% / "<<grade;
+        game_label(r,{x,p.y+9},"RESOURCE BOX",0.56f,theme_,true);
+        game_label(r,{x,p.y+31},material_resource_name(box.resource),0.72f,theme_);
+        game_label(r,{x,p.y+55},amount.str(),0.52f,theme_);
+        game_label(r,{x,p.y+76},cond.str(),0.50f,theme_,true);
+        bool can_store=false;
+        for(const auto& structure:placed_resources_){
+            if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
+            const std::int64_t used=structure.stored_resources.iron+structure.stored_resources.copper+structure.stored_resources.silicon+structure.stored_resources.plastic;
+            if(used+box.amount<=storage_dome_capacity_kg(structure.storage_size)){ can_store=true; break; }
+        }
+        const char* action=!debug_frame_enabled_?"DEBUG REQUIRED FOR DEL":(can_store?"DEL  MOVE TO STORAGE DOME":"NO AVAILABLE STORAGE DOME");
+        game_label(r,{x,p.y+97},action,0.44f,theme_,true);
+        return;
+    }
+
     const Rect p=selection_panel_rect();
     ui::panel(r,p,theme_);
     r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2.0f);
@@ -36,6 +72,7 @@ void GameApp::render_selection_panel(Renderer& r){
             std::ostringstream build;
             build<<"CONSTRUCTION  STEP "<<(int)h.construction.step<<" / "<<(int)kConstructionSteps<<"  "<<(int)std::lround(h.construction.progress()*100.0f)<<"%";
             game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
+            game_label(r,{x,p.y+73},next_material_cost(h.resource_plan,h.construction.step),0.43f,theme_,true);
         }
         game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
@@ -52,13 +89,25 @@ void GameApp::render_selection_panel(Renderer& r){
         rot<<"ROTATION "<<(int)std::round(item.rotation_degrees)<<" DEG";
         utilities<<"SUPPLY LINKS "<<(utility_network_.endpoint_connection_count(UtilityEndpointKind::Resource,(size_t)selected_resource_)+walkway_network_.endpoint_connection_count(WalkwayEndpointKind::Resource,(size_t)selected_resource_));
         game_label(r,{x,p.y+10},"RESOURCE #"+std::to_string(selected_resource_+1),0.64f,theme_,true);
-        game_label(r,{x,p.y+34},resource_name(item.kind),0.76f,theme_);
+        game_label(r,{x,p.y+34},item.kind==ResourceKind::StorageDome?std::string(resource_name(item.kind))+" / "+storage_dome_size_name(item.storage_size):resource_name(item.kind),0.76f,theme_);
         if(item.construction.complete()){
             game_label(r,{x,p.y+60},"STATUS  PLACED / AVAILABLE",0.58f,theme_);
         }else{
             std::ostringstream build;
             build<<"CONSTRUCTION  STEP "<<(int)item.construction.step<<" / "<<(int)kConstructionSteps<<"  "<<(int)std::lround(item.construction.progress()*100.0f)<<"%";
             game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
+            game_label(r,{x,p.y+73},next_material_cost(item.resource_plan,item.construction.step),0.43f,theme_,true);
+        }
+        if(item.kind==ResourceKind::StorageDome){
+            const std::int64_t stored=item.stored_resources.iron+item.stored_resources.copper+item.stored_resources.silicon+item.stored_resources.plastic;
+            std::ostringstream capacity,corridors;
+            capacity<<"STORAGE  "<<stored<<" / "<<storage_dome_capacity_kg(item.storage_size)<<" KG";
+            corridors<<"CORRIDORS "<<corridor_network_.resource_connection_count((size_t)selected_resource_);
+            game_label(r,{x,p.y+84},capacity.str(),0.56f,theme_,true);
+            game_label(r,{x,p.y+106},pos.str(),0.54f,theme_,true);
+            game_label(r,{x,p.y+128},corridors.str()+" / "+utilities.str(),0.50f,theme_,true);
+            game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
+            return;
         }
         game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
@@ -85,6 +134,7 @@ void GameApp::render_selection_panel(Renderer& r){
             build<<"CONSTRUCTION  STEP "<<(int)u.construction.step<<" / "<<(int)kSupplyConstructionSteps
                  <<"  "<<(int)std::lround(u.construction.progress()*100.0f)<<"%";
             game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
+            game_label(r,{x,p.y+73},next_material_cost(u.resource_plan,u.construction.step),0.43f,theme_,true);
         }
         game_label(r,{x,p.y+84},length.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},endpoints.str(),0.50f,theme_,true);
@@ -102,7 +152,15 @@ void GameApp::render_selection_panel(Renderer& r){
         if(w.endpoint_b.kind!=WalkwayEndpointKind::Open) endpoints<<" "<<(w.endpoint_b.index+1);
         game_label(r,{x,p.y+10},"WALKWAY #"+std::to_string(selected_walkway_+1),0.64f,theme_,true);
         game_label(r,{x,p.y+34},"EXTERNAL ACCESS WALKWAY",0.72f,theme_);
-        game_label(r,{x,p.y+60},"STATUS  ACCESS + POWER + WATER",0.56f,theme_);
+        if(w.construction.complete()){
+            game_label(r,{x,p.y+60},"STATUS  ACCESS + POWER + WATER",0.56f,theme_);
+        }else{
+            std::ostringstream build;
+            build<<"CONSTRUCTION  STEP "<<(int)w.construction.step<<" / "<<(int)kWalkwayConstructionSteps
+                 <<"  "<<(int)std::lround(w.construction.progress()*100.0f)<<"%";
+            game_label(r,{x,p.y+60},build.str(),0.56f,theme_);
+            game_label(r,{x,p.y+73},next_material_cost(w.resource_plan,w.construction.step),0.43f,theme_,true);
+        }
         game_label(r,{x,p.y+84},length.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+108},endpoints.str(),0.50f,theme_,true);
         game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
@@ -126,6 +184,7 @@ void GameApp::render_selection_panel(Renderer& r){
             build<<"CONSTRUCTION  STEP "<<(int)c.construction.step<<" / "<<(int)kCorridorConstructionSteps
                  <<"  "<<(int)std::lround(c.construction.progress()*100.0f)<<"%";
             game_label(r,{x,p.y+59},build.str(),0.56f,theme_);
+            game_label(r,{x,p.y+72},next_material_cost(c.resource_plan,c.construction.step),0.43f,theme_,true);
         }
         game_label(r,{x,p.y+82},length.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+105},segments.str(),0.58f,theme_,true);

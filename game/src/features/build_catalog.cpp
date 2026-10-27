@@ -12,10 +12,10 @@ BuildObjectDefinition resource(const char* id,const char* name,const char* type,
     return {id,name,type,icon,category,BuildObjectKind::Resource,HabitatKind::AirLock,HabitatSizeTier::Standard,kind,UtilityKind::SupplyChannel};
 }
 BuildObjectDefinition utility(){
-    return {"supply_channel","Supply Channel","Utility / Power + Water",BuildIcon::SupplyChannel,BuildCategory::Resources,BuildObjectKind::Utility,HabitatKind::AirLock,HabitatSizeTier::Standard,ResourceKind::SolarPanel,UtilityKind::SupplyChannel};
+    return {"supply_channel","Supply Channel","Utility / Power + Water",BuildIcon::SupplyChannel,BuildCategory::Structures,BuildObjectKind::Utility,HabitatKind::AirLock,HabitatSizeTier::Standard,ResourceKind::SolarPanel,UtilityKind::SupplyChannel};
 }
 BuildObjectDefinition walkway(){
-    return {"walkway","Walkway","Infrastructure / Access + Supply",BuildIcon::Walkway,BuildCategory::Facilities,BuildObjectKind::Walkway,HabitatKind::AirLock,HabitatSizeTier::Standard,ResourceKind::SolarPanel,UtilityKind::SupplyChannel};
+    return {"walkway","Walkway","Infrastructure / Access + Supply",BuildIcon::Walkway,BuildCategory::Structures,BuildObjectKind::Walkway,HabitatKind::AirLock,HabitatSizeTier::Standard,ResourceKind::SolarPanel,UtilityKind::SupplyChannel};
 }
 }
 
@@ -33,18 +33,19 @@ BuildCatalog::BuildCatalog(){
         habitat("manufactory","Manufactory","Industry / Complex Fabrication",BuildIcon::Manufactory,HabitatKind::Manufactory),
         habitat("sick_bay","Sick Bay","Crew / Medical",BuildIcon::SickBay,HabitatKind::SickBay),
         habitat("laboratory","Laboratory","Research / Advanced Technology",BuildIcon::Laboratory,HabitatKind::Laboratory),
+        resource("storage_dome","Storage Dome","Habitat / Material Storage / Scalable",BuildIcon::StorageDome,BuildCategory::Habitats,ResourceKind::StorageDome),
         corridor(),
 
-        resource("solar_panel","Solar Panel","Resource / Power Generation",BuildIcon::SolarPanel,BuildCategory::Resources,ResourceKind::SolarPanel),
-        resource("water_driller","Water Driller","Resource / Extraction",BuildIcon::WaterDriller,BuildCategory::Resources,ResourceKind::WaterDriller),
-        resource("power_storage","Power Storage","Resource / Energy Storage",BuildIcon::PowerStorage,BuildCategory::Resources,ResourceKind::PowerStorage),
-        resource("water_storage","Water Storage","Resource / Water Storage",BuildIcon::WaterStorage,BuildCategory::Resources,ResourceKind::WaterStorage),
-        resource("ore_driller","Ore Driller","Resource / Ore Extraction",BuildIcon::OreDriller,BuildCategory::Resources,ResourceKind::OreDriller),
+        resource("solar_panel","Solar Panel","Resource / Power Generation",BuildIcon::SolarPanel,BuildCategory::Structures,ResourceKind::SolarPanel),
+        resource("water_driller","Water Driller","Resource / Extraction",BuildIcon::WaterDriller,BuildCategory::Structures,ResourceKind::WaterDriller),
+        resource("power_storage","Power Storage","Resource / Energy Storage",BuildIcon::PowerStorage,BuildCategory::Structures,ResourceKind::PowerStorage),
+        resource("water_storage","Water Storage","Resource / Water Storage",BuildIcon::WaterStorage,BuildCategory::Structures,ResourceKind::WaterStorage),
+        resource("ore_driller","Ore Driller","Resource / Ore Extraction",BuildIcon::OreDriller,BuildCategory::Structures,ResourceKind::OreDriller),
         utility(),
 
-        resource("water_purifier","Water Purifier","Facility / Water Recycling",BuildIcon::WaterPurifier,BuildCategory::Facilities,ResourceKind::WaterPurifier),
-        resource("antenna","Antenna","Facility / Communications",BuildIcon::Antenna,BuildCategory::Facilities,ResourceKind::Antenna),
-        resource("landing_pad","Landing Pad","Facility / Transport",BuildIcon::LandingPad,BuildCategory::Facilities,ResourceKind::LandingPad),
+        resource("water_purifier","Water Purifier","Facility / Water Recycling",BuildIcon::WaterPurifier,BuildCategory::Structures,ResourceKind::WaterPurifier),
+        resource("antenna","Antenna","Facility / Communications",BuildIcon::Antenna,BuildCategory::Structures,ResourceKind::Antenna),
+        resource("landing_pad","Landing Pad","Facility / Transport",BuildIcon::LandingPad,BuildCategory::Structures,ResourceKind::LandingPad),
         walkway()
     };
 }

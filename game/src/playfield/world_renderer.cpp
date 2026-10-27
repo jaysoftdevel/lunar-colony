@@ -152,11 +152,50 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
     r.draw_lines_3d(edges,selected?theme_.accent:Color{0.10f,0.16f,0.18f,1.0f},selected?2.4f:1.15f);
 }
 
+
+void GameApp::render_ground_resources(Renderer& r){
+    auto color_for=[](MaterialResource resource){
+        switch(resource){
+            case MaterialResource::Iron: return Color{0.48f,0.52f,0.56f,1.0f};
+            case MaterialResource::Copper: return Color{0.74f,0.42f,0.20f,1.0f};
+            case MaterialResource::Silicon: return Color{0.28f,0.58f,0.76f,1.0f};
+            case MaterialResource::Plastic: return Color{0.72f,0.70f,0.58f,1.0f};
+            case MaterialResource::Count: break;
+        }
+        return Color{0.6f,0.6f,0.6f,1.0f};
+    };
+
+    for(std::size_t pile_index=0;pile_index<ground_resource_piles_.size();++pile_index){
+        const auto& pile=ground_resource_piles_[pile_index];
+        const float r0=pile.radius;
+        const float h=std::clamp(0.18f+0.055f*std::log10((float)pile.amount+1.0f),0.22f,0.52f);
+        const Vec3 c=pile.position+Vec3{0,h*0.5f+0.025f,0};
+        const float x0=c.x-r0,x1=c.x+r0,z0=c.z-r0,z1=c.z+r0,y0=c.y-h*0.5f,y1=c.y+h*0.5f;
+        const std::vector<Vec3> tris{
+            {x0,y0,z0},{x1,y0,z0},{x1,y0,z1},{x0,y0,z0},{x1,y0,z1},{x0,y0,z1},
+            {x0,y1,z0},{x1,y1,z1},{x1,y1,z0},{x0,y1,z0},{x0,y1,z1},{x1,y1,z1},
+            {x0,y0,z0},{x0,y1,z0},{x1,y1,z0},{x0,y0,z0},{x1,y1,z0},{x1,y0,z0},
+            {x1,y0,z1},{x1,y1,z1},{x0,y1,z1},{x1,y0,z1},{x0,y1,z1},{x0,y0,z1},
+            {x0,y0,z1},{x0,y1,z1},{x0,y1,z0},{x0,y0,z1},{x0,y1,z0},{x0,y0,z0},
+            {x1,y0,z0},{x1,y1,z0},{x1,y1,z1},{x1,y0,z0},{x1,y1,z1},{x1,y0,z1}
+        };
+        const std::vector<Vec3> edges{
+            {x0,y0,z0},{x1,y0,z0},{x1,y0,z0},{x1,y0,z1},{x1,y0,z1},{x0,y0,z1},{x0,y0,z1},{x0,y0,z0},
+            {x0,y1,z0},{x1,y1,z0},{x1,y1,z0},{x1,y1,z1},{x1,y1,z1},{x0,y1,z1},{x0,y1,z1},{x0,y1,z0},
+            {x0,y0,z0},{x0,y1,z0},{x1,y0,z0},{x1,y1,z0},{x1,y0,z1},{x1,y1,z1},{x0,y0,z1},{x0,y1,z1}
+        };
+        const Color base=color_for(pile.resource);
+        const bool selected=selection_kind_==SelectionKind::GroundResource && selected_ground_resource_==(int)pile_index;
+        r.draw_triangles_3d(tris,{base.r,base.g,base.b,0.90f});
+        r.draw_lines_3d(edges,selected?theme_.accent:Color{0.10f,0.12f,0.13f,1.0f},selected?2.8f:1.25f);
+    }
+}
+
 void GameApp::render_resources(Renderer& r){
     for(size_t i=0;i<placed_resources_.size();++i){
         const auto& instance=placed_resources_[i];
         const bool selected=selection_kind_==SelectionKind::Resource && selected_resource_==(int)i;
-        render_resource_mesh(r,resource_models_.mesh(instance.kind),instance.position,instance.rotation_degrees,false,true,selected,instance.construction.step);
+        render_resource_mesh(r,resource_models_.mesh(instance),instance.position,instance.rotation_degrees,false,true,selected,instance.construction.step);
     }
 }
 
@@ -199,6 +238,22 @@ void GameApp::render_walkways(Renderer& r){
         const auto& w=links[i];
         const bool selected=selection_kind_==SelectionKind::Walkway && selected_walkway_==(int)i;
         const float boost=selected?1.55f:1.0f;
+        if(!w.construction.complete()){
+            const float fraction=w.construction.progress();
+            const Color build_main{0.80f,0.66f,0.27f,1.0f};
+            const Color build_detail{0.66f,0.58f,0.34f,0.96f};
+            if(w.construction.step==0){
+                r.draw_lines_3d(construction_path_lines(w.path),build_main,selected?2.6f:1.6f);
+            }else{
+                const auto deck=construction_sequence::reveal_triangles(w.mesh.deck,fraction);
+                const auto details=construction_sequence::reveal_triangles(w.mesh.details,fraction);
+                const auto edges=construction_sequence::reveal_lines(w.mesh.edges,fraction);
+                mesh_wireframe::draw_layer(r,deck,build_main,1.10f*boost);
+                mesh_wireframe::draw_layer(r,details,build_detail,1.00f*boost);
+                if(!edges.empty()) r.draw_lines_3d(edges,selected?theme_.accent:build_main,selected?2.5f:1.20f);
+            }
+            continue;
+        }
         mesh_wireframe::draw_layer(r,w.mesh.deck,{0.54f,0.64f,0.66f,1.0f},1.10f*boost);
         mesh_wireframe::draw_layer(r,w.mesh.details,{0.72f,0.58f,0.25f,0.96f},1.00f*boost);
         r.draw_lines_3d(w.mesh.edges,selected?theme_.accent:Color{0.10f,0.15f,0.16f,1.0f},selected?2.5f:1.15f);

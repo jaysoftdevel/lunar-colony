@@ -114,14 +114,8 @@ void GameApp::render_settings(Renderer& r){
     if(ui::button(r,ui_input_,{right_x+column_w-82,inner_y+27,82,34},debug_label,theme_)){
         debug_frame_enabled_=!debug_frame_enabled_;
     }
-    ui::label(r,{right_x+14,inner_y+78},"CREW ACCESS PATHS",0.86f,theme_);
-    const std::string crew_paths_label=debug_crew_paths_enabled_?"ON":"OFF";
-    if(ui::button(r,ui_input_,{right_x+column_w-82,inner_y+66,82,34},crew_paths_label,theme_)){
-        debug_crew_paths_enabled_=!debug_crew_paths_enabled_;
-    }
-    ui::label(r,{right_x+14,inner_y+113},"BLUE CONNECTED CREW ROUTES",0.72f,theme_,true);
-    ui::label(r,{right_x,inner_y+143},"UI SCALE APPLIES TO ALL HUD",0.76f,theme_,true);
-    ui::label(r,{right_x,inner_y+170},"CROSSHAIR ONLY OVER PLAYFIELD",0.76f,theme_,true);
+    ui::label(r,{right_x,inner_y+82},"UI SCALE APPLIES TO ALL HUD",0.76f,theme_,true);
+    ui::label(r,{right_x,inner_y+109},"CROSSHAIR ONLY OVER PLAYFIELD",0.76f,theme_,true);
 
     constexpr float back_w=130.0f;
     constexpr float back_h=38.0f;

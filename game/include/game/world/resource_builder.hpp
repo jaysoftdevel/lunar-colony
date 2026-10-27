@@ -75,6 +75,28 @@ struct Builder {
         cylinder_between(dst,{c.x,c.y,c.z-len*0.5f},{c.x,c.y,c.z+len*0.5f},radius,segments,true,outline);
     }
 
+    void dome(std::vector<Vec3>& dst,Vec3 base,float radius,int rings=7,int segments=20,bool outline=true,float y_scale=1.0f){
+        const int rs=std::max(3,rings), ss=std::max(8,segments);
+        for(int r=0;r<rs;++r){
+            const float t0=(PI*0.5f)*(float)r/(float)rs;
+            const float t1=(PI*0.5f)*(float)(r+1)/(float)rs;
+            const float rr0=radius*std::cos(t0), rr1=radius*std::cos(t1);
+            const float y0=base.y+radius*std::sin(t0)*y_scale;
+            const float y1=base.y+radius*std::sin(t1)*y_scale;
+            for(int s=0;s<ss;++s){
+                const float a0=2.0f*PI*(float)s/(float)ss;
+                const float a1=2.0f*PI*(float)(s+1)/(float)ss;
+                const Vec3 p00{base.x+rr0*std::cos(a0),y0,base.z+rr0*std::sin(a0)};
+                const Vec3 p01{base.x+rr0*std::cos(a1),y0,base.z+rr0*std::sin(a1)};
+                const Vec3 p10{base.x+rr1*std::cos(a0),y1,base.z+rr1*std::sin(a0)};
+                const Vec3 p11{base.x+rr1*std::cos(a1),y1,base.z+rr1*std::sin(a1)};
+                tri(dst,p00,p10,p11); tri(dst,p00,p11,p01);
+                if(outline && (s%(std::max(1,ss/8))==0)) line(p00,p10);
+                if(outline && s==0){ line(p00,p01); line(p10,p11); }
+            }
+        }
+    }
+
     void foot(Vec3 c,float radius=0.42f,float height=0.18f){
         cylinder_y(mesh.foundation,{c.x,height*0.5f,c.z},height,radius,10,true);
     }

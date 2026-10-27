@@ -3,20 +3,24 @@
 namespace game::corridor_detail {
 std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anchor,const CorridorBuildAnchor& b_anchor,
                                                CorridorConnectionKind kind,
-                                               const std::vector<PlacedHabitat>& habitats,
-                                               const HabitatModelLibrary& library,
+                                               const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                                               const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                                                const std::vector<CorridorConnection>& existing){
     Vec3 a_hint=a_anchor.position,b_hint=b_anchor.position;
     if(a_anchor.kind==CorridorEndpointKind::Habitat && a_anchor.index<habitats.size()) a_hint=habitats[a_anchor.index].position;
     if(b_anchor.kind==CorridorEndpointKind::Habitat && b_anchor.index<habitats.size()) b_hint=habitats[b_anchor.index].position;
-    auto a=resolve_anchor(a_anchor,b_hint,habitats,library,existing);
-    auto b=resolve_anchor(b_anchor,a_hint,habitats,library,existing);
+    if(a_anchor.kind==CorridorEndpointKind::Resource && a_anchor.index<resources.size()) a_hint=resources[a_anchor.index].position;
+    if(b_anchor.kind==CorridorEndpointKind::Resource && b_anchor.index<resources.size()) b_hint=resources[b_anchor.index].position;
+    auto a=resolve_anchor(a_anchor,b_hint,habitats,library,resources,resource_library,existing);
+    auto b=resolve_anchor(b_anchor,a_hint,habitats,library,resources,resource_library,existing);
     if(!a || !b) return std::nullopt;
 
     // Re-resolve habitats once using the actual opposite endpoint so generated
     // door placement tracks corridor/corridor/open targets precisely.
-    if(a_anchor.kind==CorridorEndpointKind::Habitat) a=resolve_anchor(a_anchor,b->position,habitats,library,existing);
-    if(b_anchor.kind==CorridorEndpointKind::Habitat) b=resolve_anchor(b_anchor,a->position,habitats,library,existing);
+    if(a_anchor.kind==CorridorEndpointKind::Habitat || a_anchor.kind==CorridorEndpointKind::Resource)
+        a=resolve_anchor(a_anchor,b->position,habitats,library,resources,resource_library,existing);
+    if(b_anchor.kind==CorridorEndpointKind::Habitat || b_anchor.kind==CorridorEndpointKind::Resource)
+        b=resolve_anchor(b_anchor,a->position,habitats,library,resources,resource_library,existing);
     if(!a || !b) return std::nullopt;
 
     // Habitat-to-habitat runs shorter than eight raster cells stay elevated

@@ -1,4 +1,5 @@
 #include "game/world/corridor_network.hpp"
+#include "game/systems/construction_costs.hpp"
 #include "game/world/corridor/detail.hpp"
 #include <limits>
 
@@ -81,6 +82,16 @@ std::optional<CorridorEndpoint> CorridorNetwork::preview_anchor(
     return resolve_anchor(anchor,other,habitats,library,connections_);
 }
 
+std::optional<CorridorEndpoint> CorridorNetwork::preview_anchor(
+    const CorridorBuildAnchor& anchor,Vec3 other,
+    const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+    const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const {
+    if(anchor.kind==CorridorEndpointKind::Corridor && anchor.index>=connections_.size()) return std::nullopt;
+    if(anchor.kind==CorridorEndpointKind::Habitat && anchor.index>=habitats.size()) return std::nullopt;
+    if(anchor.kind==CorridorEndpointKind::Resource && (anchor.index>=resources.size() || resources[anchor.index].kind!=ResourceKind::StorageDome)) return std::nullopt;
+    return resolve_anchor(anchor,other,habitats,library,resources,resource_library,connections_);
+}
+
 CorridorMesh CorridorNetwork::preview_endpoint_mesh(const CorridorEndpoint& endpoint) const {
     CorridorMesh mesh;
     append_docking_collar(mesh,endpoint);
@@ -89,18 +100,22 @@ CorridorMesh CorridorNetwork::preview_endpoint_mesh(const CorridorEndpoint& endp
 
 std::optional<CorridorConnection> CorridorNetwork::preview_built_corridor(
     const CorridorBuildAnchor& a,const CorridorBuildAnchor& b,
-    const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library) const {
+    const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+    const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const {
     if(a.kind==CorridorEndpointKind::Corridor && a.index>=connections_.size()) return std::nullopt;
     if(b.kind==CorridorEndpointKind::Corridor && b.index>=connections_.size()) return std::nullopt;
     if(a.kind==CorridorEndpointKind::Habitat && a.index>=habitats.size()) return std::nullopt;
     if(b.kind==CorridorEndpointKind::Habitat && b.index>=habitats.size()) return std::nullopt;
+    if(a.kind==CorridorEndpointKind::Resource && (a.index>=resources.size() || resources[a.index].kind!=ResourceKind::StorageDome)) return std::nullopt;
+    if(b.kind==CorridorEndpointKind::Resource && (b.index>=resources.size() || resources[b.index].kind!=ResourceKind::StorageDome)) return std::nullopt;
     if(a.kind==b.kind && a.index==b.index && a.kind!=CorridorEndpointKind::OpenDoor) return std::nullopt;
-    return make_generic(a,b,CorridorConnectionKind::BuiltSection,habitats,library,connections_);
+    return make_generic(a,b,CorridorConnectionKind::BuiltSection,habitats,library,resources,resource_library,connections_);
 }
 
 bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const CorridorBuildAnchor& b,
-                                     const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library){
-    auto c=preview_built_corridor(a,b,habitats,library);
+                                     const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                                     const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
+    auto c=preview_built_corridor(a,b,habitats,library,resources,resource_library);
     if(!c) return false;
     // Materialize the exact branch point into each host path. This gives
     // corridor-to-corridor connections a shared centerline vertex instead of
@@ -114,6 +129,7 @@ bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const Corridor
     }
     connections_.push_back(std::move(*c));
     optimize_shared_entrance_groups(connections_,habitats,library);
+    connections_.back().resource_plan=construction_costs::corridor(path_length(connections_.back().path));
     return true;
 }
 
@@ -159,7 +175,9 @@ std::optional<CorridorConnection> CorridorNetwork::preview_corridor_link(
 
     CorridorBuildAnchor a{CorridorEndpointKind::Corridor,corridor_a,pair.first};
     CorridorBuildAnchor b{CorridorEndpointKind::Corridor,corridor_b,pair.second};
-    return make_generic(a,b,CorridorConnectionKind::NetworkLink,habitats,library,connections_);
+    static const std::vector<PlacedResource> no_resources;
+    static const ResourceModelLibrary resource_library;
+    return make_generic(a,b,CorridorConnectionKind::NetworkLink,habitats,library,no_resources,resource_library,connections_);
 }
 
 bool CorridorNetwork::connect_corridors(std::size_t corridor_a,std::size_t corridor_b,
@@ -173,12 +191,17 @@ bool CorridorNetwork::connect_corridors(std::size_t corridor_a,std::size_t corri
         connections_[ep->index].mesh=build_mesh(connections_[ep->index].endpoint_a,connections_[ep->index].endpoint_b,
                                                 connections_[ep->index].path,connections_);
     }
+    c->resource_plan=construction_costs::corridor(path_length(c->path));
     connections_.push_back(std::move(*c));
     return true;
 }
 
-void CorridorNetwork::update_construction(float dt){
-    for(auto& connection:connections_) connection.construction.update(dt);
+void CorridorNetwork::update_construction(float dt,ResourceManagement& resources,bool allow_negative){
+    for(auto& connection:connections_){
+        connection.construction.update_gated(dt,[&](std::uint8_t next_step){
+            return resources.consume(connection.resource_plan.next_step_cost((std::uint8_t)(next_step-1)),allow_negative);
+        });
+    }
 }
 
 Vec3 CorridorNetwork::nearest_point_on_corridor(std::size_t corridor_index,Vec3 p) const {
@@ -195,6 +218,13 @@ std::size_t CorridorNetwork::habitat_connection_count(std::size_t habitat_index)
     for(const auto& c:connections_){
         if(endpoint_uses_habitat(c.endpoint_a,habitat_index) || endpoint_uses_habitat(c.endpoint_b,habitat_index)) ++count;
     }
+    return count;
+}
+
+std::size_t CorridorNetwork::resource_connection_count(std::size_t resource_index) const {
+    std::size_t count=0;
+    for(const auto& c:connections_)
+        if(endpoint_uses_resource(c.endpoint_a,resource_index) || endpoint_uses_resource(c.endpoint_b,resource_index)) ++count;
     return count;
 }
 
@@ -273,6 +303,24 @@ void CorridorNetwork::remove_habitat(std::size_t habitat_index){
                 endpoint->host_tangent={0,0,0};
                 endpoint->host_position={};
             }else if(endpoint->index>habitat_index){
+                --endpoint->index;
+            }
+        }
+    }
+    for(auto& connection:connections_)
+        connection.mesh=build_mesh(connection.endpoint_a,connection.endpoint_b,connection.path,connections_);
+}
+
+void CorridorNetwork::remove_resource(std::size_t resource_index){
+    for(auto& connection:connections_){
+        for(CorridorEndpoint* endpoint:{&connection.endpoint_a,&connection.endpoint_b}){
+            if(endpoint->kind!=CorridorEndpointKind::Resource) continue;
+            if(endpoint->index==resource_index){
+                endpoint->kind=CorridorEndpointKind::OpenDoor;
+                endpoint->index=0;
+                endpoint->door=CorridorDoor{};
+                endpoint->suppress_open_door=false;
+            }else if(endpoint->index>resource_index){
                 --endpoint->index;
             }
         }

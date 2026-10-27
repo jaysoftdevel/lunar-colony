@@ -30,14 +30,14 @@ enum class BuildIcon {
     WaterPurifier,
     Antenna,
     LandingPad,
+    StorageDome,
     SupplyChannel,
     Walkway
 };
 
 enum class BuildCategory {
     Habitats,
-    Resources,
-    Facilities
+    Structures
 };
 
 enum class BuildObjectKind {

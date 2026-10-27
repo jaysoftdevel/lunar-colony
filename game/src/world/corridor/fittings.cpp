@@ -115,7 +115,7 @@ void append_generated_entrance(CorridorMesh& mesh,const CorridorDoor& door){
 // models. Add shallow internal steps only when there is enough height to
 // justify them. The stair run lives entirely inside the pressure docking sleeve.
 void append_entrance_stairs(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
-    if(endpoint.kind!=CorridorEndpointKind::Habitat) return;
+    if(endpoint.kind!=CorridorEndpointKind::Habitat && endpoint.kind!=CorridorEndpointKind::Resource) return;
     const CorridorDoor& door=endpoint.door;
     const Vec3 n=flat_normal(door.normal);
     const float threshold_y=std::clamp(door.wall_position.y-0.30f,WALKWAY_Y,1.05f);
@@ -140,7 +140,7 @@ void append_entrance_stairs(CorridorMesh& mesh,const CorridorEndpoint& endpoint)
 }
 
 void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
-    if(endpoint.kind!=CorridorEndpointKind::Habitat) return;
+    if(endpoint.kind!=CorridorEndpointKind::Habitat && endpoint.kind!=CorridorEndpointKind::Resource) return;
     const CorridorDoor& door=endpoint.door;
     const Vec3 n=flat_normal(door.normal);
     append_generated_entrance(mesh,door);

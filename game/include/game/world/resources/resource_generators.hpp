@@ -10,4 +10,5 @@ ResourceMesh make_ore_driller();
 ResourceMesh make_water_purifier();
 ResourceMesh make_antenna();
 ResourceMesh make_landing_pad();
+ResourceMesh make_storage_dome(StorageDomeSize size);
 }

@@ -29,9 +29,11 @@ void GameApp::update(float dt,const InputState& in){
             build_catalog_.clear_selection();
             placement_rotation_degrees_=0.0f;
             placement_habitat_size_=HabitatSizeTier::Standard;
+            placement_storage_size_=StorageDomeSize::Small;
             corridor_build_start_.reset();
             utility_build_start_.reset();
             walkway_build_start_.reset();
+            walkway_build_target_.reset();
             corridor_link_source_=-1;
             return;
         }
@@ -42,9 +44,11 @@ void GameApp::update(float dt,const InputState& in){
                 build_catalog_.clear_selection();
                 placement_rotation_degrees_=0.0f;
                 placement_habitat_size_=HabitatSizeTier::Standard;
+                placement_storage_size_=StorageDomeSize::Small;
                 corridor_build_start_.reset();
                 utility_build_start_.reset();
                 walkway_build_start_.reset();
+                walkway_build_target_.reset();
                 return;
             }
             if(corridor_link_source_>=0){
@@ -64,9 +68,8 @@ void GameApp::update(float dt,const InputState& in){
         if(const BuildObjectDefinition* selected=build_catalog_.selected(); selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
             constexpr float step=15.0f;
             const bool scalable_habitat=selected->kind==BuildObjectKind::Habitat && habitat_has_size_tiers(selected->habitat_kind);
+            const bool scalable_storage=selected->kind==BuildObjectKind::Resource && selected->resource_kind==ResourceKind::StorageDome;
             if(scalable_habitat){
-                // Scalable habitats reserve the wheel exclusively for size selection.
-                // Rotation remains available on N/M so wheel input never has two meanings.
                 auto cycle_size=[&](int delta){
                     int v=(int)placement_habitat_size_;
                     v=(v+delta+3)%3;
@@ -74,6 +77,14 @@ void GameApp::update(float dt,const InputState& in){
                 };
                 if(in.wheel>0.0f) cycle_size(+1);
                 if(in.wheel<0.0f) cycle_size(-1);
+            }else if(scalable_storage){
+                auto cycle_storage=[&](int delta){
+                    int v=(int)placement_storage_size_;
+                    v=(v+delta+4)%4;
+                    placement_storage_size_=(StorageDomeSize)v;
+                };
+                if(in.wheel>0.0f) cycle_storage(+1);
+                if(in.wheel<0.0f) cycle_storage(-1);
             }else{
                 if(in.wheel>0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
                 if(in.wheel<0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);

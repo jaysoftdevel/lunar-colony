@@ -1,6 +1,8 @@
 #pragma once
 #include "game/world/habitat_mesh.hpp"
+#include "game/world/resource_mesh.hpp"
 #include "game/world/construction.hpp"
+#include "game/systems/resource_management.hpp"
 #include <cstddef>
 #include <optional>
 #include <vector>
@@ -27,6 +29,7 @@ struct CorridorMesh {
 
 enum class CorridorEndpointKind {
     Habitat,
+    Resource,
     Corridor,
     OpenDoor
 };
@@ -63,6 +66,7 @@ struct CorridorConnection {
     std::vector<eng::Vec3> path{};
     CorridorMesh mesh{};
     StagedConstructionState construction{kCorridorConstructionSteps};
+    ConstructionResourcePlan resource_plan{};
 };
 
 class CorridorNetwork {
@@ -81,33 +85,35 @@ public:
                            const HabitatModelLibrary& library);
 
     std::optional<CorridorEndpoint> preview_anchor(
-        const CorridorBuildAnchor& anchor,
-        eng::Vec3 other,
-        const std::vector<PlacedHabitat>& habitats,
-        const HabitatModelLibrary& library) const;
+        const CorridorBuildAnchor& anchor,eng::Vec3 other,
+        const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library) const;
+    std::optional<CorridorEndpoint> preview_anchor(
+        const CorridorBuildAnchor& anchor,eng::Vec3 other,
+        const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+        const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const;
 
     CorridorMesh preview_endpoint_mesh(const CorridorEndpoint& endpoint) const;
 
     std::optional<CorridorConnection> preview_built_corridor(
-        const CorridorBuildAnchor& a,
-        const CorridorBuildAnchor& b,
-        const std::vector<PlacedHabitat>& habitats,
-        const HabitatModelLibrary& library) const;
+        const CorridorBuildAnchor& a,const CorridorBuildAnchor& b,
+        const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+        const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const;
 
-    bool build_corridor(const CorridorBuildAnchor& a,
-                        const CorridorBuildAnchor& b,
-                        const std::vector<PlacedHabitat>& habitats,
-                        const HabitatModelLibrary& library);
+    bool build_corridor(const CorridorBuildAnchor& a,const CorridorBuildAnchor& b,
+                        const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                        const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library);
 
     CorridorBuildAnchor corridor_anchor(std::size_t corridor_index,eng::Vec3 near_point) const;
     eng::Vec3 nearest_point_on_corridor(std::size_t corridor_index,eng::Vec3 p) const;
 
     std::size_t habitat_connection_count(std::size_t habitat_index) const;
+    std::size_t resource_connection_count(std::size_t resource_index) const;
     bool habitat_entrance_connected(std::size_t habitat_index,std::size_t entrance_index) const;
     float connection_length(std::size_t corridor_index) const;
     void remove_corridor(std::size_t corridor_index);
     void remove_habitat(std::size_t habitat_index);
-    void update_construction(float dt);
+    void remove_resource(std::size_t resource_index);
+    void update_construction(float dt,ResourceManagement& resources,bool allow_negative);
     const std::vector<CorridorConnection>& connections() const { return connections_; }
 
 private:

@@ -14,9 +14,9 @@ struct CategoryButton {
 };
 constexpr CategoryButton CATEGORIES[]={
     {BuildCategory::Habitats,BuildIcon::CategoryHabitats,"HABITATS / INFRASTRUCTURE"},
-    {BuildCategory::Resources,BuildIcon::CategoryResources,"RESOURCE STRUCTURES"},
-    {BuildCategory::Facilities,BuildIcon::CategoryFacilities,"FACILITIES"}
+    {BuildCategory::Structures,BuildIcon::CategoryResources,"RESOURCES / FACILITIES"}
 };
+constexpr int CATEGORY_COUNT=(int)(sizeof(CATEGORIES)/sizeof(CATEGORIES[0]));
 }
 
 void GameApp::render_build_bar(Renderer& r){
@@ -31,10 +31,10 @@ void GameApp::render_build_bar(Renderer& r){
     constexpr float category_gap=7.0f;
     constexpr float category_x=12.0f;
     const float category_y=y+(BUILD_BAR_H-category_size)*0.5f;
-    const float category_area_w=category_size*3.0f+category_gap*2.0f+28.0f;
+    const float category_area_w=category_size*(float)CATEGORY_COUNT+category_gap*(float)(CATEGORY_COUNT-1)+28.0f;
 
     int hovered_category=-1;
-    for(int i=0;i<(int)(sizeof(CATEGORIES)/sizeof(CATEGORIES[0]));++i){
+    for(int i=0;i<CATEGORY_COUNT;++i){
         const Rect box={category_x+(category_size+category_gap)*(float)i,category_y,category_size,category_size};
         const bool hover=box.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
         const bool selected=build_catalog_.category()==CATEGORIES[i].category;
@@ -51,9 +51,11 @@ void GameApp::render_build_bar(Renderer& r){
             build_catalog_.set_category(CATEGORIES[i].category);
             placement_rotation_degrees_=0.0f;
             placement_habitat_size_=HabitatSizeTier::Standard;
+            placement_storage_size_=StorageDomeSize::Small;
             corridor_build_start_.reset();
             utility_build_start_.reset();
             walkway_build_start_.reset();
+            walkway_build_target_.reset();
             corridor_link_source_=-1;
             clear_world_selection();
         }
@@ -106,9 +108,11 @@ void GameApp::render_build_bar(Renderer& r){
             if(build_catalog_.selected_index()!=before){
                 placement_rotation_degrees_=0.0f;
                 placement_habitat_size_=HabitatSizeTier::Standard;
+                placement_storage_size_=StorageDomeSize::Small;
                 corridor_build_start_.reset();
                 utility_build_start_.reset();
                 walkway_build_start_.reset();
+                walkway_build_target_.reset();
             }
             clear_world_selection();
             corridor_link_source_=-1;
@@ -124,6 +128,8 @@ void GameApp::render_build_bar(Renderer& r){
         line2="TYPE " + item.type;
         if(item.kind==BuildObjectKind::Habitat && habitat_has_size_tiers(item.habitat_kind) && hovered_item==build_catalog_.selected_index())
             line2 += " / SIZE " + std::string(habitat_size_name(placement_habitat_size_));
+        if(item.kind==BuildObjectKind::Resource && item.resource_kind==ResourceKind::StorageDome && hovered_item==build_catalog_.selected_index())
+            line2 += " / SIZE " + std::string(storage_dome_size_name(placement_storage_size_));
     }else if(hovered_category>=0){
         line1=CATEGORIES[hovered_category].name;
         line2="BUILD SUBMENU";

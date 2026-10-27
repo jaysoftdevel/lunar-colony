@@ -8,7 +8,6 @@ void ColonyStatus::reset(){
     power_capacity_=100;
     water_current_=840;
     water_capacity_=1000;
-    resources_=1250;
     crew_current_=6;
     crew_capacity_=8;
 }

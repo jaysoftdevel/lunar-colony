@@ -1,4 +1,5 @@
 #include "game/game_app.hpp"
+#include "game/systems/construction_costs.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
 #include "game/util/mesh_wireframe.hpp"
@@ -32,9 +33,14 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
         if(overlaps(candidate_box,other_box,clearance)) return false;
     }
     for(const auto& placed:placed_resources_){
-        const ResourceMesh& other=resource_models_.mesh(placed.kind);
+        const ResourceMesh& other=resource_models_.mesh(placed);
         const auto other_box=footprint(placed.position,placed.rotation_degrees,other.footprint_x,other.footprint_z);
         if(overlaps(candidate_box,other_box,clearance)) return false;
+    }
+    for(const auto& pile:ground_resource_piles_){
+        const float diameter=std::max(0.20f,pile.radius*2.0f);
+        const auto pile_box=footprint(pile.position,0.0f,diameter,diameter);
+        if(overlaps(candidate_box,pile_box,0.12f)) return false;
     }
     return true;
 }
@@ -51,12 +57,19 @@ void GameApp::render_habitat_placement(Renderer& r){
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
     Vec3 snapped{std::round(hit.x),0.0f,std::round(hit.z)};
     const HabitatSizeTier size=habitat_has_size_tiers(selected->habitat_kind)?placement_habitat_size_:selected->habitat_size;
-    const bool valid=placement_valid(selected->habitat_kind,size,snapped,placement_rotation_degrees_);
+    const auto plan=construction_costs::habitat(selected->habitat_kind,size,habitat_models_.mesh(selected->habitat_kind,size));
+    const bool valid=placement_valid(selected->habitat_kind,size,snapped,placement_rotation_degrees_) && can_start_construction(plan);
 
     render_habitat_mesh(r,habitat_models_.mesh(selected->habitat_kind,size),snapped,placement_rotation_degrees_,true,valid);
 
     if(valid && input_.left_pressed){
-        placed_habitats_.push_back({selected->habitat_kind,snapped,placement_rotation_degrees_,size});
+        PlacedHabitat placed;
+        placed.kind=selected->habitat_kind;
+        placed.position=snapped;
+        placed.rotation_degrees=placement_rotation_degrees_;
+        placed.size=size;
+        placed.resource_plan=plan;
+        placed_habitats_.push_back(std::move(placed));
         build_catalog_.clear_selection();
         placement_rotation_degrees_=0.0f;
         placement_habitat_size_=HabitatSizeTier::Standard;

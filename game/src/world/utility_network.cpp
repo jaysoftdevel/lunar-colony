@@ -1,4 +1,5 @@
 #include "game/world/utility_network.hpp"
+#include "game/systems/construction_costs.hpp"
 #include "game/util/world_math.hpp"
 #include <algorithm>
 #include <cmath>
@@ -148,6 +149,21 @@ void nearest_surface_point(const std::vector<Vec3>& triangles,Vec3 desired,float
 std::optional<UtilityEndpoint> surface_endpoint(const UtilityBuildAnchor& anchor,Vec3 toward,UtilityKind utility,
                                                 const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
                                                 const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
+    // Open anchors are intentional free/network junction points. Keeping them
+    // at channel height lets a new run start directly on an existing supply
+    // centerline without inventing a structure port.
+    if(anchor.kind==UtilityEndpointKind::Open){
+        UtilityEndpoint out;
+        out.kind=UtilityEndpointKind::Open;
+        out.index=0;
+        out.position=anchor.hit;
+        out.position.y=channel_y(utility);
+        Vec3 n=toward-anchor.hit; n.y=0.0f;
+        if(length(n)<0.001f) n={1,0,0};
+        out.normal=normalize(n);
+        return out;
+    }
+
     Vec3 center{};
     float rotation=0.0f;
     float radius=2.0f;
@@ -163,10 +179,33 @@ std::optional<UtilityEndpoint> surface_endpoint(const UtilityBuildAnchor& anchor
     }else{
         if(anchor.index>=resources.size()) return std::nullopt;
         const auto& placed=resources[anchor.index];
-        resource_mesh=&resource_library.mesh(placed.kind);
+        resource_mesh=&resource_library.mesh(placed);
         center=placed.position;
         rotation=placed.rotation_degrees;
         radius=std::max(resource_mesh->footprint_x,resource_mesh->footprint_z)*0.75f+3.0f;
+    }
+
+    // Storage domes have four explicit service faces shared with corridor
+    // docking. Snap supply channels to those ports instead of sliding freely
+    // around the dome shell, which keeps utility/corridor routing predictable.
+    if(anchor.kind==UtilityEndpointKind::Resource && anchor.index<resources.size() &&
+       resources[anchor.index].kind==ResourceKind::StorageDome){
+        const float port_radius=std::min(resource_mesh->footprint_x,resource_mesh->footprint_z)*0.40f;
+        const Vec3 local_normals[4]={{0,0,-1},{1,0,0},{0,0,1},{-1,0,0}};
+        float best=std::numeric_limits<float>::max();
+        Vec3 best_n{0,0,-1},best_p{};
+        for(Vec3 ln:local_normals){
+            Vec3 n=rotate_y(ln,rotation); n.y=0.0f; n=normalize(n);
+            Vec3 p=center+n*port_radius+Vec3{0,channel_y(utility),0};
+            const float d=distance_xz(anchor.hit,p);
+            if(d<best){ best=d; best_n=n; best_p=p; }
+        }
+        UtilityEndpoint out;
+        out.kind=anchor.kind;
+        out.index=anchor.index;
+        out.normal=best_n;
+        out.position=best_p;
+        return out;
     }
 
     // The cursor position controls the actual attachment location. This keeps
@@ -254,7 +293,7 @@ bool segment_hits_structure(Vec3 a,Vec3 b,UtilityEndpointKind skip_kind_a,std::s
         for(std::size_t r=0;r<resources.size();++r){
             if((skip_kind_a==UtilityEndpointKind::Resource && r==skip_a) || (skip_kind_b==UtilityEndpointKind::Resource && r==skip_b)) continue;
             const auto& placed=resources[r];
-            const auto& mesh=resource_library.mesh(placed.kind);
+            const auto& mesh=resource_library.mesh(placed);
             if(point_in_footprint(p,placed.position,placed.rotation_degrees,mesh.footprint_x,mesh.footprint_z,0.28f)) return true;
         }
     }
@@ -512,8 +551,14 @@ UtilityMesh make_mesh(UtilityKind /*kind*/,const UtilityEndpoint& a,const Utilit
     Builder builder;
     // Attached endpoints use the combined structure port. Endpoints left behind
     // by structure deletion remain as capped, disconnected service stubs.
-    if(a.kind==UtilityEndpointKind::Open) add_open_supply_cap(builder,a); else { add_power_port(builder,a); add_water_port(builder,a); }
-    if(b.kind==UtilityEndpointKind::Open) add_open_supply_cap(builder,b); else { add_power_port(builder,b); add_water_port(builder,b); }
+    const auto is_junction=[&](const UtilityEndpoint& ep){
+        for(const Vec3 p:junctions) if(distance_xz(ep.position,p)<0.10f && std::abs(ep.position.y-p.y)<0.12f) return true;
+        return false;
+    };
+    if(a.kind==UtilityEndpointKind::Open){ if(!is_junction(a)) add_open_supply_cap(builder,a); }
+    else { add_power_port(builder,a); add_water_port(builder,a); }
+    if(b.kind==UtilityEndpointKind::Open){ if(!is_junction(b)) add_open_supply_cap(builder,b); }
+    else { add_power_port(builder,b); add_water_port(builder,b); }
 
     for(std::size_t i=0;i+1<path.size();++i){
         // Shared service carrier: cable tray plus water line in the same run.
@@ -530,13 +575,18 @@ UtilityMesh make_mesh(UtilityKind /*kind*/,const UtilityEndpoint& a,const Utilit
     return builder.mesh;
 }
 
-bool same_anchor(const UtilityBuildAnchor& a,const UtilityBuildAnchor& b){ return a.kind==b.kind && a.index==b.index; }
+bool same_anchor(const UtilityBuildAnchor& a,const UtilityBuildAnchor& b){
+    if(a.kind!=b.kind) return false;
+    if(a.kind==UtilityEndpointKind::Open) return distance_xz(a.hit,b.hit)<0.18f;
+    return a.index==b.index;
+}
 
 } // namespace
 
 bool UtilityNetwork::anchor_compatible(UtilityKind kind,const UtilityBuildAnchor& anchor,
                                        const std::vector<PlacedHabitat>& habitats,
                                        const std::vector<PlacedResource>& resources) const {
+    if(anchor.kind==UtilityEndpointKind::Open) return true;
     if(anchor.kind==UtilityEndpointKind::Habitat) return anchor.index<habitats.size();
     if(anchor.index>=resources.size()) return false;
     return resource_supports(kind,resources[anchor.index].kind);
@@ -552,8 +602,8 @@ std::optional<UtilityEndpoint> UtilityNetwork::preview_anchor(
 
 UtilityMesh UtilityNetwork::preview_endpoint_mesh(const UtilityEndpoint& endpoint) const {
     Builder builder;
-    add_power_port(builder,endpoint);
-    add_water_port(builder,endpoint);
+    if(endpoint.kind==UtilityEndpointKind::Open) add_open_supply_cap(builder,endpoint);
+    else { add_power_port(builder,endpoint); add_water_port(builder,endpoint); }
     return builder.mesh;
 }
 
@@ -595,13 +645,20 @@ bool UtilityNetwork::build_connection(
                          existing.endpoint_b.kind==preview->endpoint_a.kind && existing.endpoint_b.index==preview->endpoint_a.index);
         if(same) return false;
     }
+    float route_length=0.0f;
+    for(std::size_t i=0;i+1<preview->path.size();++i) route_length+=distance_xz(preview->path[i],preview->path[i+1]);
+    preview->resource_plan=construction_costs::supply_channel(route_length);
     connections_.push_back(std::move(*preview));
     rebuild_supply_junctions();
     return true;
 }
 
-void UtilityNetwork::update_construction(float dt){
-    for(auto& connection:connections_) connection.construction.update(dt);
+void UtilityNetwork::update_construction(float dt,ResourceManagement& resources,bool allow_negative){
+    for(auto& connection:connections_){
+        connection.construction.update_gated(dt,[&](std::uint8_t next_step){
+            return resources.consume(connection.resource_plan.next_step_cost((std::uint8_t)(next_step-1)),allow_negative);
+        });
+    }
 }
 
 float UtilityNetwork::connection_length(std::size_t index) const {

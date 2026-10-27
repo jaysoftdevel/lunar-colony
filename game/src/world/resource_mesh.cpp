@@ -11,9 +11,19 @@ ResourceModelLibrary::ResourceModelLibrary(){
     meshes_[(size_t)ResourceKind::WaterPurifier]=resources::make_water_purifier();
     meshes_[(size_t)ResourceKind::Antenna]=resources::make_antenna();
     meshes_[(size_t)ResourceKind::LandingPad]=resources::make_landing_pad();
+    storage_domes_[(size_t)StorageDomeSize::Small]=resources::make_storage_dome(StorageDomeSize::Small);
+    storage_domes_[(size_t)StorageDomeSize::Mid]=resources::make_storage_dome(StorageDomeSize::Mid);
+    storage_domes_[(size_t)StorageDomeSize::Big]=resources::make_storage_dome(StorageDomeSize::Big);
+    storage_domes_[(size_t)StorageDomeSize::Huge]=resources::make_storage_dome(StorageDomeSize::Huge);
+    meshes_[(size_t)ResourceKind::StorageDome]=storage_domes_[(size_t)StorageDomeSize::Small];
 }
 
 const ResourceMesh& ResourceModelLibrary::mesh(ResourceKind kind) const {
+    return meshes_[(size_t)kind];
+}
+
+const ResourceMesh& ResourceModelLibrary::mesh(ResourceKind kind,StorageDomeSize storage_size) const {
+    if(kind==ResourceKind::StorageDome) return storage_domes_[(size_t)storage_size];
     return meshes_[(size_t)kind];
 }
 }

@@ -30,6 +30,7 @@ inline const char* resource_name(ResourceKind kind){
         case ResourceKind::WaterPurifier: return "WATER PURIFIER";
         case ResourceKind::Antenna: return "COMMUNICATION ANTENNA";
         case ResourceKind::LandingPad: return "LANDING PAD";
+        case ResourceKind::StorageDome: return "STORAGE DOME";
         default: return "RESOURCE STRUCTURE";
     }
 }
@@ -37,6 +38,7 @@ inline std::string corridor_endpoint_name(const CorridorEndpoint& endpoint){
     std::ostringstream out;
     switch(endpoint.kind){
         case CorridorEndpointKind::Habitat: out<<"HABITAT "<<(endpoint.index+1); break;
+        case CorridorEndpointKind::Resource: out<<"STORAGE DOME "<<(endpoint.index+1); break;
         case CorridorEndpointKind::Corridor: out<<"CORRIDOR "<<(endpoint.index+1)<<" INTERSECTION"; break;
         case CorridorEndpointKind::OpenDoor: out<<"SEALED END"; break;
     }

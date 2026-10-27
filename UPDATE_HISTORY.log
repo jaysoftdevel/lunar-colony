@@ -1,3 +1,15 @@
+0.19.1
+- Returned to plain release.major.minor versioning.
+- Ground resource boxes are selectable and show material, amount and condition in an adjacent status frame.
+- Added buildable Storage Dome with 100,000 kg material capacity.
+- In debug mode, DEL transfers a selected ground resource box into an available completed Storage Dome.
+
+0.19.0-dev.1
+- Switched development builds to SemVer prerelease numbering: MAJOR.MINOR.PATCH-dev.N.
+- Demolishing habitat/resource structures drops the materials actually consumed by completed construction stages onto the ground.
+- Dropped material piles occupy ground and invalidate overlapping structure placement.
+- Normal mode now reserves the remaining staged cost of active construction when validating new builds, preventing material overcommit; debug mode still permits negative stock.
+
 2026-10-26T09:31:01Z | legacy-unversioned -> 0.4.0 | version tracking + gameplay debug frame
 2026-10-26T09:36:13Z | 0.4.0 -> 0.4.1 | repair engine/display/camera API mismatch
 2026-10-26T09:41:07Z | 0.4.1 -> 0.4.2 | common resolution selector + scaled in-game HUD
@@ -35,3 +47,15 @@
 0.17.3 -> 0.17.4 : shared-entrance corridor topology optimizer; route reassignment, non-overlapping fan layout and full group rerouting
 0.17.4 -> 0.18.0 : ten-step modular construction sequences for all habitats, resource structures and facilities; one stage per second with construction status/progressive mesh assembly
 0.18.0 -> 0.18.1 : five-step corridor construction and three-step Supply Channel construction; one stage per second with progressive route assembly and construction status
+0.18.5 -> 0.18.6 : four-material construction economy with staged per-build resource spending and debug overdraft; top-bar material inventory; rail-free tangent-smoothed walkway routing and seamless host-walkway attachments
+0.18.6 -> 0.18.7 : remove circular walkway junction plates; mitered shared deck polygons provide seamless non-overlapping walkway intersections and attachments
+0.18.7 -> 0.18.8 : collision-aware walkway routing across corridor/supply networks; paired corridor crossing entrances, raised supply-channel bridges, and pre-click blueprint start samples for corridor/walkway/supply tools
+
+0.18.9 - Placement intersection preview refinement
+- Routed build tools show a real one-section blueprint before the first click.
+- Walkways prefer valid existing-network intersection snaps; invalid nearby intersections stay red.
+- Supply channels can start/end on open terrain and snap to existing channel centerlines for junctions.
+- Corridor/walkway/supply source samples use the same validity rules as final placement.
+0.18.9 -> 0.18.10 : walkway branching now mirrors corridor branching: terminal snaps extend on the host tangent, mid-run branches leave on the destination-side perpendicular, and exact shared host centerline vertices produce deterministic seamless T/Y junctions without overlap
+0.18.10 -> 0.18.11 : cumulative four-material construction economy integration retained/packaged; walkway blueprint routing now uses corridor-style fixed-order curve sampling and deterministic route-side selection to prevent section/frame flipping while moving the cursor
+0.19.2 - Storage Dome moved to Habitats/Infrastructure; Small/Mid/Big/Huge tiers; fixed corridor/supply docking ports; dome/network placement snapping.

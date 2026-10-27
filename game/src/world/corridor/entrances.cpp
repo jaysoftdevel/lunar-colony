@@ -478,11 +478,61 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     return out;
 }
 
+std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& anchor,Vec3 other,
+                                                     const std::vector<PlacedResource>& resources,
+                                                     const ResourceModelLibrary& library){
+    if(anchor.index>=resources.size()) return std::nullopt;
+    const auto& placed=resources[anchor.index];
+    if(placed.kind!=ResourceKind::StorageDome) return std::nullopt;
+    const auto& mesh=library.mesh(placed);
+    const float wall_radius=std::min(mesh.footprint_x,mesh.footprint_z)*0.40f;
+    const Vec3 local_normals[4]={{0,0,-1},{1,0,0},{0,0,1},{-1,0,0}};
+    float best=std::numeric_limits<float>::max();
+    Vec3 normal{0,0,-1},wall{};
+    for(Vec3 ln:local_normals){
+        const Vec3 n=flat_normal(rotate_y(ln,placed.rotation_degrees));
+        const Vec3 w=placed.position+n*wall_radius;
+        const float d=distance_xz(anchor.position,w);
+        if(d<best){ best=d; normal=n; wall=w; }
+    }
+    // If the pointer is near the center, choose the port facing the target.
+    if(distance_xz(anchor.position,placed.position)<0.40f){
+        Vec3 desired=flat_normal(other-placed.position);
+        float best_dot=-2.0f;
+        for(Vec3 ln:local_normals){
+            const Vec3 n=flat_normal(rotate_y(ln,placed.rotation_degrees));
+            const float score=dot(n,desired);
+            if(score>best_dot){ best_dot=score; normal=n; wall=placed.position+n*wall_radius; }
+        }
+    }
+    CorridorEndpoint out;
+    out.kind=CorridorEndpointKind::Resource;
+    out.index=anchor.index;
+    out.door.generated=false;
+    out.door.entrance_index=-1;
+    out.door.normal=normal;
+    out.door.wall_position=wall+Vec3{0,0.48f,0};
+    out.door.position=wall+Vec3{0,0.48f,0};
+    out.tangent=normal;
+    out.position=wall+normal*DOCK_RUN;
+    out.position.y=0.0f;
+    return out;
+}
+
 std::optional<CorridorEndpoint> resolve_anchor(const CorridorBuildAnchor& anchor,Vec3 other,
                                                const std::vector<PlacedHabitat>& habitats,
                                                const HabitatModelLibrary& library,
                                                const std::vector<CorridorConnection>& existing){
     if(anchor.kind==CorridorEndpointKind::Habitat) return resolve_habitat(anchor,other,habitats,library,existing);
+    if(anchor.kind==CorridorEndpointKind::Resource) return std::nullopt;
     return resolve_open_or_corridor(anchor,other,existing);
+}
+
+std::optional<CorridorEndpoint> resolve_anchor(const CorridorBuildAnchor& anchor,Vec3 other,
+                                               const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                                               const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
+                                               const std::vector<CorridorConnection>& existing){
+    if(anchor.kind==CorridorEndpointKind::Resource) return resolve_storage_dome(anchor,other,resources,resource_library);
+    return resolve_anchor(anchor,other,habitats,library,existing);
 }
 } // namespace game::corridor_detail

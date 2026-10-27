@@ -243,6 +243,17 @@ void GameApp::render_build_icon(Renderer& r,BuildIcon icon,Rect q,Color c) const
             r.draw_line({cx+8,cy-8},{cx+8,cy+8},c,2.2f);
             r.draw_line({cx-8,cy},{cx+8,cy},c,2.2f);
             break;
+        case BuildIcon::StorageDome:
+            // Low geodesic storage dome with a central cargo door.
+            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);
+            r.draw_line({x+6,y+h-9},{x+11,y+17},c,2.0f);
+            r.draw_line({x+11,y+17},{cx,y+6},c,2.0f);
+            r.draw_line({cx,y+6},{x+w-11,y+17},c,2.0f);
+            r.draw_line({x+w-11,y+17},{x+w-6,y+h-9},c,2.0f);
+            r.draw_line({cx,y+6},{cx,y+h-9},c,1.0f);
+            r.draw_line({x+11,y+17},{x+w-11,y+17},c,1.0f);
+            r.draw_rect({cx-7,y+h-20,14,12},{c.r,c.g,c.b,0.16f});
+            break;
         case BuildIcon::SupplyChannel:
             // Three electrical conductors plus one utility pipe inside the same carrier.
             r.draw_line({x+5,cy-8},{x+w-5,cy-8},c,1.8f);
@@ -255,15 +266,14 @@ void GameApp::render_build_icon(Renderer& r,BuildIcon icon,Rect q,Color c) const
             r.draw_rect({x+w-10,cy-13,6,20},{c.r,c.g,c.b,0.10f});
             break;
         case BuildIcon::Walkway:
-            r.draw_line({x+5,cy+5},{x+w-5,cy+5},c,2.4f);
-            r.draw_line({x+5,cy-7},{x+w-5,cy-7},c,1.5f);
-            r.draw_line({x+5,cy-7},{x+5,cy+5},c,1.5f);
-            r.draw_line({x+w-5,cy-7},{x+w-5,cy+5},c,1.5f);
-            for(int i=0;i<4;++i){
-                const float px=x+8.0f+i*((w-16.0f)/3.0f);
-                r.draw_line({px,cy-7},{px,cy+5},c,1.2f);
+            // Flat open deck / grating, intentionally without side railings.
+            r.draw_line({x+5,cy-5},{x+w-5,cy-5},c,2.2f);
+            r.draw_line({x+5,cy+7},{x+w-5,cy+7},c,2.2f);
+            for(int i=0;i<5;++i){
+                const float px=x+7.0f+i*((w-14.0f)/4.0f);
+                r.draw_line({px,cy-5},{px,cy+7},c,1.2f);
             }
-            r.draw_line({x+7,cy+11},{x+w-7,cy+11},c,2.2f);
+            r.draw_line({x+8,cy+12},{x+w-8,cy+12},c,1.8f);
             break;
     }
 }

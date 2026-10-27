@@ -12,7 +12,6 @@ add_executable(game
 
     src/ui/status_bar.cpp
     src/ui/debug_frame.cpp
-    src/ui/debug_crew_paths.cpp
     src/ui/build_bar.cpp
     src/ui/view_selector.cpp
     src/ui/build_icons.cpp
@@ -29,6 +28,8 @@ add_executable(game
     src/systems/world_selection.cpp
     src/systems/camera_controller.cpp
     src/systems/colony_status.cpp
+    src/systems/resource_management.cpp
+    src/systems/construction_costs.cpp
     src/systems/construction_system.cpp
 
     src/world/playfield.cpp
@@ -57,6 +58,7 @@ add_executable(game
     src/world/resources/water_purifier.cpp
     src/world/resources/antenna.cpp
     src/world/resources/landing_pad.cpp
+    src/world/resources/storage_dome.cpp
 
     src/world/corridor_network.cpp
     src/world/corridor/geometry.cpp
@@ -68,6 +70,6 @@ add_executable(game
 )
 target_include_directories(game PRIVATE include)
 target_link_libraries(game PRIVATE game_engine)
-target_compile_definitions(game PRIVATE GAME_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(game PRIVATE GAME_VERSION="${GAME_VERSION_FULL}")
 target_compile_options(game PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(game PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
