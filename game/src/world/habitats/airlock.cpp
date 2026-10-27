@@ -1,6 +1,5 @@
 #include "game/world/habitat_builder.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
-#include "game/world/habitats/habitat_interiors.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
 namespace {
@@ -33,15 +32,9 @@ HabitatEntranceAccess make_stairs(const HabitatEntrance& entrance){
 }
 }
 
-HabitatMesh make_airlock(){
-    Builder b;
+void build_airlock_outer(Builder& b){
     b.mesh.footprint_x=10.0f; b.mesh.footprint_z=6.5f; b.mesh.height=5.8f;
     b.cylinder_x(b.mesh.shell,{0,2.55f,0},7.2f,2.15f,18,true);
-    // Interior deck and equipment remain opaque when hull view modes are active.
-    b.box(b.mesh.interior,{0,0.72f,0},{6.4f,0.16f,3.2f},false);
-    b.box(b.mesh.interior,{-1.7f,1.55f,-1.35f},{1.6f,0.65f,0.48f},false);
-    b.box(b.mesh.interior,{0.9f,1.55f,-1.35f},{1.6f,0.65f,0.48f},false);
-    b.cylinder_y(b.mesh.interior,{2.35f,1.55f,0.95f},1.6f,0.30f,10,false);
     // Structural ribs and service conduits follow the cylindrical body.
     for(float x:{-2.5f,-0.8f,0.9f,2.6f}) b.torus_x(b.mesh.details,{x,2.55f,0},2.18f,0.08f,18,6);
 
@@ -75,8 +68,6 @@ HabitatMesh make_airlock(){
     b.mesh.entrances.push_back({{-5.25f,1.18f,0.0f},{-1.0f,0.0f,0.0f}});
     b.mesh.entrance_access.push_back(make_stairs(b.mesh.entrances[0]));
     b.mesh.entrance_access.push_back(make_stairs(b.mesh.entrances[1]));
-    interiors::add_airlock(b);
-    return std::move(b.mesh);
 }
 
 } // namespace game::habitats

@@ -1,10 +1,8 @@
 #include "game/world/habitat_builder.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
-#include "game/world/habitats/habitat_interiors.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
-HabitatMesh make_bio_dome(){
-    Builder b;
+void build_bio_dome_outer(Builder& b){
     b.mesh.footprint_x=13.5f; b.mesh.footprint_z=8.0f; b.mesh.height=6.3f;
     b.box(b.mesh.foundation,{0,0.62f,0},{10.5f,1.25f,6.6f});
     b.half_cylinder_x(b.mesh.glazing,{0,1.20f,0},10.5f,3.3f,14,8,false);
@@ -16,13 +14,6 @@ HabitatMesh make_bio_dome(){
         const float y=1.20f+std::sin(theta)*3.31f;
         const float z=std::cos(theta)*3.31f;
         b.cylinder_between(b.mesh.details,{-5.25f,y,z},{5.25f,y,z},0.07f,6,true,true);
-    }
-    // Interior crop racks visible as actual geometry.
-    for(float z:{-1.7f,0.0f,1.7f}){
-        for(float y:{1.25f,2.05f}){
-            b.box(b.mesh.interior,{-0.5f,y,z},{8.3f,0.14f,0.75f},false);
-            for(float x:{-3.8f,-1.9f,0.0f,1.9f,3.8f}) b.cylinder_y(b.mesh.interior,{x,y+0.35f,z},0.65f,0.06f,6,false);
-        }
     }
     // Environmental control column and ducting.
     b.cylinder_y(b.mesh.details,{0,3.1f,0},3.6f,0.38f,12,true);
@@ -36,8 +27,6 @@ HabitatMesh make_bio_dome(){
     b.supports(-4.2f,4.1f,2.65f,0.78f);
     b.supports(-4.2f,4.1f,-2.65f,0.78f);
     b.mesh.entrances.push_back({{7.00f,1.18f,0.0f},{1.0f,0.0f,0.0f}});
-    interiors::add_bio_dome(b);
-    return std::move(b.mesh);
 }
 
 } // namespace game::habitats

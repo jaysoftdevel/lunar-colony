@@ -561,8 +561,8 @@ std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anch
     // thresholds instead of dropping to the lunar surface and climbing again.
     if(a->kind==CorridorEndpointKind::Habitat && b->kind==CorridorEndpointKind::Habitat &&
        distance_xz(a->position,b->position)<DIRECT_CORRIDOR_MAX_RASTERS){
-        const float threshold_a=std::max(WALKWAY_Y,a->door.wall_position.y-0.30f);
-        const float threshold_b=std::max(WALKWAY_Y,b->door.wall_position.y-0.30f);
+        const float threshold_a=std::max(WALKWAY_Y,a->door.position.y);
+        const float threshold_b=std::max(WALKWAY_Y,b->door.position.y);
         const float base=std::max(DIRECT_CORRIDOR_MIN_BASE_Y,std::min(threshold_a,threshold_b)-WALKWAY_Y);
         a->position.y=base;
         b->position.y=base;

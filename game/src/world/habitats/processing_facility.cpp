@@ -1,6 +1,5 @@
 #include "game/world/habitat_builder.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
-#include "game/world/habitats/habitat_interiors.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
 namespace {
@@ -16,8 +15,7 @@ HabitatEntranceAccess access_stairs(float x){
 }
 }
 
-HabitatMesh make_processing_facility(){
-    Builder b;
+void build_processing_facility_outer(Builder& b){
     b.mesh.footprint_x=17.0f; b.mesh.footprint_z=12.0f; b.mesh.height=9.2f;
 
     // Heavy industrial foundation and central pressure vessel from the concept.
@@ -62,13 +60,6 @@ HabitatMesh make_processing_facility(){
         b.cylinder_y(b.mesh.details,{c.x,c.y+1.25f,c.z},0.28f,0.66f,12,true);
     }
 
-    // Processing interior: furnace cells, ingot line and center service deck.
-    b.box(b.mesh.interior,{0,1.05f,0},{8.6f,0.18f,5.2f},false);
-    for(float x:{-2.6f,-0.9f,0.9f,2.6f}){
-        b.box(b.mesh.interior,{x,2.15f,-1.35f},{1.15f,1.55f,1.25f},false);
-        b.box(b.mesh.interior,{x,1.35f,1.35f},{1.35f,0.38f,1.1f},false);
-    }
-
     // Pressure entry, hatch and access stairs.
     b.box(b.mesh.shell,{5.45f,3.05f,0},{1.70f,4.35f,3.65f});
     b.box(b.mesh.details,{6.32f,3.05f,0},{0.18f,3.55f,3.05f});
@@ -79,7 +70,5 @@ HabitatMesh make_processing_facility(){
 
     b.supports(-4.4f,3.8f,2.7f,0.95f);
     b.supports(-4.4f,3.8f,-2.7f,0.95f);
-    interiors::add_processing_facility(b);
-    return std::move(b.mesh);
 }
 }

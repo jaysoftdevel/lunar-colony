@@ -38,21 +38,32 @@ add_executable(game
 
     src/world/playfield.cpp
     src/world/habitat_mesh.cpp
+    src/world/habitats/module.cpp
+    src/world/corridor/module.cpp
     src/world/resource_mesh.cpp
     src/world/construction_sequence.cpp
     src/world/utility_network.cpp
     src/world/walkway_network.cpp
     src/world/habitats/airlock.cpp
+    src/world/habitats/airlock_inner.cpp
     src/world/habitats/oxygen_dome.cpp
+    src/world/habitats/oxygen_dome_inner.cpp
     src/world/habitats/cantine_dome.cpp
+    src/world/habitats/cantine_dome_inner.cpp
     src/world/habitats/bio_dome.cpp
+    src/world/habitats/bio_dome_inner.cpp
     src/world/habitats/crew_quarters.cpp
+    src/world/habitats/crew_quarters_inner.cpp
     src/world/habitats/processing_facility.cpp
+    src/world/habitats/processing_facility_inner.cpp
     src/world/habitats/factory.cpp
+    src/world/habitats/factory_inner.cpp
     src/world/habitats/manufactory.cpp
+    src/world/habitats/manufactory_inner.cpp
     src/world/habitats/sick_bay.cpp
+    src/world/habitats/sick_bay_inner.cpp
     src/world/habitats/laboratory.cpp
-    src/world/habitats/interiors.cpp
+    src/world/habitats/laboratory_inner.cpp
 
     src/world/resources/solar_panel.cpp
     src/world/resources/water_driller.cpp

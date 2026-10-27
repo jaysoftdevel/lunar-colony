@@ -26,3 +26,6 @@ sudo apt install build-essential cmake libx11-dev libgl1-mesa-dev
 - Escape: return to the main menu.
 
 The game starts fullscreen. The bottom build palette is data-driven through `BuildCatalog`, and the top status bar receives its prototype values from `ColonyStatus` so both can be replaced by later simulation systems without changing the renderer.
+
+## Structure modules
+Crew-accessible habitats and corridors share a common structural access contract. Every habitat keeps exterior and interior geometry in separate modules, while its module registration declares the authoritative POV deck height and access behavior. Corridor shell and walking-deck generation follow the same outer/inner split.

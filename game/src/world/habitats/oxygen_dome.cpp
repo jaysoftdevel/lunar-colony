@@ -1,18 +1,11 @@
 #include "game/world/habitat_builder.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
-#include "game/world/habitats/habitat_interiors.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
-HabitatMesh make_oxygen_dome(){
-    Builder b;
+void build_oxygen_dome_outer(Builder& b){
     b.mesh.footprint_x=10.5f; b.mesh.footprint_z=10.0f; b.mesh.height=7.6f;
     b.cylinder_y(b.mesh.foundation,{0,0.55f,0},1.10f,4.35f,24,true);
     b.dome(b.mesh.shell,{0,1.0f,0},4.35f,8,24,true,0.92f);
-    // Interior electrolyzer / buffer-tank cluster.
-    b.box(b.mesh.interior,{0,1.10f,0},{5.6f,0.18f,5.6f},false);
-    for(const Vec3 c: {Vec3{-1.25f,2.15f,-1.25f},Vec3{1.25f,2.15f,-1.25f},Vec3{-1.25f,2.15f,1.25f},Vec3{1.25f,2.15f,1.25f}})
-        b.cylinder_y(b.mesh.interior,c,2.2f,0.46f,12,false);
-    b.cylinder_y(b.mesh.interior,{0,2.45f,0},3.0f,0.34f,12,false);
     // Geodesic/service ribs.
     for(int s=0;s<8;++s){
         const float a=2*PI*(float)s/8.0f;
@@ -46,8 +39,6 @@ HabitatMesh make_oxygen_dome(){
         b.cylinder_y(b.mesh.details,{foot.x,0.09f,foot.z},0.18f,0.36f,10,true);
     }
     b.mesh.entrances.push_back({{5.70f,1.18f,0.0f},{1.0f,0.0f,0.0f}});
-    interiors::add_oxygen_dome(b);
-    return std::move(b.mesh);
 }
 
 } // namespace game::habitats

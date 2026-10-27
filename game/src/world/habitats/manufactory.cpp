@@ -1,6 +1,5 @@
 #include "game/world/habitat_builder.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
-#include "game/world/habitats/habitat_interiors.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
 namespace {
@@ -22,8 +21,7 @@ HabitatEntranceAccess stairs(float x){
 }
 }
 
-HabitatMesh make_manufactory(){
-    Builder b;
+void build_manufactory_outer(Builder& b){
     b.mesh.footprint_x=21.0f; b.mesh.footprint_z=14.0f; b.mesh.height=10.8f;
     b.box(b.mesh.foundation,{0,0.62f,0},{15.2f,1.24f,9.8f});
 
@@ -33,20 +31,10 @@ HabitatMesh make_manufactory(){
     for(float x:{1.2f,3.5f,5.8f,7.8f}) b.torus_x(b.mesh.details,{x,3.65f,0},3.03f,0.10f,20,6);
 
     // Huge assembly opening / internal handling platform.
-    b.box(b.mesh.interior,{-3.6f,1.15f,0},{7.4f,0.22f,6.5f},false);
     b.box(b.mesh.details,{-7.45f,4.0f,-4.45f},{0.5f,6.5f,0.5f});
     b.box(b.mesh.details,{0.15f,4.0f,-4.45f},{0.5f,6.5f,0.5f});
     b.box(b.mesh.details,{-3.65f,7.1f,-4.45f},{8.1f,0.48f,0.5f});
     b.box(b.mesh.details,{-3.65f,1.3f,-4.45f},{8.1f,0.42f,0.5f});
-
-    // Fabrication gantry and suspended tooling visible inside.
-    b.box(b.mesh.interior,{-3.6f,6.3f,0},{6.8f,0.22f,0.42f},false);
-    b.cylinder_between(b.mesh.interior,{-3.6f,6.2f,0},{-3.6f,4.45f,0},0.16f,8,true,false);
-    b.box(b.mesh.interior,{-3.6f,4.15f,0},{0.8f,0.65f,0.8f},false);
-    for(float x:{-5.8f,-3.5f,-1.2f}){
-        b.box(b.mesh.interior,{x,1.55f,-2.0f},{1.6f,0.7f,1.2f},false);
-        b.cylinder_y(b.mesh.interior,{x,2.65f,1.75f},2.25f,0.35f,10,false);
-    }
 
     // Large external crane arms and cargo fixtures.
     crane_arm(b,{1.1f,9.2f,2.75f},1.0f);
@@ -71,7 +59,5 @@ HabitatMesh make_manufactory(){
 
     b.supports(-6.4f,6.9f,3.4f,1.05f);
     b.supports(-6.4f,6.9f,-3.4f,1.05f);
-    interiors::add_manufactory(b);
-    return std::move(b.mesh);
 }
 }

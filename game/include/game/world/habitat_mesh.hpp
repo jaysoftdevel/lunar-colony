@@ -64,6 +64,10 @@ struct HabitatMesh {
     float footprint_x{1.0f};
     float footprint_z{1.0f};
     float height{1.0f};
+    // Authoritative POV/navigation deck height supplied by the habitat module.
+    // Do not infer this from furniture/foundation triangles.
+    float walkable_floor_y{0.20f};
+    bool crew_accessible{true};
     std::vector<HabitatEntrance> entrances{};
     // Optional exterior access geometry indexed like entrances. This is kept
     // separate from the permanent habitat mesh so stairs/ramps can disappear

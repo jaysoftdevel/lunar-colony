@@ -1,21 +1,8 @@
 #include "game/world/habitat_builder.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
-#include "game/world/habitats/habitat_interiors.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
 namespace {
-void robot_arm(Builder& b,eng::Vec3 base,float facing){
-    using namespace eng;
-    const Vec3 p0=base;
-    const Vec3 p1=base+Vec3{0,0.55f,0};
-    const Vec3 p2=p1+Vec3{0.55f*facing,0.65f,0.15f};
-    const Vec3 p3=p2+Vec3{0.50f*facing,0.35f,-0.10f};
-    b.cylinder_y(b.mesh.interior,p0+Vec3{0,0.2f,0},0.40f,0.28f,10,false);
-    b.cylinder_between(b.mesh.interior,p1,p2,0.15f,8,true,false);
-    b.cylinder_between(b.mesh.interior,p2,p3,0.13f,8,true,false);
-    b.cylinder_y(b.mesh.interior,p2,0.26f,0.24f,10,false);
-    b.box(b.mesh.interior,p3,{0.28f,0.25f,0.28f},false);
-}
 HabitatEntranceAccess stairs(float x){
     Builder b;
     for(int i=0;i<4;++i) b.box(b.mesh.details,{x+0.40f*(float)i,0.75f-0.17f*(float)i,0},{0.72f,0.15f,2.25f});
@@ -23,8 +10,7 @@ HabitatEntranceAccess stairs(float x){
 }
 }
 
-HabitatMesh make_factory(){
-    Builder b;
+void build_factory_outer(Builder& b){
     b.mesh.footprint_x=18.0f; b.mesh.footprint_z=12.0f; b.mesh.height=9.0f;
     b.box(b.mesh.foundation,{0,0.55f,0},{12.8f,1.10f,8.4f});
 
@@ -38,13 +24,6 @@ HabitatMesh make_factory(){
     b.box(b.mesh.details,{0.35f,3.6f,-3.8f},{0.45f,6.1f,0.45f});
     b.box(b.mesh.details,{-2.7f,6.55f,-3.8f},{6.5f,0.42f,0.45f});
     for(float x:{-5.15f,-3.55f,-1.95f,-0.35f}) b.box(b.mesh.details,{x,1.35f,-3.55f},{1.1f,0.55f,0.85f});
-
-    // Robotic production cells inside the assembly hall.
-    b.box(b.mesh.interior,{-2.6f,1.05f,0},{5.7f,0.18f,5.6f},false);
-    robot_arm(b,{-4.25f,1.2f,-1.35f},1.0f);
-    robot_arm(b,{-2.55f,1.2f,1.25f},1.0f);
-    robot_arm(b,{-0.75f,1.2f,-1.15f},-1.0f);
-    for(float x:{-4.2f,-2.6f,-1.0f}) b.box(b.mesh.interior,{x,1.25f,2.15f},{1.2f,0.45f,0.9f},false);
 
     // Storage racks / material crates at the left end.
     for(int row=0;row<3;++row) for(int col=0;col<2;++col)
@@ -71,7 +50,5 @@ HabitatMesh make_factory(){
 
     b.supports(-5.3f,4.7f,3.0f,0.95f);
     b.supports(-5.3f,4.7f,-3.0f,0.95f);
-    interiors::add_factory(b);
-    return std::move(b.mesh);
 }
 }

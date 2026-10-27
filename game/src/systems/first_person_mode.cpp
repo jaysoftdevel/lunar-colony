@@ -1,6 +1,7 @@
 #include "game/game_app.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/corridor/detail.hpp"
+#include "game/world/corridor/corridor_module.hpp"
 #include "game/world/geometry_standards.hpp"
 #include <algorithm>
 #include <cmath>
@@ -53,6 +54,7 @@ bool near_rotated_footprint(Vec3 p,Vec3 center,float rotation,float width,float 
 }
 
 bool projected_mesh_contains_body(const std::vector<Vec3>& triangles,Vec3 local,float radius);
+bool projected_habitat_contains_body(const HabitatMesh& mesh,Vec3 local,float radius);
 
 bool habitat_uses_elliptical_hull(HabitatKind kind){
     return kind==HabitatKind::OxygenGeneratorDome ||
@@ -62,10 +64,12 @@ bool habitat_uses_elliptical_hull(HabitatKind kind){
 
 bool inside_habitat_hull(Vec3 p,const PlacedHabitat& h,const HabitatMesh& mesh,float inset){
     const Vec3 local=rotate_y(p-h.position,-h.rotation_degrees);
-    // Use the actual projected pressure-shell triangles as the primary FPV
-    // boundary.  This keeps rounded/irregular structures on their rendered
-    // mesh instead of permitting movement in an invisible footprint box.
-    if(!mesh.shell.empty()) return projected_mesh_contains_body(mesh.shell,local,std::max(0.0f,inset));
+    // The structural envelope may be split over shell, glazing and foundation
+    // meshes (Bio/Cantine domes are the important case). Treat their projected
+    // union as one pressure boundary so the complete rendered structure remains
+    // walkable while its mesh is still an impassable wall outside door portals.
+    if(!mesh.shell.empty() || !mesh.glazing.empty() || !mesh.foundation.empty())
+        return projected_habitat_contains_body(mesh,local,std::max(0.0f,inset));
     if(habitat_uses_elliptical_hull(h.kind))
         return inside_elliptical_footprint(p,h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z,inset);
     const float round=h.kind==HabitatKind::CrewQuarters?0.95f:0.24f;
@@ -216,6 +220,26 @@ bool projected_mesh_contains_body(const std::vector<Vec3>& triangles,Vec3 local,
     return true;
 }
 
+bool projected_habitat_contains_point(const HabitatMesh& mesh,Vec3 local){
+    return projected_mesh_contains_point(mesh.shell,local) ||
+           projected_mesh_contains_point(mesh.glazing,local) ||
+           projected_mesh_contains_point(mesh.foundation,local);
+}
+
+bool projected_habitat_contains_body(const HabitatMesh& mesh,Vec3 local,float radius){
+    if(!projected_habitat_contains_point(mesh,local)) return false;
+    if(radius<=0.015f) return true;
+    constexpr int samples=12;
+    for(int i=0;i<samples;++i){
+        const float a=2.0f*3.14159265358979323846f*(float)i/(float)samples;
+        Vec3 q=local;
+        q.x+=std::cos(a)*radius;
+        q.z+=std::sin(a)*radius;
+        if(!projected_habitat_contains_point(mesh,q)) return false;
+    }
+    return true;
+}
+
 std::optional<float> walkable_surface_height_at(const std::vector<Vec3>& triangles,Vec3 local_point,
                                                 float min_y,float max_y){
     std::optional<float> best;
@@ -263,7 +287,9 @@ float dominant_floor_height(const std::vector<Vec3>& a,const std::vector<Vec3>& 
 }
 
 float habitat_basement_height(const HabitatMesh& mesh){
-    return dominant_floor_height(mesh.interior,mesh.foundation,geometry::kHabitatFloorY);
+    // Habitat modules declare the real internal deck explicitly. Rendered
+    // furniture/foundation triangles are no longer used to guess POV height.
+    return mesh.walkable_floor_y;
 }
 
 float storage_basement_height(const ResourceMesh& mesh){
@@ -390,8 +416,10 @@ std::vector<CorridorDoor> GameApp::habitat_doors(std::size_t habitat_index) cons
             if(!habitat_exterior_access_enabled(habitat_index,i)) continue;
             const auto& e=mesh.entrances[i];
             CorridorDoor d;
-            d.position=h.position+rotate_y(e.local_position,h.rotation_degrees);
-            d.wall_position=d.position;
+            d.wall_position=h.position+rotate_y(e.local_position,h.rotation_degrees);
+            d.wall_position.y=h.position.y+geometry::kEntranceSliceY;
+            d.position=d.wall_position;
+            d.position.y=h.position.y+mesh.walkable_floor_y;
             d.normal=normalize(rotate_y(e.local_normal,h.rotation_degrees));
             d.entrance_index=(int)i;
             add_unique(d);
@@ -516,13 +544,11 @@ float GameApp::first_person_floor_height(Vec3 p) const {
         if(!h.construction.complete()) continue;
         const auto& mesh=habitat_models_.mesh(h);
         if(inside_habitat_hull(p,h,mesh,0.02f)){
-            const float basement=habitat_basement_height(mesh);
-            const Vec3 local=rotate_y(p-h.position,-h.rotation_degrees);
-            // Follow the rendered basement slab where it exists, but deliberately
-            // ignore furniture/platform tops far above the base walking level.
-            if(auto y=walkable_surface_height_at(mesh.interior,local,basement-0.10f,basement+0.28f))
-                return h.position.y+*y;
-            return h.position.y+basement;
+            // Every crew-accessible habitat owns one authoritative internal
+            // deck level. This prevents benches, crop racks or foundation caps
+            // from being mistaken for the floor and keeps all size tiers equal
+            // vertically.
+            return h.position.y+habitat_basement_height(mesh);
         }
     }
     for(const auto& item:placed_resources_){
@@ -544,7 +570,7 @@ float GameApp::first_person_floor_height(Vec3 p) const {
             const float corridor_center_limit=std::max(0.20f,corridor_detail::CORRIDOR_HALF_WIDTH-first_person_.body_radius());
             if(d<best_corridor && d<=corridor_center_limit){
                 best_corridor=d;
-                corridor_floor=q.y+corridor_detail::WALKWAY_Y;
+                corridor_floor=q.y+corridor_detail::corridor_module().access_profile().walkable_floor_y;
                 floor_connection=&c;
             }
         }
@@ -559,7 +585,7 @@ float GameApp::first_person_floor_height(Vec3 p) const {
                 const float sleeve_limit=std::max(0.20f,geometry::kDockSleeveHalfWidth-first_person_.body_radius());
                 if(d<best_corridor && d<=sleeve_limit){
                     best_corridor=d;
-                    corridor_floor=ep->position.y+corridor_detail::WALKWAY_Y;
+                    corridor_floor=ep->position.y+corridor_detail::corridor_module().access_profile().walkable_floor_y;
                     floor_connection=&c;
                 }
                 continue;

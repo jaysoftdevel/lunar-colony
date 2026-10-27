@@ -1,6 +1,5 @@
 #include "game/world/habitat_builder.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
-#include "game/world/habitats/habitat_interiors.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
 namespace {
@@ -12,8 +11,7 @@ HabitatEntranceAccess stairs(float x){
 }
 }
 
-HabitatMesh make_sick_bay(){
-    Builder b;
+void build_sick_bay_outer(Builder& b){
     b.mesh.footprint_x=13.0f; b.mesh.footprint_z=11.0f; b.mesh.height=8.2f;
     b.cylinder_y(b.mesh.foundation,{0,0.55f,0},1.1f,4.55f,24,true);
 
@@ -36,15 +34,6 @@ HabitatMesh make_sick_bay(){
         Builder::tri(b.mesh.glazing,low0,p1,low1);
     }
 
-    // Medical interior: four treatment beds, central diagnostic ring and cabinets.
-    b.box(b.mesh.interior,{0,1.15f,0},{6.6f,0.18f,6.6f},false);
-    for(Vec3 c:std::initializer_list<Vec3>{{-2.0f,1.45f,-1.65f},{2.0f,1.45f,-1.65f},{-2.0f,1.45f,1.65f},{2.0f,1.45f,1.65f}}){
-        b.box(b.mesh.interior,c,{1.65f,0.32f,0.72f},false);
-        b.cylinder_y(b.mesh.interior,{c.x,2.25f,c.z},1.1f,0.18f,8,false);
-    }
-    b.torus_x(b.mesh.interior,{0,3.25f,0},1.35f,0.09f,18,6);
-    for(float z:{-2.7f,2.7f}) b.box(b.mesh.interior,{0,2.0f,z},{3.4f,1.6f,0.48f},false);
-
     // Exterior medical support pods / life support tanks.
     for(float z:{-2.6f,-0.9f,0.9f,2.6f}) b.cylinder_y(b.mesh.details,{-4.0f,2.35f,z},2.8f,0.46f,12,true);
     b.box(b.mesh.details,{-4.2f,1.55f,-3.65f},{1.35f,1.35f,0.55f});
@@ -64,7 +53,5 @@ HabitatMesh make_sick_bay(){
         b.cylinder_between(b.mesh.details,top,foot,0.14f,8,true,true);
         b.cylinder_y(b.mesh.details,{foot.x,0.09f,foot.z},0.18f,0.36f,10,true);
     }
-    interiors::add_sick_bay(b);
-    return std::move(b.mesh);
 }
 }

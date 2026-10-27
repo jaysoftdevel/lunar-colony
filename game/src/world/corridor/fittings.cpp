@@ -1,4 +1,5 @@
 #include "game/world/corridor/detail.hpp"
+#include "game/world/corridor/corridor_module.hpp"
 #include <array>
 #include <cmath>
 #include <vector>
@@ -118,7 +119,9 @@ void append_entrance_stairs(CorridorMesh& mesh,const CorridorEndpoint& endpoint)
     if(endpoint.kind!=CorridorEndpointKind::Habitat && endpoint.kind!=CorridorEndpointKind::Resource) return;
     const CorridorDoor& door=endpoint.door;
     const Vec3 n=flat_normal(door.normal);
-    const float threshold_y=std::clamp(door.wall_position.y-0.30f,WALKWAY_Y,1.05f);
+    // door.position.y is the structure module's authoritative interior deck.
+    // wall_position.y remains the generic pressure-hull slice used for carving.
+    const float threshold_y=std::max(WALKWAY_Y,door.position.y);
     const float corridor_walkway_y=endpoint.position.y+WALKWAY_Y;
     const float rise=threshold_y-corridor_walkway_y;
     if(rise<0.16f) return;
@@ -460,9 +463,8 @@ void append_crossing_hubs(CorridorMesh& mesh,const std::vector<AutomaticCrossing
 CorridorMesh build_mesh(const CorridorEndpoint& a,const CorridorEndpoint& b,const std::vector<Vec3>& path,
                         const std::vector<CorridorConnection>& existing,std::size_t self_index){
     CorridorMesh mesh;
-    append_swept_shell(mesh,path);
-    append_walkway(mesh,path);
-    append_ribs(mesh,path);
+    corridor_module().build_outer(mesh,path);
+    corridor_module().build_inner(mesh,path);
     append_docking_collar(mesh,a);
     append_docking_collar(mesh,b);
     append_corridor_junction(mesh,a);

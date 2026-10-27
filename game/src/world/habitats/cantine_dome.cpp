@@ -1,10 +1,8 @@
 #include "game/world/habitat_builder.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
-#include "game/world/habitats/habitat_interiors.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
-HabitatMesh make_cantine_dome(){
-    Builder b;
+void build_cantine_dome_outer(Builder& b){
     b.mesh.footprint_x=11.0f; b.mesh.footprint_z=10.5f; b.mesh.height=7.0f;
     b.cylinder_y(b.mesh.foundation,{0,0.60f,0},1.20f,4.55f,24,true);
     // Transparent-looking window dome plus substantial structural framing.
@@ -29,15 +27,6 @@ HabitatMesh make_cantine_dome(){
             b.cylinder_between(b.mesh.details,p0,p1,0.075f,6,true,false); b.line(p0,p1);
         }
     }
-    // Interior communal tables/core visible through the dome.
-    b.cylinder_y(b.mesh.interior,{0,2.15f,0},2.2f,0.30f,12,false);
-    b.cylinder_y(b.mesh.interior,{0,1.30f,0},0.22f,2.0f,18,false);
-    b.cylinder_y(b.mesh.interior,{0,2.95f,0},0.18f,1.65f,18,false);
-    for(float a:{0.0f,1.5708f,3.1416f,4.7124f}){
-        const Vec3 c{2.35f*std::cos(a),1.28f,2.35f*std::sin(a)};
-        b.cylinder_y(b.mesh.interior,c,0.16f,0.82f,14,false);
-        b.cylinder_y(b.mesh.interior,{c.x,0.72f,c.z},0.95f,0.13f,8,false);
-    }
     // Entry connector.
     b.box(b.mesh.shell,{4.85f,2.0f,0},{2.0f,3.35f,3.15f});
     b.torus_x(b.mesh.details,{5.9f,2.0f,0},0.62f,0.09f,16,6);
@@ -51,8 +40,6 @@ HabitatMesh make_cantine_dome(){
         b.cylinder_y(b.mesh.details,{foot.x,0.09f,foot.z},0.18f,0.34f,10,true);
     }
     b.mesh.entrances.push_back({{6.00f,1.18f,0.0f},{1.0f,0.0f,0.0f}});
-    interiors::add_cantine_dome(b);
-    return std::move(b.mesh);
 }
 
 } // namespace game::habitats

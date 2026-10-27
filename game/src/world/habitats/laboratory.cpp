@@ -1,6 +1,5 @@
 #include "game/world/habitat_builder.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
-#include "game/world/habitats/habitat_interiors.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
 namespace {
@@ -15,8 +14,7 @@ void mast(Builder& b,eng::Vec3 p,float h){
 }
 }
 
-HabitatMesh make_laboratory(){
-    Builder b;
+void build_laboratory_outer(Builder& b){
     b.mesh.footprint_x=15.0f; b.mesh.footprint_z=9.5f; b.mesh.height=9.0f;
     b.cylinder_x(b.mesh.shell,{0,3.0f,0},10.8f,2.55f,20,true);
     for(float x:{-4.2f,-2.1f,0.0f,2.1f,4.2f}) b.torus_x(b.mesh.details,{x,3.0f,0},2.58f,0.08f,20,6);
@@ -32,15 +30,6 @@ HabitatMesh make_laboratory(){
         const float x=-4.72f+2.05f*(float)i;
         b.cylinder_y(b.mesh.details,{x,3.15f,-2.72f},2.55f,0.065f,6,true);
     }
-
-    // Research benches, sample columns and manipulators.
-    b.box(b.mesh.interior,{-1.5f,1.25f,0},{6.5f,0.18f,3.8f},false);
-    for(float x:{-3.2f,-1.4f,0.4f}){
-        b.box(b.mesh.interior,{x,1.55f,-1.25f},{1.25f,0.65f,0.75f},false);
-        b.cylinder_y(b.mesh.interior,{x,2.25f,1.2f},1.55f,0.25f,10,false);
-    }
-    b.cylinder_between(b.mesh.interior,{-2.4f,2.0f,0},{-1.8f,2.75f,0.4f},0.11f,8,true,false);
-    b.cylinder_between(b.mesh.interior,{-1.8f,2.75f,0.4f},{-1.2f,2.25f,0.65f},0.09f,8,true,false);
 
     // Roof cupola, sensor masts and dish-like instrument.
     b.cylinder_y(b.mesh.shell,{-2.6f,6.15f,0},1.6f,1.35f,14,true);
@@ -66,7 +55,5 @@ HabitatMesh make_laboratory(){
     b.mesh.entrance_access.push_back(stairs(6.87f));
     b.supports(-4.4f,4.5f,2.2f,0.9f);
     b.supports(-4.4f,4.5f,-2.2f,0.9f);
-    interiors::add_laboratory(b);
-    return std::move(b.mesh);
 }
 }

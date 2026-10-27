@@ -133,12 +133,13 @@ CorridorDoor transformed_builtin_door(const PlacedHabitat& habitat,const Habitat
     HabitatEntrance local{};
     if(entrance_index<mesh.entrances.size()) local=mesh.entrances[entrance_index];
     CorridorDoor d;
-    d.position=habitat.position+rotate_y(local.local_position,habitat.rotation_degrees);
-    // Corridor and structure decks share one threshold level.  Keep the door
-    // anchor on that level even when the authored hull mesh contains an old
-    // elevated hatch marker.
-    d.position.y=geometry::kEntranceSliceY;
-    d.wall_position=d.position;
+    d.wall_position=habitat.position+rotate_y(local.local_position,habitat.rotation_degrees);
+    d.wall_position.y=habitat.position.y+geometry::kEntranceSliceY;
+    // X/Z identify the physical hatch plane; Y carries the authoritative
+    // walking threshold from the habitat module so docking stairs terminate on
+    // the real interior deck instead of on the generic hull slice.
+    d.position=d.wall_position;
+    d.position.y=habitat.position.y+mesh.walkable_floor_y;
     d.normal=flat_normal(rotate_y(local.local_normal,habitat.rotation_degrees));
     d.generated=false;
     d.entrance_index=(int)entrance_index;
@@ -215,9 +216,10 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
 
     CorridorDoor d;
     d.wall_position=habitat.position+rotate_y(local_hit,habitat.rotation_degrees);
-    d.wall_position.y=geometry::kEntranceSliceY;
+    d.wall_position.y=habitat.position.y+geometry::kEntranceSliceY;
     d.normal=flat_normal(rotate_y(local_normal,habitat.rotation_degrees));
     d.position=d.wall_position+d.normal*GENERATED_ENTRANCE_DEPTH;
+    d.position.y=habitat.position.y+mesh.walkable_floor_y;
     d.generated=true;
     d.entrance_index=-1;
     if(!attach_surface_profile(d,habitat,mesh)) return std::nullopt;
@@ -272,9 +274,10 @@ std::optional<CorridorDoor> generated_face_door(std::size_t habitat_index,
             if(!local_wall) continue; // never invent a door on a footprint plane with no pressure hull
             CorridorDoor d;
             d.wall_position=habitat.position+rotate_y(*local_wall,habitat.rotation_degrees);
-            d.wall_position.y=geometry::kEntranceSliceY;
+            d.wall_position.y=habitat.position.y+geometry::kEntranceSliceY;
             d.normal=wn;
             d.position=d.wall_position+d.normal*GENERATED_ENTRANCE_DEPTH;
+            d.position.y=habitat.position.y+mesh.walkable_floor_y;
             d.generated=true;
             d.entrance_index=-1;
             if(!attach_surface_profile(d,habitat,mesh)) continue;
@@ -589,7 +592,7 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
     out.door.entrance_index=-1;
     out.door.normal=normal;
     out.door.wall_position=wall+Vec3{0,geometry::kEntranceSliceY,0};
-    out.door.position=wall+Vec3{0,geometry::kEntranceSliceY,0};
+    out.door.position=wall+Vec3{0,geometry::kStorageFloorY,0};
     out.tangent=normal;
     float dock_run=DOCK_RUN;
     const Vec3 rel=flatten(other-wall);

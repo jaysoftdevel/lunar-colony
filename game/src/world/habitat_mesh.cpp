@@ -1,5 +1,5 @@
 #include "game/world/habitat_mesh.hpp"
-#include "game/world/habitats/habitat_generators.hpp"
+#include "game/world/habitats/habitat_module.hpp"
 #include "game/world/geometry_standards.hpp"
 #include <cmath>
 
@@ -80,19 +80,7 @@ HabitatMesh scale_xz(const HabitatMesh& source,float scale){
 }
 
 HabitatMesh base_mesh(HabitatKind kind){
-    switch(kind){
-        case HabitatKind::AirLock: return habitats::make_airlock();
-        case HabitatKind::OxygenGeneratorDome: return habitats::make_oxygen_dome();
-        case HabitatKind::CantineDome: return habitats::make_cantine_dome();
-        case HabitatKind::BioDome: return habitats::make_bio_dome();
-        case HabitatKind::CrewQuarters: return habitats::make_crew_quarters();
-        case HabitatKind::ProcessingFacility: return habitats::make_processing_facility();
-        case HabitatKind::Factory: return habitats::make_factory();
-        case HabitatKind::Manufactory: return habitats::make_manufactory();
-        case HabitatKind::SickBay: return habitats::make_sick_bay();
-        case HabitatKind::Laboratory: return habitats::make_laboratory();
-        default: return habitats::make_airlock();
-    }
+    return habitats::module(kind).instantiate();
 }
 
 } // namespace
