@@ -55,6 +55,14 @@ bool consume_close_open_end(CorridorConnection& host,Vec3 point){
     return changed;
 }
 
+
+std::size_t network_junction_count(const CorridorConnection& c){
+    std::size_t count=0;
+    if(c.endpoint_a.kind==CorridorEndpointKind::Corridor) ++count;
+    if(c.endpoint_b.kind==CorridorEndpointKind::Corridor) ++count;
+    return count;
+}
+
 void insert_shared_path_vertex(CorridorConnection& host,Vec3 point){
     if(host.path.size()<2) return;
     consume_close_open_end(host,point);
@@ -129,7 +137,7 @@ bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const Corridor
     }
     connections_.push_back(std::move(*c));
     optimize_shared_entrance_groups(connections_,habitats,library);
-    connections_.back().resource_plan=construction_costs::corridor(path_length(connections_.back().path));
+    connections_.back().resource_plan=construction_costs::corridor(connections_.back().path,network_junction_count(connections_.back()));
     return true;
 }
 
@@ -191,7 +199,7 @@ bool CorridorNetwork::connect_corridors(std::size_t corridor_a,std::size_t corri
         connections_[ep->index].mesh=build_mesh(connections_[ep->index].endpoint_a,connections_[ep->index].endpoint_b,
                                                 connections_[ep->index].path,connections_);
     }
-    c->resource_plan=construction_costs::corridor(path_length(c->path));
+    c->resource_plan=construction_costs::corridor(c->path,network_junction_count(*c));
     connections_.push_back(std::move(*c));
     return true;
 }

@@ -28,6 +28,41 @@ std::vector<Vec3> construction_path_lines(const std::vector<Vec3>& path){
     }
     return lines;
 }
+
+Color resource_box_color(MaterialResource resource){
+    switch(resource){
+        case MaterialResource::Iron: return {0.48f,0.52f,0.56f,1.0f};
+        case MaterialResource::Copper: return {0.74f,0.42f,0.20f,1.0f};
+        case MaterialResource::Silicon: return {0.28f,0.58f,0.76f,1.0f};
+        case MaterialResource::Plastic: return {0.72f,0.70f,0.58f,1.0f};
+        case MaterialResource::Water: return {0.22f,0.58f,0.86f,1.0f};
+        case MaterialResource::Food: return {0.48f,0.72f,0.28f,1.0f};
+        case MaterialResource::Medical: return {0.88f,0.42f,0.48f,1.0f};
+        case MaterialResource::Count: break;
+    }
+    return {0.6f,0.6f,0.6f,1.0f};
+}
+
+void draw_resource_box(Renderer& r,Vec3 base,float half_width,float height,MaterialResource resource,bool selected=false){
+    const Vec3 c=base+Vec3{0,height*0.5f+0.025f,0};
+    const float x0=c.x-half_width,x1=c.x+half_width,z0=c.z-half_width,z1=c.z+half_width,y0=c.y-height*0.5f,y1=c.y+height*0.5f;
+    const std::vector<Vec3> tris{
+        {x0,y0,z0},{x1,y0,z0},{x1,y0,z1},{x0,y0,z0},{x1,y0,z1},{x0,y0,z1},
+        {x0,y1,z0},{x1,y1,z1},{x1,y1,z0},{x0,y1,z0},{x0,y1,z1},{x1,y1,z1},
+        {x0,y0,z0},{x0,y1,z0},{x1,y1,z0},{x0,y0,z0},{x1,y1,z0},{x1,y0,z0},
+        {x1,y0,z1},{x1,y1,z1},{x0,y1,z1},{x1,y0,z1},{x0,y1,z1},{x0,y0,z1},
+        {x0,y0,z1},{x0,y1,z1},{x0,y1,z0},{x0,y0,z1},{x0,y1,z0},{x0,y0,z0},
+        {x1,y0,z0},{x1,y1,z0},{x1,y1,z1},{x1,y0,z0},{x1,y1,z1},{x1,y0,z1}
+    };
+    const std::vector<Vec3> edges{
+        {x0,y0,z0},{x1,y0,z0},{x1,y0,z0},{x1,y0,z1},{x1,y0,z1},{x0,y0,z1},{x0,y0,z1},{x0,y0,z0},
+        {x0,y1,z0},{x1,y1,z0},{x1,y1,z0},{x1,y1,z1},{x1,y1,z1},{x0,y1,z1},{x0,y1,z1},{x0,y1,z0},
+        {x0,y0,z0},{x0,y1,z0},{x1,y0,z0},{x1,y1,z0},{x1,y0,z1},{x1,y1,z1},{x0,y0,z1},{x0,y1,z1}
+    };
+    const Color base_color=resource_box_color(resource);
+    r.draw_triangles_3d(tris,{base_color.r,base_color.g,base_color.b,0.90f});
+    r.draw_lines_3d(edges,selected?Color{0.34f,1.00f,0.72f,1.0f}:Color{0.10f,0.12f,0.13f,1.0f},selected?2.8f:1.25f);
+}
 }
 
 void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,std::uint8_t construction_step) const {
@@ -154,40 +189,11 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
 
 
 void GameApp::render_ground_resources(Renderer& r){
-    auto color_for=[](MaterialResource resource){
-        switch(resource){
-            case MaterialResource::Iron: return Color{0.48f,0.52f,0.56f,1.0f};
-            case MaterialResource::Copper: return Color{0.74f,0.42f,0.20f,1.0f};
-            case MaterialResource::Silicon: return Color{0.28f,0.58f,0.76f,1.0f};
-            case MaterialResource::Plastic: return Color{0.72f,0.70f,0.58f,1.0f};
-            case MaterialResource::Count: break;
-        }
-        return Color{0.6f,0.6f,0.6f,1.0f};
-    };
-
     for(std::size_t pile_index=0;pile_index<ground_resource_piles_.size();++pile_index){
         const auto& pile=ground_resource_piles_[pile_index];
-        const float r0=pile.radius;
         const float h=std::clamp(0.18f+0.055f*std::log10((float)pile.amount+1.0f),0.22f,0.52f);
-        const Vec3 c=pile.position+Vec3{0,h*0.5f+0.025f,0};
-        const float x0=c.x-r0,x1=c.x+r0,z0=c.z-r0,z1=c.z+r0,y0=c.y-h*0.5f,y1=c.y+h*0.5f;
-        const std::vector<Vec3> tris{
-            {x0,y0,z0},{x1,y0,z0},{x1,y0,z1},{x0,y0,z0},{x1,y0,z1},{x0,y0,z1},
-            {x0,y1,z0},{x1,y1,z1},{x1,y1,z0},{x0,y1,z0},{x0,y1,z1},{x1,y1,z1},
-            {x0,y0,z0},{x0,y1,z0},{x1,y1,z0},{x0,y0,z0},{x1,y1,z0},{x1,y0,z0},
-            {x1,y0,z1},{x1,y1,z1},{x0,y1,z1},{x1,y0,z1},{x0,y1,z1},{x0,y0,z1},
-            {x0,y0,z1},{x0,y1,z1},{x0,y1,z0},{x0,y0,z1},{x0,y1,z0},{x0,y0,z0},
-            {x1,y0,z0},{x1,y1,z0},{x1,y1,z1},{x1,y0,z0},{x1,y1,z1},{x1,y0,z1}
-        };
-        const std::vector<Vec3> edges{
-            {x0,y0,z0},{x1,y0,z0},{x1,y0,z0},{x1,y0,z1},{x1,y0,z1},{x0,y0,z1},{x0,y0,z1},{x0,y0,z0},
-            {x0,y1,z0},{x1,y1,z0},{x1,y1,z0},{x1,y1,z1},{x1,y1,z1},{x0,y1,z1},{x0,y1,z1},{x0,y1,z0},
-            {x0,y0,z0},{x0,y1,z0},{x1,y0,z0},{x1,y1,z0},{x1,y0,z1},{x1,y1,z1},{x0,y0,z1},{x0,y1,z1}
-        };
-        const Color base=color_for(pile.resource);
         const bool selected=selection_kind_==SelectionKind::GroundResource && selected_ground_resource_==(int)pile_index;
-        r.draw_triangles_3d(tris,{base.r,base.g,base.b,0.90f});
-        r.draw_lines_3d(edges,selected?theme_.accent:Color{0.10f,0.12f,0.13f,1.0f},selected?2.8f:1.25f);
+        draw_resource_box(r,pile.position,pile.radius,h,pile.resource,selected);
     }
 }
 
@@ -195,7 +201,41 @@ void GameApp::render_resources(Renderer& r){
     for(size_t i=0;i<placed_resources_.size();++i){
         const auto& instance=placed_resources_[i];
         const bool selected=selection_kind_==SelectionKind::Resource && selected_resource_==(int)i;
-        render_resource_mesh(r,resource_models_.mesh(instance),instance.position,instance.rotation_degrees,false,true,selected,instance.construction.step);
+        const auto& mesh=resource_models_.mesh(instance);
+        render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.step);
+
+        if(instance.kind!=ResourceKind::StorageDome || !instance.construction.complete() || instance.stored_boxes.empty()) continue;
+
+        // Every returned box remains a visible physical box inside the dome.
+        // Boxes are assigned to pallet cells and stacked vertically, with the
+        // grid density adapting so all boxes remain inside every dome tier.
+        int max_layers=3;
+        switch(instance.storage_size){
+            case StorageDomeSize::Small: max_layers=3; break;
+            case StorageDomeSize::Mid: max_layers=4; break;
+            case StorageDomeSize::Big: max_layers=5; break;
+            case StorageDomeSize::Huge: max_layers=6; break;
+            default: break;
+        }
+        const std::size_t cells=(instance.stored_boxes.size()+(std::size_t)max_layers-1)/(std::size_t)max_layers;
+        const int grid=std::max(1,(int)std::ceil(std::sqrt((double)cells)));
+        const float usable=std::min(mesh.footprint_x,mesh.footprint_z)*0.52f;
+        const float spacing=usable/(float)std::max(1,grid);
+        const float half=std::clamp(spacing*0.31f,0.20f,0.52f);
+        const float box_h=std::clamp(half*1.10f,0.24f,0.55f);
+        for(std::size_t bi=0;bi<instance.stored_boxes.size();++bi){
+            const std::size_t cell=bi/(std::size_t)max_layers;
+            const int layer=(int)(bi%(std::size_t)max_layers);
+            const int gx=(int)(cell%(std::size_t)grid);
+            const int gz=(int)(cell/(std::size_t)grid);
+            Vec3 local{((float)gx-(float)(grid-1)*0.5f)*spacing,
+                       0.76f+(float)layer*(box_h+0.035f),
+                       ((float)gz-(float)(grid-1)*0.5f)*spacing};
+            // Keep the main south docking aisle clear.
+            if(local.z<-usable*0.28f && std::abs(local.x)<spacing*0.60f) local.x+=spacing*0.75f;
+            const Vec3 world=instance.position+rotate_y(local,instance.rotation_degrees);
+            draw_resource_box(r,world,half,box_h,instance.stored_boxes[bi].resource,false);
+        }
     }
 }
 

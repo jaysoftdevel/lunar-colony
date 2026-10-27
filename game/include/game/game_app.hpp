@@ -126,6 +126,9 @@ private:
     ResourceBundle committed_construction_resources() const;
     bool can_start_construction(const ConstructionResourcePlan& plan) const;
     void drop_structure_resources(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used);
+    void drop_path_resources(const std::vector<eng::Vec3>& path,float lateral_width,const ResourceBundle& used);
+    ResourceBundle store_resource_bundle(const ResourceBundle& resources,float condition=1.0f);
+    void recover_removed_resources(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used);
     bool move_ground_resource_to_storage(std::size_t pile_index);
     void consume_storage_inventory(const ResourceBundle& cost);
     void ensure_display_modes();

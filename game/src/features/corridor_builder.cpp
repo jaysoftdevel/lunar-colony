@@ -24,10 +24,15 @@ Vec3 side_of(Vec3 normal){ normal=flat_dir(normal); return {-normal.z,0,normal.x
 
 void line(std::vector<Vec3>& out,Vec3 a,Vec3 b){ out.push_back(a); out.push_back(b); }
 
-float route_length(const CorridorConnection& c){
-    float total=0.0f;
-    for(std::size_t i=0;i+1<c.path.size();++i) total+=distance_xz(c.path[i],c.path[i+1]);
-    return total;
+std::size_t corridor_junction_count(const CorridorConnection& c){
+    std::size_t count=0;
+    if(c.endpoint_a.kind==CorridorEndpointKind::Corridor) ++count;
+    if(c.endpoint_b.kind==CorridorEndpointKind::Corridor) ++count;
+    return count;
+}
+
+ConstructionResourcePlan corridor_plan(const CorridorConnection& c){
+    return construction_costs::corridor(c.path,corridor_junction_count(c));
 }
 
 std::vector<Vec3> doorway_outline(Vec3 center,Vec3 normal,float half_width,float height){
@@ -135,7 +140,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     if(target<0 || target==corridor_link_source_) return;
     auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_);
     if(!preview) return;
-    const bool affordable=can_start_construction(construction_costs::corridor(route_length(*preview)));
+    const bool affordable=can_start_construction(corridor_plan(*preview));
     const Color shell=affordable?Color{0.36f,1.00f,0.76f,0.92f}:Color{1.00f,0.24f,0.18f,0.82f};
     const Color detail=affordable?Color{0.24f,0.88f,0.68f,0.84f}:Color{1.00f,0.34f,0.24f,0.78f};
     mesh_wireframe::draw_layer(r,preview->mesh.shell,shell,1.35f);
@@ -198,7 +203,7 @@ void GameApp::render_corridor_placement(Renderer& r){
             const CorridorBuildAnchor sample_end{CorridorEndpointKind::OpenDoor,0,candidate->position+dir*2.75f};
             sample=corridor_network_.preview_built_corridor(hover,sample_end,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
         }
-        const bool sample_valid=sample.has_value() && can_start_construction(construction_costs::corridor(route_length(*sample)));
+        const bool sample_valid=sample.has_value() && can_start_construction(corridor_plan(*sample));
         if(sample){
             mesh_wireframe::draw_layer(r,sample->mesh.shell,{0.30f,0.72f,1.00f,0.34f},1.35f);
             mesh_wireframe::draw_layer(r,sample->mesh.details,{0.24f,0.88f,0.68f,0.30f},1.10f);
@@ -245,7 +250,7 @@ void GameApp::render_corridor_placement(Renderer& r){
         if(preview){
             source_endpoint=preview->endpoint_a;
             destination_endpoint=preview->endpoint_b;
-            const bool affordable=can_start_construction(construction_costs::corridor(route_length(*preview)));
+            const bool affordable=can_start_construction(corridor_plan(*preview));
             const Color shell=affordable?Color{0.36f,1.00f,0.76f,0.92f}:Color{1.00f,0.24f,0.18f,0.82f};
             const Color detail=affordable?Color{0.24f,0.88f,0.68f,0.88f}:Color{1.00f,0.34f,0.24f,0.78f};
             mesh_wireframe::draw_layer(r,preview->mesh.shell,shell,1.35f);
@@ -271,7 +276,7 @@ void GameApp::render_corridor_placement(Renderer& r){
 
     if(!input_.left_pressed) return;
 
-    const bool affordable=preview && can_start_construction(construction_costs::corridor(route_length(*preview)));
+    const bool affordable=preview && can_start_construction(corridor_plan(*preview));
     if(preview && affordable && corridor_network_.build_corridor(*corridor_build_start_,hover,placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
         selected_corridor_=(int)corridor_network_.connections().size()-1;
         selected_habitat_=-1;

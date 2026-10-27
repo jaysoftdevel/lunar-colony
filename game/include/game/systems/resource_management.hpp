@@ -10,6 +10,9 @@ enum class MaterialResource : std::uint8_t {
     Copper,
     Silicon,
     Plastic,
+    Water,
+    Food,
+    Medical,
     Count
 };
 
@@ -21,9 +24,13 @@ struct ResourceBundle {
     std::int64_t copper{0};
     std::int64_t silicon{0};
     std::int64_t plastic{0};
+    std::int64_t water{0};
+    std::int64_t food{0};
+    std::int64_t medical{0};
 
     std::int64_t amount(MaterialResource resource) const;
     std::int64_t& amount(MaterialResource resource);
+    std::int64_t total_amount() const;
     bool empty() const;
 };
 

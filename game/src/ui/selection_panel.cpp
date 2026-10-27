@@ -22,6 +22,29 @@ std::string next_material_cost(const ConstructionResourcePlan& plan,std::uint8_t
     out<<"NEXT  FE "<<c.iron<<"  CU "<<c.copper<<"  SI "<<c.silicon<<"  P "<<c.plastic;
     return out.str();
 }
+
+std::string total_material_cost(const ConstructionResourcePlan& plan){
+    const ResourceBundle c=plan.total();
+    std::ostringstream out;
+    out<<"TOTAL  FE "<<c.iron<<"  CU "<<c.copper<<"  SI "<<c.silicon<<"  P "<<c.plastic;
+    return out.str();
+}
+
+std::string used_material_cost(const ConstructionResourcePlan& plan,std::uint8_t completed_steps){
+    const ResourceBundle c=plan.consumed(completed_steps);
+    std::ostringstream out;
+    out<<"USED / FREED";
+    bool any=false;
+    for(std::size_t i=0;i<kMaterialResourceCount;++i){
+        const auto material=static_cast<MaterialResource>(i);
+        const std::int64_t amount=c.amount(material);
+        if(amount<=0) continue;
+        out<<"  "<<material_resource_symbol(material)<<" "<<amount;
+        any=true;
+    }
+    if(!any) out<<"  NONE YET";
+    return out.str();
+}
 }
 
 void GameApp::render_selection_panel(Renderer& r){
@@ -44,7 +67,8 @@ void GameApp::render_selection_panel(Renderer& r){
         bool can_store=false;
         for(const auto& structure:placed_resources_){
             if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
-            const std::int64_t used=structure.stored_resources.iron+structure.stored_resources.copper+structure.stored_resources.silicon+structure.stored_resources.plastic;
+            // Physical boxes are the authoritative Storage Dome inventory.
+            const std::int64_t used=stored_resource_box_totals(structure).total_amount();
             if(used+box.amount<=storage_dome_capacity_kg(structure.storage_size)){ can_store=true; break; }
         }
         const char* action=!debug_frame_enabled_?"DEBUG REQUIRED FOR DEL":(can_store?"DEL  MOVE TO STORAGE DOME":"NO AVAILABLE STORAGE DOME");
@@ -74,11 +98,12 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
             game_label(r,{x,p.y+73},next_material_cost(h.resource_plan,h.construction.step),0.43f,theme_,true);
         }
-        game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+132},conn.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+154},utilities.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+188},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
+        game_label(r,{x,p.y+88},used_material_cost(h.resource_plan,h.construction.step),0.44f,theme_,true);
+        game_label(r,{x,p.y+112},pos.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+136},rot.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+160},conn.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+184},utilities.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+224},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
         return;
     }
 
@@ -99,20 +124,38 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+73},next_material_cost(item.resource_plan,item.construction.step),0.43f,theme_,true);
         }
         if(item.kind==ResourceKind::StorageDome){
-            const std::int64_t stored=item.stored_resources.iron+item.stored_resources.copper+item.stored_resources.silicon+item.stored_resources.plastic;
-            std::ostringstream capacity,corridors;
-            capacity<<"STORAGE  "<<stored<<" / "<<storage_dome_capacity_kg(item.storage_size)<<" KG";
+            const ResourceBundle stored_resources=stored_resource_box_totals(item);
+            const std::int64_t stored=stored_resources.total_amount();
+            std::ostringstream capacity,corridors,boxes;
+            capacity<<"STORAGE (BOX SUM)  "<<stored<<" / "<<storage_dome_capacity_kg(item.storage_size)<<" KG";
+            boxes<<"PHYSICAL BOXES  "<<item.stored_boxes.size();
             corridors<<"CORRIDORS "<<corridor_network_.resource_connection_count((size_t)selected_resource_);
-            game_label(r,{x,p.y+84},capacity.str(),0.56f,theme_,true);
-            game_label(r,{x,p.y+106},pos.str(),0.54f,theme_,true);
-            game_label(r,{x,p.y+128},corridors.str()+" / "+utilities.str(),0.50f,theme_,true);
-            game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
+            game_label(r,{x,p.y+84},used_material_cost(item.resource_plan,item.construction.step),0.44f,theme_,true);
+            game_label(r,{x,p.y+108},capacity.str(),0.56f,theme_,true);
+            game_label(r,{x,p.y+130},boxes.str(),0.50f,theme_,true);
+            game_label(r,{x,p.y+154},"STORED RESOURCES",0.52f,theme_);
+
+            for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
+                const auto material=static_cast<MaterialResource>(ri);
+                const int col=ri<4?0:1;
+                const int row=col==0?(int)ri:(int)ri-4;
+                const float ix=x+(col==0?0.0f:235.0f);
+                const float iy=p.y+177.0f+(float)row*22.0f;
+                std::ostringstream line;
+                line<<material_resource_name(material)<<"  "<<stored_resources.amount(material)<<" KG";
+                game_label(r,{ix,iy},line.str(),0.48f,theme_,true);
+            }
+
+            game_label(r,{x,p.y+270},pos.str(),0.50f,theme_,true);
+            game_label(r,{x,p.y+292},corridors.str()+" / "+utilities.str(),0.47f,theme_,true);
+            game_label(r,{x,p.y+322},"DEL REMOVE / LMB SELECT OTHER",0.46f,theme_,true);
             return;
         }
-        game_label(r,{x,p.y+84},pos.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+108},rot.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+132},utilities.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
+        game_label(r,{x,p.y+88},used_material_cost(item.resource_plan,item.construction.step),0.44f,theme_,true);
+        game_label(r,{x,p.y+112},pos.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+136},rot.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+160},utilities.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+224},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
         return;
     }
 
@@ -136,9 +179,11 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
             game_label(r,{x,p.y+73},next_material_cost(u.resource_plan,u.construction.step),0.43f,theme_,true);
         }
-        game_label(r,{x,p.y+84},length.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+108},endpoints.str(),0.50f,theme_,true);
-        game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
+        game_label(r,{x,p.y+88},used_material_cost(u.resource_plan,u.construction.step),0.43f,theme_,true);
+        game_label(r,{x,p.y+110},total_material_cost(u.resource_plan),0.43f,theme_,true);
+        game_label(r,{x,p.y+134},length.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+158},endpoints.str(),0.50f,theme_,true);
+        game_label(r,{x,p.y+224},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
         return;
     }
 
@@ -161,9 +206,11 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+60},build.str(),0.56f,theme_);
             game_label(r,{x,p.y+73},next_material_cost(w.resource_plan,w.construction.step),0.43f,theme_,true);
         }
-        game_label(r,{x,p.y+84},length.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+108},endpoints.str(),0.50f,theme_,true);
-        game_label(r,{x,p.y+170},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
+        game_label(r,{x,p.y+88},used_material_cost(w.resource_plan,w.construction.step),0.43f,theme_,true);
+        game_label(r,{x,p.y+110},total_material_cost(w.resource_plan),0.43f,theme_,true);
+        game_label(r,{x,p.y+134},length.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+158},endpoints.str(),0.50f,theme_,true);
+        game_label(r,{x,p.y+224},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
         return;
     }
 
@@ -186,10 +233,12 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+59},build.str(),0.56f,theme_);
             game_label(r,{x,p.y+72},next_material_cost(c.resource_plan,c.construction.step),0.43f,theme_,true);
         }
-        game_label(r,{x,p.y+82},length.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+105},segments.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+128},endpoints.str(),0.50f,theme_,true);
-        game_label(r,{x,p.y+150},"DEL REMOVE",0.48f,theme_,true);
+        game_label(r,{x,p.y+87},used_material_cost(c.resource_plan,c.construction.step),0.43f,theme_,true);
+        game_label(r,{x,p.y+109},total_material_cost(c.resource_plan),0.43f,theme_,true);
+        game_label(r,{x,p.y+133},length.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+156},segments.str(),0.58f,theme_,true);
+        game_label(r,{x,p.y+179},endpoints.str(),0.50f,theme_,true);
+        game_label(r,{x,p.y+204},"DEL REMOVE",0.48f,theme_,true);
 
         const bool linking=corridor_link_source_==selected_corridor_;
         const std::string label=linking?"CANCEL CONNECTION":"CONNECT TO CORRIDOR";

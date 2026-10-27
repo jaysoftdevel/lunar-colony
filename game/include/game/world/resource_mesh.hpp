@@ -58,6 +58,12 @@ struct ResourceMesh {
     float height{1.0f};
 };
 
+struct StoredResourceBox {
+    MaterialResource resource{MaterialResource::Iron};
+    std::int64_t amount{0};
+    float condition{1.0f};
+};
+
 struct PlacedResource {
     ResourceKind kind{ResourceKind::SolarPanel};
     eng::Vec3 position{};
@@ -65,8 +71,21 @@ struct PlacedResource {
     ConstructionState construction{};
     ConstructionResourcePlan resource_plan{};
     ResourceBundle stored_resources{};
+    std::vector<StoredResourceBox> stored_boxes{};
     StorageDomeSize storage_size{StorageDomeSize::Small};
 };
+
+inline ResourceBundle stored_resource_box_totals(const PlacedResource& placed){
+    ResourceBundle totals{};
+    for(const auto& box:placed.stored_boxes){
+        if(box.amount>0) totals.amount(box.resource)+=box.amount;
+    }
+    return totals;
+}
+
+inline void sync_stored_resource_totals(PlacedResource& placed){
+    placed.stored_resources=stored_resource_box_totals(placed);
+}
 
 class ResourceModelLibrary {
 public:

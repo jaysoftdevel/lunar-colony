@@ -55,15 +55,15 @@ constexpr int structure_copper[10] ={2,3,5,8,12,17,18,16,12,7};
 constexpr int structure_silicon[10]={0,1,2,5,9,14,19,21,18,11};
 constexpr int structure_plastic[10]={8,10,12,14,14,13,11,8,6,4};
 
-constexpr int corridor_iron[5]   ={25,25,22,18,10};
-constexpr int corridor_copper[5] ={5,15,25,30,25};
-constexpr int corridor_silicon[5]={0,5,20,35,40};
-constexpr int corridor_plastic[5]={10,30,30,20,10};
+constexpr int corridor_iron[5]   ={48,30,15,5,2};
+constexpr int corridor_copper[5] ={0,4,10,54,32};
+constexpr int corridor_silicon[5]={0,0,4,20,76};
+constexpr int corridor_plastic[5]={12,24,40,18,6};
 
-constexpr int supply_iron[3]   ={45,35,20};
-constexpr int supply_copper[3] ={25,45,30};
-constexpr int supply_silicon[3]={10,35,55};
-constexpr int supply_plastic[3]={35,40,25};
+constexpr int supply_iron[3]   ={68,25,7};
+constexpr int supply_copper[3] ={5,70,25};
+constexpr int supply_silicon[3]={0,15,85};
+constexpr int supply_plastic[3]={30,55,15};
 
 constexpr int walkway_iron[3]   ={55,30,15};
 constexpr int walkway_copper[3] ={15,45,40};
@@ -138,16 +138,83 @@ ConstructionResourcePlan structure(ResourceKind kind,const ResourceMesh& mesh){
     return distribute(kConstructionSteps,total,structure_iron,structure_copper,structure_silicon,structure_plastic);
 }
 
-ConstructionResourcePlan corridor(float length_m){
-    const double m=std::max(0.5,(double)length_m);
-    const ResourceBundle total{kg(m*82.0+70.0),kg(m*4.0+12.0),kg(m*1.0+6.0),kg(m*18.0+25.0)};
+namespace {
+struct RouteMetrics {
+    double length_m{0.0};
+    double quarter_turns{0.0}; // accumulated turn angle expressed as 90-degree bends
+};
+
+RouteMetrics route_metrics(const std::vector<eng::Vec3>& path){
+    RouteMetrics out{};
+    if(path.size()<2) return out;
+    for(std::size_t i=0;i+1<path.size();++i){
+        const double dx=(double)path[i+1].x-(double)path[i].x;
+        const double dz=(double)path[i+1].z-(double)path[i].z;
+        out.length_m+=std::sqrt(dx*dx+dz*dz);
+    }
+    for(std::size_t i=1;i+1<path.size();++i){
+        double ax=(double)path[i].x-(double)path[i-1].x;
+        double az=(double)path[i].z-(double)path[i-1].z;
+        double bx=(double)path[i+1].x-(double)path[i].x;
+        double bz=(double)path[i+1].z-(double)path[i].z;
+        const double al=std::sqrt(ax*ax+az*az), bl=std::sqrt(bx*bx+bz*bz);
+        if(al<1.0e-5 || bl<1.0e-5) continue;
+        ax/=al; az/=al; bx/=bl; bz/=bl;
+        const double dot=std::clamp(ax*bx+az*bz,-1.0,1.0);
+        out.quarter_turns+=std::acos(dot)/(3.14159265358979323846*0.5);
+    }
+    return out;
+}
+
+ConstructionResourcePlan corridor_from_metrics(double length_m,double quarter_turns,std::size_t network_junctions){
+    const double m=std::max(0.5,length_m);
+    // Pressurised corridor mass model (kg-equivalent): steel frame/shell and floor,
+    // copper power/data trunks, silicon controls/sensors and polymer pressure seals.
+    // Two terminal collars are always required. Curvature adds reinforced ribs;
+    // branches into an existing corridor add a heavier pressure-rated junction fitting.
+    const double terminal_collars=2.0;
+    ResourceBundle total{
+        kg(m*82.0 + terminal_collars*38.0 + quarter_turns*28.0 + (double)network_junctions*52.0),
+        kg(m*3.8  + terminal_collars*1.6  + quarter_turns*1.2  + (double)network_junctions*2.2),
+        kg(m*0.8  + terminal_collars*0.5  + quarter_turns*0.5  + (double)network_junctions*1.0),
+        kg(m*15.5 + terminal_collars*5.5  + quarter_turns*6.0  + (double)network_junctions*8.0)
+    };
     return distribute(kCorridorConstructionSteps,total,corridor_iron,corridor_copper,corridor_silicon,corridor_plastic);
 }
 
-ConstructionResourcePlan supply_channel(float length_m){
-    const double m=std::max(0.5,(double)length_m);
-    const ResourceBundle total{kg(m*7.0+16.0),kg(m*5.0+12.0),kg(m*0.7+4.0),kg(m*2.5+8.0)};
+ConstructionResourcePlan supply_from_metrics(double length_m,double quarter_turns,std::size_t junctions){
+    const double m=std::max(0.5,length_m);
+    // Shared utility tray: iron support rail / pipe brackets, copper conductors,
+    // silicon monitoring/control hardware and polymer water/insulation lines.
+    // Every route has two terminal fittings; bends and manifold intersections
+    // add local hardware instead of being treated as free geometry.
+    const double terminals=2.0;
+    ResourceBundle total{
+        kg(m*8.5 + terminals*8.0 + quarter_turns*3.5 + (double)junctions*10.0),
+        kg(m*5.8 + terminals*2.0 + quarter_turns*1.2 + (double)junctions*5.0),
+        kg(m*0.55+ terminals*0.4 + quarter_turns*0.25+ (double)junctions*1.8),
+        kg(m*3.6 + terminals*1.5 + quarter_turns*1.4 + (double)junctions*3.5)
+    };
     return distribute(kSupplyConstructionSteps,total,supply_iron,supply_copper,supply_silicon,supply_plastic);
+}
+} // namespace
+
+ConstructionResourcePlan corridor(float length_m){
+    return corridor_from_metrics((double)length_m,0.0,0);
+}
+
+ConstructionResourcePlan corridor(const std::vector<eng::Vec3>& path,std::size_t network_junctions){
+    const RouteMetrics metrics=route_metrics(path);
+    return corridor_from_metrics(metrics.length_m,metrics.quarter_turns,network_junctions);
+}
+
+ConstructionResourcePlan supply_channel(float length_m){
+    return supply_from_metrics((double)length_m,0.0,0);
+}
+
+ConstructionResourcePlan supply_channel(const std::vector<eng::Vec3>& path,std::size_t junctions){
+    const RouteMetrics metrics=route_metrics(path);
+    return supply_from_metrics(metrics.length_m,metrics.quarter_turns,junctions);
 }
 
 ConstructionResourcePlan walkway(float length_m){

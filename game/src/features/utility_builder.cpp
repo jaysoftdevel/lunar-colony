@@ -12,10 +12,8 @@ using namespace eng;
 using namespace layout;
 
 namespace {
-float route_length(const UtilityConnection& c){
-    float total=0.0f;
-    for(std::size_t i=0;i+1<c.path.size();++i) total+=world_math::distance_xz(c.path[i],c.path[i+1]);
-    return total;
+ConstructionResourcePlan supply_plan(const UtilityConnection& c){
+    return construction_costs::supply_channel(c.path,c.junctions.size());
 }
 
 void marker(Renderer& r,Vec3 p,Color c,float size=0.62f){
@@ -101,7 +99,7 @@ void GameApp::render_utility_placement(Renderer& r){
                 if(n<best){ best=n; sample=std::move(candidate); }
             }
         }
-        const bool sample_valid=sample.has_value() && can_start_construction(construction_costs::supply_channel(route_length(*sample)));
+        const bool sample_valid=sample.has_value() && can_start_construction(supply_plan(*sample));
         if(sample){
             const Color shell{0.34f,0.82f,1.00f,0.74f};
             const Color detail{0.42f,0.88f,1.00f,0.68f};
@@ -145,7 +143,7 @@ void GameApp::render_utility_placement(Renderer& r){
                                                      placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     }
 
-    const bool affordable=preview && can_start_construction(construction_costs::supply_channel(route_length(*preview)));
+    const bool affordable=preview && can_start_construction(supply_plan(*preview));
     if(preview){
         const Color shell=affordable?Color{0.68f,0.86f,0.98f,0.95f}:Color{1.00f,0.24f,0.18f,0.86f};
         const Color detail=affordable?Color{0.93f,0.72f,0.28f,0.90f}:Color{1.00f,0.34f,0.24f,0.82f};

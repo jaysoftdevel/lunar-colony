@@ -647,7 +647,7 @@ bool UtilityNetwork::build_connection(
     }
     float route_length=0.0f;
     for(std::size_t i=0;i+1<preview->path.size();++i) route_length+=distance_xz(preview->path[i],preview->path[i+1]);
-    preview->resource_plan=construction_costs::supply_channel(route_length);
+    preview->resource_plan=construction_costs::supply_channel(preview->path,preview->junctions.size());
     connections_.push_back(std::move(*preview));
     rebuild_supply_junctions();
     return true;

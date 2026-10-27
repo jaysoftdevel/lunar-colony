@@ -19,7 +19,6 @@ void draw_resource_icon(Renderer& r,MaterialResource resource,Rect box,Color c){
     const float cx=x+w*0.5f,cy=y+h*0.5f;
     switch(resource){
         case MaterialResource::Iron:
-            // Compact ingot.
             r.draw_rect({x+3,y+8,w-6,h-14},{c.r,c.g,c.b,0.15f});
             r.draw_line({x+3,y+8},{x+w-3,y+8},c,1.8f);
             r.draw_line({x+3,y+h-6},{x+w-3,y+h-6},c,1.8f);
@@ -28,7 +27,6 @@ void draw_resource_icon(Renderer& r,MaterialResource resource,Rect box,Color c){
             r.draw_line({x+7,y+3},{x+w-7,y+3},c,1.4f);
             break;
         case MaterialResource::Copper:
-            // Copper coil / wound conductor.
             for(int i=0;i<3;++i){
                 const float yy=y+5.0f+i*6.0f;
                 r.draw_line({x+4,yy},{x+w-4,yy+3.0f},c,1.7f);
@@ -38,7 +36,6 @@ void draw_resource_icon(Renderer& r,MaterialResource resource,Rect box,Color c){
             r.draw_line({x+w-4,y+7},{x+w-4,y+h-3},c,1.0f);
             break;
         case MaterialResource::Silicon:
-            // Microchip die with pins.
             r.draw_rect({cx-7,cy-7,14,14},{c.r,c.g,c.b,0.13f});
             r.draw_line({cx-7,cy-7},{cx+7,cy-7},c,1.6f);
             r.draw_line({cx+7,cy-7},{cx+7,cy+7},c,1.6f);
@@ -51,13 +48,37 @@ void draw_resource_icon(Renderer& r,MaterialResource resource,Rect box,Color c){
             }
             break;
         case MaterialResource::Plastic:
-            // Polymer pellets / moulded stock.
             r.draw_rect({x+3,y+5,7,7},{c.r,c.g,c.b,0.14f});
             r.draw_rect({x+12,y+10,8,8},{c.r,c.g,c.b,0.14f});
             r.draw_rect({x+5,y+18,9,7},{c.r,c.g,c.b,0.14f});
             r.draw_line({x+3,y+5},{x+10,y+5},c,1.2f);
             r.draw_line({x+12,y+10},{x+20,y+10},c,1.2f);
             r.draw_line({x+5,y+18},{x+14,y+18},c,1.2f);
+            break;
+        case MaterialResource::Water:
+            // Droplet.
+            r.draw_line({cx,cy-11},{cx-8,cy+2},c,1.7f);
+            r.draw_line({cx-8,cy+2},{cx-5,cy+9},c,1.7f);
+            r.draw_line({cx-5,cy+9},{cx+5,cy+9},c,1.7f);
+            r.draw_line({cx+5,cy+9},{cx+8,cy+2},c,1.7f);
+            r.draw_line({cx+8,cy+2},{cx,cy-11},c,1.7f);
+            break;
+        case MaterialResource::Food:
+            // Compact ration crate / leaf mark.
+            r.draw_rect({cx-9,cy-7,18,14},{c.r,c.g,c.b,0.12f});
+            r.draw_line({cx-9,cy-7},{cx+9,cy-7},c,1.5f);
+            r.draw_line({cx-9,cy+7},{cx+9,cy+7},c,1.5f);
+            r.draw_line({cx,cy-4},{cx,cy+5},c,1.2f);
+            r.draw_line({cx,cy-1},{cx+5,cy-5},c,1.2f);
+            break;
+        case MaterialResource::Medical:
+            // Medical cross.
+            r.draw_rect({cx-3,cy-10,6,20},{c.r,c.g,c.b,0.18f});
+            r.draw_rect({cx-10,cy-3,20,6},{c.r,c.g,c.b,0.18f});
+            r.draw_line({cx-3,cy-10},{cx+3,cy-10},c,1.5f);
+            r.draw_line({cx-10,cy-3},{cx-10,cy+3},c,1.5f);
+            r.draw_line({cx+10,cy-3},{cx+10,cy+3},c,1.5f);
+            r.draw_line({cx-3,cy+10},{cx+3,cy+10},c,1.5f);
             break;
         case MaterialResource::Count:
             break;
@@ -97,40 +118,41 @@ void GameApp::render_status_bar(Renderer& r){
     water<<"WATER "<<status_.water_current()<<"/"<<status_.water_capacity();
     crew<<"CREW "<<status_.crew_current()<<"/"<<status_.crew_capacity();
 
-    const float day_w=logical_w*0.24f;
-    const float power_w=logical_w*0.13f;
-    const float water_w=logical_w*0.13f;
-    const float crew_w=logical_w*0.11f;
+    // Keep enough room for seven inventory resources while retaining colony status.
+    const float day_w=logical_w*0.20f;
+    const float power_w=logical_w*0.10f;
+    const float water_w=logical_w*0.09f;
+    const float crew_w=logical_w*0.09f;
     const float resource_start=day_w+power_w+water_w+crew_w;
-    const float resource_w=(logical_w-resource_start)/4.0f;
+    const float resource_w=(logical_w-resource_start)/(float)kMaterialResourceCount;
 
-    const std::array<float,5> split={day_w,day_w+power_w,day_w+power_w+water_w,resource_start,logical_w};
-    for(std::size_t i=0;i+1<split.size();++i) r.draw_line({split[i],8},{split[i],STATUS_BAR_H-8},theme_.border,1.0f);
+    const std::array<float,4> split={day_w,day_w+power_w,day_w+power_w+water_w,resource_start};
+    for(float x:split) r.draw_line({x,8},{x,STATUS_BAR_H-8},theme_.border,1.0f);
 
-    game_label(r,{9,12},day.str(),0.70f,theme_);
-    game_label(r,{day_w+9,12},power.str(),0.64f,theme_);
-    game_label(r,{day_w+power_w+9,12},water.str(),0.64f,theme_);
-    game_label(r,{day_w+power_w+water_w+9,12},crew.str(),0.64f,theme_);
+    game_label(r,{9,12},day.str(),0.66f,theme_);
+    game_label(r,{day_w+7,12},power.str(),0.58f,theme_);
+    game_label(r,{day_w+power_w+7,12},water.str(),0.58f,theme_);
+    game_label(r,{day_w+power_w+water_w+7,12},crew.str(),0.58f,theme_);
 
     const float mouse_x=(float)ui_input_.mouse_x;
     const float mouse_y=(float)ui_input_.mouse_y;
     int hovered=-1;
     Rect hovered_rect{};
     for(std::size_t i=0;i<kMaterialResourceCount;++i){
-        const auto resource=(MaterialResource)i;
+        const auto resource=static_cast<MaterialResource>(i);
         const float x=resource_start+(float)i*resource_w;
         const Rect cell{x,0,resource_w,STATUS_BAR_H};
         if(i>0) r.draw_line({x,8},{x,STATUS_BAR_H-8},theme_.border,1.0f);
-        const Rect icon{x+7,8,24,28};
+        const Rect icon{x+5,8,22,28};
         const bool negative=resources_.amount(resource)<0;
         const Color icon_color=negative?Color{1.0f,0.38f,0.30f,1.0f}:theme_.accent;
         draw_resource_icon(r,resource,icon,icon_color);
-        game_label(r,{x+35,13},amount_text(resources_.amount(resource)),0.65f,theme_);
+        game_label(r,{x+29,13},amount_text(resources_.amount(resource)),0.57f,theme_);
         if(contains(cell,mouse_x,mouse_y)){ hovered=(int)i; hovered_rect=cell; }
     }
 
     if(hovered>=0){
-        const auto resource=(MaterialResource)hovered;
+        const auto resource=static_cast<MaterialResource>(hovered);
         const std::string name=material_resource_name(resource);
         const float tooltip_w=std::max(72.0f,text_width(name,0.62f,theme_)+20.0f);
         const float tx=std::clamp(hovered_rect.x+(hovered_rect.w-tooltip_w)*0.5f,4.0f,logical_w-tooltip_w-4.0f);
