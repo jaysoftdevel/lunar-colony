@@ -659,11 +659,15 @@ void add_power_segment(Builder& b,Vec3 a,Vec3 c){
     const Vec3 mid=(a+c)*0.5f;
     b.oriented_box(b.mesh.shell,mid-up*0.05f,axis,up,side,{len,geometry::kSupplyTrayHeight,geometry::kSupplyTrayWidth},false);
     for(float s:{-0.17f,0.17f}) b.cylinder_between(b.mesh.details,a+side*s+up*0.05f,c+side*s+up*0.05f,0.045f,8,true);
+    // Low-voltage/data backbone is physically separate from the two power
+    // conductors, matching a maintainable redundant service carrier.
+    b.cylinder_between(b.mesh.details,a+up*0.115f,c+up*0.115f,0.024f,6,true);
     const int supports=std::max(1,(int)std::floor(len/1.4f));
     for(int i=0;i<=supports;++i){
         const float t=(float)i/(float)std::max(1,supports);
         const Vec3 p=a+d*t;
         b.line(p-side*0.27f-up*0.09f,p+side*0.27f-up*0.09f);
+        b.oriented_box(b.mesh.details,p-up*0.045f,axis,up,side,{0.10f,0.24f,geometry::kSupplyTrayWidth+0.12f},false);
     }
 }
 
@@ -681,6 +685,8 @@ void add_water_segment(Builder& b,Vec3 a,Vec3 c){
         b.line(p-side*0.26f+Vec3{0,-0.22f,0},p+side*0.26f+Vec3{0,-0.22f,0});
         b.line(p-side*0.18f+Vec3{0,-0.22f,0},p-side*0.18f+Vec3{0,-0.03f,0});
         b.line(p+side*0.18f+Vec3{0,-0.22f,0},p+side*0.18f+Vec3{0,-0.03f,0});
+        // Expansion/support collar around the pressurised water line.
+        b.cylinder_between(b.mesh.details,p-n*0.045f,p+n*0.045f,geometry::kSupplyWaterRadius+0.045f,10,true);
     }
 }
 
@@ -691,6 +697,7 @@ void add_power_port(Builder& b,const UtilityEndpoint& ep){
     const Vec3 side{-n.z,0,n.x};
     const Vec3 c=ep.position+n*0.08f+Vec3{0,0.08f,0};
     b.oriented_box(b.mesh.details,c,n,{0,1,0},side,{0.38f,0.46f,0.46f},true);
+    b.oriented_box(b.mesh.details,ep.position-n*0.035f+Vec3{0,0.08f,0},n,{0,1,0},side,{0.08f,0.58f,0.58f},true);
 }
 
 void add_water_port(Builder& b,const UtilityEndpoint& ep){
@@ -698,6 +705,7 @@ void add_water_port(Builder& b,const UtilityEndpoint& ep){
     const Vec3 outside=ep.position+ep.normal*0.16f;
     b.cylinder_between(b.mesh.details,inside,outside,0.26f,12,true);
     b.cylinder_between(b.mesh.details,ep.position-ep.normal*0.03f,ep.position+ep.normal*0.03f,0.33f,12,true);
+    b.cylinder_between(b.mesh.details,ep.position-ep.normal*0.055f,ep.position+ep.normal*0.055f,0.38f,12,true);
 }
 
 void add_power_junction(Builder& b,Vec3 p){
@@ -707,6 +715,8 @@ void add_power_junction(Builder& b,Vec3 p){
     p.y=channel_y(UtilityKind::SupplyChannel);
     b.box(b.mesh.details,p+Vec3{0,0.08f,0},{geometry::kSupplyJunctionWidth,0.32f,geometry::kSupplyJunctionWidth},true);
     b.cylinder_between(b.mesh.details,p+Vec3{0,-0.03f,0},p+Vec3{0,0.34f,0},0.10f,8,true);
+    b.cylinder_between(b.mesh.details,p+Vec3{-0.34f,0.02f,0},p+Vec3{0.34f,0.02f,0},0.22f,10,true);
+    b.cylinder_between(b.mesh.details,p+Vec3{0,0.02f,-0.34f},p+Vec3{0,0.02f,0.34f},0.22f,10,true);
 }
 
 void add_open_supply_cap(Builder& b,const UtilityEndpoint& ep){

@@ -142,6 +142,53 @@ struct Builder {
         cylinder_y(mesh.details,{pts[1].x,0.10f,pts[1].z},0.18f,0.34f,10,true);
         cylinder_y(mesh.details,{pts[3].x,0.10f,pts[3].z},0.18f,0.34f,10,true);
     }
+
+    // Shared baseline detailing for every habitat. Concrete modules keep their
+    // distinctive macro geometry, while this pass adds the small-scale hardware
+    // that a maintainable pressure structure would need: load spreaders,
+    // redundant service trunks, inspection boxes and a modular interior deck.
+    void future_detail_pass(float walk_floor_y){
+        const float hx=mesh.footprint_x*0.5f;
+        const float hz=mesh.footprint_z*0.5f;
+        if(hx<1.0f || hz<1.0f) return;
+
+        const float anchor_x=hx*0.34f;
+        const float anchor_z=hz*0.34f;
+        const float anchor_r=std::clamp(std::min(hx,hz)*0.055f,0.20f,0.34f);
+        for(float sx:{-1.0f,1.0f}) for(float sz:{-1.0f,1.0f}){
+            const Vec3 p{sx*anchor_x,0.0f,sz*anchor_z};
+            cylinder_y(mesh.details,{p.x,0.11f,p.z},0.22f,anchor_r,10,true);
+            cylinder_between(mesh.details,{p.x,0.22f,p.z},{p.x*0.88f,0.50f,p.z*0.88f},0.055f,6,true,true);
+        }
+
+        // Dual low-level utility trunks provide visible redundancy instead of a
+        // single magic cable entering the building. Keep them inside the
+        // footprint so rounded/domed modules do not grow artificial appendages.
+        const float service_z=-hz*0.36f;
+        const float service_x=hx*0.30f;
+        cylinder_between(mesh.details,{-service_x,0.46f,service_z},{service_x,0.46f,service_z},0.060f,8,true,true);
+        cylinder_between(mesh.details,{-service_x,0.34f,service_z+0.15f},{service_x,0.34f,service_z+0.15f},0.040f,8,true,true);
+        for(float sx:{-1.0f,1.0f}){
+            box(mesh.details,{sx*service_x,0.53f,service_z},{0.42f,0.46f,0.30f});
+            cylinder_y(mesh.details,{sx*service_x,0.80f,service_z},0.12f,0.12f,8,true);
+        }
+
+        // Pressure-deck panel seams: these are deliberately only lines so they
+        // add scale/readability without introducing collision obstacles.
+        const float floor=walk_floor_y+0.018f;
+        const float deck_x=hx*0.28f;
+        const float deck_z=hz*0.28f;
+        const int x_panels=std::clamp((int)std::floor((deck_x*2.0f)/1.35f),2,8);
+        const int z_panels=std::clamp((int)std::floor((deck_z*2.0f)/1.35f),2,8);
+        for(int i=0;i<=x_panels;++i){
+            const float x=-deck_x+(deck_x*2.0f)*(float)i/(float)x_panels;
+            line({x,floor,-deck_z},{x,floor,deck_z});
+        }
+        for(int i=0;i<=z_panels;++i){
+            const float z=-deck_z+(deck_z*2.0f)*(float)i/(float)z_panels;
+            line({-deck_x,floor,z},{deck_x,floor,z});
+        }
+    }
 };
 
 } // namespace game::habitats

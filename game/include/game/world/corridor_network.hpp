@@ -123,6 +123,7 @@ public:
     void remove_resource(std::size_t resource_index);
     void update_construction(float dt,ResourceManagement& resources,bool allow_negative);
     const std::vector<CorridorConnection>& connections() const { return connections_; }
+    std::vector<CorridorConnection>& mutable_connections() { return connections_; }
     void restore_connections(std::vector<CorridorConnection> connections){ connections_=std::move(connections); }
 
 private:

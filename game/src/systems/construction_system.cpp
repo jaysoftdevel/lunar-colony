@@ -22,14 +22,6 @@ void consume_stored_boxes(PlacedResource& structure,MaterialResource material,st
     }
 }
 
-ResourceBundle consumed_between(const ResourceBundle& before,const ResourceBundle& after){
-    ResourceBundle consumed{};
-    for(std::size_t i=0;i<kMaterialResourceCount;++i){
-        const auto material=static_cast<MaterialResource>(i);
-        consumed.amount(material)=std::max<std::int64_t>(0,before.amount(material)-after.amount(material));
-    }
-    return consumed;
-}
 }
 
 ResourceBundle GameApp::committed_construction_resources() const {
@@ -48,13 +40,10 @@ ResourceBundle GameApp::committed_construction_resources() const {
 }
 
 bool GameApp::can_start_construction(const ConstructionResourcePlan& plan) const {
-    if(debug_frame_enabled_) return true;
-    ResourceBundle need=committed_construction_resources();
-    add_bundle(need,plan.total());
-    for(std::size_t i=0;i<kMaterialResourceCount;++i){
-        const auto resource=static_cast<MaterialResource>(i);
-        if(resources_.amount(resource)<need.amount(resource)) return false;
-    }
+    // Placement creates a blueprint, not an instantly funded build order.
+    // Material availability therefore never blocks layout planning; BR-02 will
+    // wait at the logistics stage until the required physical stock exists.
+    (void)plan;
     return true;
 }
 
@@ -78,39 +67,28 @@ void GameApp::consume_storage_inventory(const ResourceBundle& cost){
 }
 
 void GameApp::update_construction(float dt){
-    const bool allow_negative=debug_frame_enabled_;
-    auto consume=[&](const ResourceBundle& cost){
-        if(!resources_.consume(cost,allow_negative)) return false;
-        consume_storage_inventory(cost);
-        return true;
-    };
+    // v0.31: construction never advances by timer alone. The autonomous
+    // builder robot is the sole stage gate: fetch -> transport -> deliver ->
+    // build. Resource facilities run in parallel and replenish physical stock.
+    update_resource_economy(dt);
 
-    for(auto& habitat:placed_habitats_){
-        habitat.construction.update_gated(dt,[&](std::uint8_t next_step){
-            return consume(habitat.resource_plan.next_step_cost((std::uint8_t)(next_step-1)));
-        });
+    // Robot navigation/operations use bounded simulation substeps. QUICK/FAST
+    // used to feed one large scaled dt into path following, causing visible
+    // stepping, interaction overshoot and more frequent robot-vs-robot stalls.
+    // Keep the economy on the full simulation delta but advance the fleet in
+    // small deterministic slices.
+    float remaining=std::max(0.0f,dt);
+    // Continuous fleet motion is integrated at 90 Hz.  A larger guard prevents
+    // low-render-FPS / FAST mode frames from silently dropping the tail of the
+    // robot simulation delta, which previously appeared as periodic motion
+    // stalls even when the planned route itself was smooth.
+    constexpr float kRobotMaxStep=1.0f/90.0f;
+    int guard=0;
+    while(remaining>0.000001f && guard++<64){
+        const float step=std::min(remaining,kRobotMaxStep);
+        update_builder_robot(step);
+        remaining-=step;
     }
-    for(auto& resource:placed_resources_){
-        resource.construction.update_gated(dt,[&](std::uint8_t next_step){
-            return consume(resource.resource_plan.next_step_cost((std::uint8_t)(next_step-1)));
-        });
-    }
-    // Routed networks update the shared inventory internally. Snapshot the
-    // inventory around each network update and remove exactly the newly spent
-    // material from physical Storage Dome boxes. Do not clamp dome contents to
-    // the global inventory: debug overdraft can legitimately make the global
-    // counter negative while real boxes are still stored in a dome.
-    ResourceBundle before=resources_.amounts();
-    corridor_network_.update_construction(dt,resources_,allow_negative);
-    consume_storage_inventory(consumed_between(before,resources_.amounts()));
-
-    before=resources_.amounts();
-    utility_network_.update_construction(dt,resources_,allow_negative);
-    consume_storage_inventory(consumed_between(before,resources_.amounts()));
-
-    before=resources_.amounts();
-    walkway_network_.update_construction(dt,resources_,allow_negative);
-    consume_storage_inventory(consumed_between(before,resources_.amounts()));
 
     for(auto& structure:placed_resources_)
         if(structure.kind==ResourceKind::StorageDome) sync_stored_resource_totals(structure);

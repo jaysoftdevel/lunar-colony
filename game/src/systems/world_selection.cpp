@@ -118,6 +118,8 @@ Vec3 point_along_path(const std::vector<Vec3>& path,float fraction,Vec3* tangent
 }
 
 Rect GameApp::selection_panel_rect() const {
+    if(selection_kind_==SelectionKind::Robot)
+        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN+68.0f,485.0f,390.0f};
     if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 && (std::size_t)selected_resource_<placed_resources_.size() &&
        placed_resources_[(std::size_t)selected_resource_].kind==ResourceKind::StorageDome){
         return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN+68.0f,485.0f,360.0f};
@@ -163,6 +165,21 @@ void GameApp::clear_world_selection(){
     selected_ground_resources_.clear();
     selected_utility_=-1;
     selected_walkway_=-1;
+    selected_robot_=-1;
+}
+
+int GameApp::pick_robot(Vec3 hit,float radius) const {
+    int best=-1;
+    float best_distance=std::numeric_limits<float>::max();
+    for(std::size_t i=0;i<builder_robots_.size();++i){
+        const auto& robot=builder_robots_[i];
+        const float dx=hit.x-robot.position.x;
+        const float dz=hit.z-robot.position.z;
+        const float d=std::sqrt(dx*dx+dz*dz);
+        const float pick_radius=std::max(radius,robot_body_radius(robot.role)+0.28f);
+        if(d<=pick_radius && d<best_distance){ best_distance=d; best=(int)i; }
+    }
+    return best;
 }
 
 int GameApp::pick_habitat(Vec3 hit) const {
@@ -409,6 +426,14 @@ CorridorBuildAnchor GameApp::corridor_anchor_at(Vec3 hit) const {
 void GameApp::select_world_at(int screen_x,int screen_y){
     Vec3 hit{};
     if(!camera_.intersect_playfield(screen_x,screen_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
+    const int robot=pick_robot(hit);
+    if(robot>=0){
+        selection_kind_=SelectionKind::Robot;
+        selected_robot_=robot;
+        selected_habitat_=-1; selected_corridor_=-1; selected_resource_=-1; selected_utility_=-1; selected_walkway_=-1;
+        selected_ground_resource_=-1; selected_ground_resources_.clear();
+        return;
+    }
     const int ground_resource=pick_ground_resource(hit);
     if(ground_resource>=0){
         selection_kind_=SelectionKind::GroundResource;
@@ -789,6 +814,9 @@ void GameApp::delete_selected_world_object(){
                 drop_path_resources(removed.path,1.8f,used);
             }
             break;
+        case SelectionKind::Robot:
+            // Robots are colony assets, not deletable world construction.
+            return;
         case SelectionKind::None:
             return;
     }

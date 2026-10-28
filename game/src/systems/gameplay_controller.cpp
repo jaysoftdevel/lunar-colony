@@ -15,6 +15,15 @@ using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
+float GameApp::game_speed_multiplier() const {
+    switch(game_speed_){
+        case GameSpeed::Normal: return 1.0f;
+        case GameSpeed::Quick: return 2.0f;
+        case GameSpeed::Fast: return 4.0f;
+    }
+    return 1.0f;
+}
+
 void GameApp::update(float dt,const InputState& in){
     input_=in;
     if(dt>0.000001f){
@@ -23,6 +32,7 @@ void GameApp::update(float dt,const InputState& in){
     }
 
     if(screen_==Screen::Playfield){
+        const float sim_dt=dt*game_speed_multiplier();
         if(in.key_v_pressed){
             selection_marquee_active_=false;
             selection_marquee_dragged_=false;
@@ -32,8 +42,8 @@ void GameApp::update(float dt,const InputState& in){
         }
 
         if(first_person_mode_==FirstPersonMode::DropPending){
-            status_.update(dt);
-            update_construction(dt);
+            status_.update(sim_dt);
+            update_construction(sim_dt);
             if(in.escape_pressed){ exit_first_person_mode(); return; }
             camera_.update(in,playfield_.size(),viewport_height_);
             const float logical_y=(float)in.mouse_y/ui_scale_;
@@ -58,8 +68,8 @@ void GameApp::update(float dt,const InputState& in){
 
         if(first_person_mode_==FirstPersonMode::Active){
             if(in.escape_pressed){ exit_first_person_mode(); return; }
-            status_.update(dt);
-            update_construction(dt);
+            status_.update(sim_dt);
+            update_construction(sim_dt);
             update_first_person(dt,in);
             return;
         }
@@ -130,17 +140,17 @@ void GameApp::update(float dt,const InputState& in){
                 };
                 if(in.wheel>0.0f) cycle_storage(+1);
                 if(in.wheel<0.0f) cycle_storage(-1);
-            }else{
-                if(in.wheel>0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
-                if(in.wheel<0.0f) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
             }
+            // Structure rotation is intentionally keyboard-only. Mouse-wheel
+            // input remains available for size-tier selection (where applicable)
+            // or normal camera zoom; N/M are the sole placement rotation keys.
             if(in.key_n_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
             if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
-            camera_input.wheel=0.0f;
+            if(scalable_habitat || scalable_storage) camera_input.wheel=0.0f;
         }
         camera_.update(camera_input,playfield_.size(),viewport_height_);
-        status_.update(dt);
-        update_construction(dt);
+        status_.update(sim_dt);
+        update_construction(sim_dt);
 
         // World selection uses a click-or-drag marquee whenever no placement
         // tool is active. A short click keeps the old single-object selection;

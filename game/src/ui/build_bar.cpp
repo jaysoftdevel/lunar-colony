@@ -26,7 +26,7 @@ void GameApp::render_build_bar(Renderer& r){
     r.draw_rect({0,y,logical_w,BUILD_BAR_H},{0.025f,0.035f,0.045f,0.97f});
     r.draw_line({0,y},{logical_w,y},theme_.border,1.0f);
 
-    constexpr float view_area_w=170.0f;
+    constexpr float view_area_w=345.0f;
     constexpr float category_size=42.0f;
     constexpr float category_gap=7.0f;
     constexpr float category_x=12.0f;

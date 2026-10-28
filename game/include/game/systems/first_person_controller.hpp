@@ -8,7 +8,7 @@ class FirstPersonController {
 public:
     void spawn(eng::Vec3 feet_position,float yaw_degrees=0.0f);
     void update_look(const eng::InputState& input);
-    eng::Vec3 desired_displacement(const eng::InputState& input,float dt) const;
+    eng::Vec3 desired_displacement(const eng::InputState& input,float dt);
     eng::Mat4 view_projection(float aspect) const;
     eng::Vec3 eye_position() const { return feet_position_+eng::Vec3{0.0f,eye_height_,0.0f}; }
     eng::Vec3 look_direction() const;
@@ -22,8 +22,9 @@ private:
     eng::Vec3 feet_position_{};
     float yaw_degrees_{0.0f};
     float pitch_degrees_{0.0f};
-    // The FPV body is the canonical scale reference for all crew-accessible
-    // geometry. World units are metres and the avatar is exactly 2 m tall.
+    // The FPV body is the canonical astronaut scale reference for all future
+    // crew implementations. World units remain metres.
+    eng::Vec3 planar_velocity_{};
     float eye_height_{geometry::kHumanEyeHeight};
     float body_height_{geometry::kHumanHeight};
     float body_radius_{geometry::kHumanBodyRadius};

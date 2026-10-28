@@ -76,58 +76,31 @@ bool door_clear(const CorridorDoor& door,const std::vector<WalkwayConnection>& e
     return true;
 }
 
-bool connection_slot_clear(WalkwayEndpointKind kind,std::size_t index,Vec3 point,
-                           const std::vector<WalkwayConnection>& existing,float spacing=2.10f){
-    for(const auto& c:existing){
-        for(const WalkwayEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
-            if(ep->kind!=kind || ep->index!=index) continue;
-            if(dist_xz(ep->position,point)<spacing) return false;
-        }
-    }
-    return true;
-}
-
-std::optional<WalkwayEndpoint> from_corridor_endpoint(const CorridorEndpoint& ep,
-                                                      const std::vector<WalkwayConnection>& existing){
-    if(ep.kind!=CorridorEndpointKind::Corridor) return std::nullopt;
-    if(!connection_slot_clear(WalkwayEndpointKind::Corridor,ep.index,ep.position,existing)) return std::nullopt;
-
-    WalkwayEndpoint out;
-    out.kind=WalkwayEndpointKind::Corridor;
-    out.index=ep.index;
-    out.position=ep.position;
-    out.position.y=0.0f;
-    out.normal=flat_normal(ep.tangent);
-
-    // A still-open corridor end is already an entrance. A mid-corridor snap
-    // needs a new exterior access opening. Store the surface-to-adapter span in
-    // the door fields so the walkway mesh can draw that generated entrance.
-    if(ep.surface_matched_junction){
-        constexpr float CORRIDOR_HALF_WIDTH=geometry::kCorridorHalfWidth;
-        out.generated_access=true;
-        out.door.generated=true;
-        out.door.normal=out.normal;
-        out.door.wall_position=ep.host_position+out.normal*CORRIDOR_HALF_WIDTH;
-        out.door.wall_position.y=0.0f;
-        out.door.position=out.position;
-        out.door.position.y=0.0f;
-    }
-    return out;
-}
-
 std::optional<WalkwayEndpoint> resolve_habitat_endpoint(const WalkwayBuildAnchor& a,Vec3 other,
                                                         const CorridorNetwork& corridors,
                                                         const std::vector<PlacedHabitat>& habitats,
                                                         const HabitatModelLibrary& library,
                                                         const std::vector<WalkwayConnection>& existing){
     if(a.index>=habitats.size()) return std::nullopt;
+    const auto& habitat=habitats[a.index];
+    if(!habitat.construction.complete() || habitat.kind!=HabitatKind::AirLock) return std::nullopt;
+
+    // Exterior walkways may approach the pressurised colony only at a real
+    // Air Lock that is already connected to the corridor network. Never cut a
+    // new exterior hatch directly into an ordinary habitat or corridor.
+    bool networked=false;
+    for(const auto& c:corridors.connections()){
+        if(!c.construction.complete()) continue;
+        for(const CorridorEndpoint* ce:{&c.endpoint_a,&c.endpoint_b}){
+            if(ce->kind==CorridorEndpointKind::Habitat && ce->index==a.index){ networked=true; break; }
+        }
+        if(networked) break;
+    }
+    if(!networked) return std::nullopt;
+
     CorridorBuildAnchor ca{CorridorEndpointKind::Habitat,a.index,a.hit};
     auto ep=corridors.preview_anchor(ca,other,habitats,library);
-    if(!ep) return std::nullopt;
-
-    if(ep->kind==CorridorEndpointKind::Corridor)
-        return from_corridor_endpoint(*ep,existing);
-    if(ep->kind!=CorridorEndpointKind::Habitat || !door_clear(ep->door,existing)) return std::nullopt;
+    if(!ep || ep->kind!=CorridorEndpointKind::Habitat || !door_clear(ep->door,existing)) return std::nullopt;
 
     WalkwayEndpoint out;
     out.kind=WalkwayEndpointKind::Habitat; out.index=a.index; out.door=ep->door;
@@ -140,11 +113,10 @@ std::optional<WalkwayEndpoint> resolve_corridor_endpoint(const WalkwayBuildAncho
                                                          const std::vector<PlacedHabitat>& habitats,
                                                          const HabitatModelLibrary& library,
                                                          const std::vector<WalkwayConnection>& existing){
-    if(a.index>=corridors.connections().size()) return std::nullopt;
-    const CorridorBuildAnchor ca=corridors.corridor_anchor(a.index,a.hit);
-    auto ep=corridors.preview_anchor(ca,other,habitats,library);
-    if(!ep) return std::nullopt;
-    return from_corridor_endpoint(*ep,existing);
+    (void)a; (void)other; (void)corridors; (void)habitats; (void)library; (void)existing;
+    // A walkway is an unpressurised exterior structure. Direct corridor access
+    // would bypass the Air Lock and create a pressure-boundary penetration.
+    return std::nullopt;
 }
 
 WalkwayEndpoint resolve_open_endpoint(const WalkwayBuildAnchor& a,Vec3 other){
@@ -161,7 +133,12 @@ std::optional<WalkwayEndpoint> resolve_resource_endpoint(const WalkwayBuildAncho
                                                          const std::vector<PlacedResource>& resources,
                                                          const ResourceModelLibrary& library){
     if(a.index>=resources.size()) return std::nullopt;
-    const auto& item=resources[a.index]; const auto& mesh=library.mesh(item.kind);
+    const auto& item=resources[a.index];
+    // Storage domes are pressure structures and therefore cannot receive a
+    // direct exterior walkway penetration. Reach them through the corridor
+    // network from a connected Air Lock, just like habitats.
+    if(item.kind==ResourceKind::StorageDome) return std::nullopt;
+    const auto& mesh=library.mesh(item.kind);
     WalkwayEndpoint out; out.kind=WalkwayEndpointKind::Resource; out.index=a.index;
     if(item.kind==ResourceKind::LandingPad){
         // The landing pad has one deliberate crew approach: the outer end of
@@ -921,12 +898,19 @@ void append_walkway_span(Builder& builder,Vec3 p0,Vec3 p1,Vec3 tangent0,Vec3 tan
     // Open lunar walkway deck: only the two deck-edge seams are rendered.
     // Railings/posts are intentionally omitted.
     builder.line(p0-s0,p1-s1); builder.line(p0+s0,p1+s1);
+    const Vec3 mid=(p0+p1)*0.5f;
+    const Vec3 mid_side=side_of(flat_normal(tangent0+tangent1))*HALF_WIDTH;
+    builder.line(mid-mid_side+Vec3{0,0.012f,0},mid+mid_side+Vec3{0,0.012f,0});
     // Integrated services run below the open deck rather than along its edge,
     // keeping the silhouette completely railing-free.
     const Vec3 util0=side0*(HALF_WIDTH*0.58f),util1=side1*(HALF_WIDTH*0.58f);
     builder.cylinder(builder.mesh.details,p0+util0+Vec3{0,-0.24f,0},p1+util1+Vec3{0,-0.24f,0},0.10f,8);
     builder.cylinder(builder.mesh.details,p0-util0+Vec3{0,-0.18f,0},p1-util1+Vec3{0,-0.18f,0},0.035f,6);
     builder.cylinder(builder.mesh.details,p0-util0+Vec3{0,-0.30f,0},p1-util1+Vec3{0,-0.30f,0},0.035f,6);
+    // Low transverse load beam and central data conduit. These are below foot
+    // level, so they add believable structure without creating a railing.
+    builder.cylinder(builder.mesh.details,mid-mid_side+Vec3{0,-0.17f,0},mid+mid_side+Vec3{0,-0.17f,0},0.045f,6);
+    builder.cylinder(builder.mesh.details,p0+Vec3{0,-0.34f,0},p1+Vec3{0,-0.34f,0},0.024f,6);
 }
 
 void append_junction_patch(Builder& builder,const WalkwayJunction& junction){
@@ -985,9 +969,15 @@ void append_junction_patch(Builder& builder,const WalkwayJunction& junction){
     for(std::size_t i=0;i<hull.size();++i)
         Builder::tri(builder.mesh.deck,centroid,hull[i],hull[(i+1)%hull.size()]);
 
-    // Intentionally no perimeter ring and no central service cylinder.  The
-    // adjoining strips provide the visible edge seams, making the merge read as
-    // one continuous bent walkway instead of a separate junction object.
+    // Keep the top surface visually continuous, but merge the under-deck
+    // services into one compact manifold so connected walkways look engineered
+    // rather than like overlapping slabs.
+    for(const Vec3& raw_arm:junction.arms){
+        const Vec3 arm=flat_normal(raw_arm);
+        builder.cylinder(builder.mesh.details,center+Vec3{0,-0.30f,0},
+                         center+arm*(junction.radius*0.86f)+Vec3{0,-0.30f,0},0.045f,6);
+    }
+    builder.cylinder(builder.mesh.details,center+Vec3{0,-0.42f,0},center+Vec3{0,-0.16f,0},0.09f,8);
 }
 
 WalkwayMesh make_mesh(const WalkwayEndpoint& a,const WalkwayEndpoint& b,const std::vector<Vec3>& path,

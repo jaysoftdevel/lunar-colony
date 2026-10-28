@@ -5,6 +5,7 @@
 #include <array>
 #include <cctype>
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -14,7 +15,8 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=1;
+constexpr std::uint32_t kSaveSchema=5;
+constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
 
@@ -194,7 +196,8 @@ bool read_metadata(const fs::path& path,std::string& name,std::string& version){
     Reader r(path);
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic) return false;
-    if(r.pod<std::uint32_t>()!=kSaveSchema) return false;
+    const auto schema=r.pod<std::uint32_t>();
+    if(schema<kMinSaveSchema || schema>kSaveSchema) return false;
     version=r.string(64); name=r.string(128);
     return r.valid && !name.empty();
 }
@@ -206,6 +209,68 @@ bool read_object_vector(Reader& r,std::vector<T>& out,ReadFn&& fn){
     out.clear(); out.reserve((std::size_t)n);
     for(std::uint64_t i=0;i<n&&r.valid;++i) out.push_back(fn(r));
     return r.valid;
+}
+
+
+void write_builder_robot(Writer& w,const BuilderRobotState& robot){
+    w.pod((std::uint8_t)robot.role);
+    write_vec3(w,robot.position); w.pod(robot.heading_degrees); w.pod((std::uint8_t)robot.mode);
+    w.pod((std::uint8_t)robot.target.kind); w.pod((std::uint64_t)robot.target.index);
+    write_bundle(w,robot.cargo); write_bundle(w,robot.site_buffer);
+    w.pod(robot.work_elapsed); w.pod(robot.idle_elapsed); w.pod(robot.move_speed_mps); w.pod(robot.payload_capacity_kg);
+    w.pod((std::uint64_t)robot.support_robot_index);
+    w.boolean(robot.cargo_committed_to_build);
+    write_bundle(w,robot.logistics_reservation);
+    w.pod(robot.condition);
+}
+
+BuilderRobotState read_builder_robot_v5(Reader& r){
+    BuilderRobotState robot{};
+    robot.role=(RobotRole)r.pod<std::uint8_t>();
+    robot.position=read_vec3(r); robot.heading_degrees=r.pod<float>(); robot.mode=(BuilderRobotMode)r.pod<std::uint8_t>();
+    robot.target.kind=(ConstructionTargetKind)r.pod<std::uint8_t>(); robot.target.index=(std::size_t)r.pod<std::uint64_t>();
+    robot.cargo=read_bundle(r); robot.site_buffer=read_bundle(r);
+    robot.work_elapsed=r.pod<float>(); robot.idle_elapsed=r.pod<float>(); robot.move_speed_mps=r.pod<float>(); robot.payload_capacity_kg=r.pod<std::int64_t>();
+    robot.support_robot_index=(std::size_t)r.pod<std::uint64_t>();
+    robot.cargo_committed_to_build=r.boolean();
+    robot.logistics_reservation=read_bundle(r);
+    robot.condition=r.pod<float>();
+    if((int)robot.role>1 || robot.payload_capacity_kg<=0 || robot.payload_capacity_kg>100000 || !std::isfinite(robot.condition)) r.valid=false;
+    robot.condition=std::clamp(robot.condition,0.0f,1.0f);
+    return robot;
+}
+
+BuilderRobotState read_builder_robot_v4(Reader& r){
+    BuilderRobotState robot{};
+    robot.role=(RobotRole)r.pod<std::uint8_t>();
+    robot.position=read_vec3(r); robot.heading_degrees=r.pod<float>(); robot.mode=(BuilderRobotMode)r.pod<std::uint8_t>();
+    robot.target.kind=(ConstructionTargetKind)r.pod<std::uint8_t>(); robot.target.index=(std::size_t)r.pod<std::uint64_t>();
+    robot.cargo=read_bundle(r); robot.site_buffer=read_bundle(r);
+    robot.work_elapsed=r.pod<float>(); robot.idle_elapsed=r.pod<float>(); robot.move_speed_mps=r.pod<float>(); robot.payload_capacity_kg=r.pod<std::int64_t>();
+    robot.support_robot_index=(std::size_t)r.pod<std::uint64_t>();
+    robot.cargo_committed_to_build=r.boolean();
+    if((int)robot.role>1 || robot.payload_capacity_kg<=0 || robot.payload_capacity_kg>100000) r.valid=false;
+    return robot;
+}
+
+BuilderRobotState read_builder_robot_legacy(Reader& r){
+    BuilderRobotState robot{};
+    robot.role=RobotRole::Constructor;
+    robot.position=read_vec3(r); robot.heading_degrees=r.pod<float>();
+    const auto old_mode=r.pod<std::uint8_t>();
+    switch(old_mode){
+        case 0: robot.mode=BuilderRobotMode::Idle; break;
+        case 1: robot.mode=BuilderRobotMode::Fetching; break;
+        case 2: robot.mode=BuilderRobotMode::Delivering; break;
+        case 3: robot.mode=BuilderRobotMode::Building; break;
+        default: r.valid=false; break;
+    }
+    robot.target.kind=(ConstructionTargetKind)r.pod<std::uint8_t>(); robot.target.index=(std::size_t)r.pod<std::uint64_t>();
+    robot.cargo=read_bundle(r); robot.site_buffer=read_bundle(r);
+    robot.work_elapsed=r.pod<float>(); robot.idle_elapsed=r.pod<float>(); robot.move_speed_mps=r.pod<float>(); robot.payload_capacity_kg=r.pod<std::int64_t>();
+    robot.cargo_committed_to_build=!robot.cargo.empty();
+    if(robot.payload_capacity_kg<=0 || robot.payload_capacity_kg>100000) r.valid=false;
+    return robot;
 }
 
 template<class T,class WriteFn>
@@ -274,6 +339,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     w.pod(placement_rotation_degrees_);
     w.pod((std::uint8_t)placement_habitat_size_);
     w.pod((std::uint8_t)placement_storage_size_);
+    w.pod((std::uint8_t)game_speed_);
 
     const CameraState camera_state=camera_.state();
     w.pod(camera_state.distance); w.pod(camera_state.elevation_degrees); w.pod(camera_state.azimuth_degrees); write_vec3(w,camera_state.target);
@@ -300,6 +366,16 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,utility_network_.connections(),write_utility);
     write_object_vector(w,walkway_network_.connections(),write_walkway);
 
+    // Save schema 5: mixed fleet plus exact per-robot construction logistics
+    // reservations and persistent mechanical condition. This keeps carrier
+    // demand accounting synchronized across save/load boundaries.
+    const std::uint8_t robot_count=(std::uint8_t)std::clamp<std::size_t>(builder_robots_.size(),1,12);
+    w.pod(robot_count);
+    for(std::size_t i=0;i<robot_count;++i) write_builder_robot(w,builder_robots_[i]);
+    write_vec3(w,starter_stash_center_);
+    for(double value:production_fraction_) w.pod(value);
+    w.pod(life_support_fraction_seconds_);
+
     w.out.flush();
     if(!w.ok()){ w.out.close(); fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
     w.out.close();
@@ -315,7 +391,8 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     Reader r{fs::path(path)};
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Invalid savegame file."; return false; }
-    if(r.pod<std::uint32_t>()!=kSaveSchema){ error="Unsupported savegame format."; return false; }
+    const auto source_schema=r.pod<std::uint32_t>();
+    if(source_schema<kMinSaveSchema || source_schema>kSaveSchema){ error="Unsupported savegame format."; return false; }
     const std::string source_version=r.string(64);
     const std::string save_name=r.string(128);
     (void)source_version;
@@ -332,6 +409,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     const float saved_rotation=r.pod<float>();
     const auto saved_habitat_size=(HabitatSizeTier)r.pod<std::uint8_t>();
     const auto saved_storage_size=(StorageDomeSize)r.pod<std::uint8_t>();
+    const auto saved_game_speed=source_schema>=4?(GameSpeed)r.pod<std::uint8_t>():GameSpeed::Normal;
     if(saved_playfield<16 || saved_playfield>512){ error="Savegame playfield size is invalid."; return false; }
 
     CameraState camera_state{};
@@ -368,6 +446,42 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     if(!read_object_vector(r,utilities,read_utility)){ error="Savegame supply-channel data is damaged."; return false; }
     std::vector<WalkwayConnection> walkways;
     if(!read_object_vector(r,walkways,read_walkway)){ error="Savegame walkway data is damaged."; return false; }
+
+    std::vector<BuilderRobotState> saved_robots;
+    eng::Vec3 saved_stash{};
+    std::array<double,kMaterialResourceCount> saved_production{};
+    double saved_life_fraction=0.0;
+    if(source_schema>=5){
+        const auto robot_count=r.pod<std::uint8_t>();
+        if(robot_count<1 || robot_count>12) r.valid=false;
+        saved_robots.reserve(robot_count);
+        for(std::uint8_t i=0;i<robot_count && r.valid;++i) saved_robots.push_back(read_builder_robot_v5(r));
+        saved_stash=read_vec3(r);
+        for(double& value:saved_production) value=r.pod<double>();
+        saved_life_fraction=r.pod<double>();
+    }else if(source_schema>=4){
+        const auto robot_count=r.pod<std::uint8_t>();
+        if(robot_count<1 || robot_count>12) r.valid=false;
+        saved_robots.reserve(robot_count);
+        for(std::uint8_t i=0;i<robot_count && r.valid;++i) saved_robots.push_back(read_builder_robot_v4(r));
+        saved_stash=read_vec3(r);
+        for(double& value:saved_production) value=r.pod<double>();
+        saved_life_fraction=r.pod<double>();
+    }else if(source_schema>=3){
+        const auto robot_count=r.pod<std::uint8_t>();
+        if(robot_count<1 || robot_count>6) r.valid=false;
+        saved_robots.reserve(robot_count);
+        for(std::uint8_t i=0;i<robot_count && r.valid;++i) saved_robots.push_back(read_builder_robot_legacy(r));
+        saved_stash=read_vec3(r);
+        for(double& value:saved_production) value=r.pod<double>();
+        saved_life_fraction=r.pod<double>();
+    }else if(source_schema>=2){
+        // v0.31.0 schema 2 stored exactly one BR-02 without a count field.
+        saved_robots.push_back(read_builder_robot_legacy(r));
+        saved_stash=read_vec3(r);
+        for(double& value:saved_production) value=r.pod<double>();
+        saved_life_fraction=r.pod<double>();
+    }
     if(!r.valid){ error="Savegame ended unexpectedly."; return false; }
 
     playfield_size_=saved_playfield;
@@ -384,6 +498,96 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     walkway_network_.restore_connections(std::move(walkways));
 
+    if(source_schema>=2){
+        builder_robots_=std::move(saved_robots);
+        if(builder_robots_.empty()) builder_robots_.push_back(BuilderRobotState{});
+        starter_stash_center_=saved_stash;
+        production_fraction_=saved_production;
+        life_support_fraction_seconds_=saved_life_fraction;
+
+        // Older fleets contained constructors only. Introduce one carrier when
+        // loading them so the new logistics rules work without invalidating saves.
+        int carriers=0; int constructors=0;
+        for(const auto& robot:builder_robots_){
+            if(robot.role==RobotRole::Carrier) ++carriers; else ++constructors;
+        }
+        starting_robot_count_=std::clamp(constructors,1,6);
+        starting_carrier_count_=std::clamp(carriers,1,6);
+        if(carriers==0){
+            // Legacy constructor-only fleets receive one CR-01 so old saves
+            // remain usable with the logistics system.
+            BuilderRobotState carrier{}; carrier.role=RobotRole::Carrier;
+            carrier.position={starter_stash_center_.x+6.35f,0.0f,starter_stash_center_.z};
+            carrier.heading_degrees=90.0f; carrier.move_speed_mps=kCarrierRobotTransitSpeedMps; carrier.payload_capacity_kg=1800;
+            builder_robots_.push_back(carrier);
+            starting_carrier_count_=1;
+        }
+    }else{
+        builder_robots_.assign(2,BuilderRobotState{});
+        starting_robot_count_=1;
+        starting_carrier_count_=1;
+        const float half=(float)playfield_.size()*0.5f;
+        starter_stash_center_={-half+5.0f,0.0f,-half+5.0f};
+        builder_robots_[0].role=RobotRole::Constructor;
+        builder_robots_[0].position={starter_stash_center_.x+3.15f,0.0f,starter_stash_center_.z};
+        builder_robots_[0].heading_degrees=90.0f;
+        builder_robots_[1].role=RobotRole::Carrier;
+        builder_robots_[1].position={starter_stash_center_.x+6.35f,0.0f,starter_stash_center_.z};
+        builder_robots_[1].heading_degrees=90.0f; builder_robots_[1].move_speed_mps=kCarrierRobotTransitSpeedMps; builder_robots_[1].payload_capacity_kg=1800;
+        production_fraction_.fill(0.0);
+        life_support_fraction_seconds_=0.0;
+    }
+
+    // Transit speed is a role characteristic rather than persistent tuning.
+    // Normalize older saves so CR-01 is consistently 10% faster than BR-02.
+    for(auto& robot:builder_robots_){
+        robot.move_speed_mps=robot.role==RobotRole::Carrier?kCarrierRobotTransitSpeedMps:kBuilderRobotTransitSpeedMps;
+        robot.condition=std::clamp(robot.condition,0.0f,1.0f);
+        robot.visual_position=robot.position;
+        robot.visual_heading_degrees=robot.heading_degrees;
+        robot.visual_initialized=true;
+        if(source_schema<5){
+            robot.logistics_reservation={};
+            // Existing in-transit cargo becomes its own exact reservation.
+            // Empty FETCHING assignments are intentionally released and will
+            // be recalculated by the new synchronized demand ledger.
+            if(robot.cargo_committed_to_build && robot.target.valid() && !robot.cargo.empty())
+                robot.logistics_reservation=robot.cargo;
+            if(robot.condition<=0.0f) robot.condition=1.0f;
+        }
+    }
+    // v0.31.8/0.31.9 accidentally placed the starter pallet row at an
+    // absolute world Z coordinate. Migrate only piles that still match that
+    // legacy depot signature so continued games regain a stash aligned to the
+    // saved starter_stash_center_ without disturbing produced/moved resources.
+    constexpr float legacy_pallet_spacing=3.00f;
+    constexpr float aligned_pallet_spacing=1.45f;
+    const float aligned_center_index=((float)kMaterialResourceCount-1.0f)*0.5f;
+    for(auto& pile:ground_resource_piles_){
+        const std::size_t material_index=(std::size_t)pile.resource;
+        if(material_index>=kMaterialResourceCount) continue;
+        const float legacy_z=-30.0f+(float)material_index*legacy_pallet_spacing;
+        if(std::abs(pile.position.x-(starter_stash_center_.x-2.15f))<0.35f &&
+           std::abs(pile.position.z-legacy_z)<0.35f){
+            pile.position.x=starter_stash_center_.x-2.15f;
+            pile.position.z=starter_stash_center_.z+((float)material_index-aligned_center_index)*aligned_pallet_spacing;
+        }
+    }
+
+    // v0.31.6 and older constructors did not use support_robot_index. Seed a
+    // stable coordinator pointer for their existing target so a newly joining
+    // helper cannot accidentally steal ownership of an in-progress site buffer.
+    for(std::size_t i=0;i<builder_robots_.size();++i){
+        auto& robot=builder_robots_[i];
+        if(robot.role!=RobotRole::Constructor || !robot.target.valid()) continue;
+        bool valid_owner=false;
+        if(robot.support_robot_index<builder_robots_.size()){
+            const auto& owner=builder_robots_[robot.support_robot_index];
+            valid_owner=owner.role==RobotRole::Constructor && owner.target.valid() && owner.target.same_as(robot.target);
+        }
+        if(!valid_owner) robot.support_robot_index=i;
+    }
+
     if(saved_display_width>0 && saved_display_height>0) app_.set_display_mode(saved_display_width,saved_display_height);
     app_.set_fullscreen(saved_fullscreen);
     display_modes_.clear();
@@ -392,6 +596,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     ui_scale_=layout::UI_SCALES[ui_scale_index_];
     debug_frame_enabled_=saved_debug;
     habitat_view_mode_=saved_view;
+    game_speed_=saved_game_speed;
     build_catalog_.set_category(saved_category);
     build_catalog_.clear_selection();
     placement_rotation_degrees_=saved_rotation;

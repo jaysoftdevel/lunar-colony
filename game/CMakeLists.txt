@@ -10,6 +10,7 @@ add_executable(game
 
     src/playfield/playfield_view.cpp
     src/playfield/world_renderer.cpp
+    src/playfield/builder_robot_renderer.cpp
 
     src/ui/status_bar.cpp
     src/ui/debug_frame.cpp
@@ -17,6 +18,7 @@ add_executable(game
     src/ui/view_selector.cpp
     src/ui/build_icons.cpp
     src/ui/selection_panel.cpp
+    src/ui/construction_status_frames.cpp
 
     src/features/build_catalog.cpp
     src/features/habitat_placement.cpp
@@ -35,6 +37,7 @@ add_executable(game
     src/systems/save_game.cpp
     src/systems/construction_costs.cpp
     src/systems/construction_system.cpp
+    src/systems/builder_robot.cpp
 
     src/world/playfield.cpp
     src/world/habitat_mesh.cpp

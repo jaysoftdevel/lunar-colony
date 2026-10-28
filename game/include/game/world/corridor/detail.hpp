@@ -94,6 +94,8 @@ void append_swept_shell(CorridorMesh& mesh,const std::vector<Vec3>& path);
 void append_walkway(CorridorMesh& mesh,const std::vector<Vec3>& path);
 void append_ring(CorridorMesh& mesh,Vec3 center,Vec3 tangent,float scale=1.055f);
 void append_ribs(CorridorMesh& mesh,const std::vector<Vec3>& path);
+void append_pressure_services(CorridorMesh& mesh,const std::vector<Vec3>& path);
+void append_deck_panels(CorridorMesh& mesh,const std::vector<Vec3>& path);
 void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint);
 
 std::optional<CorridorEndpoint> resolve_anchor(const CorridorBuildAnchor& anchor,Vec3 other,

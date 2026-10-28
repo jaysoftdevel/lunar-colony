@@ -84,6 +84,22 @@ void append_door_frame(CorridorMesh& mesh,Vec3 center,Vec3 normal,float half_wid
     append_oriented_box(mesh.details,base+Vec3{0,bar,0},normal,0.12f,half_width,bar);
 }
 
+void append_pressure_seal(CorridorMesh& mesh,Vec3 center,Vec3 normal,float half_width,float height){
+    normal=flat_normal(normal);
+    if(length(normal)<0.001f) return;
+    const Vec3 side=perp_xz(normal);
+    const float bar=0.070f;
+    const float depth=0.045f;
+    const Vec3 base{center.x,0.055f,center.z};
+    // A narrow continuous gasket/flange sits inside the structural door frame.
+    // It is deliberately separate geometry so no visual gap survives between
+    // the pressure sleeve and a habitat/resource hull.
+    append_oriented_box(mesh.details,base-side*(half_width-bar)+Vec3{0,height*0.5f,0},normal,depth,bar,height*0.5f);
+    append_oriented_box(mesh.details,base+side*(half_width-bar)+Vec3{0,height*0.5f,0},normal,depth,bar,height*0.5f);
+    append_oriented_box(mesh.details,base+Vec3{0,height-bar,0},normal,depth,half_width,bar);
+    append_oriented_box(mesh.details,base+Vec3{0,bar,0},normal,depth,half_width,bar);
+}
+
 void append_generated_entrance(CorridorMesh& mesh,const CorridorDoor& door){
     if(!door.generated) return;
     const Vec3 n=flat_normal(door.normal);
@@ -157,6 +173,16 @@ void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
     const auto corridor_profile=corridor_cross_section();
     append_profile_transition(mesh,door_base,endpoint.position,n,door_profile,corridor_profile);
     append_door_frame(mesh,door.position,n,geometry::kDoorFrameHalfWidth,geometry::kDoorFrameHeight);
+    append_pressure_seal(mesh,door.position,n,DOCK_SLEEVE_HALF_WIDTH*0.94f,DOCK_SLEEVE_HEIGHT*0.94f);
+    // The hull contact gets a second flange. Generated entrances use the exact
+    // sampled wall profile for the pressure skin; this inner flange visually
+    // and mechanically consolidates that surface-to-sleeve seam.
+    append_pressure_seal(mesh,door.wall_position,n,geometry::kDoorClearWidth*0.62f,geometry::kDoorClearHeight*1.02f);
+    const Vec3 side=perp_xz(n);
+    const Vec3 threshold=door_base+Vec3{0,0.105f,0};
+    append_oriented_box(mesh.details,threshold,n,0.18f,geometry::kDoorClearWidth*0.52f,0.055f);
+    edge(mesh.edges,threshold-side*(geometry::kDoorClearWidth*0.52f)+Vec3{0,0.06f,0},
+                    threshold+side*(geometry::kDoorClearWidth*0.52f)+Vec3{0,0.06f,0});
     append_entrance_stairs(mesh,endpoint);
     append_ring(mesh,endpoint.position,n,1.0f);
 }
@@ -191,6 +217,10 @@ void append_sealed_open_end(CorridorMesh& mesh,const CorridorEndpoint& endpoint)
     append_oriented_box(mesh.details,
                         endpoint.position-n*0.055f+Vec3{0,1.12f,0},
                         n,0.07f,0.48f,0.58f);
+    // Cross-braced pressure plate communicates that this is a structural
+    // bulkhead, not an unimplemented/open doorway.
+    append_oriented_box(mesh.details,endpoint.position-n*0.075f+Vec3{0,1.12f,0},n,0.045f,1.05f,0.055f);
+    append_oriented_box(mesh.details,endpoint.position-n*0.078f+Vec3{0,1.12f,0},side,0.045f,0.055f,0.92f);
 }
 
 float host_half_width_at_height(float y){
@@ -353,6 +383,15 @@ struct AutomaticCrossing {
     std::size_t other_index{};
 };
 
+struct MergedCrossingJunction {
+    Vec3 position{};
+    std::size_t samples{0};
+    std::vector<Vec3> directions{};
+    std::vector<std::size_t> participants{};
+    std::vector<Vec3> footprint{};
+    std::vector<Vec3> cut_footprint{};
+};
+
 std::vector<AutomaticCrossing> collect_automatic_crossings(const std::vector<Vec3>& path,
                                                             const std::vector<CorridorConnection>& existing,
                                                             std::size_t self_index){
@@ -374,18 +413,191 @@ std::vector<AutomaticCrossing> collect_automatic_crossings(const std::vector<Vec
     return out;
 }
 
-bool point_in_auto_crossing_cut(Vec3 p,const AutomaticCrossing& c){
-    constexpr float CUT_RADIUS=CORRIDOR_HALF_WIDTH*1.34f;
-    const float y=p.y-c.position.y;
-    if(y<CORRIDOR_FLOOR_Y-0.12f || y>CORRIDOR_SIDE_Y+CORRIDOR_ROOF_RADIUS+0.12f) return false;
-    return distance_xz(p,c.position)<CUT_RADIUS;
+namespace {
+constexpr float JUNCTION_CLUSTER_RADIUS=CORRIDOR_HALF_WIDTH*1.10f;
+constexpr float JUNCTION_ARM_LENGTH=CORRIDOR_HALF_WIDTH*1.48f;
+constexpr float JUNCTION_HALF_WIDTH=CORRIDOR_HALF_WIDTH*1.10f;
+constexpr float JUNCTION_CUT_SCALE=0.90f;
+
+float cross_xz(Vec3 o,Vec3 a,Vec3 b){
+    return (a.x-o.x)*(b.z-o.z)-(a.z-o.z)*(b.x-o.x);
 }
 
-void carve_automatic_crossings(CorridorMesh& mesh,const std::vector<AutomaticCrossing>& crossings){
-    if(crossings.empty()) return;
+std::vector<Vec3> convex_hull_xz(std::vector<Vec3> points){
+    if(points.size()<=3) return points;
+    std::sort(points.begin(),points.end(),[](Vec3 a,Vec3 b){
+        if(std::abs(a.x-b.x)>1.0e-5f) return a.x<b.x;
+        return a.z<b.z;
+    });
+    points.erase(std::unique(points.begin(),points.end(),[](Vec3 a,Vec3 b){
+        return distance_xz(a,b)<0.001f;
+    }),points.end());
+    if(points.size()<=3) return points;
+
+    std::vector<Vec3> lower,upper;
+    for(const Vec3 p:points){
+        while(lower.size()>=2 && cross_xz(lower[lower.size()-2],lower.back(),p)<=0.0001f) lower.pop_back();
+        lower.push_back(p);
+    }
+    for(auto it=points.rbegin();it!=points.rend();++it){
+        const Vec3 p=*it;
+        while(upper.size()>=2 && cross_xz(upper[upper.size()-2],upper.back(),p)<=0.0001f) upper.pop_back();
+        upper.push_back(p);
+    }
+    lower.pop_back();
+    upper.pop_back();
+    lower.insert(lower.end(),upper.begin(),upper.end());
+    return lower;
+}
+
+void add_unique_direction(std::vector<Vec3>& directions,Vec3 d){
+    d=flat_normal(d);
+    if(length(d)<0.001f) return;
+    // Corridor axes are bidirectional. Canonicalising the sign keeps +X/-X
+    // from becoming two separate arms while still preserving different angles.
+    if(d.x<-0.0001f || (std::abs(d.x)<=0.0001f && d.z<0.0f)) d=d*-1.0f;
+    for(const Vec3 e:directions) if(std::abs(dot(e,d))>0.965f) return;
+    directions.push_back(d);
+}
+
+void add_unique_participant(std::vector<std::size_t>& participants,std::size_t index){
+    if(index==NONE_INDEX) return;
+    if(std::find(participants.begin(),participants.end(),index)==participants.end()) participants.push_back(index);
+}
+
+std::vector<Vec3> junction_footprint(Vec3 center,const std::vector<Vec3>& directions,float scale){
+    std::vector<Vec3> points;
+    points.reserve(directions.size()*4);
+    const float arm=JUNCTION_ARM_LENGTH*scale;
+    const float half=JUNCTION_HALF_WIDTH*scale;
+    for(Vec3 d:directions){
+        d=flat_normal(d);
+        if(length(d)<0.001f) continue;
+        const Vec3 side=perp_xz(d)*half;
+        for(float sign:{-1.0f,1.0f}){
+            const Vec3 end=center+d*(arm*sign);
+            points.push_back(end-side);
+            points.push_back(end+side);
+        }
+    }
+    return convex_hull_xz(std::move(points));
+}
+
+bool point_in_convex_xz(Vec3 p,const std::vector<Vec3>& poly){
+    if(poly.size()<3) return false;
+    float sign=0.0f;
+    for(std::size_t i=0;i<poly.size();++i){
+        const Vec3 a=poly[i],b=poly[(i+1)%poly.size()];
+        const float c=cross_xz(a,b,p);
+        if(std::abs(c)<0.001f) continue;
+        if(sign==0.0f) sign=c;
+        else if((sign>0.0f)!=(c>0.0f)) return false;
+    }
+    return true;
+}
+
+std::vector<MergedCrossingJunction> consolidate_crossings(const std::vector<AutomaticCrossing>& crossings,
+                                                           std::size_t self_index){
+    std::vector<MergedCrossingJunction> groups;
+    for(const auto& c:crossings){
+        MergedCrossingJunction* group=nullptr;
+        for(auto& g:groups){
+            if(distance_xz(g.position,c.position)<=JUNCTION_CLUSTER_RADIUS){ group=&g; break; }
+        }
+        if(!group){
+            groups.push_back({});
+            group=&groups.back();
+            group->position=c.position;
+        }else{
+            group->position=(group->position*(float)group->samples+c.position)*(1.0f/(float)(group->samples+1));
+        }
+        ++group->samples;
+        add_unique_direction(group->directions,c.self_tangent);
+        add_unique_direction(group->directions,c.other_tangent);
+        add_unique_participant(group->participants,self_index);
+        add_unique_participant(group->participants,c.other_index);
+    }
+    for(auto& g:groups){
+        g.footprint=junction_footprint(g.position,g.directions,1.0f);
+        g.cut_footprint=junction_footprint(g.position,g.directions,JUNCTION_CUT_SCALE);
+    }
+    return groups;
+}
+
+bool junction_edge_opening(Vec3 a,Vec3 b,const MergedCrossingJunction& junction,Vec3& outward){
+    const Vec3 mid=(a+b)*0.5f;
+    Vec3 radial=flat_normal(mid-junction.position);
+    const Vec3 edge_dir=flat_normal(b-a);
+    if(length(radial)<0.001f || length(edge_dir)<0.001f) return false;
+    float best=0.0f;
+    Vec3 best_dir{};
+    for(Vec3 d:junction.directions){
+        d=flat_normal(d);
+        const float alignment=std::abs(dot(radial,d));
+        const float perpendicular=std::abs(dot(edge_dir,d));
+        if(alignment>0.84f && perpendicular<0.34f && alignment>best){
+            best=alignment;
+            best_dir=dot(radial,d)>=0.0f?d:d*-1.0f;
+        }
+    }
+    if(best<=0.0f) return false;
+    outward=best_dir;
+    return true;
+}
+
+void append_wall_quad(CorridorMesh& mesh,Vec3 a0,Vec3 a1,Vec3 b1,Vec3 b0){
+    tri(mesh.shell,a0,a1,b1);
+    tri(mesh.shell,a0,b1,b0);
+}
+
+void append_d_profile_opening_wall(CorridorMesh& mesh,Vec3 edge_a,Vec3 edge_b,Vec3 outward,float base_y){
+    const Vec3 side=flat_normal(edge_b-edge_a);
+    if(length(side)<0.001f) return;
+    const Vec3 center=(edge_a+edge_b)*0.5f;
+    const float half_edge=distance_xz(edge_a,edge_b)*0.5f;
+    const float aperture_half=std::min(CORRIDOR_HALF_WIDTH,half_edge-0.03f);
+    const float floor_y=base_y+CORRIDOR_FLOOR_Y;
+    const float top_y=base_y+CORRIDOR_SIDE_Y+CORRIDOR_ROOF_RADIUS;
+
+    // Side pressure plates leave exactly the corridor-width D-profile opening.
+    if(half_edge>aperture_half+0.015f){
+        const Vec3 l0=center-side*half_edge+Vec3{0,floor_y-center.y,0};
+        const Vec3 l1=center-side*aperture_half+Vec3{0,floor_y-center.y,0};
+        const Vec3 lt0={l0.x,top_y,l0.z},lt1={l1.x,top_y,l1.z};
+        append_wall_quad(mesh,l0,l1,lt1,lt0);
+        const Vec3 r0=center+side*aperture_half+Vec3{0,floor_y-center.y,0};
+        const Vec3 r1=center+side*half_edge+Vec3{0,floor_y-center.y,0};
+        const Vec3 rt0={r0.x,top_y,r0.z},rt1={r1.x,top_y,r1.z};
+        append_wall_quad(mesh,r0,r1,rt1,rt0);
+    }
+
+    // Above the rounded D-profile roof, a faceted spandrel closes the chamber
+    // up to its flat service ceiling. The opening itself therefore matches the
+    // normal corridor pressure shell without any circular/cylindrical hub.
+    const auto section=corridor_cross_section();
+    for(std::size_t i=2;i+1<section.size();++i){
+        const Vec2 qa=section[i],qb=section[i+1];
+        const Vec3 ca=center+side*qa.x+Vec3{0,base_y+qa.y-center.y,0};
+        const Vec3 cb=center+side*qb.x+Vec3{0,base_y+qb.y-center.y,0};
+        const Vec3 ta{ca.x,top_y,ca.z},tb{cb.x,top_y,cb.z};
+        append_wall_quad(mesh,ca,cb,tb,ta);
+    }
+    append_ring(mesh,{center.x,base_y,center.z},outward,1.0f);
+}
+
+} // namespace
+
+bool point_in_auto_crossing_cut(Vec3 p,const MergedCrossingJunction& junction){
+    const float y=p.y-junction.position.y;
+    if(y<CORRIDOR_FLOOR_Y-0.12f || y>CORRIDOR_SIDE_Y+CORRIDOR_ROOF_RADIUS+0.12f) return false;
+    return point_in_convex_xz(p,junction.cut_footprint);
+}
+
+void carve_automatic_crossings(CorridorMesh& mesh,const std::vector<MergedCrossingJunction>& junctions){
+    if(junctions.empty()) return;
     auto cut_triangle=[&](Vec3 a,Vec3 b,Vec3 c){
         const Vec3 m=(a+b+c)*(1.0f/3.0f);
-        for(const auto& x:crossings){
+        for(const auto& x:junctions){
             if(point_in_auto_crossing_cut(a,x)||point_in_auto_crossing_cut(b,x)||point_in_auto_crossing_cut(c,x)||point_in_auto_crossing_cut(m,x)) return true;
         }
         return false;
@@ -408,7 +620,7 @@ void carve_automatic_crossings(CorridorMesh& mesh,const std::vector<AutomaticCro
     for(std::size_t i=0;i+1<mesh.edges.size();i+=2){
         const Vec3 m=(mesh.edges[i]+mesh.edges[i+1])*0.5f;
         bool cut=false;
-        for(const auto& x:crossings){
+        for(const auto& x:junctions){
             if(point_in_auto_crossing_cut(mesh.edges[i],x)||point_in_auto_crossing_cut(mesh.edges[i+1],x)||point_in_auto_crossing_cut(m,x)){ cut=true; break; }
         }
         if(!cut){ edges.push_back(mesh.edges[i]); edges.push_back(mesh.edges[i+1]); }
@@ -416,47 +628,50 @@ void carve_automatic_crossings(CorridorMesh& mesh,const std::vector<AutomaticCro
     mesh.edges=std::move(edges);
 }
 
-void append_merged_crossing_chamber(CorridorMesh& mesh,const AutomaticCrossing& c){
-    constexpr int SIDES=16;
-    constexpr float R=CORRIDOR_HALF_WIDTH*1.34f;
-    const float floor_y=c.position.y+CORRIDOR_FLOOR_Y;
-    const float deck_y=c.position.y+WALKWAY_Y;
-    const float top_y=c.position.y+CORRIDOR_SIDE_Y+CORRIDOR_ROOF_RADIUS;
-    Vec3 ring[SIDES];
-    for(int i=0;i<SIDES;++i){
-        const float a=2.0f*PI*(float)i/(float)SIDES;
-        ring[i]={c.position.x+std::cos(a)*R,0.0f,c.position.z+std::sin(a)*R};
-    }
-    const Vec3 floor_center{c.position.x,floor_y,c.position.z};
-    const Vec3 deck_center{c.position.x,deck_y,c.position.z};
-    const Vec3 roof_center{c.position.x,top_y,c.position.z};
-    for(int i=0;i<SIDES;++i){
-        const int j=(i+1)%SIDES;
-        const Vec3 f0{ring[i].x,floor_y,ring[i].z},f1{ring[j].x,floor_y,ring[j].z};
-        const Vec3 d0{ring[i].x,deck_y,ring[i].z},d1{ring[j].x,deck_y,ring[j].z};
-        const Vec3 t0{ring[i].x,top_y,ring[i].z},t1{ring[j].x,top_y,ring[j].z};
+void append_merged_crossing_manifold(CorridorMesh& mesh,const MergedCrossingJunction& junction){
+    const auto& poly=junction.footprint;
+    if(poly.size()<4) return;
+    const float base_y=junction.position.y;
+    const float floor_y=base_y+CORRIDOR_FLOOR_Y;
+    const float deck_y=base_y+WALKWAY_Y;
+    const float top_y=base_y+CORRIDOR_SIDE_Y+CORRIDOR_ROOF_RADIUS;
+    const Vec3 floor_center{junction.position.x,floor_y,junction.position.z};
+    const Vec3 deck_center{junction.position.x,deck_y,junction.position.z};
+    const Vec3 roof_center{junction.position.x,top_y,junction.position.z};
+
+    // One convex, faceted pressure manifold replaces the old round/cylindrical
+    // crossing hub. Its footprint is the convex union of all corridor approach
+    // throats, so X/T/Y/angled crossings share one structural volume even when
+    // several directions arrive at nearly the same point.
+    for(std::size_t i=0;i<poly.size();++i){
+        const std::size_t j=(i+1)%poly.size();
+        const Vec3 f0{poly[i].x,floor_y,poly[i].z},f1{poly[j].x,floor_y,poly[j].z};
+        const Vec3 d0{poly[i].x,deck_y,poly[i].z},d1{poly[j].x,deck_y,poly[j].z};
+        const Vec3 t0{poly[i].x,top_y,poly[i].z},t1{poly[j].x,top_y,poly[j].z};
         tri(mesh.shell,floor_center,f1,f0);
         tri(mesh.shell,roof_center,t0,t1);
         tri(mesh.details,deck_center,d0,d1);
-
-        Vec3 radial=flat_normal(((ring[i]+ring[j])*0.5f)-c.position);
-        const bool opening=std::abs(dot(radial,c.self_tangent))>0.78f ||
-                           std::abs(dot(radial,c.other_tangent))>0.78f;
-        if(!opening){
-            tri(mesh.shell,f0,f1,t1); tri(mesh.shell,f0,t1,t0);
-            edge(mesh.edges,f0,t0); edge(mesh.edges,t0,t1);
-        }
         edge(mesh.edges,d0,d1);
+        edge(mesh.edges,t0,t1);
+
+        Vec3 outward{};
+        if(junction_edge_opening(poly[i],poly[j],junction,outward)){
+            append_d_profile_opening_wall(mesh,poly[i],poly[j],outward,base_y);
+        }else{
+            append_wall_quad(mesh,f0,f1,t1,t0);
+            edge(mesh.edges,f0,t0);
+        }
     }
 }
 
-void append_crossing_hubs(CorridorMesh& mesh,const std::vector<AutomaticCrossing>& crossings,std::size_t self_index){
-    for(const auto& c:crossings){
-        // Preview owns its temporary chamber. In committed topology exactly one
-        // of the two corridor meshes owns the shared chamber, eliminating the
-        // duplicate junction geometry that used to z-fight at intersections.
-        if(self_index!=NONE_INDEX && self_index>c.other_index) continue;
-        append_merged_crossing_chamber(mesh,c);
+void append_crossing_hubs(CorridorMesh& mesh,const std::vector<MergedCrossingJunction>& junctions,std::size_t self_index){
+    for(const auto& junction:junctions){
+        if(self_index!=NONE_INDEX){
+            std::size_t owner=self_index;
+            for(const std::size_t p:junction.participants) owner=std::min(owner,p);
+            if(owner!=self_index) continue;
+        }
+        append_merged_crossing_manifold(mesh,junction);
     }
 }
 
@@ -477,8 +692,9 @@ CorridorMesh build_mesh(const CorridorEndpoint& a,const CorridorEndpoint& b,cons
     // tubes locally and let exactly one mesh own the replacement chamber so the
     // intersection contains no doubled shell, floor or rib geometry.
     const auto automatic_crossings=collect_automatic_crossings(path,existing,self_index);
-    carve_automatic_crossings(mesh,automatic_crossings);
-    append_crossing_hubs(mesh,automatic_crossings,self_index);
+    const auto merged_junctions=consolidate_crossings(automatic_crossings,self_index);
+    carve_automatic_crossings(mesh,merged_junctions);
+    append_crossing_hubs(mesh,merged_junctions,self_index);
     return mesh;
 }
 

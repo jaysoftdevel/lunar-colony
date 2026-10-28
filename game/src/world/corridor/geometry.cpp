@@ -70,6 +70,67 @@ void append_walkway(CorridorMesh& mesh,const std::vector<Vec3>& path){
     }
 }
 
+
+namespace {
+void append_detail_tube(CorridorMesh& mesh,Vec3 a,Vec3 b,float radius,int segments=6){
+    const Vec3 axis=b-a;
+    const float len=length(axis);
+    if(len<0.001f) return;
+    const Vec3 n=axis*(1.0f/len);
+    const Vec3 ref=std::abs(n.y)<0.92f?Vec3{0,1,0}:Vec3{1,0,0};
+    const Vec3 u=normalize(cross(n,ref));
+    const Vec3 v=normalize(cross(n,u));
+    segments=std::max(6,segments);
+    for(int i=0;i<segments;++i){
+        const float a0=2.0f*PI*(float)i/(float)segments;
+        const float a1=2.0f*PI*(float)(i+1)/(float)segments;
+        const Vec3 r0=(u*std::cos(a0)+v*std::sin(a0))*radius;
+        const Vec3 r1=(u*std::cos(a1)+v*std::sin(a1))*radius;
+        tri(mesh.details,a+r0,b+r0,b+r1);
+        tri(mesh.details,a+r0,b+r1,a+r1);
+        if(i%2==0){ edge(mesh.edges,a+r0,b+r0); }
+    }
+}
+}
+
+void append_pressure_services(CorridorMesh& mesh,const std::vector<Vec3>& path){
+    if(path.size()<2) return;
+    // Redundant service/lighting trunks are routed in the dead space between
+    // the crew deck and pressure shell. They follow the exact swept path, so a
+    // bend/junction remains visually continuous instead of exposing loose ends.
+    for(std::size_t i=0;i+1<path.size();++i){
+        const Vec3 t0=path_tangent(path,i),t1=path_tangent(path,i+1);
+        const Vec3 s0=perp_xz(t0),s1=perp_xz(t1);
+        const Vec3 a=path[i],b=path[i+1];
+        for(float sign:{-1.0f,1.0f}){
+            append_detail_tube(mesh,a+s0*(1.19f*sign)+Vec3{0,0.48f,0},
+                                    b+s1*(1.19f*sign)+Vec3{0,0.48f,0},0.038f,6);
+            append_detail_tube(mesh,a+s0*(0.88f*sign)+Vec3{0,2.22f,0},
+                                    b+s1*(0.88f*sign)+Vec3{0,2.22f,0},0.028f,6);
+        }
+    }
+}
+
+void append_deck_panels(CorridorMesh& mesh,const std::vector<Vec3>& path){
+    if(path.size()<2) return;
+    float next=0.70f;
+    float travelled=0.0f;
+    for(std::size_t i=0;i+1<path.size();++i){
+        const float seg=distance_xz(path[i],path[i+1]);
+        if(seg<0.001f) continue;
+        while(travelled+seg>=next){
+            const float t=(next-travelled)/seg;
+            const Vec3 p=path[i]+(path[i+1]-path[i])*t;
+            const Vec3 tangent=flat_normal(path[i+1]-path[i]);
+            const Vec3 side=perp_xz(tangent)*WALKWAY_HALF_WIDTH;
+            const Vec3 c=p+Vec3{0,WALKWAY_Y+0.012f,0};
+            edge(mesh.edges,c-side,c+side);
+            next+=1.10f;
+        }
+        travelled+=seg;
+    }
+}
+
 void append_ring(CorridorMesh& mesh,Vec3 center,Vec3 tangent,float scale){
     tangent=flat_normal(tangent);
     if(length(tangent)<0.001f) return;

@@ -61,6 +61,7 @@ public:
     void clear(){ connections_.clear(); }
     void set_playfield_half_extent(float half_extent){ playfield_half_extent_=std::max(8.0f,half_extent); }
     const std::vector<UtilityConnection>& connections() const { return connections_; }
+    std::vector<UtilityConnection>& mutable_connections() { return connections_; }
     void restore_connections(std::vector<UtilityConnection> connections){ connections_=std::move(connections); }
 
     bool anchor_compatible(UtilityKind kind,const UtilityBuildAnchor& anchor,

@@ -30,6 +30,33 @@ std::string total_material_cost(const ConstructionResourcePlan& plan){
     return out.str();
 }
 
+std::string compact_bundle(const ResourceBundle& bundle,const char* empty_text="NONE"){
+    std::ostringstream out;
+    bool any=false;
+    for(std::size_t i=0;i<kMaterialResourceCount;++i){
+        const auto material=(MaterialResource)i;
+        const auto amount=bundle.amount(material);
+        if(amount<=0) continue;
+        if(any) out<<"  ";
+        out<<material_resource_symbol(material)<<" "<<amount;
+        any=true;
+    }
+    if(!any) out<<empty_text;
+    return out.str();
+}
+
+const char* target_kind_name(ConstructionTargetKind kind){
+    switch(kind){
+        case ConstructionTargetKind::Habitat: return "HABITAT";
+        case ConstructionTargetKind::Resource: return "RESOURCE STRUCTURE";
+        case ConstructionTargetKind::Corridor: return "CORRIDOR";
+        case ConstructionTargetKind::Utility: return "SUPPLY CHANNEL";
+        case ConstructionTargetKind::Walkway: return "WALKWAY";
+        case ConstructionTargetKind::None: break;
+    }
+    return "NONE";
+}
+
 std::string used_material_cost(const ConstructionResourcePlan& plan,std::uint8_t completed_steps){
     const ResourceBundle c=plan.consumed(completed_steps);
     std::ostringstream out;
@@ -116,6 +143,62 @@ void GameApp::render_selection_panel(Renderer& r){
     ui::panel(r,p,theme_);
     r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2.0f);
     const float x=p.x+14.0f;
+
+    if(selection_kind_==SelectionKind::Robot && selected_robot_>=0 && (std::size_t)selected_robot_<builder_robots_.size()){
+        const std::size_t robot_index=(std::size_t)selected_robot_;
+        const auto& robot=builder_robots_[robot_index];
+        std::size_t role_number=0;
+        for(std::size_t i=0;i<=robot_index;++i) if(builder_robots_[i].role==robot.role) ++role_number;
+
+        std::ostringstream title,status,condition,speed,cargo_mass,route,target;
+        title<<robot_role_name(robot.role)<<" #"<<role_number;
+        status<<"STATUS  "<<builder_robot_mode_name(robot.mode);
+        if(robot.action!=BuilderRobotAction::None) status<<" / "<<builder_robot_action_name(robot.action);
+        const int condition_pct=(int)std::lround(std::clamp(robot.condition,0.0f,1.0f)*100.0f);
+        const char* condition_grade=condition_pct>=90?"NOMINAL":(condition_pct>=70?"SERVICE DUE":"DEGRADED");
+        condition<<"CONDITION  "<<condition_pct<<"% / "<<condition_grade;
+        speed<<"MOTION  "<<std::fixed<<std::setprecision(2)<<robot.current_speed_mps<<" / "<<robot.move_speed_mps<<" M/S";
+        cargo_mass<<"CARGO  "<<robot.cargo.total_amount()<<" / "<<robot.payload_capacity_kg<<" KG";
+        if(robot.route_active){
+            const float remaining_m=std::max(0.0f,robot.route_total_length_m-robot.route_progress_m);
+            route<<"ROUTE  "<<(robot.route_waiting_for_clearance?"FLOW YIELD":"FLOW / CLEAR")
+                 <<" / "<<std::fixed<<std::setprecision(1)<<remaining_m<<" M";
+        }else route<<"ROUTE  STATIONARY";
+        if(robot.target.valid()){
+            target<<"TARGET  "<<target_kind_name(robot.target.kind)<<" #"<<(robot.target.index+1)
+                  <<"  STEP "<<(int)construction_target_step(robot.target)<<"/"<<(int)construction_target_total_steps(robot.target);
+        }else if(robot.mode==BuilderRobotMode::DepotTransfer) target<<"TARGET  MAIN DEPOT / RESOURCE SWEEP";
+        else target<<"TARGET  NONE";
+
+        game_label(r,{x,p.y+10},title.str(),0.67f,theme_,true);
+        game_label(r,{x,p.y+36},status.str(),0.58f,theme_);
+        game_label(r,{x,p.y+59},condition.str(),0.50f,theme_,true);
+        game_label(r,{x,p.y+81},speed.str(),0.48f,theme_,true);
+        game_label(r,{x,p.y+103},route.str(),0.46f,theme_,true);
+        game_label(r,{x,p.y+127},target.str(),0.49f,theme_);
+        game_label(r,{x,p.y+151},cargo_mass.str(),0.53f,theme_);
+        game_label(r,{x,p.y+173},compact_bundle(robot.cargo),0.46f,theme_,true);
+
+        std::ostringstream assigned;
+        assigned<<"ASSIGNED / IN-TRANSIT  "<<robot.logistics_reservation.total_amount()<<" KG";
+        game_label(r,{x,p.y+201},assigned.str(),0.50f,theme_);
+        game_label(r,{x,p.y+223},compact_bundle(robot.logistics_reservation),0.46f,theme_,true);
+
+        if(robot.target.valid() && !construction_target_complete(robot.target)){
+            const ResourceBundle delivered=construction_site_buffer(robot.target)?*construction_site_buffer(robot.target):ResourceBundle{};
+            const ResourceBundle reserved=construction_site_reserved(robot.target);
+            const ResourceBundle left=construction_site_remaining(robot.target,true);
+            std::ostringstream site;
+            site<<"SITE LEDGER  DELIVERED "<<delivered.total_amount()<<" KG / RESERVED "<<reserved.total_amount()<<" KG";
+            game_label(r,{x,p.y+253},site.str(),0.47f,theme_);
+            game_label(r,{x,p.y+275},"UNASSIGNED LEFT  "+compact_bundle(left),0.46f,theme_,true);
+        }else{
+            game_label(r,{x,p.y+253},"SITE LEDGER  NO ACTIVE CONSTRUCTION ASSIGNMENT",0.47f,theme_,true);
+        }
+
+        game_label(r,{x,p.y+p.h-32.0f},"LMB SELECT OTHER / ROBOTS ARE NOT DELETABLE",0.44f,theme_,true);
+        return;
+    }
 
     if(selection_kind_==SelectionKind::Habitat && selected_habitat_>=0 && (size_t)selected_habitat_<placed_habitats_.size()){
         const auto& h=placed_habitats_[(size_t)selected_habitat_];

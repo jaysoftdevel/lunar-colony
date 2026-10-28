@@ -134,8 +134,8 @@ void draw_sliding_door(Renderer& r,const CorridorDoor& door,float open_fraction)
         const Vec3 s=side*panel_half;
         const Vec3 u{0,panel_h*0.5f,0};
         const Vec3 p0=center-s-u,p1=center+s-u,p2=center+s+u,p3=center-s+u;
-        r.draw_triangles_3d({p0,p1,p2,p0,p2,p3},fill);
-        r.draw_lines_3d({p0,p1,p1,p2,p2,p3,p3,p0},edge_color,1.25f);
+        (void)fill;
+        r.draw_lines_3d({p0,p1,p1,p2,p2,p3,p3,p0},edge_color,2.15f);
     }
 }
 }
@@ -173,19 +173,32 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
         const auto details=transformed_vertices(construction_sequence::reveal_triangles(mesh.details,visibility.details),position,rotation_degrees);
         const auto glazing=transformed_vertices(construction_sequence::reveal_triangles(mesh.glazing,visibility.glazing),position,rotation_degrees);
         const auto edges=transformed_vertices(construction_sequence::reveal_lines(mesh.edges,visibility.edges),position,rotation_degrees);
-        const float boost=selected?1.40f:1.0f;
-        const Color build_main{0.78f,0.66f,0.30f,1.0f};
-        const Color build_dim{0.58f,0.53f,0.32f,0.92f};
-        mesh_wireframe::draw_layer(r,foundation,build_dim,1.05f*boost);
-        mesh_wireframe::draw_layer(r,shell,build_main,1.15f*boost);
-        mesh_wireframe::draw_layer(r,interior,{0.66f,0.60f,0.36f,0.94f},1.00f*boost);
-        mesh_wireframe::draw_layer(r,details,{0.72f,0.61f,0.31f,0.96f},1.00f*boost);
-        mesh_wireframe::draw_layer(r,glazing,{0.70f,0.68f,0.44f,0.78f},0.95f*boost);
-        if(!edges.empty()) r.draw_lines_3d(edges,selected?theme_.accent:build_main,selected?2.4f:1.25f);
+        const float boost=selected?1.28f:1.0f;
+        // The complete target remains a blue engineering mesh. Every part
+        // that has actually been installed replaces that draft with filled,
+        // bold yellow construction geometry. The player can therefore read the
+        // exact target shape and the completed fraction at the same time.
+        const Color blueprint{0.08f,0.36f,0.96f,0.46f};
+        const Color installed{1.00f,0.68f,0.12f,0.99f};
+        const Color installed_dim{0.96f,0.56f,0.08f,0.96f};
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.foundation,position,rotation_degrees),blueprint,1.35f*boost);
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.shell,position,rotation_degrees),blueprint,1.55f*boost);
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.interior,position,rotation_degrees),blueprint,1.25f*boost);
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.details,position,rotation_degrees),blueprint,1.30f*boost);
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.glazing,position,rotation_degrees),{0.10f,0.48f,1.00f,0.40f},1.20f*boost);
+        const auto ghost_edges=transformed_vertices(mesh.edges,position,rotation_degrees);
+        if(!ghost_edges.empty()) r.draw_lines_3d(ghost_edges,{0.12f,0.50f,1.00f,0.62f},1.65f*boost);
+
+        mesh_wireframe::draw_layer(r,foundation,installed_dim,1.95f*boost);
+        mesh_wireframe::draw_layer(r,shell,installed,2.20f*boost);
+        mesh_wireframe::draw_layer(r,interior,installed_dim,1.85f*boost);
+        mesh_wireframe::draw_layer(r,details,installed,1.95f*boost);
+        mesh_wireframe::draw_layer(r,glazing,{1.00f,0.76f,0.20f,0.94f},1.80f*boost);
+        if(!edges.empty()) r.draw_lines_3d(edges,installed,selected?3.45f:2.45f);
         if(construction_step==0){
             const float hx=mesh.footprint_x*0.5f, hz=mesh.footprint_z*0.5f;
             std::vector<Vec3> marker{{-hx,0.03f,-hz},{hx,0.03f,-hz},{hx,0.03f,-hz},{hx,0.03f,hz},{hx,0.03f,hz},{-hx,0.03f,hz},{-hx,0.03f,hz},{-hx,0.03f,-hz}};
-            r.draw_lines_3d(transformed_vertices(marker,position,rotation_degrees),build_main,selected?2.5f:1.6f);
+            r.draw_lines_3d(transformed_vertices(marker,position,rotation_degrees),blueprint,selected?3.2f:2.4f);
         }
         return;
     }
@@ -201,24 +214,27 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
         details=carve_door_apertures(details,*fpv_doors);
         glazing=carve_door_apertures(glazing,*fpv_doors);
     }
-    const Color shell_color{0.56f,0.66f,0.70f,1.0f};
-    const Color foundation_color{0.40f,0.47f,0.50f,1.0f};
-    const Color interior_color{0.58f,0.64f,0.64f,0.92f};
-    const Color detail_color{0.43f,0.53f,0.57f,0.96f};
-    const Color glass_color{0.34f,0.58f,0.63f,0.72f};
-    const Color edge_color=selected?theme_.accent:Color{0.10f,0.16f,0.18f,1.0f};
+    const Color shell_color{0.24f,0.96f,0.42f,1.0f};
+    const Color foundation_color{0.20f,0.84f,0.36f,1.0f};
+    const Color interior_color{0.34f,1.00f,0.50f,0.98f};
+    const Color detail_color{0.22f,0.92f,0.40f,0.99f};
+    const Color glass_color{0.32f,1.00f,0.56f,0.82f};
+    const Color edge_color=selected?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f};
     const float selected_boost=selected?1.45f:1.0f;
 
-    mesh_wireframe::draw_layer(r,foundation,foundation_color,1.05f*selected_boost);
-    mesh_wireframe::draw_layer(r,interior,interior_color,0.95f*selected_boost);
-    mesh_wireframe::draw_layer(r,details,detail_color,1.00f*selected_boost);
-    mesh_wireframe::draw_layer(r,glazing,glass_color,0.90f*selected_boost);
+    // Structures intentionally remain mesh-only in this development phase.
+    // Completion is communicated by green color and heavier engineering lines,
+    // not by filled/material surfaces or textures.
+    mesh_wireframe::draw_layer(r,foundation,foundation_color,2.40f*selected_boost);
+    mesh_wireframe::draw_layer(r,interior,interior_color,2.20f*selected_boost);
+    mesh_wireframe::draw_layer(r,details,detail_color,2.30f*selected_boost);
+    mesh_wireframe::draw_layer(r,glazing,glass_color,2.10f*selected_boost);
     if(habitat_view_mode_==HabitatViewMode::Default){
-        mesh_wireframe::draw_layer(r,shell,shell_color,1.10f*selected_boost);
+        mesh_wireframe::draw_layer(r,shell,shell_color,2.65f*selected_boost);
     }else{
-        mesh_wireframe::draw_layer(r,shell,{shell_color.r,shell_color.g,shell_color.b,0.14f},0.80f);
+        mesh_wireframe::draw_layer(r,shell,{shell_color.r,shell_color.g,shell_color.b,0.24f},1.25f);
     }
-    r.draw_lines_3d(edges,edge_color,selected?2.4f:1.15f);
+    r.draw_lines_3d(edges,edge_color,selected?3.65f:2.90f);
 }
 
 void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,std::uint8_t construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
@@ -242,16 +258,24 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
         const auto body=transformed_vertices(construction_sequence::reveal_triangles(mesh.body,visibility.body),position,rotation_degrees);
         const auto details=transformed_vertices(construction_sequence::reveal_triangles(mesh.details,visibility.details),position,rotation_degrees);
         const auto edges=transformed_vertices(construction_sequence::reveal_lines(mesh.edges,visibility.edges),position,rotation_degrees);
-        const float boost=selected?1.40f:1.0f;
-        const Color build_main{0.78f,0.66f,0.30f,1.0f};
-        mesh_wireframe::draw_layer(r,foundation,{0.58f,0.53f,0.32f,0.92f},1.05f*boost);
-        mesh_wireframe::draw_layer(r,body,build_main,1.15f*boost);
-        mesh_wireframe::draw_layer(r,details,{0.72f,0.61f,0.31f,0.96f},1.00f*boost);
-        if(!edges.empty()) r.draw_lines_3d(edges,selected?theme_.accent:build_main,selected?2.4f:1.25f);
+        const float boost=selected?1.28f:1.0f;
+        const Color blueprint{0.08f,0.36f,0.96f,0.46f};
+        const Color installed{1.00f,0.68f,0.12f,0.99f};
+        const Color installed_dim{0.96f,0.56f,0.08f,0.96f};
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.foundation,position,rotation_degrees),blueprint,1.35f*boost);
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.body,position,rotation_degrees),blueprint,1.55f*boost);
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.details,position,rotation_degrees),blueprint,1.30f*boost);
+        const auto ghost_edges=transformed_vertices(mesh.edges,position,rotation_degrees);
+        if(!ghost_edges.empty()) r.draw_lines_3d(ghost_edges,{0.12f,0.50f,1.00f,0.62f},1.65f*boost);
+
+        mesh_wireframe::draw_layer(r,foundation,installed_dim,1.95f*boost);
+        mesh_wireframe::draw_layer(r,body,installed,2.20f*boost);
+        mesh_wireframe::draw_layer(r,details,installed,1.95f*boost);
+        if(!edges.empty()) r.draw_lines_3d(edges,installed,selected?3.45f:2.45f);
         if(construction_step==0){
             const float hx=mesh.footprint_x*0.5f, hz=mesh.footprint_z*0.5f;
             std::vector<Vec3> marker{{-hx,0.03f,-hz},{hx,0.03f,-hz},{hx,0.03f,-hz},{hx,0.03f,hz},{hx,0.03f,hz},{-hx,0.03f,hz},{-hx,0.03f,hz},{-hx,0.03f,-hz}};
-            r.draw_lines_3d(transformed_vertices(marker,position,rotation_degrees),build_main,selected?2.5f:1.6f);
+            r.draw_lines_3d(transformed_vertices(marker,position,rotation_degrees),blueprint,selected?3.2f:2.4f);
         }
         return;
     }
@@ -265,10 +289,10 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
         details=carve_door_apertures(details,*fpv_doors);
     }
     const float boost=selected?1.45f:1.0f;
-    mesh_wireframe::draw_layer(r,foundation,{0.42f,0.48f,0.50f,1.0f},1.05f*boost);
-    mesh_wireframe::draw_layer(r,body,{0.57f,0.67f,0.69f,1.0f},1.10f*boost);
-    mesh_wireframe::draw_layer(r,details,{0.44f,0.54f,0.56f,0.96f},1.00f*boost);
-    r.draw_lines_3d(edges,selected?theme_.accent:Color{0.10f,0.16f,0.18f,1.0f},selected?2.4f:1.15f);
+    mesh_wireframe::draw_layer(r,foundation,{0.20f,0.84f,0.36f,1.0f},2.40f*boost);
+    mesh_wireframe::draw_layer(r,body,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
+    mesh_wireframe::draw_layer(r,details,{0.22f,0.92f,0.40f,0.99f},2.35f*boost);
+    r.draw_lines_3d(edges,selected?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f},selected?3.65f:2.90f);
 }
 
 
@@ -320,26 +344,30 @@ void GameApp::render_utilities(Renderer& r){
 
         if(!link.construction.complete()){
             const float fraction=link.construction.progress();
-            const Color build_main{0.80f,0.66f,0.27f,1.0f};
-            const Color build_detail{0.66f,0.55f,0.30f,0.96f};
+            const Color build_main{1.00f,0.68f,0.12f,0.99f};
+            const Color build_detail{0.96f,0.56f,0.08f,0.96f};
+            const Color ghost{0.10f,0.40f,0.90f,0.46f};
+            mesh_wireframe::draw_layer(r,link.mesh.shell,ghost,1.50f*boost);
+            mesh_wireframe::draw_layer(r,link.mesh.details,ghost,1.25f*boost);
+            if(!link.mesh.edges.empty()) r.draw_lines_3d(link.mesh.edges,{0.14f,0.54f,1.00f,0.58f},1.65f*boost);
             if(link.construction.step==0){
-                r.draw_lines_3d(construction_path_lines(link.path),build_main,selected?2.5f:1.5f);
+                r.draw_lines_3d(construction_path_lines(link.path),Color{0.12f,0.58f,1.00f,0.92f},selected?3.2f:2.3f);
             }else{
                 const auto shell=construction_sequence::reveal_triangles(link.mesh.shell,fraction);
                 const auto details=construction_sequence::reveal_triangles(link.mesh.details,fraction);
                 const auto edges=construction_sequence::reveal_lines(link.mesh.edges,fraction);
-                mesh_wireframe::draw_layer(r,shell,build_main,1.10f*boost);
-                mesh_wireframe::draw_layer(r,details,build_detail,1.00f*boost);
-                if(!edges.empty()) r.draw_lines_3d(edges,selected?theme_.accent:build_main,selected?2.5f:1.20f);
+                                mesh_wireframe::draw_layer(r,shell,build_main,2.05f*boost);
+                mesh_wireframe::draw_layer(r,details,build_detail,1.80f*boost);
+                if(!edges.empty()) r.draw_lines_3d(edges,build_main,selected?3.35f:2.30f);
             }
             continue;
         }
 
-        const Color shell{0.48f,0.68f,0.80f,1.0f};
-        const Color details{0.70f,0.56f,0.24f,0.96f};
-        mesh_wireframe::draw_layer(r,link.mesh.shell,shell,1.05f*boost);
-        mesh_wireframe::draw_layer(r,link.mesh.details,details,1.00f*boost);
-        r.draw_lines_3d(link.mesh.edges,selected?theme_.accent:Color{0.10f,0.14f,0.15f,1.0f},selected?2.5f:1.15f);
+        const Color shell{0.24f,0.96f,0.42f,1.0f};
+        const Color details{0.22f,0.92f,0.40f,0.99f};
+        mesh_wireframe::draw_layer(r,link.mesh.shell,shell,2.60f*boost);
+        mesh_wireframe::draw_layer(r,link.mesh.details,details,2.35f*boost);
+        r.draw_lines_3d(link.mesh.edges,selected?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f},selected?3.60f:2.85f);
     }
 }
 
@@ -352,23 +380,27 @@ void GameApp::render_walkways(Renderer& r){
         const float boost=selected?1.55f:1.0f;
         if(!w.construction.complete()){
             const float fraction=w.construction.progress();
-            const Color build_main{0.80f,0.66f,0.27f,1.0f};
-            const Color build_detail{0.66f,0.58f,0.34f,0.96f};
+            const Color build_main{1.00f,0.68f,0.12f,0.99f};
+            const Color build_detail{0.96f,0.56f,0.08f,0.96f};
+            const Color ghost{0.10f,0.40f,0.90f,0.46f};
+            mesh_wireframe::draw_layer(r,w.mesh.deck,ghost,1.50f*boost);
+            mesh_wireframe::draw_layer(r,w.mesh.details,ghost,1.25f*boost);
+            if(!w.mesh.edges.empty()) r.draw_lines_3d(w.mesh.edges,{0.14f,0.54f,1.00f,0.58f},1.65f*boost);
             if(w.construction.step==0){
-                r.draw_lines_3d(construction_path_lines(w.path),build_main,selected?2.6f:1.6f);
+                r.draw_lines_3d(construction_path_lines(w.path),Color{0.12f,0.58f,1.00f,0.92f},selected?3.2f:2.3f);
             }else{
                 const auto deck=construction_sequence::reveal_triangles(w.mesh.deck,fraction);
                 const auto details=construction_sequence::reveal_triangles(w.mesh.details,fraction);
                 const auto edges=construction_sequence::reveal_lines(w.mesh.edges,fraction);
-                mesh_wireframe::draw_layer(r,deck,build_main,1.10f*boost);
-                mesh_wireframe::draw_layer(r,details,build_detail,1.00f*boost);
-                if(!edges.empty()) r.draw_lines_3d(edges,selected?theme_.accent:build_main,selected?2.5f:1.20f);
+                        mesh_wireframe::draw_layer(r,deck,build_main,2.05f*boost);
+                mesh_wireframe::draw_layer(r,details,build_detail,1.80f*boost);
+                if(!edges.empty()) r.draw_lines_3d(edges,build_main,selected?3.35f:2.30f);
             }
             continue;
         }
-        mesh_wireframe::draw_layer(r,w.mesh.deck,{0.54f,0.64f,0.66f,1.0f},1.10f*boost);
-        mesh_wireframe::draw_layer(r,w.mesh.details,{0.72f,0.58f,0.25f,0.96f},1.00f*boost);
-        r.draw_lines_3d(w.mesh.edges,selected?theme_.accent:Color{0.10f,0.15f,0.16f,1.0f},selected?2.5f:1.15f);
+        mesh_wireframe::draw_layer(r,w.mesh.deck,{0.24f,0.96f,0.42f,1.0f},2.60f*boost);
+        mesh_wireframe::draw_layer(r,w.mesh.details,{0.22f,0.92f,0.40f,0.99f},2.35f*boost);
+        r.draw_lines_3d(w.mesh.edges,selected?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f},selected?3.60f:2.85f);
     }
 }
 
@@ -378,38 +410,42 @@ void GameApp::render_corridors(Renderer& r){
         const auto& connection=corridors[i];
         const bool selected=selection_kind_==SelectionKind::Corridor && selected_corridor_==(int)i;
         const bool link_source=corridor_link_source_==(int)i;
-        const Color edge_color=(selected||link_source)?theme_.accent:Color{0.09f,0.15f,0.17f,1.0f};
+        const Color edge_color=(selected||link_source)?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f};
         const float boost=(selected||link_source)?1.55f:1.0f;
 
         if(!connection.construction.complete()){
             const float fraction=connection.construction.progress();
-            const Color build_main{0.80f,0.66f,0.27f,1.0f};
-            const Color build_detail{0.66f,0.58f,0.34f,0.96f};
+            const Color build_main{1.00f,0.68f,0.12f,0.99f};
+            const Color build_detail{0.96f,0.56f,0.08f,0.96f};
+            const Color ghost{0.10f,0.40f,0.90f,0.46f};
+            mesh_wireframe::draw_layer(r,connection.mesh.shell,ghost,1.55f*boost);
+            mesh_wireframe::draw_layer(r,connection.mesh.details,ghost,1.30f*boost);
+            if(!connection.mesh.edges.empty()) r.draw_lines_3d(connection.mesh.edges,{0.14f,0.54f,1.00f,0.58f},1.70f*boost);
             if(connection.construction.step==0){
-                r.draw_lines_3d(construction_path_lines(connection.path),build_main,(selected||link_source)?2.6f:1.6f);
+                r.draw_lines_3d(construction_path_lines(connection.path),Color{0.12f,0.58f,1.00f,0.92f},(selected||link_source)?3.3f:2.4f);
             }else{
                 const auto shell=construction_sequence::reveal_triangles(connection.mesh.shell,fraction);
                 const auto details=construction_sequence::reveal_triangles(connection.mesh.details,fraction);
                 const auto edges=construction_sequence::reveal_lines(connection.mesh.edges,fraction);
-                mesh_wireframe::draw_layer(r,details,build_detail,1.00f*boost);
-                mesh_wireframe::draw_layer(r,shell,build_main,1.10f*boost);
-                if(!edges.empty()) r.draw_lines_3d(edges,(selected||link_source)?theme_.accent:build_main,(selected||link_source)?2.5f:1.20f);
+                                mesh_wireframe::draw_layer(r,details,build_detail,1.80f*boost);
+                mesh_wireframe::draw_layer(r,shell,build_main,2.05f*boost);
+                if(!edges.empty()) r.draw_lines_3d(edges,build_main,(selected||link_source)?3.45f:2.35f);
             }
             continue;
         }
 
-        const Color shell_color{0.50f,0.62f,0.66f,1.0f};
-        const Color detail_color{0.42f,0.54f,0.58f,0.95f};
+        const Color shell_color{0.24f,0.96f,0.42f,1.0f};
+        const Color detail_color{0.22f,0.92f,0.40f,0.99f};
         // Open corridor endpoints are permanent sealed pressure bulkheads.
         // Exterior access is provided only by a connected Air Lock habitat, so
         // corridor meshes never carve/open a door at an exposed endpoint.
-        mesh_wireframe::draw_layer(r,connection.mesh.details,detail_color,1.00f*boost);
+        mesh_wireframe::draw_layer(r,connection.mesh.details,detail_color,2.35f*boost);
         if(habitat_view_mode_==HabitatViewMode::Default || first_person_mode_==FirstPersonMode::Active){
-            mesh_wireframe::draw_layer(r,connection.mesh.shell,shell_color,1.10f*boost);
+            mesh_wireframe::draw_layer(r,connection.mesh.shell,shell_color,2.65f*boost);
         }else{
-            mesh_wireframe::draw_layer(r,connection.mesh.shell,{shell_color.r,shell_color.g,shell_color.b,0.14f},0.80f);
+            mesh_wireframe::draw_layer(r,connection.mesh.shell,{shell_color.r,shell_color.g,shell_color.b,0.24f},1.25f);
         }
-        r.draw_lines_3d(connection.mesh.edges,edge_color,(selected||link_source)?2.5f:1.15f);
+        r.draw_lines_3d(connection.mesh.edges,edge_color,(selected||link_source)?3.65f:2.90f);
     }
 }
 
@@ -439,11 +475,11 @@ void GameApp::render_habitats(Renderer& r){
             const float access_fraction=instance.construction.complete()?1.0f:0.5f;
             const auto details=transformed_vertices(construction_sequence::reveal_triangles(access.details,access_fraction),instance.position,instance.rotation_degrees);
             const auto edges=transformed_vertices(construction_sequence::reveal_lines(access.edges,instance.construction.complete()?1.0f:0.0f),instance.position,instance.rotation_degrees);
-            const Color access_color=instance.construction.complete()?Color{0.43f,0.53f,0.57f,0.96f}:Color{0.72f,0.61f,0.31f,0.96f};
-            mesh_wireframe::draw_layer(r,details,access_color,1.0f);
+            const Color access_color=instance.construction.complete()?Color{0.24f,0.96f,0.42f,1.0f}:Color{1.00f,0.68f,0.12f,0.99f};
+            mesh_wireframe::draw_layer(r,details,access_color,instance.construction.complete()?2.45f:2.0f);
             if(!edges.empty()){
                 const Color ec=selected?theme_.accent:Color{0.08f,0.11f,0.13f,1.0f};
-                r.draw_lines_3d(edges,ec,selected?2.4f:1.15f);
+                r.draw_lines_3d(edges,ec,selected?3.35f:(instance.construction.complete()?2.55f:2.25f));
             }
         }
     }

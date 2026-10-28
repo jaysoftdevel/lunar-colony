@@ -5,11 +5,16 @@ namespace game::geometry {
 // World units are metres.  Every crew-accessible dimension in the procedural
 // geometry is derived from this 2 m reference human instead of maintaining
 // independent, implicit scales per feature.
-inline constexpr float kHumanHeight = 2.00f;
-inline constexpr float kHumanEyeHeight = 1.82f;
-inline constexpr float kHumanBodyRadius = 0.34f;
-inline constexpr float kHeadClearance = 0.28f;
-inline constexpr float kShoulderClearance = 0.26f;
+// Baseline astronaut scale. The old 2.00 m proxy made POV/navigation read too
+// large against the structures. Future crew/astronaut implementations use this
+// same canonical 80% scale unless a specific character archetype overrides it.
+inline constexpr float kAstronautScale = 0.80f;
+inline constexpr float kHumanReferenceHeight = 2.00f;
+inline constexpr float kHumanHeight = kHumanReferenceHeight*kAstronautScale;
+inline constexpr float kHumanEyeHeight = 1.82f*kAstronautScale;
+inline constexpr float kHumanBodyRadius = 0.34f*kAstronautScale;
+inline constexpr float kHeadClearance = 0.28f*kAstronautScale;
+inline constexpr float kShoulderClearance = 0.26f*kAstronautScale;
 
 // Common structure interface.  Existing structures keep their realistic
 // building footprints, while all generated entrances/connectors share these

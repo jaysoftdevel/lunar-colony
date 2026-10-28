@@ -1017,7 +1017,7 @@ void GameApp::update_first_person(float dt,const InputState& input){
         }
     }
     const float target_floor=first_person_floor_height(current);
-    const float max_step=std::max(0.08f,dt*2.8f);
+    const float max_step=std::max(0.055f,dt*1.65f);
     current.y += std::clamp(target_floor-current.y,-max_step,max_step);
     first_person_.set_feet_position(current);
     update_first_person_resource_hover();

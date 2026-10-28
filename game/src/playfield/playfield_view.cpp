@@ -28,9 +28,11 @@ void GameApp::render_playfield(Renderer& r){
     render_walkways(r);
     render_habitats(r);
     render_resources(r);
+    render_builder_robot(r);
 
     if(first_person_mode_==FirstPersonMode::Active){
         r.set_2d(ui_scale_);
+        render_construction_status_frames(r);
         render_status_bar(r);
         render_first_person_hud(r);
         return;
@@ -45,6 +47,7 @@ void GameApp::render_playfield(Renderer& r){
     render_playfield_crosshair(r);
 
     r.set_2d(ui_scale_);
+    render_construction_status_frames(r);
     render_status_bar(r);
     render_build_bar(r);
     render_selection_marquee(r);
@@ -64,10 +67,33 @@ void GameApp::render_playfield(Renderer& r){
             (utility_build_start_?"MOVE TARGET TO ADJUST PORT / LMB CONNECT / ESC CANCEL":"LMB SELECT SUPPLY SOURCE / ESC CANCEL"):
         (active_build && active_build->kind==BuildObjectKind::Walkway?
             (walkway_build_start_?"MOVE TO ADJUST WALKWAY BLUEPRINT / LMB BUILD / ESC CANCEL":"LMB SET WALKWAY START / ESC CANCEL"):
-        (active_build && active_build->kind==BuildObjectKind::Habitat && habitat_has_size_tiers(active_build->habitat_kind)?
+        (active_build && ((active_build->kind==BuildObjectKind::Habitat && habitat_has_size_tiers(active_build->habitat_kind)) ||
+                          (active_build->kind==BuildObjectKind::Resource && active_build->resource_kind==ResourceKind::StorageDome))?
             "LMB PLACE / WHEEL SIZE / N-M ROTATE / ESC CANCEL":
-        (active_build?"LMB PLACE / WHEEL OR N/M ROTATE / ESC CANCEL":"LMB SELECT / DRAG SELECT RESOURCE BOXES / WHEEL ZOOM / MMB ORBIT / RMB PAN / V FPV / ESC MENU")))));
+        (active_build?"LMB PLACE / N-M ROTATE / WHEEL ZOOM / ESC CANCEL":"LMB SELECT / DRAG SELECT RESOURCE BOXES / WHEEL ZOOM / MMB ORBIT / RMB PAN / V FPV / ESC MENU")))));
     game_label(r,{info.x+12,info.y+31},controls,0.52f,theme_,true);
+
+    Rect robot_info={info.x,info.y+info.h+6.0f,560,40};
+    r.draw_rect(robot_info,{0.025f,0.035f,0.045f,0.88f});
+    std::size_t working=0,constructors=0,carriers=0;
+    std::int64_t fleet_cargo=0;
+    std::int64_t fleet_capacity=0;
+    for(const auto& robot:builder_robots_){
+        if(robot.role==RobotRole::Carrier) ++carriers; else ++constructors;
+        if(robot.mode!=BuilderRobotMode::Idle) ++working;
+        fleet_cargo+=robot.cargo.total_amount();
+        fleet_capacity+=robot.payload_capacity_kg;
+    }
+    std::ostringstream robot_line;
+    robot_line<<"ROBOTS  BR-02 "<<constructors<<"  CR-01 "<<carriers<<"  ACTIVE "<<working
+              <<"  CARGO "<<fleet_cargo<<"/"<<fleet_capacity<<" kg";
+    for(const auto& robot:builder_robots_){
+        if(robot.action!=BuilderRobotAction::None){
+            robot_line<<"  |  "<<robot_role_name(robot.role)<<" "<<builder_robot_action_name(robot.action);
+            break;
+        }
+    }
+    game_label(r,{robot_info.x+12,robot_info.y+11},robot_line.str(),0.47f,theme_);
 }
 
 void GameApp::render_selection_marquee(Renderer& r){

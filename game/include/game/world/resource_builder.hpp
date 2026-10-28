@@ -2,6 +2,7 @@
 #include "game/world/resource_mesh.hpp"
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace game::resources {
 using namespace eng;
@@ -101,5 +102,102 @@ struct Builder {
         cylinder_y(mesh.foundation,{c.x,height*0.5f,c.z},height,radius,10,true);
     }
 };
+
+inline ResourceMesh refine_future_resource(ResourceMesh source,ResourceKind kind){
+    Builder b;
+    b.mesh=std::move(source);
+    const float hx=b.mesh.footprint_x*0.5f;
+    const float hz=b.mesh.footprint_z*0.5f;
+
+    // Shared maintainability layer: grounding/load lugs, redundant low-level
+    // service runs and an externally reachable diagnostics enclosure.
+    if(kind!=ResourceKind::LandingPad){
+        const float ax=hx*0.36f,az=hz*0.36f;
+        const float ar=std::clamp(std::min(hx,hz)*0.055f,0.18f,0.32f);
+        for(float sx:{-1.0f,1.0f}) for(float sz:{-1.0f,1.0f}){
+            b.cylinder_y(b.mesh.details,{sx*ax,0.10f,sz*az},0.20f,ar,10,true);
+        }
+        const float z=-hz*0.34f;
+        b.cylinder_between(b.mesh.details,{-hx*0.28f,0.42f,z},{hx*0.28f,0.42f,z},0.050f,8,true,true);
+        b.cylinder_between(b.mesh.details,{-hx*0.28f,0.30f,z+0.13f},{hx*0.28f,0.30f,z+0.13f},0.032f,8,true,true);
+        b.box(b.mesh.details,{hx*0.22f,0.64f,z},{0.58f,0.62f,0.34f});
+        for(int i=0;i<4;++i){
+            const float y=0.45f+0.10f*(float)i;
+            b.line({hx*0.22f-0.20f,y,z-0.18f},{hx*0.22f+0.20f,y,z-0.18f});
+        }
+    }
+
+    switch(kind){
+        case ResourceKind::SolarPanel:
+            // Rotary drive bearings, redundant harnesses and a field-service inverter.
+            b.cylinder_y(b.mesh.details,{0,3.38f,0},0.24f,0.94f,16,true);
+            b.cylinder_between(b.mesh.details,{-4.55f,3.55f,0.48f},{4.55f,3.55f,0.48f},0.045f,8,true,true);
+            b.cylinder_between(b.mesh.details,{-4.55f,3.47f,0.66f},{4.55f,3.47f,0.66f},0.030f,8,true,true);
+            b.box(b.mesh.details,{-1.05f,1.38f,0.62f},{0.72f,0.86f,0.54f});
+            break;
+        case ResourceKind::WaterDriller:
+            // Visible bypass manifold, valves and protected pressure instrumentation.
+            b.cylinder_z(b.mesh.details,{1.30f,2.52f,0},4.80f,0.085f,10,true);
+            for(float z:{-1.75f,0.0f,1.75f}){
+                b.cylinder_y(b.mesh.details,{1.30f,2.70f,z},0.36f,0.15f,10,true);
+                b.box(b.mesh.details,{1.55f,2.70f,z},{0.32f,0.32f,0.28f});
+            }
+            break;
+        case ResourceKind::PowerStorage:
+            // Independent DC bus ducts and emergency isolation cabinets.
+            for(float z:{-1.62f,1.62f}) b.cylinder_x(b.mesh.details,{0,4.62f,z},7.8f,0.070f,8,true);
+            b.box(b.mesh.details,{-4.18f,2.20f,0},{0.62f,1.55f,1.20f});
+            b.box(b.mesh.details,{4.18f,3.35f,0},{0.58f,0.58f,1.35f});
+            break;
+        case ResourceKind::WaterStorage:
+            // Cross-tank pressure equalisation and local valve manifolds.
+            b.cylinder_z(b.mesh.details,{0,5.95f,0},3.55f,0.075f,8,true);
+            for(float x:{-2.65f,2.65f}){
+                b.cylinder_y(b.mesh.details,{x,6.65f,0},0.36f,0.17f,10,true);
+                b.box(b.mesh.details,{x,1.14f,0},{0.58f,0.50f,0.58f});
+            }
+            break;
+        case ResourceKind::OreDriller:
+            // Secondary hydraulic lines and inspection/service platforms.
+            b.cylinder_between(b.mesh.details,{-4.15f,9.65f,-0.68f},{-0.25f,4.60f,-0.68f},0.070f,8,true,true);
+            b.cylinder_between(b.mesh.details,{-4.15f,9.65f,0.68f},{-0.25f,4.60f,0.68f},0.070f,8,true,true);
+            b.box(b.mesh.details,{-3.55f,6.55f,-1.22f},{1.45f,0.16f,0.85f});
+            break;
+        case ResourceKind::WaterPurifier:
+            // Bypass loop and sample/quality sensor bank.
+            b.cylinder_x(b.mesh.details,{0,3.75f,2.35f},6.9f,0.075f,8,true);
+            for(float x:{-2.5f,-0.8f,0.9f,2.6f}){
+                b.cylinder_y(b.mesh.details,{x,3.98f,2.35f},0.34f,0.13f,10,true);
+                b.box(b.mesh.details,{x,4.20f,2.35f},{0.24f,0.22f,0.24f});
+            }
+            break;
+        case ResourceKind::Antenna:
+            // Tension/guy lines make the tall mast read as a plausible low-mass structure.
+            for(float a:{0.0f,2.0944f,4.1888f}){
+                const Vec3 foot{3.15f*std::cos(a),0.26f,3.15f*std::sin(a)};
+                b.line({0,8.25f,0},foot);
+                b.cylinder_y(b.mesh.details,{foot.x,0.32f,foot.z},0.32f,0.16f,8,true);
+            }
+            break;
+        case ResourceKind::LandingPad:
+            // Expansion joints, embedded service trench and low flush approach markers.
+            for(float x:{-5.7f,-2.85f,0.0f,2.85f,5.7f}) b.line({x,0.74f,-7.2f},{x,0.74f,7.2f});
+            b.box(b.mesh.details,{0,0.59f,5.95f},{5.4f,0.12f,0.58f});
+            for(float x:{-2.4f,-0.8f,0.8f,2.4f}) b.cylinder_y(b.mesh.details,{x,0.86f,-7.1f},0.28f,0.12f,8,true);
+            break;
+        case ResourceKind::StorageDome:
+            // Four independent hull-health/service stations around the warehouse.
+            for(int i=0;i<4;++i){
+                const float a=PI*0.5f*(float)i;
+                const Vec3 n{std::sin(a),0.0f,-std::cos(a)};
+                const Vec3 c=n*(std::min(hx,hz)*0.78f)+Vec3{0,1.05f,0};
+                b.box(b.mesh.details,c,{0.56f,0.88f,0.56f});
+                b.cylinder_y(b.mesh.details,{c.x,1.62f,c.z},0.22f,0.14f,8,true);
+            }
+            break;
+        case ResourceKind::Count: break;
+    }
+    return std::move(b.mesh);
+}
 
 } // namespace game::resources

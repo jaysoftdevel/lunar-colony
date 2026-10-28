@@ -19,5 +19,10 @@ fi
 cmake --build "$ROOT/build" --parallel "$JOBS"
 
 echo
-echo "Local build complete: $ROOT/build/bin/game"
-echo "Run with: $ROOT/build/bin/game"
+GAME_BINARY="$ROOT/build/bin/game"
+BINARY_BYTES="$(stat -c %s "$GAME_BINARY")"
+BINARY_KB="$(( (BINARY_BYTES + 1023) / 1024 ))"
+
+echo "Local build complete: $GAME_BINARY"
+echo "Game binary size: ${BINARY_KB} KB (${BINARY_BYTES} bytes)"
+echo "Run with: $GAME_BINARY"
