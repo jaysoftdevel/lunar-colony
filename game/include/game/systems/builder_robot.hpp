@@ -243,6 +243,12 @@ struct BuilderRobotState {
     // transient and intentionally need no save-schema change.
     bool stage_commit_pending{false};
     eng::Vec3 stage_commit_safe_position{};
+    // Latched evacuation destination for the current stage transition. Reusing
+    // one validated point prevents the destination from hopping between nearby
+    // perimeter samples while the rover is moving, which otherwise invalidates
+    // its route and can trigger repeated A* replans. Transient by design.
+    bool stage_commit_safe_position_valid{false};
+    bool stage_commit_alternate_attempted{false};
 
     // Current construction-step material handoff. Carriers always place
     // delivered resources at the site's single drop zone. Before assembly can

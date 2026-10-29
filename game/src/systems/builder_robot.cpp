@@ -60,10 +60,10 @@ constexpr float kApplySeconds=1.50f;
 constexpr float kConstructionWorkSpeedMultiplier=1.50f;
 constexpr float kWeldSeconds=2.20f/kConstructionWorkSpeedMultiplier;
 constexpr float kBuildUpSeconds=1.80f/kConstructionWorkSpeedMultiplier;
-// A stage no longer forces a full four-side lap. Two opposite work positions
-// provide visible perimeter work while substantially reducing non-productive
-// driving; the selected pair rotates between construction stages.
-constexpr int kBuildWorkSectorsPerStage=2;
+// A stage no longer forces a full perimeter lap. One work position is used
+// per stage and rotates between stages, keeping visible perimeter activity
+// without making the constructor cross the growing structure mid-stage.
+constexpr int kBuildWorkSectorsPerStage=1;
 constexpr float kRobotAccelerationMps2=2.4f*kRobotMovementSpeedMultiplier;
 constexpr float kRobotBrakingMps2=3.2f*kRobotMovementSpeedMultiplier;
 constexpr float kRobotTurnRateDegreesPerSecond=125.0f*kRobotMovementSpeedMultiplier;
@@ -907,6 +907,8 @@ void GameApp::update_builder_robot(float dt){
             robot.idle_elapsed=0.0f;
             robot.stage_commit_pending=false;
             robot.stage_commit_safe_position={};
+            robot.stage_commit_safe_position_valid=false;
+            robot.stage_commit_alternate_attempted=false;
             robot.stage_materials_picked=false;
             robot.build_orbit_phase=0.0f;
             robot.build_side_corner_reached=false;
@@ -985,18 +987,19 @@ void GameApp::update_builder_robot(float dt){
                                v.details>0.0f || v.glazing>0.0f || v.access>0.0f;
             if(!visible) continue;
             const Vec3 local=world_math::rotate_y(candidate-h.position,-h.rotation_degrees);
-            if(std::abs(local.x)>mesh.footprint_x*0.5f+radius+0.8f || std::abs(local.z)>mesh.footprint_z*0.5f+radius+0.8f) continue;
-            // Once any authored structure mesh has appeared, its footprint is
-            // no longer a shortcut for rover traffic. This deliberately blocks
-            // the whole installed footprint rather than relying on thin-triangle
-            // hits that can leave diagonal gaps between revealed mesh pieces.
-            if(std::abs(local.x)<mesh.footprint_x*0.5f+radius+0.10f &&
-               std::abs(local.z)<mesh.footprint_z*0.5f+radius+0.10f) return true;
-            if(transformed_triangles_block_circle_range(mesh.foundation,0,revealed_triangle_vertex_count(mesh.foundation,v.foundation),h.position,h.rotation_degrees,candidate,radius) ||
-               transformed_triangles_block_circle_range(mesh.shell,0,revealed_triangle_vertex_count(mesh.shell,v.shell),h.position,h.rotation_degrees,candidate,radius) ||
-               transformed_triangles_block_circle_range(mesh.interior,0,revealed_triangle_vertex_count(mesh.interior,v.interior),h.position,h.rotation_degrees,candidate,radius) ||
-               transformed_triangles_block_circle_range(mesh.details,0,revealed_triangle_vertex_count(mesh.details,v.details),h.position,h.rotation_degrees,candidate,radius) ||
-               transformed_triangles_block_circle_range(mesh.glazing,0,revealed_triangle_vertex_count(mesh.glazing,v.glazing),h.position,h.rotation_degrees,candidate,radius)) return true;
+            // As soon as authored construction mesh is visible, reserve the
+            // whole structure footprint for rover traffic. `radius` already
+            // contains kRobotObstacleMargin; do not add that margin a second
+            // time here. The duplicate inflation in v0.40.13 could turn a
+            // legitimate perimeter work bay into an obstacle as soon as the
+            // next mesh fraction appeared, leaving the constructor unable to
+            // take even the first step of its escape/work route. The previous code
+            // additionally tested thousands of revealed triangles in a fringe
+            // around this same footprint on every A* occupancy query. That did
+            // not improve the conservative collision rule, but became a major
+            // CPU hotspot while a builder was repeatedly replanning near a site.
+            if(std::abs(local.x)<mesh.footprint_x*0.5f+radius &&
+               std::abs(local.z)<mesh.footprint_z*0.5f+radius) return true;
         }
         for(const auto& item:placed_resources_){
             if(item.construction.complete()) continue;
@@ -1005,12 +1008,8 @@ void GameApp::update_builder_robot(float dt){
             const bool visible=v.foundation>0.0f || v.body>0.0f || v.details>0.0f;
             if(!visible) continue;
             const Vec3 local=world_math::rotate_y(candidate-item.position,-item.rotation_degrees);
-            if(std::abs(local.x)>mesh.footprint_x*0.5f+radius+0.8f || std::abs(local.z)>mesh.footprint_z*0.5f+radius+0.8f) continue;
-            if(std::abs(local.x)<mesh.footprint_x*0.5f+radius+0.10f &&
-               std::abs(local.z)<mesh.footprint_z*0.5f+radius+0.10f) return true;
-            if(transformed_triangles_block_circle_range(mesh.foundation,0,revealed_triangle_vertex_count(mesh.foundation,v.foundation),item.position,item.rotation_degrees,candidate,radius) ||
-               transformed_triangles_block_circle_range(mesh.body,0,revealed_triangle_vertex_count(mesh.body,v.body),item.position,item.rotation_degrees,candidate,radius) ||
-               transformed_triangles_block_circle_range(mesh.details,0,revealed_triangle_vertex_count(mesh.details,v.details),item.position,item.rotation_degrees,candidate,radius)) return true;
+            if(std::abs(local.x)<mesh.footprint_x*0.5f+radius &&
+               std::abs(local.z)<mesh.footprint_z*0.5f+radius) return true;
         }
         for(const auto& c:corridor_network_.connections()){
             if(c.construction.complete() || c.construction.progress()<=0.0001f) continue;
@@ -1871,7 +1870,70 @@ void GameApp::update_builder_robot(float dt){
             blocker_distance=d;
             blocker_index=i;
         }
-        if(blocker_index==kNoRobotIndex) return false;
+        if(blocker_index==kNoRobotIndex){
+            // A constructor can become geometrically wedged on the exact
+            // inflated boundary of the partial structure it is building. The
+            // grid planner may consider that boundary traversable while the
+            // continuous chassis test correctly rejects the first turn. In
+            // that case there is no fleet blocker to trigger the normal
+            // traffic escape, so step directly outward from the active
+            // construction footprint before asking A* for another route.
+            const bool structure_build=robot.role==RobotRole::Constructor && robot.target.valid() &&
+                (robot.target.kind==ConstructionTargetKind::Habitat ||
+                 robot.target.kind==ConstructionTargetKind::Resource) &&
+                (robot.mode==BuilderRobotMode::Building || robot.mode==BuilderRobotMode::AwaitingMaterials);
+            if(structure_build){
+                const Vec3 center=construction_target_position(robot.target);
+                Vec3 radial=robot.position-center; radial.y=0.0f;
+                float radial_len=std::sqrt(radial.x*radial.x+radial.z*radial.z);
+                if(radial_len<0.10f){
+                    const float h=robot.heading_degrees*PI/180.0f;
+                    radial={std::sin(h),0.0f,std::cos(h)};
+                    radial_len=1.0f;
+                }
+                radial=radial*(1.0f/radial_len);
+                const float half=(float)playfield_.size()*0.5f-0.70f;
+                constexpr std::array<float,7> turn_offsets{{0.0f,22.5f,-22.5f,45.0f,-45.0f,67.5f,-67.5f}};
+                for(float offset_degrees:turn_offsets){
+                    const float a=offset_degrees*PI/180.0f;
+                    const Vec3 dir{radial.x*std::cos(a)+radial.z*std::sin(a),0.0f,
+                                   -radial.x*std::sin(a)+radial.z*std::cos(a)};
+                    Vec3 candidate=robot.position+dir*2.35f;
+                    candidate.x=std::clamp(candidate.x,-half,half);
+                    candidate.z=std::clamp(candidate.z,-half,half);
+                    candidate.y=first_person_floor_height(candidate);
+                    if(!robot_position_clear(robot_index,candidate)) continue;
+                    if(!robot_structure_move_allowed(robot,robot.position,candidate)) continue;
+                    const float heading=heading_between(robot.position,candidate,robot.heading_degrees);
+                    if(!fleet_hull_clear(robot_index,candidate,heading)) continue;
+
+                    bool clear=true;
+                    const float distance=dist_xz(robot.position,candidate);
+                    const int samples=std::max(2,(int)std::ceil(distance/0.16f));
+                    // Deliberately do not re-test the exact start pose. It may
+                    // be a few centimetres inside the conservative partial-mesh
+                    // envelope; every forward sample must become collision-free.
+                    for(int q=1;q<=samples && clear;++q){
+                        Vec3 pnt=robot.position+(candidate-robot.position)*((float)q/(float)samples);
+                        pnt.y=first_person_floor_height(pnt);
+                        if(!robot_position_clear(robot_index,pnt) ||
+                           !fleet_hull_clear(robot_index,pnt,heading)) clear=false;
+                    }
+                    if(!clear) continue;
+
+                    robot.traffic_escape_position=candidate;
+                    robot.traffic_escape_active=true;
+                    clear_route(robot);
+                    robot.current_speed_mps=0.0f;
+                    robot.route_replan_cooldown=0.0f;
+                    robot.route_resolution_elapsed=0.0f;
+                    robot.route_force_full_replan=false;
+                    robot.blocked_elapsed=0.0f;
+                    return true;
+                }
+            }
+            return false;
+        }
 
         // An idle carrier that is itself blocked while returning to standby
         // must clear *toward standby*, never use the generic head-on escape
@@ -2438,10 +2500,32 @@ void GameApp::update_builder_robot(float dt){
         if(constructor.role!=RobotRole::Constructor || !constructor.stage_commit_pending || !constructor.target.valid()) continue;
         const auto next_step=(std::uint8_t)std::min<int>((int)construction_target_step(constructor.target)+1,(int)construction_target_total_steps(constructor.target));
         for(std::size_t ri=0;ri<builder_robots_.size();++ri){
-            if(robot_safe_for_next_stage(ri,constructor.target,next_step)) continue;
-            Vec3 destination=safe_stage_commit_destination(ri,constructor.target,next_step);
+            if(robot_safe_for_next_stage(ri,constructor.target,next_step)){
+                builder_robots_[ri].stage_commit_safe_position={};
+                builder_robots_[ri].stage_commit_safe_position_valid=false;
+                builder_robots_[ri].stage_commit_alternate_attempted=false;
+                continue;
+            }
             auto& evac=builder_robots_[ri];
-            evac.stage_commit_safe_position=destination;
+            const float body_radius=robot_body_radius(evac.role);
+            auto evacuation_destination_still_valid=[&](Vec3 candidate){
+                if(!evac.stage_commit_safe_position_valid) return false;
+                // Keep the chosen point stable when another rover merely passes
+                // through it. Dynamic fleet conflicts are handled by the route
+                // governor; changing the goal here would recreate route thrash.
+                if(!robot_position_clear(ri,candidate)) return false;
+                if(target_future_envelope_contains(constructor.target,next_step,candidate,body_radius+kRobotObstacleMargin)) return false;
+                if(target_blocks_at_step(constructor.target,next_step,candidate,body_radius+kRobotObstacleMargin)) return false;
+                return robot_structure_move_allowed(evac,candidate,candidate);
+            };
+            if(!evacuation_destination_still_valid(evac.stage_commit_safe_position)){
+                evac.stage_commit_safe_position=safe_stage_commit_destination(ri,constructor.target,next_step);
+                evac.stage_commit_safe_position_valid=true;
+                evac.stage_commit_alternate_attempted=false;
+                clear_route(evac);
+                evac.route_replan_cooldown=0.0f;
+            }
+            Vec3 destination=evac.stage_commit_safe_position;
             // Evacuation owns the robot completely; work animations must not
             // keep the watchdog artificially "alive" while the chassis is
             // failing to leave a future wall volume.
@@ -2450,19 +2534,23 @@ void GameApp::update_builder_robot(float dt){
             // 20 cm short of them, because that can still leave the robot
             // intersecting the next stage's clearance envelope.
             const bool reached=move_towards(ri,destination,0.025f,0.72f);
-            if(!reached && evac.blocked_elapsed>2.0f){
-                // Try a different exterior sector before considering the final
-                // anti-entrapment fallback. This remains local to one robot.
+            if(!reached && evac.blocked_elapsed>2.0f && !evac.stage_commit_alternate_attempted){
+                // After one genuine blocked interval choose exactly one alternate
+                // exterior sector. Do not reset blocked_elapsed here: if the
+                // alternate is also unsolvable, the 5 s hard safety relocation
+                // below must remain reachable instead of restarting forever.
                 evac.service_slot_offset=(std::uint8_t)((evac.service_slot_offset+7u)%24u);
                 clear_route(evac);
                 evac.route_replan_cooldown=0.0f;
-                destination=safe_stage_commit_destination(ri,constructor.target,next_step);
-                evac.stage_commit_safe_position=destination;
+                evac.stage_commit_safe_position=safe_stage_commit_destination(ri,constructor.target,next_step);
+                evac.stage_commit_safe_position_valid=true;
+                evac.stage_commit_alternate_attempted=true;
+                destination=evac.stage_commit_safe_position;
             }
             if(!reached && evac.blocked_elapsed>5.0f &&
                robot_position_clear(ri,destination) && fleet_position_clear(ri,destination) &&
-               !target_future_envelope_contains(constructor.target,next_step,destination,robot_body_radius(evac.role)+kRobotObstacleMargin) &&
-               !target_blocks_at_step(constructor.target,next_step,destination,robot_body_radius(evac.role)+kRobotObstacleMargin)){
+               !target_future_envelope_contains(constructor.target,next_step,destination,body_radius+kRobotObstacleMargin) &&
+               !target_blocks_at_step(constructor.target,next_step,destination,body_radius+kRobotObstacleMargin)){
                 // Absolute invariant: construction is never allowed to seal a
                 // robot into new geometry. If a pathological dynamic traffic
                 // arrangement prevents evacuation for several seconds, place
@@ -2473,6 +2561,9 @@ void GameApp::update_builder_robot(float dt){
                 evac.visual_position=destination;
                 evac.visual_velocity={};
                 evac.current_speed_mps=0.0f;
+                evac.stage_commit_safe_position={};
+                evac.stage_commit_safe_position_valid=false;
+                evac.stage_commit_alternate_attempted=false;
                 evac.blocked_elapsed=0.0f;
                 clear_route(evac);
             }
@@ -2628,9 +2719,10 @@ void GameApp::update_builder_robot(float dt){
 
     constexpr float kConstructionBayArrivalM=0.28f;
 
-    // Work points are deterministic perimeter sectors. A build stage now uses
-    // only two opposite sectors and rotates that pair between stages, avoiding
-    // a full lap around the structure for every single construction increment.
+    // Work points are deterministic perimeter sectors. Each build stage uses one
+    // side only and rotates to the next side on the following stage. This keeps
+    // visible construction activity around the structure without forcing a
+    // constructor to traverse an obstacle corner in the middle of every stage.
     auto construction_work_point=[&](std::size_t robot_index,const ConstructionTargetRef& target,int phase){
         if(robot_index>=builder_robots_.size()) return construction_target_position(target);
         const auto& robot=builder_robots_[robot_index];
@@ -2653,6 +2745,48 @@ void GameApp::update_builder_robot(float dt){
             if(i<robot_index) ++ordinal;
             ++total_workers;
         }
+
+        // Linear projects are worked from the side the constructor is already
+        // on. Their staged resource packages intentionally sit on the blueprint
+        // centreline, so choosing a fixed north/east/south/west sector can put
+        // the work bay on the opposite side and ask A* to drive through the
+        // material pile or the partially erected segment. Stay on the nearest
+        // lateral side and offset multiple builders along the path instead.
+        if(!rectangular && (target.kind==ConstructionTargetKind::Corridor ||
+                            target.kind==ConstructionTargetKind::Utility ||
+                            target.kind==ConstructionTargetKind::Walkway)){
+            const std::vector<Vec3>* path=nullptr;
+            if(target.kind==ConstructionTargetKind::Corridor && target.index<corridor_network_.connections().size())
+                path=&corridor_network_.connections()[target.index].path;
+            else if(target.kind==ConstructionTargetKind::Utility && target.index<utility_network_.connections().size())
+                path=&utility_network_.connections()[target.index].path;
+            else if(target.kind==ConstructionTargetKind::Walkway && target.index<walkway_network_.connections().size())
+                path=&walkway_network_.connections()[target.index].path;
+            if(path && path->size()>=2){
+                const float f=((float)construction_target_step(target)+0.5f)/(float)std::max<std::uint8_t>(1,construction_target_total_steps(target));
+                const Vec3 a=point_along_path(*path,std::max(0.0f,f-0.035f));
+                const Vec3 b=point_along_path(*path,std::min(1.0f,f+0.035f));
+                Vec3 tangent=b-a; tangent.y=0.0f;
+                float tl=std::sqrt(tangent.x*tangent.x+tangent.z*tangent.z);
+                if(tl>0.05f){
+                    tangent=tangent*(1.0f/tl);
+                    Vec3 lateral{-tangent.z,0.0f,tangent.x};
+                    if((robot.position.x-center.x)*lateral.x+(robot.position.z-center.z)*lateral.z<0.0f)
+                        lateral=lateral*-1.0f;
+                    const RobotFootprint hull=robot_footprint(robot.role);
+                    const float ring=1.68f+hull.half_length;
+                    float along=0.0f;
+                    if(total_workers>1){
+                        const float centered=(float)ordinal-((float)total_workers-1.0f)*0.5f;
+                        along=centered*1.45f;
+                    }
+                    Vec3 p=center+lateral*ring+tangent*along;
+                    p.y=first_person_floor_height(p);
+                    return p;
+                }
+            }
+        }
+
         const int sector=((phase%4)+4+(int)(ordinal%4u))%4;
         const float local_angle=(float)sector*0.5f*PI;
         const float a=rotation*PI/180.0f+local_angle;
@@ -2665,7 +2799,12 @@ void GameApp::update_builder_robot(float dt){
             const float hz=std::max(0.25f,footprint_z*0.5f);
             const float tx=dx>0.0001f?hx/dx:std::numeric_limits<float>::max();
             const float tz=dz>0.0001f?hz/dz:std::numeric_limits<float>::max();
-            ring=std::min(tx,tz)+hull.half_length+0.22f;
+            // Keep the normal construction bay outside the *next-stage*
+            // evacuation envelope even when the rover stops within the arrival
+            // tolerance. The old 0.22 m margin left only ~6 cm of theoretical
+            // clearance on the Air Lock, so every stage unnecessarily entered
+            // safety evacuation and could replan itself into a stall.
+            ring=std::min(tx,tz)+hull.half_length+0.88f;
         }
         Vec3 outward{std::sin(a),0.0f,std::cos(a)};
         Vec3 tangent{-outward.z,0.0f,outward.x};
@@ -2688,10 +2827,33 @@ void GameApp::update_builder_robot(float dt){
 
     auto construction_wait_point=[&](std::size_t robot_index,const ConstructionTargetRef& target){
         // Waiting constructors must not occupy the one shared delivery apron.
-        // Choose the perimeter work sector farthest from the material drop so a
-        // CR-01 always has a physically solvable approach while materials are
-        // still missing.
+        // Linear projects use a nearest-side work bay, so sampling work phases
+        // no longer produces four distinct parking candidates. Park explicitly
+        // away from the material handoff instead; otherwise the waiting BR-02
+        // can make the CR-01's drop destination dynamically unreachable.
         const Vec3 drop=construction_drop_position(target);
+        if(target.kind==ConstructionTargetKind::Corridor ||
+           target.kind==ConstructionTargetKind::Utility ||
+           target.kind==ConstructionTargetKind::Walkway){
+            const Vec3 center=construction_target_position(target);
+            Vec3 away=center-drop; away.y=0.0f;
+            float len=std::sqrt(away.x*away.x+away.z*away.z);
+            if(len<0.05f){ away={-1.0f,0.0f,-1.0f}; len=std::sqrt(2.0f); }
+            away=away*(1.0f/len);
+            const Vec3 tangent{-away.z,0.0f,away.x};
+            constexpr std::array<float,5> side_offsets{{0.0f,1.6f,-1.6f,3.0f,-3.0f}};
+            for(float side:side_offsets){
+                Vec3 candidate=center+away*4.25f+tangent*side;
+                candidate.y=first_person_floor_height(candidate);
+                const float heading=heading_between(candidate,center,builder_robots_[robot_index].heading_degrees);
+                if(!robot_position_clear(robot_index,candidate)) continue;
+                if(!fleet_hull_clear(robot_index,candidate,heading)) continue;
+                return candidate;
+            }
+        }
+
+        // Structures retain four stable perimeter sectors; choose the one farthest
+        // from the material drop so CR-01 always has a solvable approach.
         Vec3 best=construction_work_point(robot_index,target,0);
         float best_d=dist_xz(best,drop);
         for(int phase=1;phase<4;++phase){
@@ -3268,6 +3430,8 @@ void GameApp::update_builder_robot(float dt){
             robot.idle_elapsed=0.0f;
             robot.stage_commit_pending=false;
             robot.stage_commit_safe_position={};
+            robot.stage_commit_safe_position_valid=false;
+            robot.stage_commit_alternate_attempted=false;
             robot.stage_materials_picked=false;
             robot.build_orbit_phase=0.0f;
             robot.build_side_corner_reached=false;
@@ -3282,7 +3446,7 @@ void GameApp::update_builder_robot(float dt){
         }
 
         const auto* plan=construction_target_plan(robot.target);
-        if(!plan){ robot.target={}; robot.support_robot_index=kNoRobotIndex; robot.logistics_reservation={}; robot.stage_commit_pending=false; robot.stage_commit_safe_position={}; robot.mode=BuilderRobotMode::Idle; continue; }
+        if(!plan){ robot.target={}; robot.support_robot_index=kNoRobotIndex; robot.logistics_reservation={}; robot.stage_commit_pending=false; robot.stage_commit_safe_position={}; robot.stage_commit_safe_position_valid=false; robot.stage_commit_alternate_attempted=false; robot.mode=BuilderRobotMode::Idle; continue; }
         const auto step=construction_target_step(robot.target);
         const ResourceBundle step_cost=plan->next_step_cost(step);
         ResourceBundle* shared_site_buffer=site_buffer_for(robot.target);
@@ -3602,6 +3766,8 @@ void GameApp::update_builder_robot(float dt){
                 }
                 robot.stage_commit_pending=false;
                 robot.stage_commit_safe_position={};
+                robot.stage_commit_safe_position_valid=false;
+                robot.stage_commit_alternate_attempted=false;
                 clear_action(robot);
                 clear_interaction_station(robot);
                 if(construction_target_complete(robot.target)){
@@ -3637,9 +3803,9 @@ void GameApp::update_builder_robot(float dt){
             clear_route(robot);
             robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*dt);
 
-            // Two opposite work positions per stage retain visible perimeter
-            // construction while cutting the non-productive driving roughly in
-            // half. Action time remains distributed across the required points.
+            // One work position per stage keeps construction visibly distributed around
+            // the footprint while eliminating the opposite-side traversal that
+            // repeatedly stranded BR-02s on partial-mesh corners.
             const float sector_factor=(float)kBuildWorkSectorsPerStage*team_work_factor;
             if(robot.action==BuilderRobotAction::None)
                 start_action(robot,BuilderRobotAction::Welding,kWeldSeconds/sector_factor,MaterialResource::Iron,0,center);
@@ -4137,27 +4303,26 @@ void GameApp::update_builder_robot(float dt){
         }
     }
 
-    // Idle CR-01s park in deterministic standby bays instead of freezing at
-    // the location where their previous delivery happened. Parking at an
-    // arbitrary construction approach can permanently block the BR-02's single
-    // material-drop lane (the no-building.gmsave regression). Standby bays are
-    // outside the starter pallet throat and separated by more than one hull.
+    // Idle CR-01s do not spend simulation time pathfinding toward a cosmetic
+    // global parking bay. Every completed delivery already has a protected
+    // drop-exit phase which moves the chassis clear of the shared apron. Once
+    // that exit is complete the carrier can remain where it is until new work
+    // arrives. If an idle carrier still blocks useful traffic, the right-of-way
+    // recovery above moves that one rover locally. This avoids repeated full-map
+    // A* searches for an otherwise idle robot (the 0.40.13 Bio Dome FPS stall).
     for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
         auto& robot=builder_robots_[robot_index];
         if(robot.role!=RobotRole::Carrier || robot.mode!=BuilderRobotMode::Idle ||
            !robot.cargo.empty() || robot.target.valid()) continue;
-        const Vec3 standby=carrier_standby_position(robot_index);
-        robot.post_delivery_hold=false;
-        if(dist_xz(robot.position,standby)>0.24f){
-            clear_action(robot);
-            clear_interaction_station(robot);
-            move_towards(robot_index,standby,0.16f,0.74f);
-        }else{
-            clear_route(robot);
-            clear_interaction_station(robot);
-            robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*dt);
-            robot.post_delivery_hold=true;
-        }
+        clear_action(robot);
+        clear_interaction_station(robot);
+        clear_route(robot);
+        robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*dt);
+        robot.route_resolution_elapsed=0.0f;
+        robot.route_force_full_replan=false;
+        robot.route_replan_cooldown=0.0f;
+        robot.blocked_elapsed=0.0f;
+        robot.post_delivery_hold=true;
     }
 
     // Per-robot operation watchdog. A fleet member is never allowed to hold a

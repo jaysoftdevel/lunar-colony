@@ -6,11 +6,10 @@
 namespace game::construction_sequence {
 namespace {
 float clamp01(float v){ return std::clamp(v,0.0f,1.0f); }
-float phase(float step,int first,int last){
-    if(step < first) return 0.0f;
-    if(step >= last) return 1.0f;
-    const float span=static_cast<float>(last-first+1);
-    return clamp01((static_cast<float>(step-first)+1.0f)/span);
+float continuous_phase(float step,float first,float last){
+    if(step<=first) return 0.0f;
+    if(step>=last) return 1.0f;
+    return clamp01((step-first)/std::max(0.001f,last-first));
 }
 }
 
@@ -25,13 +24,17 @@ HabitatVisibility habitat_visibility(float step){
     // Discrete assembly plan: ground works -> pressure shell -> internal modules
     // -> glazing/services -> access/finish. Every placed habitat uses its own
     // mesh order, so the visible modules are specific to that model.
-    v.foundation = phase(step,1,2);
-    v.shell      = phase(step,2,5);
-    v.interior   = phase(step,5,7);
-    v.glazing    = phase(step,7,9);
-    v.details    = phase(step,7,9);
-    v.access     = phase(step,9,10);
-    v.edges      = step>=10.0f ? 1.0f : 0.0f;
+    // Construction mesh must become visible during the very first work
+    // iteration. Use continuous ramps rather than waiting for the first whole
+    // legacy stage boundary; reveal_triangles() guarantees at least one authored
+    // triangle as soon as the fraction becomes non-zero.
+    v.foundation = step>0.0f?std::max(0.12f,continuous_phase(step,0.00f,1.60f)):0.0f;
+    v.shell      = continuous_phase(step,0.70f,5.20f);
+    v.interior   = continuous_phase(step,4.50f,7.30f);
+    v.glazing    = continuous_phase(step,6.80f,9.30f);
+    v.details    = continuous_phase(step,6.50f,9.20f);
+    v.access     = continuous_phase(step,8.40f,10.0f);
+    v.edges      = continuous_phase(step,8.80f,10.0f);
     return v;
 }
 
@@ -41,10 +44,10 @@ ResourceVisibility resource_visibility(float step){
     ResourceVisibility v{};
     // External facilities assemble base-first, then the main machine/body,
     // then service hardware and final structural edges.
-    v.foundation = phase(step,1,2);
-    v.body       = phase(step,2,7);
-    v.details    = phase(step,7,9);
-    v.edges      = step>=10.0f ? 1.0f : 0.0f;
+    v.foundation = step>0.0f?std::max(0.12f,continuous_phase(step,0.00f,1.60f)):0.0f;
+    v.body       = continuous_phase(step,0.75f,7.20f);
+    v.details    = continuous_phase(step,6.30f,9.30f);
+    v.edges      = continuous_phase(step,8.70f,10.0f);
     return v;
 }
 

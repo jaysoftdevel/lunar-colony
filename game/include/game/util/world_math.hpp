@@ -56,7 +56,13 @@ inline float point_segment_distance_xz(Vec3 p,Vec3 a,Vec3 b){
 inline std::vector<Vec3> transformed_vertices(const std::vector<Vec3>& src,Vec3 p,float rotation_degrees){
     std::vector<Vec3> out;
     out.reserve(src.size());
-    for(const Vec3& v:src) out.push_back(rotate_y(v,rotation_degrees)+p);
+    // Mesh rendering transforms thousands of vertices per frame. Computing
+    // sin/cos inside rotate_y() for every single vertex dominated CPU time for
+    // large construction blueprints. Evaluate the fixed instance transform once
+    // per batch and apply it to every vertex.
+    const float a=radians(rotation_degrees);
+    const float c=std::cos(a),s=std::sin(a);
+    for(const Vec3& v:src) out.push_back({v.x*c+v.z*s+p.x,v.y+p.y,-v.x*s+v.z*c+p.z});
     return out;
 }
 } // namespace game::world_math

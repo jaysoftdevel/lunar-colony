@@ -350,7 +350,7 @@ void GameApp::render_utilities(Renderer& r){
             mesh_wireframe::draw_layer(r,link.mesh.shell,ghost,1.50f*boost);
             mesh_wireframe::draw_layer(r,link.mesh.details,ghost,1.25f*boost);
             if(!link.mesh.edges.empty()) r.draw_lines_3d(link.mesh.edges,{0.14f,0.54f,1.00f,0.58f},1.65f*boost);
-            if(link.construction.step==0){
+            if(fraction<=0.0001f){
                 r.draw_lines_3d(construction_path_lines(link.path),Color{0.12f,0.58f,1.00f,0.92f},selected?3.2f:2.3f);
             }else{
                 const auto shell=construction_sequence::reveal_triangles(link.mesh.shell,fraction);
@@ -386,7 +386,7 @@ void GameApp::render_walkways(Renderer& r){
             mesh_wireframe::draw_layer(r,w.mesh.deck,ghost,1.50f*boost);
             mesh_wireframe::draw_layer(r,w.mesh.details,ghost,1.25f*boost);
             if(!w.mesh.edges.empty()) r.draw_lines_3d(w.mesh.edges,{0.14f,0.54f,1.00f,0.58f},1.65f*boost);
-            if(w.construction.step==0){
+            if(fraction<=0.0001f){
                 r.draw_lines_3d(construction_path_lines(w.path),Color{0.12f,0.58f,1.00f,0.92f},selected?3.2f:2.3f);
             }else{
                 const auto deck=construction_sequence::reveal_triangles(w.mesh.deck,fraction);
@@ -421,7 +421,7 @@ void GameApp::render_corridors(Renderer& r){
             mesh_wireframe::draw_layer(r,connection.mesh.shell,ghost,1.55f*boost);
             mesh_wireframe::draw_layer(r,connection.mesh.details,ghost,1.30f*boost);
             if(!connection.mesh.edges.empty()) r.draw_lines_3d(connection.mesh.edges,{0.14f,0.54f,1.00f,0.58f},1.70f*boost);
-            if(connection.construction.step==0){
+            if(fraction<=0.0001f){
                 r.draw_lines_3d(construction_path_lines(connection.path),Color{0.12f,0.58f,1.00f,0.92f},(selected||link_source)?3.3f:2.4f);
             }else{
                 const auto shell=construction_sequence::reveal_triangles(connection.mesh.shell,fraction);
