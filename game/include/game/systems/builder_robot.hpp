@@ -249,6 +249,11 @@ struct BuilderRobotState {
     // its route and can trigger repeated A* replans. Transient by design.
     bool stage_commit_safe_position_valid{false};
     bool stage_commit_alternate_attempted{false};
+    // Independent wall-clock for one stage evacuation. Do not derive hard
+    // recovery from blocked_elapsed: turning/replanning can legitimately reset
+    // that locomotion counter while the rover is still trapped inside the
+    // future construction envelope.
+    float stage_commit_evacuate_elapsed{0.0f};
 
     // Current construction-step material handoff. Carriers always place
     // delivered resources at the site's single drop zone. Before assembly can

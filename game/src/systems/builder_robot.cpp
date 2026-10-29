@@ -933,10 +933,9 @@ void GameApp::update_builder_robot(float dt){
         }
     }
 
-    // Several BR-02s may cooperate on the same target.  The lowest-index
-    // assigned constructor is the site coordinator and owns the authoritative
-    // material buffer / stage commit.  Other constructors share that buffer,
-    // haul into it when necessary and perform visible parallel build work.
+    // Construction is blueprint-owned. At most one BR-02 is assigned to a
+    // given target at a time; other constructors remain available for separate
+    // blueprints and dependency-ready network projects.
     auto constructor_team_count=[&](const ConstructionTargetRef& target){
         std::size_t count=0;
         if(!target.valid()) return count;
@@ -947,28 +946,13 @@ void GameApp::update_builder_robot(float dt){
         return count;
     };
     auto constructor_team_capacity=[&](const ConstructionTargetRef& target){
-        // Multiple constructors are useful, but physically small structures
-        // must not attract the entire fleet. Size-aware crew limits leave
-        // enough perimeter/service positions for carriers to approach as well.
-        if(target.kind==ConstructionTargetKind::Habitat && target.index<placed_habitats_.size()){
-            const auto& m=habitat_models_.mesh(placed_habitats_[target.index]);
-            const float largest=std::max(m.footprint_x,m.footprint_z);
-            return largest<7.0f?(std::size_t)2:(largest<13.0f?(std::size_t)4:(std::size_t)6);
-        }
-        if(target.kind==ConstructionTargetKind::Resource && target.index<placed_resources_.size()){
-            const auto& m=resource_models_.mesh(placed_resources_[target.index]);
-            const float largest=std::max(m.footprint_x,m.footprint_z);
-            return largest<7.0f?(std::size_t)2:(largest<13.0f?(std::size_t)4:(std::size_t)6);
-        }
-        switch(target.kind){
-            case ConstructionTargetKind::Corridor:
-            case ConstructionTargetKind::Utility:
-            case ConstructionTargetKind::Walkway: return (std::size_t)2;
-            case ConstructionTargetKind::Habitat:
-            case ConstructionTargetKind::Resource:
-            case ConstructionTargetKind::None: break;
-        }
-        return (std::size_t)1;
+        // One constructor owns one blueprint at a time. Cooperative multi-BR-02
+        // work on the same small structure saved only a few seconds but created
+        // avoidable depot departures, perimeter conflicts and duplicated route
+        // recovery. Multiple builders still work fully in parallel by taking
+        // different placed blueprints; an extra builder waits until a new
+        // structure/network project becomes dependency-ready.
+        return target.valid()?(std::size_t)1:(std::size_t)0;
     };
     auto site_owner_index=[&](const ConstructionTargetRef& target){
         return construction_site_owner_index(target);
@@ -978,8 +962,10 @@ void GameApp::update_builder_robot(float dt){
     };
 
 
-    auto partial_construction_blocks=[&](Vec3 candidate,float radius){
-        for(const auto& h:placed_habitats_){
+    auto partial_construction_blocks=[&](Vec3 candidate,float radius,const ConstructionTargetRef* ignore_target=nullptr){
+        for(std::size_t i=0;i<placed_habitats_.size();++i){
+            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Habitat && ignore_target->index==i) continue;
+            const auto& h=placed_habitats_[i];
             if(h.construction.complete()) continue;
             const auto& mesh=habitat_models_.mesh(h);
             const auto v=construction_sequence::habitat_visibility(h.construction.progress()*(float)kConstructionSteps);
@@ -987,21 +973,16 @@ void GameApp::update_builder_robot(float dt){
                                v.details>0.0f || v.glazing>0.0f || v.access>0.0f;
             if(!visible) continue;
             const Vec3 local=world_math::rotate_y(candidate-h.position,-h.rotation_degrees);
-            // As soon as authored construction mesh is visible, reserve the
-            // whole structure footprint for rover traffic. `radius` already
-            // contains kRobotObstacleMargin; do not add that margin a second
-            // time here. The duplicate inflation in v0.40.13 could turn a
-            // legitimate perimeter work bay into an obstacle as soon as the
-            // next mesh fraction appeared, leaving the constructor unable to
-            // take even the first step of its escape/work route. The previous code
-            // additionally tested thousands of revealed triangles in a fringe
-            // around this same footprint on every A* occupancy query. That did
-            // not improve the conservative collision rule, but became a major
-            // CPU hotspot while a builder was repeatedly replanning near a site.
+            // Once visible, the current structure footprint is a hard rover
+            // obstacle. During a one-way escape from the exact target being
+            // built, callers may ignore only this conservative footprint; the
+            // real mesh/structure collision test still applies to every move.
             if(std::abs(local.x)<mesh.footprint_x*0.5f+radius &&
                std::abs(local.z)<mesh.footprint_z*0.5f+radius) return true;
         }
-        for(const auto& item:placed_resources_){
+        for(std::size_t i=0;i<placed_resources_.size();++i){
+            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Resource && ignore_target->index==i) continue;
+            const auto& item=placed_resources_[i];
             if(item.construction.complete()) continue;
             const auto& mesh=resource_models_.mesh(item);
             const auto v=construction_sequence::resource_visibility(item.construction.progress()*(float)kConstructionSteps);
@@ -1011,21 +992,27 @@ void GameApp::update_builder_robot(float dt){
             if(std::abs(local.x)<mesh.footprint_x*0.5f+radius &&
                std::abs(local.z)<mesh.footprint_z*0.5f+radius) return true;
         }
-        for(const auto& c:corridor_network_.connections()){
+        for(std::size_t i=0;i<corridor_network_.connections().size();++i){
+            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Corridor && ignore_target->index==i) continue;
+            const auto& c=corridor_network_.connections()[i];
             if(c.construction.complete() || c.construction.progress()<=0.0001f) continue;
             if(!polyline_near_xz(candidate,c.path,radius+geometry::kCorridorHalfWidth+1.0f)) continue;
             const float f=c.construction.progress();
             if(construction_triangles_block_circle_range(c.mesh.shell,0,revealed_triangle_vertex_count(c.mesh.shell,f),candidate,radius,[](Vec3 v){return v;}) ||
                construction_triangles_block_circle_range(c.mesh.details,0,revealed_triangle_vertex_count(c.mesh.details,f),candidate,radius,[](Vec3 v){return v;})) return true;
         }
-        for(const auto& c:utility_network_.connections()){
+        for(std::size_t i=0;i<utility_network_.connections().size();++i){
+            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Utility && ignore_target->index==i) continue;
+            const auto& c=utility_network_.connections()[i];
             if(c.construction.complete() || c.construction.progress()<=0.0001f) continue;
             if(!polyline_near_xz(candidate,c.path,radius+1.75f)) continue;
             const float f=c.construction.progress();
             if(construction_triangles_block_circle_range(c.mesh.shell,0,revealed_triangle_vertex_count(c.mesh.shell,f),candidate,radius,[](Vec3 v){return v;}) ||
                construction_triangles_block_circle_range(c.mesh.details,0,revealed_triangle_vertex_count(c.mesh.details,f),candidate,radius,[](Vec3 v){return v;})) return true;
         }
-        for(const auto& c:walkway_network_.connections()){
+        for(std::size_t i=0;i<walkway_network_.connections().size();++i){
+            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Walkway && ignore_target->index==i) continue;
+            const auto& c=walkway_network_.connections()[i];
             if(c.construction.complete() || c.construction.progress()<=0.0001f) continue;
             if(!polyline_near_xz(candidate,c.path,radius+geometry::kWalkwayHalfWidth+0.9f)) continue;
             const float f=c.construction.progress();
@@ -1129,6 +1116,26 @@ void GameApp::update_builder_robot(float dt){
             const float margin=radius+0.30f;
             return std::abs(local.x)<mesh.footprint_x*0.5f+margin && std::abs(local.z)<mesh.footprint_z*0.5f+margin;
         }
+
+        // Linear projects are hollow/open enough that triangle-only safety can
+        // classify a rover in the middle of the future tube as "clear": its
+        // centre does not touch a wall triangle, but once the shell appears it
+        // has no legal route through that wall to get back out. Reserve the
+        // complete planned strip before every stage commit. This is deliberately
+        // conservative; construction work bays are already outside these strips.
+        if(target.kind==ConstructionTargetKind::Corridor && target.index<corridor_network_.connections().size()){
+            const auto& c=corridor_network_.connections()[target.index];
+            return polyline_near_xz(candidate,c.path,geometry::kCorridorHalfWidth+radius+0.30f);
+        }
+        if(target.kind==ConstructionTargetKind::Utility && target.index<utility_network_.connections().size()){
+            const auto& c=utility_network_.connections()[target.index];
+            const float half_width=geometry::kSupplyTrayWidth*0.5f+0.35f;
+            return polyline_near_xz(candidate,c.path,half_width+radius+0.30f);
+        }
+        if(target.kind==ConstructionTargetKind::Walkway && target.index<walkway_network_.connections().size()){
+            const auto& c=walkway_network_.connections()[target.index];
+            return polyline_near_xz(candidate,c.path,geometry::kWalkwayHalfWidth+radius+0.30f);
+        }
         return false;
     };
 
@@ -1196,16 +1203,45 @@ void GameApp::update_builder_robot(float dt){
         }
     }
 
-    auto robot_position_clear=[&](std::size_t robot_index,Vec3 candidate){
+    auto own_target_partial_penetration=[&](const BuilderRobotState& robot,Vec3 candidate){
+        if(!robot.target.valid()) return 0.0f;
+        const float radius=robot_resource_clearance_radius(robot.role)+kRobotObstacleMargin;
+        auto rectangular_penetration=[&](Vec3 center,float rotation,float footprint_x,float footprint_z){
+            const Vec3 local=world_math::rotate_y(candidate-center,-rotation);
+            const float dx=footprint_x*0.5f+radius-std::abs(local.x);
+            const float dz=footprint_z*0.5f+radius-std::abs(local.z);
+            return (dx>0.0f && dz>0.0f)?std::min(dx,dz):0.0f;
+        };
+        if(robot.target.kind==ConstructionTargetKind::Habitat && robot.target.index<placed_habitats_.size()){
+            const auto& h=placed_habitats_[robot.target.index];
+            if(h.construction.complete() || h.construction.progress()<=0.0001f) return 0.0f;
+            const auto& mesh=habitat_models_.mesh(h);
+            return rectangular_penetration(h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+        }
+        if(robot.target.kind==ConstructionTargetKind::Resource && robot.target.index<placed_resources_.size()){
+            const auto& item=placed_resources_[robot.target.index];
+            if(item.construction.complete() || item.construction.progress()<=0.0001f) return 0.0f;
+            const auto& mesh=resource_models_.mesh(item);
+            return rectangular_penetration(item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+        }
+        return 0.0f;
+    };
+
+    auto robot_position_clear_impl=[&](std::size_t robot_index,Vec3 candidate,const ConstructionTargetRef* ignore_partial_target){
         const auto& robot=builder_robots_[robot_index];
-        const float body_radius=robot_body_radius(robot.role);
-        const float radius=body_radius+kRobotObstacleMargin;
+        // Structure/path occupancy must use the complete rendered chassis
+        // envelope, not the legacy centre-body radius. The BR-02 is about
+        // 1.24 m wide x 1.44 m long (CR-01 x 1.54 m), so a centre point can be
+        // outside a wall while a wheel/chassis corner already intersects it.
+        // A circumscribed hull radius is conservative for path planning and
+        // guarantees every heading remains structure-clear.
+        const float structure_radius=robot_resource_clearance_radius(robot.role)+kRobotObstacleMargin;
 
         // Erected geometry is solid, and the volume that will appear in the
         // NEXT construction step is reserved before any rover starts a route.
         // This turns construction into a predictable moving obstacle instead of
         // evacuating robots only at the instant a wall/segment appears.
-        if(partial_construction_blocks(candidate,radius)) return false;
+        if(partial_construction_blocks(candidate,structure_radius,ignore_partial_target)) return false;
         auto future_reserved=[&](const ConstructionTargetRef& target){
             if(!target.valid() || construction_target_complete(target)) return false;
             // A robot servicing this exact construction target may enter its
@@ -1220,13 +1256,6 @@ void GameApp::update_builder_robot(float dt){
                 robot.mode==BuilderRobotMode::Building))
                 return false;
             const auto current=construction_target_step(target);
-            // A untouched blueprint is not yet an imminent geometry change. In
-            // v0.40.5 every step-0 corridor/structure was treated as if its
-            // first segment could appear immediately, so each pathfinding cell
-            // rescanned thousands of mesh triangles for projects no robot was
-            // even building. Reserve step-0 geometry only once a constructor
-            // has actually claimed that target. In-progress targets remain
-            // reserved exactly as before.
             if(current==0){
                 bool actively_claimed=false;
                 for(const auto& fleet_robot:builder_robots_){
@@ -1240,15 +1269,9 @@ void GameApp::update_builder_robot(float dt){
             const auto total=construction_target_total_steps(target);
             const auto next=(std::uint8_t)std::min<int>((int)current+1,(int)total);
             if(next<=current) return false;
-            // Through-traffic reserves the full robot-sized future segment. The
-            // BR-02 assigned to this exact construction may approach its wall
-            // face with a small centre-point clearance; the two-phase stage
-            // commit still performs the strict full-hull evacuation check before
-            // the geometry is revealed, so a new segment can never spawn through
-            // the builder.
             if(robot.role==RobotRole::Constructor && robot.target.valid() && robot.target.same_as(target))
                 return false;
-            return target_blocks_at_step(target,next,candidate,radius);
+            return target_blocks_at_step(target,next,candidate,structure_radius);
         };
         for(std::size_t i=0;i<placed_habitats_.size();++i)
             if(future_reserved({ConstructionTargetKind::Habitat,i})) return false;
@@ -1267,12 +1290,38 @@ void GameApp::update_builder_robot(float dt){
         return true;
     };
 
+    auto robot_position_clear=[&](std::size_t robot_index,Vec3 candidate){
+        return robot_position_clear_impl(robot_index,candidate,nullptr);
+    };
+
+    // A newly revealed construction fraction can expand the conservative rover
+    // footprint around a BR-02 that was legal a frame earlier. Never let that
+    // conservative envelope imprison the constructor: it may move only in a
+    // direction that strictly reduces its penetration into its own target's
+    // footprint. All other structures, material boxes, fleet hulls and the real
+    // authored mesh collision remain active, so this cannot become a shortcut
+    // through a built structure.
+    auto robot_position_clear_while_exiting_own_target=[&](std::size_t robot_index,Vec3 from,Vec3 candidate){
+        if(robot_index>=builder_robots_.size()) return false;
+        const auto& robot=builder_robots_[robot_index];
+        const float from_penetration=own_target_partial_penetration(robot,from);
+        if(from_penetration<=0.0005f) return robot_position_clear(robot_index,candidate);
+        const float candidate_penetration=own_target_partial_penetration(robot,candidate);
+        if(candidate_penetration>0.0005f && candidate_penetration>=from_penetration-0.0005f) return false;
+        return robot_position_clear_impl(robot_index,candidate,&robot.target);
+    };
+
     auto robot_structure_move_allowed=[&](const BuilderRobotState& robot,Vec3 from,Vec3 to){
         if(!first_person_move_allowed(from,to)) return false;
         const float fp_radius=first_person_.body_radius();
-        const float extra=std::max(0.0f,robot_body_radius(robot.role)-fp_radius);
+        const float extra=std::max(0.0f,robot_resource_clearance_radius(robot.role)-fp_radius);
         if(extra<=0.01f) return true;
-        constexpr std::array<Vec3,4> axes{{Vec3{1,0,0},Vec3{-1,0,0},Vec3{0,0,1},Vec3{0,0,-1}}};
+        constexpr float kInvSqrt2=0.70710678118f;
+        constexpr std::array<Vec3,8> axes{{
+            Vec3{1,0,0},Vec3{-1,0,0},Vec3{0,0,1},Vec3{0,0,-1},
+            Vec3{kInvSqrt2,0,kInvSqrt2},Vec3{-kInvSqrt2,0,kInvSqrt2},
+            Vec3{kInvSqrt2,0,-kInvSqrt2},Vec3{-kInvSqrt2,0,-kInvSqrt2}
+        }};
         for(const Vec3 axis:axes){
             const Vec3 off=axis*extra;
             if(!first_person_move_allowed(from+off,to+off)) return false;
@@ -1882,7 +1931,7 @@ void GameApp::update_builder_robot(float dt){
                 (robot.target.kind==ConstructionTargetKind::Habitat ||
                  robot.target.kind==ConstructionTargetKind::Resource) &&
                 (robot.mode==BuilderRobotMode::Building || robot.mode==BuilderRobotMode::AwaitingMaterials);
-            if(structure_build){
+            if(structure_build && own_target_partial_penetration(robot,robot.position)>0.0005f){
                 const Vec3 center=construction_target_position(robot.target);
                 Vec3 radial=robot.position-center; radial.y=0.0f;
                 float radial_len=std::sqrt(radial.x*radial.x+radial.z*radial.z);
@@ -1910,14 +1959,18 @@ void GameApp::update_builder_robot(float dt){
                     bool clear=true;
                     const float distance=dist_xz(robot.position,candidate);
                     const int samples=std::max(2,(int)std::ceil(distance/0.16f));
-                    // Deliberately do not re-test the exact start pose. It may
-                    // be a few centimetres inside the conservative partial-mesh
-                    // envelope; every forward sample must become collision-free.
+                    // The start pose may have become a few centimetres inside
+                    // the newly expanded conservative footprint. Allow a
+                    // strictly monotonic outward exit while keeping every real
+                    // mesh, resource and fleet collision active.
+                    Vec3 previous=robot.position;
                     for(int q=1;q<=samples && clear;++q){
                         Vec3 pnt=robot.position+(candidate-robot.position)*((float)q/(float)samples);
                         pnt.y=first_person_floor_height(pnt);
-                        if(!robot_position_clear(robot_index,pnt) ||
+                        if(!robot_position_clear_while_exiting_own_target(robot_index,previous,pnt) ||
+                           !robot_structure_move_allowed(robot,previous,pnt) ||
                            !fleet_hull_clear(robot_index,pnt,heading)) clear=false;
+                        previous=pnt;
                     }
                     if(!clear) continue;
 
@@ -2209,7 +2262,7 @@ void GameApp::update_builder_robot(float dt){
                 }
                 return true;
             };
-            const bool escape_legal=robot_position_clear(robot_index,candidate) &&
+            const bool escape_legal=robot_position_clear_while_exiting_own_target(robot_index,robot.position,candidate) &&
                 robot_structure_move_allowed(robot,robot.position,candidate) && escape_fleet_clear();
             if(escape_legal){
                 robot.position=candidate;
@@ -2377,7 +2430,8 @@ void GameApp::update_builder_robot(float dt){
         }
 
         const Vec3 midpoint=route_position_at_distance(robot,robot.route_progress_m+advance*0.5f);
-        const bool legal=robot_position_clear(robot_index,midpoint) && robot_position_clear(robot_index,candidate) &&
+        const bool legal=robot_position_clear_while_exiting_own_target(robot_index,robot.position,midpoint) &&
+                         robot_position_clear_while_exiting_own_target(robot_index,midpoint,candidate) &&
                          robot_structure_move_allowed(robot,robot.position,midpoint) &&
                          robot_structure_move_allowed(robot,midpoint,candidate) &&
                          fleet_hull_clear(robot_index,midpoint,candidate_heading) &&
@@ -2423,7 +2477,7 @@ void GameApp::update_builder_robot(float dt){
 
     auto robot_safe_for_next_stage=[&](std::size_t robot_index,const ConstructionTargetRef& target,std::uint8_t next_step){
         const auto& robot=builder_robots_[robot_index];
-        const float radius=robot_body_radius(robot.role)+kRobotObstacleMargin;
+        const float radius=robot_resource_clearance_radius(robot.role)+kRobotObstacleMargin;
         if(target_future_envelope_contains(target,next_step,robot.position,radius)) return false;
         if(target_blocks_at_step(target,next_step,robot.position,radius)) return false;
         return true;
@@ -2431,7 +2485,7 @@ void GameApp::update_builder_robot(float dt){
 
     auto safe_stage_commit_destination=[&](std::size_t robot_index,const ConstructionTargetRef& target,std::uint8_t next_step){
         const auto& robot=builder_robots_[robot_index];
-        const float body_radius=robot_body_radius(robot.role);
+        const float body_radius=robot_resource_clearance_radius(robot.role);
         Vec3 center=construction_target_position(target);
         float base_radius=1.35f;
         float rotation_degrees=0.0f;
@@ -2504,10 +2558,12 @@ void GameApp::update_builder_robot(float dt){
                 builder_robots_[ri].stage_commit_safe_position={};
                 builder_robots_[ri].stage_commit_safe_position_valid=false;
                 builder_robots_[ri].stage_commit_alternate_attempted=false;
+                builder_robots_[ri].stage_commit_evacuate_elapsed=0.0f;
                 continue;
             }
             auto& evac=builder_robots_[ri];
-            const float body_radius=robot_body_radius(evac.role);
+            evac.stage_commit_evacuate_elapsed+=dt;
+            const float body_radius=robot_resource_clearance_radius(evac.role);
             auto evacuation_destination_still_valid=[&](Vec3 candidate){
                 if(!evac.stage_commit_safe_position_valid) return false;
                 // Keep the chosen point stable when another rover merely passes
@@ -2534,7 +2590,7 @@ void GameApp::update_builder_robot(float dt){
             // 20 cm short of them, because that can still leave the robot
             // intersecting the next stage's clearance envelope.
             const bool reached=move_towards(ri,destination,0.025f,0.72f);
-            if(!reached && evac.blocked_elapsed>2.0f && !evac.stage_commit_alternate_attempted){
+            if(!reached && evac.stage_commit_evacuate_elapsed>2.0f && !evac.stage_commit_alternate_attempted){
                 // After one genuine blocked interval choose exactly one alternate
                 // exterior sector. Do not reset blocked_elapsed here: if the
                 // alternate is also unsolvable, the 5 s hard safety relocation
@@ -2547,7 +2603,7 @@ void GameApp::update_builder_robot(float dt){
                 evac.stage_commit_alternate_attempted=true;
                 destination=evac.stage_commit_safe_position;
             }
-            if(!reached && evac.blocked_elapsed>5.0f &&
+            if(!reached && evac.stage_commit_evacuate_elapsed>5.0f &&
                robot_position_clear(ri,destination) && fleet_position_clear(ri,destination) &&
                !target_future_envelope_contains(constructor.target,next_step,destination,body_radius+kRobotObstacleMargin) &&
                !target_blocks_at_step(constructor.target,next_step,destination,body_radius+kRobotObstacleMargin)){
@@ -2564,6 +2620,7 @@ void GameApp::update_builder_robot(float dt){
                 evac.stage_commit_safe_position={};
                 evac.stage_commit_safe_position_valid=false;
                 evac.stage_commit_alternate_attempted=false;
+                evac.stage_commit_evacuate_elapsed=0.0f;
                 evac.blocked_elapsed=0.0f;
                 clear_route(evac);
             }
@@ -2774,7 +2831,17 @@ void GameApp::update_builder_robot(float dt){
                     if((robot.position.x-center.x)*lateral.x+(robot.position.z-center.z)*lateral.z<0.0f)
                         lateral=lateral*-1.0f;
                     const RobotFootprint hull=robot_footprint(robot.role);
-                    const float ring=1.68f+hull.half_length;
+                    (void)hull;
+                    float project_half_width=0.80f;
+                    if(target.kind==ConstructionTargetKind::Corridor) project_half_width=geometry::kCorridorHalfWidth;
+                    else if(target.kind==ConstructionTargetKind::Utility) project_half_width=geometry::kSupplyTrayWidth*0.5f+0.35f;
+                    else if(target.kind==ConstructionTargetKind::Walkway) project_half_width=geometry::kWalkwayHalfWidth;
+                    // End each work cycle outside the *full chassis* future
+                    // envelope, including the arrival tolerance. This avoids a
+                    // stage-commit evacuation where the tube/walkway edge and
+                    // the rover body compete for the same narrow strip.
+                    const float ring=project_half_width+robot_resource_clearance_radius(robot.role)+
+                                     kRobotObstacleMargin+0.70f;
                     float along=0.0f;
                     if(total_workers>1){
                         const float centered=(float)ordinal-((float)total_workers-1.0f)*0.5f;
@@ -2934,7 +3001,7 @@ void GameApp::update_builder_robot(float dt){
             return structure.position+world_math::rotate_y({mesh.footprint_x*0.5f+1.15f,0.0f,0.0f},structure.rotation_degrees);
         const auto& robot=builder_robots_[robot_index];
         const float ring=0.5f*std::sqrt(mesh.footprint_x*mesh.footprint_x+mesh.footprint_z*mesh.footprint_z)+
-                         robot_body_radius(robot.role)+0.92f;
+                         robot_resource_clearance_radius(robot.role)+0.92f;
         const int slots=24;
         const int start=(int)((robot_index*7u+robot.service_slot_offset)%slots);
         for(int n=0;n<slots;++n){
@@ -3368,6 +3435,68 @@ void GameApp::update_builder_robot(float dt){
     };
 
 
+    // A construction step can reveal enough geometry that the *full rendered
+    // chassis* is suddenly inside the conservative footprint even though its
+    // centre was legal on the previous frame. A* cannot reliably start from an
+    // invalid occupancy cell, so resolve this one-way overlap before normal task
+    // planning. Movement is allowed only when it strictly reduces penetration
+    // into the rover's own target and remains clear of every other structure,
+    // material package and robot hull.
+    std::vector<bool> body_escape_repositioning(builder_robots_.size(),false);
+    for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
+        auto& robot=builder_robots_[robot_index];
+        if(robot.role!=RobotRole::Constructor || safety_repositioning[robot_index] ||
+           !robot.target.valid() || construction_target_complete(robot.target)) continue;
+        if(robot.target.kind!=ConstructionTargetKind::Habitat &&
+           robot.target.kind!=ConstructionTargetKind::Resource) continue;
+        const float penetration=own_target_partial_penetration(robot,robot.position);
+        if(penetration<=0.0005f) continue;
+
+        Vec3 center=construction_target_position(robot.target);
+        float rotation=0.0f, footprint_x=1.0f, footprint_z=1.0f;
+        if(robot.target.kind==ConstructionTargetKind::Habitat && robot.target.index<placed_habitats_.size()){
+            const auto& h=placed_habitats_[robot.target.index];
+            const auto& mesh=habitat_models_.mesh(h);
+            center=h.position; rotation=h.rotation_degrees; footprint_x=mesh.footprint_x; footprint_z=mesh.footprint_z;
+        }else if(robot.target.kind==ConstructionTargetKind::Resource && robot.target.index<placed_resources_.size()){
+            const auto& item=placed_resources_[robot.target.index];
+            const auto& mesh=resource_models_.mesh(item);
+            center=item.position; rotation=item.rotation_degrees; footprint_x=mesh.footprint_x; footprint_z=mesh.footprint_z;
+        }
+        const float hull_radius=robot_resource_clearance_radius(robot.role)+kRobotObstacleMargin;
+        const Vec3 local=world_math::rotate_y(robot.position-center,-rotation);
+        const float px=footprint_x*0.5f+hull_radius-std::abs(local.x);
+        const float pz=footprint_z*0.5f+hull_radius-std::abs(local.z);
+        Vec3 local_out{};
+        if(px<=pz) local_out={local.x>=0.0f?1.0f:-1.0f,0.0f,0.0f};
+        else local_out={0.0f,0.0f,local.z>=0.0f?1.0f:-1.0f};
+        const Vec3 outward=world_math::rotate_y(local_out,rotation);
+        const float step_distance=std::min(penetration+0.08f,std::max(0.018f,robot.move_speed_mps*dt*0.82f));
+        constexpr std::array<float,7> escape_angles{{0.0f,15.0f,-15.0f,30.0f,-30.0f,45.0f,-45.0f}};
+        for(float angle_degrees:escape_angles){
+            const float a=angle_degrees*PI/180.0f;
+            const Vec3 dir{outward.x*std::cos(a)+outward.z*std::sin(a),0.0f,
+                           -outward.x*std::sin(a)+outward.z*std::cos(a)};
+            Vec3 candidate=robot.position+dir*step_distance;
+            candidate.y=first_person_floor_height(candidate);
+            if(!robot_position_clear_while_exiting_own_target(robot_index,robot.position,candidate)) continue;
+            if(!robot_structure_move_allowed(robot,robot.position,candidate)) continue;
+            const float heading=heading_between(robot.position,candidate,robot.heading_degrees);
+            if(!fleet_hull_clear(robot_index,candidate,heading)) continue;
+            clear_action(robot);
+            clear_route(robot);
+            robot.position=candidate;
+            robot.heading_degrees=heading;
+            robot.current_speed_mps=std::min(robot.move_speed_mps,0.85f);
+            robot.blocked_elapsed=0.0f;
+            robot.route_resolution_elapsed=0.0f;
+            robot.route_force_full_replan=false;
+            robot.traffic_escape_active=false;
+            body_escape_repositioning[robot_index]=true;
+            break;
+        }
+    }
+
     // Constructors own build targets and build-site buffers. They wait for a
     // carrier first, but retain the ability to self-haul if no carrier can
     // satisfy the request so construction can never deadlock.
@@ -3378,7 +3507,7 @@ void GameApp::update_builder_robot(float dt){
         // coordinating constructor itself. Previously a pending coordinator
         // could be moved by the pre-pass and then immediately braked by its
         // normal Building branch in the same tick, freezing the stage forever.
-        if(safety_repositioning[robot_index]) continue;
+        if(safety_repositioning[robot_index] || body_escape_repositioning[robot_index]) continue;
 
         auto choose_target=[&](){
             ConstructionTargetRef best{};
@@ -3781,8 +3910,44 @@ void GameApp::update_builder_robot(float dt){
 
             const Vec3 center=build_center;
             const int phase=std::clamp((int)std::floor(robot.build_orbit_phase),0,kBuildWorkSectorsPerStage-1);
-            const int stage_side=(int)construction_target_step(robot.target)&3;
-            const int work_sector=(stage_side+phase*2)&3;
+
+            // Do not rotate a BR-02 to a different structure side merely because
+            // the logical build stage advanced. The growing footprint can turn
+            // that cosmetic side change into a mandatory corner traversal, and
+            // the exact v0.40.14 save demonstrates how the planner/chassis
+            // boundary mismatch can then repeat forever. Choose the nearest
+            // exterior side when a stage begins and latch that work point for
+            // the duration of the stage. After the stage commit the next stage
+            // re-evaluates from the rover's current position, which naturally
+            // keeps it on the same safe side unless another side is genuinely
+            // closer. Multiple constructors remain distributed because
+            // construction_work_point() already offsets by constructor ordinal.
+            int work_sector=phase;
+            if(robot.target.kind==ConstructionTargetKind::Habitat ||
+               robot.target.kind==ConstructionTargetKind::Resource){
+                const Vec3 selector=robot.interaction_position_valid?robot.interaction_position:robot.position;
+                float best_clear_distance=std::numeric_limits<float>::max();
+                float best_any_distance=std::numeric_limits<float>::max();
+                int best_clear_sector=-1;
+                int best_any_sector=work_sector;
+                for(int sector=0;sector<4;++sector){
+                    const Vec3 candidate=construction_work_point(robot_index,robot.target,sector);
+                    const float candidate_distance=dist_xz(selector,candidate);
+                    if(candidate_distance<best_any_distance){
+                        best_any_distance=candidate_distance;
+                        best_any_sector=sector;
+                    }
+                    const float face_heading=heading_between(candidate,center,robot.heading_degrees);
+                    const bool bay_clear=robot_position_clear(robot_index,candidate) &&
+                        robot_structure_move_allowed(robot,candidate,candidate) &&
+                        fleet_hull_clear(robot_index,candidate,face_heading);
+                    if(bay_clear && candidate_distance<best_clear_distance){
+                        best_clear_distance=candidate_distance;
+                        best_clear_sector=sector;
+                    }
+                }
+                work_sector=best_clear_sector>=0?best_clear_sector:best_any_sector;
+            }
             const Vec3 work_position=construction_work_point(robot_index,robot.target,work_sector);
             robot.interaction_focus_position=center;
             robot.interaction_position_valid=true;
