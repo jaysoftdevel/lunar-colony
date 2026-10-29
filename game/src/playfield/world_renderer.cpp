@@ -140,7 +140,7 @@ void draw_sliding_door(Renderer& r,const CorridorDoor& door,float open_fraction)
 }
 }
 
-void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,std::uint8_t construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
+void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
     if(preview){
         const auto shell=transformed_vertices(mesh.shell,position,rotation_degrees);
         const auto foundation=transformed_vertices(mesh.foundation,position,rotation_degrees);
@@ -237,7 +237,7 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
     r.draw_lines_3d(edges,edge_color,selected?3.65f:2.90f);
 }
 
-void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,std::uint8_t construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
+void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
     if(preview){
         const auto body=transformed_vertices(mesh.body,position,rotation_degrees);
         const auto foundation=transformed_vertices(mesh.foundation,position,rotation_degrees);
@@ -319,7 +319,7 @@ void GameApp::render_resources(Renderer& r){
             fpv_doors=storage_dome_doors(i);
             fpv_ptr=&fpv_doors;
         }
-        render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.step,fpv_ptr);
+        render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
 
         if(instance.kind!=ResourceKind::StorageDome || !instance.construction.complete() || instance.stored_boxes.empty()) continue;
@@ -461,7 +461,7 @@ void GameApp::render_habitats(Renderer& r){
             fpv_doors=habitat_doors(i);
             fpv_ptr=&fpv_doors;
         }
-        render_habitat_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.step,fpv_ptr);
+        render_habitat_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
 
         // Exterior stairs/ramps exist only on the dedicated Air Lock and only

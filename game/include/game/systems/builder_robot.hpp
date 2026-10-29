@@ -42,8 +42,15 @@ enum class BuilderRobotAction : std::uint8_t {
 
 inline constexpr float kBuilderRobotBodyRadiusM = 0.48f;
 inline constexpr float kCarrierRobotBodyRadiusM = 0.44f;
-inline constexpr float kBuilderRobotTransitSpeedMps = 2.20f;
+inline constexpr float kRobotMovementSpeedMultiplier = 1.50f;
+inline constexpr float kBuilderRobotTransitSpeedMps = 2.20f*kRobotMovementSpeedMultiplier;
 inline constexpr float kCarrierRobotTransitSpeedMps = kBuilderRobotTransitSpeedMps*1.10f;
+// Physical construction-drop package layout. Keeping these dimensions shared
+// between rendering and navigation makes the visible material stacks real
+// obstacles instead of decoration that a rover can drive through.
+inline constexpr float kConstructionDropBoxColumnSpacingM = 0.46f;
+inline constexpr float kConstructionDropBoxFirstRowOffsetM = 2.20f;
+inline constexpr float kConstructionDropBoxRowSpacingM = 0.48f;
 inline constexpr std::size_t kNoRobotIndex = std::numeric_limits<std::size_t>::max();
 
 inline float robot_body_radius(RobotRole role){
@@ -85,7 +92,7 @@ struct BuilderRobotState {
     BuilderRobotMode mode{BuilderRobotMode::Idle};
     ConstructionTargetRef target{};
     ResourceBundle cargo{};
-    ResourceBundle site_buffer{};       // authoritative only for Constructor role
+    ResourceBundle site_buffer{};       // legacy save field; blueprint site_buffer is authoritative since 0.40.12
 
     // Exact logistics assignment for the current construction trip.  This is
     // the shared reservation seen by every robot: a material kilogram may be
@@ -141,6 +148,10 @@ struct BuilderRobotState {
     eng::Vec3 route_destination{};
     float route_stop_radius{0.0f};
     float route_replan_cooldown{0.0f};
+    // Transient widening tier for event-driven path search. A failed search
+    // widens on a later planning opportunity instead of running several A* jobs
+    // back-to-back in one simulation slice.
+    std::uint8_t route_search_tier{0};
     float route_speed_scale{1.0f};
     float route_progress_m{0.0f};
     float route_total_length_m{0.0f};
@@ -158,6 +169,24 @@ struct BuilderRobotState {
     // A yield changes speed, never steering direction, so it cannot cause spins.
     bool route_waiting_for_clearance{false};
     float route_wait_elapsed{0.0f};
+
+    // Route-resolution watchdog. Local lane replans are intentionally cheap,
+    // but a rover must never remain trapped in that local search indefinitely.
+    // If no useful path/progress is obtained for two seconds the integration
+    // layer requests one full-map/world-geometry replan and discards the local
+    // traffic assumptions which may have created a mutual wait.
+    float route_resolution_elapsed{0.0f};
+    bool route_force_full_replan{false};
+    std::uint16_t route_full_replan_count{0};
+
+    // Deterministic fleet-deadlock escape. If the 2 s full-route watchdog
+    // detects a nose-to-nose traffic lock, only the lower-priority rover is
+    // assigned a short hull-safe pull-aside waypoint. The original task/goal is
+    // untouched; after reaching this transient waypoint the robot replans its
+    // normal route. This avoids random reverse/spin steering while guaranteeing
+    // that two mutually blocking chassis can create planning space.
+    eng::Vec3 traffic_escape_position{};
+    bool traffic_escape_active{false};
 
     // Stable operation station for pickup / delivery / construction work.
     // Interaction destinations must not be recomputed from the robot's current
@@ -177,6 +206,14 @@ struct BuilderRobotState {
     // ranking can reorder two approaching rovers every frame and put both into
     // the throat. Older assignments keep priority until pickup/egress completes.
     float pickup_queue_age{0.0f};
+
+    // Runtime hysteresis for leaving the starter depot with cargo. Once a
+    // rover has crossed the outbound gate for the current load, it may not
+    // re-enter the exit phase just because a later route briefly crosses the
+    // old x-threshold. These flags are transient and are reconstructed from
+    // cargo/position after load; they do not need save-schema persistence.
+    bool starter_exit_pending{false};
+    bool starter_exit_completed{false};
 
     // After unloading at a construction site's single material drop, a CR-01
     // must physically clear the apron before the site reservation is released.

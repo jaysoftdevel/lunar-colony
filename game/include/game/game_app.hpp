@@ -37,7 +37,7 @@ public:
 private:
     enum class Screen { MainMenu, NewGame, SaveGame, LoadGame, Settings, Credits, Playfield };
     enum class HabitatViewMode { Default, Full };
-    enum class GameSpeed { Normal = 0, Quick, Fast };
+    enum class GameSpeed { Normal = 0, Quick, Fast, Pause };
     enum class FirstPersonMode { Off, DropPending, Active };
     enum class SelectionKind { None, Habitat, Corridor, Resource, GroundResource, Utility, Walkway, Robot };
 
@@ -70,6 +70,12 @@ private:
     ColonyStatus status_{};
     ResourceManagement resources_{};
     std::vector<BuilderRobotState> builder_robots_{};
+    // Synchronous pathfinding is bounded once per rendered update. All 90 Hz
+    // catch-up substeps share this budget so a slow frame cannot recursively
+    // create more expensive path searches.
+    int robot_constructor_route_plans_budget_{0};
+    int robot_carrier_route_plans_budget_{0};
+    int robot_full_route_plans_budget_{0};
     eng::Vec3 starter_stash_center_{};
     std::array<double,kMaterialResourceCount> production_fraction_{};
     double life_support_fraction_seconds_{0.0};
@@ -144,8 +150,8 @@ private:
     void render_utility_placement(eng::Renderer& r);
     void render_walkway_placement(eng::Renderer& r);
     void render_corridor_placement(eng::Renderer& r);
-    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,std::uint8_t construction_step=10,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
-    void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,std::uint8_t construction_step=10,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
+    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
+    void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
     bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees) const;
     bool resource_placement_valid(ResourceKind kind,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees) const;
     eng::Vec3 snap_storage_dome(eng::Vec3 hit,StorageDomeSize size,float& rotation_degrees) const;
@@ -174,12 +180,15 @@ private:
     ResourceBundle starter_resource_reserve() const;
     eng::Vec3 construction_target_position(const ConstructionTargetRef& target) const;
     eng::Vec3 construction_drop_position(const ConstructionTargetRef& target) const;
+    eng::Vec3 construction_drop_package_position(const ConstructionTargetRef& target,int visual_slot) const;
     bool construction_target_complete(const ConstructionTargetRef& target) const;
+    bool construction_target_dependencies_ready(const ConstructionTargetRef& target) const;
     const ConstructionResourcePlan* construction_target_plan(const ConstructionTargetRef& target) const;
     std::uint8_t construction_target_step(const ConstructionTargetRef& target) const;
     std::uint8_t construction_target_total_steps(const ConstructionTargetRef& target) const;
     bool advance_construction_target(const ConstructionTargetRef& target,float dt);
     std::size_t construction_site_owner_index(const ConstructionTargetRef& target) const;
+    ResourceBundle* construction_site_buffer(const ConstructionTargetRef& target);
     const ResourceBundle* construction_site_buffer(const ConstructionTargetRef& target) const;
     ResourceBundle construction_site_reserved(const ConstructionTargetRef& target,std::size_t exclude_robot=kNoRobotIndex) const;
     ResourceBundle construction_site_remaining(const ConstructionTargetRef& target,bool include_reservations=true,std::size_t exclude_robot=kNoRobotIndex) const;

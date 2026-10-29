@@ -124,3 +124,11 @@ Fleet prediction is acceleration-bounded: future pose is integrated from actual 
 ## 0.31.20 construction logistics handoff
 
 Construction sites expose a single deterministic `construction_drop_position()`. CR-01 deliveries and BR-02 fallback hauls stage outside that apron, unload into the shared site buffer, then physically clear the bay before ownership is released. A designated builder performs the stage-material pickup animation from the pile; the shared buffer remains authoritative until the stage commits, so visual handoff does not duplicate inventory. Each stage assigns four planned perimeter work sectors plus outside-corner transition points. Robot path validation also reserves the geometry introduced by the next construction step, preventing any rover from occupying space that is about to become solid.
+
+## v0.40.0 context-cluster baseline
+
+The build is now partitioned into explicit implementation clusters in `game/cmake/GameClusters.cmake`. These are CMake OBJECT targets and also the supported context boundaries for future maintenance. `IMPLEMENTATION_CLUSTERS.md` maps feature requests to the smallest relevant targets; `BASELINE_CONTEXT.md` is the compact handoff summary intended for starting a fresh conversation without importing the full historical context.
+
+Robot path search is separated from robot task policy. `game_cluster_pathfinding` owns generic corridor-grid A*/Theta*-style route geometry in `game/robots/path_planner.*`. `game_cluster_robots` supplies floor, occupancy, segment and traffic-cost callbacks and remains authoritative for task scheduling, continuous motion, hull collision exclusion, logistics and construction work.
+
+Path recovery has two levels. Routine replans stay in bounded 4.5/9/18 m corridors. A per-robot route-resolution watchdog accumulates whenever no useful movement/path resolution is achieved; publishing another local route does not clear it. At 2.0 seconds the next attempt becomes a full-width world-geometry search and temporary rover positions are removed from hard A* occupancy. Continuous prediction and hard hull checks still prevent physical robot overlap during execution. Any meaningful physical progress resets the watchdog and returns the robot to the cheap local planner.

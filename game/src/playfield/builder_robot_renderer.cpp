@@ -226,21 +226,19 @@ void GameApp::render_builder_robot(Renderer& r){
     add_box(carrier_sensors,{0,0.86f,-0.56f},{0.09f,0.28f,0.09f});
     add_box(carrier_sensors,{0,1.04f,-0.56f},{0.42f,0.12f,0.14f});
 
-    // Delivered construction resources remain visibly staged beside the site
-    // after PUT-DOWN. These crates are a rendering of the authoritative shared
+    // Delivered construction resources remain visibly staged inside the active
+    // blueprint after PUT-DOWN. The rover handoff point stays outside so a
+    // partial wall can never trap the logistics vehicle. These crates render the authoritative shared
     // site buffer, not loose ground resources, so they cannot be collected a
     // second time. As a construction step consumes material the corresponding
     // boxes disappear from the staging area.
-    for(std::size_t owner_index=0;owner_index<builder_robots_.size();++owner_index){
-        const auto& owner=builder_robots_[owner_index];
-        if(owner.role!=RobotRole::Constructor || !owner.target.valid() || owner.site_buffer.empty()) continue;
-        if(construction_site_owner_index(owner.target)!=owner_index) continue;
-        Vec3 site=construction_drop_position(owner.target);
-        site.y=first_person_floor_height(site);
-        ResourceBundle visible_buffer=owner.site_buffer;
-        if(owner.stage_materials_picked){
-            if(const auto* plan=construction_target_plan(owner.target)){
-                const ResourceBundle picked=plan->next_step_cost(construction_target_step(owner.target));
+    auto render_site_buffer=[&](const ConstructionTargetRef& target,const ResourceBundle& buffer){
+        if(buffer.empty()) return;
+        ResourceBundle visible_buffer=buffer;
+        const std::size_t owner_index=construction_site_owner_index(target);
+        if(owner_index<builder_robots_.size() && builder_robots_[owner_index].stage_materials_picked){
+            if(const auto* plan=construction_target_plan(target)){
+                const ResourceBundle picked=plan->next_step_cost(construction_target_step(target));
                 for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
                     const auto material=(MaterialResource)ri;
                     visible_buffer.amount(material)=std::max<std::int64_t>(0,visible_buffer.amount(material)-picked.amount(material));
@@ -255,15 +253,12 @@ void GameApp::render_builder_robot(Renderer& r){
             const std::int64_t capacity=std::max<std::int64_t>(1,resource_package_capacity_kg(material));
             while(remaining>0 && visual_slot<max_visual_packages){
                 const std::int64_t package_amount=std::min(remaining,capacity);
-                const int column=visual_slot%6;
-                const int row=(visual_slot/6)%3;
                 const int layer=visual_slot/18;
-                const float x=((float)column-2.5f)*0.43f;
-                const float z=0.62f+(float)row*0.44f;
                 const float half=resource_package_half_width(material,package_amount);
                 const float height=resource_package_height(material,package_amount);
                 MeshBits box;
-                const Vec3 base=site+Vec3{x,0.04f+(float)layer*0.38f,z};
+                Vec3 base=construction_drop_package_position(target,visual_slot);
+                base.y=first_person_floor_height(base)+0.04f+(float)layer*0.38f;
                 add_box(box,base+Vec3{0,height*0.5f,0},{half*2.0f,height,half*2.0f});
                 r.draw_triangles_3d(box.tris,resource_color(material));
                 r.draw_lines_3d(box.edges,{0.07f,0.09f,0.10f,0.95f},0.9f);
@@ -271,7 +266,17 @@ void GameApp::render_builder_robot(Renderer& r){
                 ++visual_slot;
             }
         }
-    }
+    };
+    for(std::size_t i=0;i<placed_habitats_.size();++i)
+        render_site_buffer({ConstructionTargetKind::Habitat,i},placed_habitats_[i].site_buffer);
+    for(std::size_t i=0;i<placed_resources_.size();++i)
+        render_site_buffer({ConstructionTargetKind::Resource,i},placed_resources_[i].site_buffer);
+    for(std::size_t i=0;i<corridor_network_.connections().size();++i)
+        render_site_buffer({ConstructionTargetKind::Corridor,i},corridor_network_.connections()[i].site_buffer);
+    for(std::size_t i=0;i<utility_network_.connections().size();++i)
+        render_site_buffer({ConstructionTargetKind::Utility,i},utility_network_.connections()[i].site_buffer);
+    for(std::size_t i=0;i<walkway_network_.connections().size();++i)
+        render_site_buffer({ConstructionTargetKind::Walkway,i},walkway_network_.connections()[i].site_buffer);
 
     // Every moving task exposes its complete precomputed continuous trajectory
     // on the ground. Cyan is the planned lane; amber means the reciprocal speed

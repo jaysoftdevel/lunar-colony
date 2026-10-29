@@ -100,6 +100,7 @@ struct PlacedResource {
     float rotation_degrees{0.0f};
     ConstructionState construction{};
     ConstructionResourcePlan resource_plan{};
+    ResourceBundle site_buffer{}; // delivered construction material staged at this blueprint
     ResourceBundle stored_resources{};
     std::vector<StoredResourceBox> stored_boxes{};
     StorageDomeSize storage_size{StorageDomeSize::Small};

@@ -70,6 +70,7 @@ struct WalkwayConnection {
     WalkwayMesh mesh{};
     StagedConstructionState construction{kWalkwayConstructionSteps};
     ConstructionResourcePlan resource_plan{};
+    ResourceBundle site_buffer{}; // delivered construction material staged at this blueprint
     bool carries_power{true};
     bool carries_water{true};
     bool pressurized{false}; // exterior crew access only; intentionally no atmosphere

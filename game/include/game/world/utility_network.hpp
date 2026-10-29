@@ -54,6 +54,7 @@ struct UtilityConnection {
     UtilityMesh mesh{};
     StagedConstructionState construction{kSupplyConstructionSteps};
     ConstructionResourcePlan resource_plan{};
+    ResourceBundle site_buffer{}; // delivered construction material staged at this blueprint
 };
 
 class UtilityNetwork {

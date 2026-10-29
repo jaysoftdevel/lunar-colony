@@ -15,7 +15,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=5;
+constexpr std::uint32_t kSaveSchema=6;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -71,6 +71,13 @@ ResourceBundle read_bundle(Reader& r){
     return b;
 }
 
+void add_bundle(ResourceBundle& dst,const ResourceBundle& src){
+    for(std::size_t i=0;i<kMaterialResourceCount;++i){
+        const auto material=(MaterialResource)i;
+        dst.amount(material)+=src.amount(material);
+    }
+}
+
 void write_plan(Writer& w,const ConstructionResourcePlan& p){
     w.pod(p.total_steps);
     for(const auto& step:p.steps) write_bundle(w,step);
@@ -83,10 +90,86 @@ ConstructionResourcePlan read_plan(Reader& r){
     return p;
 }
 
+ResourceBundle plan_range(const ConstructionResourcePlan& plan,std::uint8_t begin,std::uint8_t end){
+    ResourceBundle out{};
+    const std::size_t first=std::min<std::size_t>(begin,plan.steps.size());
+    const std::size_t last=std::min<std::size_t>({(std::size_t)end,(std::size_t)plan.total_steps,plan.steps.size()});
+    for(std::size_t si=first;si<last;++si)
+        for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
+            const auto material=(MaterialResource)ri;
+            out.amount(material)+=plan.steps[si].amount(material);
+        }
+    return out;
+}
+
+void distribute_plan_range(ConstructionResourcePlan& plan,const ResourceBundle& amount,
+                           std::uint8_t begin,std::uint8_t count){
+    if(count==0) return;
+    for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
+        const auto material=(MaterialResource)ri;
+        const std::int64_t total=std::max<std::int64_t>(0,amount.amount(material));
+        const std::int64_t base=total/(std::int64_t)count;
+        std::int64_t remainder=total%(std::int64_t)count;
+        for(std::uint8_t offset=0;offset<count;++offset){
+            const std::size_t index=(std::size_t)begin+(std::size_t)offset;
+            if(index>=plan.steps.size()) break;
+            plan.steps[index].amount(material)=base+(remainder>0?1:0);
+            if(remainder>0) --remainder;
+        }
+    }
+}
+
+std::uint8_t remapped_completed_steps(std::uint8_t old_step,std::uint8_t old_total,std::uint8_t new_total){
+    if(old_total==0) return 0;
+    if(old_step>=old_total) return new_total;
+    if(old_step==0) return 0;
+    const float scaled=(float)old_step*(float)new_total/(float)old_total;
+    const int rounded=(int)std::lround(scaled);
+    return (std::uint8_t)std::clamp(rounded,1,std::max(1,(int)new_total-1));
+}
+
+void compact_construction_plan(ConstructionResourcePlan& plan,std::uint8_t old_step,
+                               std::uint8_t new_step,std::uint8_t new_total){
+    const std::uint8_t old_total=std::max<std::uint8_t>(1,plan.total_steps);
+    const ResourceBundle consumed=plan_range(plan,0,std::min(old_step,old_total));
+    const ResourceBundle remaining=plan_range(plan,std::min(old_step,old_total),old_total);
+    ConstructionResourcePlan compact{};
+    compact.total_steps=std::max<std::uint8_t>(1,new_total);
+    distribute_plan_range(compact,consumed,0,new_step);
+    distribute_plan_range(compact,remaining,new_step,(std::uint8_t)(compact.total_steps-new_step));
+    plan=compact;
+}
+
+void compact_construction(ConstructionState& state,ConstructionResourcePlan& plan,std::uint8_t new_total){
+    const std::uint8_t old_total=std::max<std::uint8_t>(1,plan.total_steps);
+    if(old_total==new_total){ state.step=std::min(state.step,new_total); return; }
+    const std::uint8_t old_step=std::min(state.step,old_total);
+    const std::uint8_t new_step=remapped_completed_steps(old_step,old_total,new_total);
+    compact_construction_plan(plan,old_step,new_step,new_total);
+    state.step=new_step;
+    state.step_elapsed=state.step>=new_total?0.0f:std::clamp(state.step_elapsed,0.0f,kConstructionStepSeconds*0.999f);
+}
+
+void compact_construction(StagedConstructionState& state,ConstructionResourcePlan& plan,std::uint8_t new_total){
+    const std::uint8_t old_total=std::max<std::uint8_t>(1,state.total_steps);
+    if(old_total==new_total && plan.total_steps==new_total){ state.step=std::min(state.step,new_total); return; }
+    const std::uint8_t old_step=std::min(state.step,old_total);
+    const std::uint8_t new_step=remapped_completed_steps(old_step,old_total,new_total);
+    // Plan total normally mirrors state.total_steps. Use its own old boundary
+    // when it does not, but preserve the same completed-stage proportion.
+    compact_construction_plan(plan,std::min<std::uint8_t>(old_step,plan.total_steps),new_step,new_total);
+    state.total_steps=new_total;
+    state.step=new_step;
+    state.step_elapsed=state.step>=new_total?0.0f:std::clamp(state.step_elapsed,0.0f,kConstructionStepSeconds*0.999f);
+}
+
 void write_construction(Writer& w,const ConstructionState& c){ w.pod(c.step); w.pod(c.step_elapsed); }
 ConstructionState read_construction(Reader& r){
     ConstructionState c{}; c.step=r.pod<std::uint8_t>(); c.step_elapsed=r.pod<float>();
-    if(c.step>kConstructionSteps) r.valid=false;
+    // Older 0.40.x saves used ten structure stages. Accept that persisted
+    // range here and compact it to the current stage count after the complete
+    // object (including its resource plan) has been read.
+    if(c.step>kMaxConstructionResourceSteps) r.valid=false;
     return c;
 }
 void write_staged(Writer& w,const StagedConstructionState& c){ w.pod(c.step); w.pod(c.total_steps); w.pod(c.step_elapsed); }
@@ -121,11 +204,13 @@ void write_corridor_mesh(Writer& w,const CorridorMesh& m){ write_vec3s(w,m.shell
 CorridorMesh read_corridor_mesh(Reader& r){ CorridorMesh m{}; m.shell=read_vec3s(r); m.details=read_vec3s(r); m.edges=read_vec3s(r); return m; }
 void write_corridor(Writer& w,const CorridorConnection& c){
     w.pod((std::uint8_t)c.kind); write_corridor_endpoint(w,c.endpoint_a); write_corridor_endpoint(w,c.endpoint_b); write_vec3s(w,c.path);
-    write_corridor_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan);
+    write_corridor_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan); write_bundle(w,c.site_buffer);
 }
-CorridorConnection read_corridor(Reader& r){
+CorridorConnection read_corridor(Reader& r,bool with_site_buffer){
     CorridorConnection c{}; c.kind=(CorridorConnectionKind)r.pod<std::uint8_t>(); c.endpoint_a=read_corridor_endpoint(r); c.endpoint_b=read_corridor_endpoint(r);
-    c.path=read_vec3s(r); c.mesh=read_corridor_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r); return c;
+    c.path=read_vec3s(r); c.mesh=read_corridor_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
+    if(with_site_buffer) c.site_buffer=read_bundle(r);
+    return c;
 }
 
 void write_utility_endpoint(Writer& w,const UtilityEndpoint& e){ w.pod((std::uint8_t)e.kind); w.pod((std::uint64_t)e.index); write_vec3(w,e.position); write_vec3(w,e.normal); }
@@ -134,11 +219,13 @@ void write_utility_mesh(Writer& w,const UtilityMesh& m){ write_vec3s(w,m.shell);
 UtilityMesh read_utility_mesh(Reader& r){ UtilityMesh m{}; m.shell=read_vec3s(r); m.details=read_vec3s(r); m.edges=read_vec3s(r); return m; }
 void write_utility(Writer& w,const UtilityConnection& c){
     w.pod((std::uint8_t)c.kind); write_utility_endpoint(w,c.endpoint_a); write_utility_endpoint(w,c.endpoint_b); write_vec3s(w,c.path); write_vec3s(w,c.junctions);
-    write_utility_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan);
+    write_utility_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan); write_bundle(w,c.site_buffer);
 }
-UtilityConnection read_utility(Reader& r){
+UtilityConnection read_utility(Reader& r,bool with_site_buffer){
     UtilityConnection c{}; c.kind=(UtilityKind)r.pod<std::uint8_t>(); c.endpoint_a=read_utility_endpoint(r); c.endpoint_b=read_utility_endpoint(r);
-    c.path=read_vec3s(r); c.junctions=read_vec3s(r); c.mesh=read_utility_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r); return c;
+    c.path=read_vec3s(r); c.junctions=read_vec3s(r); c.mesh=read_utility_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
+    if(with_site_buffer) c.site_buffer=read_bundle(r);
+    return c;
 }
 
 void write_walkway_endpoint(Writer& w,const WalkwayEndpoint& e){
@@ -162,15 +249,17 @@ void write_walkway(Writer& w,const WalkwayConnection& c){
     w.pod((std::uint64_t)c.junctions.size()); for(const auto& j:c.junctions) write_walkway_junction(w,j);
     w.pod((std::uint64_t)c.corridor_crossings.size()); for(const auto& x:c.corridor_crossings) write_walkway_crossing(w,x);
     w.pod((std::uint64_t)c.supply_bridges.size()); for(const auto& b:c.supply_bridges) write_walkway_bridge(w,b);
-    write_walkway_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan);
+    write_walkway_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan); write_bundle(w,c.site_buffer);
     w.boolean(c.carries_power); w.boolean(c.carries_water); w.boolean(c.pressurized);
 }
-WalkwayConnection read_walkway(Reader& r){
+WalkwayConnection read_walkway(Reader& r,bool with_site_buffer){
     WalkwayConnection c{}; c.endpoint_a=read_walkway_endpoint(r); c.endpoint_b=read_walkway_endpoint(r); c.path=read_vec3s(r);
     auto n=r.pod<std::uint64_t>(); if(n>kMaxObjects) r.valid=false; c.junctions.reserve((std::size_t)std::min(n,kMaxObjects)); for(std::uint64_t i=0;i<n&&r.valid;++i)c.junctions.push_back(read_walkway_junction(r));
     n=r.pod<std::uint64_t>(); if(n>kMaxObjects) r.valid=false; c.corridor_crossings.reserve((std::size_t)std::min(n,kMaxObjects)); for(std::uint64_t i=0;i<n&&r.valid;++i)c.corridor_crossings.push_back(read_walkway_crossing(r));
     n=r.pod<std::uint64_t>(); if(n>kMaxObjects) r.valid=false; c.supply_bridges.reserve((std::size_t)std::min(n,kMaxObjects)); for(std::uint64_t i=0;i<n&&r.valid;++i)c.supply_bridges.push_back(read_walkway_bridge(r));
-    c.mesh=read_walkway_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r); c.carries_power=r.boolean(); c.carries_water=r.boolean(); c.pressurized=r.boolean(); return c;
+    c.mesh=read_walkway_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
+    if(with_site_buffer) c.site_buffer=read_bundle(r);
+    c.carries_power=r.boolean(); c.carries_water=r.boolean(); c.pressurized=r.boolean(); return c;
 }
 
 std::string trimmed_name(std::string value){
@@ -350,10 +439,10 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
 
     write_object_vector(w,placed_habitats_,[](Writer& out,const PlacedHabitat& h){
         out.pod((std::uint8_t)h.kind); write_vec3(out,h.position); out.pod(h.rotation_degrees); out.pod((std::uint8_t)h.size);
-        write_construction(out,h.construction); write_plan(out,h.resource_plan);
+        write_construction(out,h.construction); write_plan(out,h.resource_plan); write_bundle(out,h.site_buffer);
     });
     write_object_vector(w,placed_resources_,[](Writer& out,const PlacedResource& item){
-        out.pod((std::uint8_t)item.kind); write_vec3(out,item.position); out.pod(item.rotation_degrees); write_construction(out,item.construction); write_plan(out,item.resource_plan);
+        out.pod((std::uint8_t)item.kind); write_vec3(out,item.position); out.pod(item.rotation_degrees); write_construction(out,item.construction); write_plan(out,item.resource_plan); write_bundle(out,item.site_buffer);
         out.pod((std::uint8_t)item.storage_size);
         out.pod((std::uint64_t)item.stored_boxes.size());
         for(const auto& box:item.stored_boxes){ out.pod((std::uint8_t)box.resource); out.pod(box.amount); out.pod(box.condition); }
@@ -366,7 +455,8 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,utility_network_.connections(),write_utility);
     write_object_vector(w,walkway_network_.connections(),write_walkway);
 
-    // Save schema 5: mixed fleet plus exact per-robot construction logistics
+    // Save schema 6: blueprint-owned delivered-material buffers plus the mixed fleet.
+    // Schema 5 already persisted exact per-robot construction logistics
     // reservations and persistent mechanical condition. This keeps carrier
     // demand accounting synchronized across save/load boundaries.
     const std::uint8_t robot_count=(std::uint8_t)std::clamp<std::size_t>(builder_robots_.size(),1,12);
@@ -420,14 +510,14 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     const ResourceBundle resource_state=read_bundle(r);
 
     std::vector<PlacedHabitat> habitats;
-    if(!read_object_vector(r,habitats,[](Reader& in){
+    if(!read_object_vector(r,habitats,[&](Reader& in){
         PlacedHabitat h{}; h.kind=(HabitatKind)in.pod<std::uint8_t>(); h.position=read_vec3(in); h.rotation_degrees=in.pod<float>(); h.size=(HabitatSizeTier)in.pod<std::uint8_t>();
-        h.construction=read_construction(in); h.resource_plan=read_plan(in); return h;
+        h.construction=read_construction(in); h.resource_plan=read_plan(in); if(source_schema>=6) h.site_buffer=read_bundle(in); return h;
     })){ error="Savegame habitat data is damaged."; return false; }
 
     std::vector<PlacedResource> structures;
-    if(!read_object_vector(r,structures,[](Reader& in){
-        PlacedResource item{}; item.kind=(ResourceKind)in.pod<std::uint8_t>(); item.position=read_vec3(in); item.rotation_degrees=in.pod<float>(); item.construction=read_construction(in); item.resource_plan=read_plan(in);
+    if(!read_object_vector(r,structures,[&](Reader& in){
+        PlacedResource item{}; item.kind=(ResourceKind)in.pod<std::uint8_t>(); item.position=read_vec3(in); item.rotation_degrees=in.pod<float>(); item.construction=read_construction(in); item.resource_plan=read_plan(in); if(source_schema>=6) item.site_buffer=read_bundle(in);
         item.storage_size=(StorageDomeSize)in.pod<std::uint8_t>();
         const auto n=in.pod<std::uint64_t>(); if(n>kMaxObjects) in.valid=false;
         item.stored_boxes.reserve((std::size_t)std::min(n,kMaxObjects));
@@ -441,11 +531,21 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     })){ error="Savegame resource-box data is damaged."; return false; }
 
     std::vector<CorridorConnection> corridors;
-    if(!read_object_vector(r,corridors,read_corridor)){ error="Savegame corridor data is damaged."; return false; }
+    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6); })){ error="Savegame corridor data is damaged."; return false; }
     std::vector<UtilityConnection> utilities;
-    if(!read_object_vector(r,utilities,read_utility)){ error="Savegame supply-channel data is damaged."; return false; }
+    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6); })){ error="Savegame supply-channel data is damaged."; return false; }
     std::vector<WalkwayConnection> walkways;
-    if(!read_object_vector(r,walkways,read_walkway)){ error="Savegame walkway data is damaged."; return false; }
+    if(!read_object_vector(r,walkways,[&](Reader& in){ return read_walkway(in,source_schema>=6); })){ error="Savegame walkway data is damaged."; return false; }
+
+    // v0.40.10 shortens the physical construction sequence. Compact old plans
+    // while preserving the exact consumed-vs-remaining material totals at the
+    // saved completion boundary, so an existing colony neither loses already
+    // spent resources nor has to pay for them a second time.
+    for(auto& h:habitats) compact_construction(h.construction,h.resource_plan,kConstructionSteps);
+    for(auto& item:structures) compact_construction(item.construction,item.resource_plan,kConstructionSteps);
+    for(auto& c:corridors) compact_construction(c.construction,c.resource_plan,kCorridorConstructionSteps);
+    for(auto& c:utilities) compact_construction(c.construction,c.resource_plan,kSupplyConstructionSteps);
+    for(auto& c:walkways) compact_construction(c.construction,c.resource_plan,kWalkwayConstructionSteps);
 
     std::vector<BuilderRobotState> saved_robots;
     eng::Vec3 saved_stash{};
@@ -483,6 +583,40 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         saved_life_fraction=r.pod<double>();
     }
     if(!r.valid){ error="Savegame ended unexpectedly."; return false; }
+
+    // v0.40.11 and older stored delivered construction material on the BR-02
+    // coordinator. Move that authoritative buffer onto the blueprint itself so
+    // carriers can continue supplying an unstaffed blueprint and constructors
+    // can change targets without making already-delivered material disappear.
+    if(source_schema<6){
+        auto migrate_site_buffer=[&](const ConstructionTargetRef& target,const ResourceBundle& buffer){
+            if(buffer.empty() || !target.valid()) return;
+            switch(target.kind){
+                case ConstructionTargetKind::Habitat:
+                    if(target.index<habitats.size()) add_bundle(habitats[target.index].site_buffer,buffer);
+                    break;
+                case ConstructionTargetKind::Resource:
+                    if(target.index<structures.size()) add_bundle(structures[target.index].site_buffer,buffer);
+                    break;
+                case ConstructionTargetKind::Corridor:
+                    if(target.index<corridors.size()) add_bundle(corridors[target.index].site_buffer,buffer);
+                    break;
+                case ConstructionTargetKind::Utility:
+                    if(target.index<utilities.size()) add_bundle(utilities[target.index].site_buffer,buffer);
+                    break;
+                case ConstructionTargetKind::Walkway:
+                    if(target.index<walkways.size()) add_bundle(walkways[target.index].site_buffer,buffer);
+                    break;
+                case ConstructionTargetKind::None: break;
+            }
+        };
+        for(auto& robot:saved_robots){
+            if(robot.role==RobotRole::Constructor) migrate_site_buffer(robot.target,robot.site_buffer);
+            robot.site_buffer={};
+        }
+    }else{
+        for(auto& robot:saved_robots) robot.site_buffer={};
+    }
 
     playfield_size_=saved_playfield;
     playfield_.rebuild(saved_playfield);

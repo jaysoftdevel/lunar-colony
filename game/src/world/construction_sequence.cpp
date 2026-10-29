@@ -6,7 +6,7 @@
 namespace game::construction_sequence {
 namespace {
 float clamp01(float v){ return std::clamp(v,0.0f,1.0f); }
-float phase(std::uint8_t step,int first,int last){
+float phase(float step,int first,int last){
     if(step < first) return 0.0f;
     if(step >= last) return 1.0f;
     const float span=static_cast<float>(last-first+1);
@@ -14,8 +14,13 @@ float phase(std::uint8_t step,int first,int last){
 }
 }
 
-HabitatVisibility habitat_visibility(std::uint8_t step){
+HabitatVisibility habitat_visibility(float step){
     if(step>=kConstructionSteps) return {1,1,1,1,1,1,1};
+    // Keep the original ten-stage visual choreography while allowing the
+    // gameplay stage count to be shortened. The normalized value means a
+    // six-stage build reveals the same mesh groups at the same relative
+    // completion percentages instead of dropping late-stage details.
+    step=step*(10.0f/(float)std::max<std::uint8_t>(1,kConstructionSteps));
     HabitatVisibility v{};
     // Discrete assembly plan: ground works -> pressure shell -> internal modules
     // -> glazing/services -> access/finish. Every placed habitat uses its own
@@ -26,19 +31,20 @@ HabitatVisibility habitat_visibility(std::uint8_t step){
     v.glazing    = phase(step,7,9);
     v.details    = phase(step,7,9);
     v.access     = phase(step,9,10);
-    v.edges      = step>=10 ? 1.0f : 0.0f;
+    v.edges      = step>=10.0f ? 1.0f : 0.0f;
     return v;
 }
 
-ResourceVisibility resource_visibility(std::uint8_t step){
+ResourceVisibility resource_visibility(float step){
     if(step>=kConstructionSteps) return {1,1,1,1};
+    step=step*(10.0f/(float)std::max<std::uint8_t>(1,kConstructionSteps));
     ResourceVisibility v{};
     // External facilities assemble base-first, then the main machine/body,
     // then service hardware and final structural edges.
     v.foundation = phase(step,1,2);
     v.body       = phase(step,2,7);
     v.details    = phase(step,7,9);
-    v.edges      = step>=10 ? 1.0f : 0.0f;
+    v.edges      = step>=10.0f ? 1.0f : 0.0f;
     return v;
 }
 

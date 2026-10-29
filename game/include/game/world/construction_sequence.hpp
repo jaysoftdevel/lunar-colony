@@ -22,8 +22,8 @@ struct ResourceVisibility {
     float edges{0.0f};
 };
 
-HabitatVisibility habitat_visibility(std::uint8_t step);
-ResourceVisibility resource_visibility(std::uint8_t step);
+HabitatVisibility habitat_visibility(float step);
+ResourceVisibility resource_visibility(float step);
 std::vector<eng::Vec3> reveal_triangles(const std::vector<eng::Vec3>& triangles,float fraction);
 std::vector<eng::Vec3> reveal_lines(const std::vector<eng::Vec3>& lines,float fraction);
 

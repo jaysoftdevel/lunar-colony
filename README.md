@@ -110,3 +110,9 @@ Short-horizon fleet prediction now integrates each rover's real current velocity
 ## v0.31.20 construction handoff and four-side builder work
 
 Construction logistics now use one explicit material drop area per construction target. Carriers unload there, clear the apron before releasing it, and builders pick the current stage material from that pile before assembly. If the delivered and already-reserved material does not cover the active stage, one builder may self-haul only the uncovered amount from the stash/storage and rejoins the same drop queue. Each construction step is worked from four perimeter sectors with outside-corner transitions, and the next construction segment is reserved as future geometry before robots plan through it.
+
+## v0.40.0 modular baseline
+
+The source tree is now built through explicit implementation/context clusters rather than one monolithic game target. Start future maintenance from `IMPLEMENTATION_CLUSTERS.md`; it maps common requests to the minimum CMake target and source set to inspect. `BASELINE_CONTEXT.md` is the compact handoff for starting a new chat from this release.
+
+Robot geometry path search is isolated in `game_cluster_pathfinding`. Normal movement uses bounded corridor searches; if a rover cannot resolve or make useful route progress for 2.0 seconds, its local route state is discarded and the next attempt becomes a full-width world-geometry route search. Temporary rover positions are not hard A* obstacles during that recovery search, while the continuous traffic layer and hull checks still prevent physical robot intersections.

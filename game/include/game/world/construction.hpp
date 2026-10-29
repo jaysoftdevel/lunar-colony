@@ -4,13 +4,13 @@
 
 namespace game {
 
-inline constexpr std::uint8_t kConstructionSteps = 10;
+inline constexpr std::uint8_t kConstructionSteps = 6;
 inline constexpr float kConstructionStepSeconds = 1.0f;
 
 
-inline constexpr std::uint8_t kCorridorConstructionSteps = 5;
-inline constexpr std::uint8_t kSupplyConstructionSteps = 3;
-inline constexpr std::uint8_t kWalkwayConstructionSteps = 3;
+inline constexpr std::uint8_t kCorridorConstructionSteps = 3;
+inline constexpr std::uint8_t kSupplyConstructionSteps = 2;
+inline constexpr std::uint8_t kWalkwayConstructionSteps = 2;
 
 struct StagedConstructionState {
     std::uint8_t step{0};
@@ -22,7 +22,10 @@ struct StagedConstructionState {
 
     bool complete() const { return step >= total_steps; }
     float progress() const {
-        return static_cast<float>(step) / static_cast<float>(std::max<std::uint8_t>(1,total_steps));
+        const float total=static_cast<float>(std::max<std::uint8_t>(1,total_steps));
+        if(complete()) return 1.0f;
+        const float within=std::clamp(step_elapsed/std::max(0.001f,kConstructionStepSeconds),0.0f,0.999f);
+        return std::clamp((static_cast<float>(step)+within)/total,0.0f,1.0f);
     }
 
     bool update(float dt){
@@ -55,7 +58,11 @@ struct ConstructionState {
     float step_elapsed{0.0f};
 
     bool complete() const { return step >= kConstructionSteps; }
-    float progress() const { return static_cast<float>(step) / static_cast<float>(kConstructionSteps); }
+    float progress() const {
+        if(complete()) return 1.0f;
+        const float within=std::clamp(step_elapsed/std::max(0.001f,kConstructionStepSeconds),0.0f,0.999f);
+        return std::clamp((static_cast<float>(step)+within)/static_cast<float>(kConstructionSteps),0.0f,1.0f);
+    }
 
     bool update(float dt){
         return update_gated(dt,[](std::uint8_t){ return true; });

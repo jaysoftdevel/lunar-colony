@@ -82,6 +82,7 @@ struct PlacedHabitat {
     HabitatSizeTier size{HabitatSizeTier::Standard};
     ConstructionState construction{};
     ConstructionResourcePlan resource_plan{};
+    ResourceBundle site_buffer{}; // delivered construction material staged at this blueprint
 };
 
 class HabitatModelLibrary {

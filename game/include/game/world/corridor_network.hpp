@@ -74,6 +74,7 @@ struct CorridorConnection {
     CorridorMesh mesh{};
     StagedConstructionState construction{kCorridorConstructionSteps};
     ConstructionResourcePlan resource_plan{};
+    ResourceBundle site_buffer{}; // delivered construction material staged at this blueprint
 };
 
 class CorridorNetwork {

@@ -64,6 +64,15 @@ ResourceBundle bundle_difference(const ResourceBundle& a,const ResourceBundle& b
     return result;
 }
 
+ResourceBundle bundle_sum(const ResourceBundle& a,const ResourceBundle& b){
+    ResourceBundle result{};
+    for(std::size_t i=0;i<kMaterialResourceCount;++i){
+        const auto material=static_cast<MaterialResource>(i);
+        result.amount(material)=a.amount(material)+b.amount(material);
+    }
+    return result;
+}
+
 float recovered_resource_condition(MaterialResource material){
     switch(material){
         case MaterialResource::Iron: return 0.94f;
@@ -717,7 +726,7 @@ void GameApp::delete_selected_world_object(){
                 const std::size_t index=(std::size_t)selected_habitat_;
                 const auto removed=placed_habitats_[index];
                 const auto mesh=habitat_models_.mesh(removed);
-                const ResourceBundle used=removed.resource_plan.consumed(removed.construction.step);
+                const ResourceBundle used=bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer);
                 corridor_network_.remove_habitat(index);
                 utility_network_.remove_habitat(index);
                 walkway_network_.remove_habitat(index);
@@ -731,7 +740,7 @@ void GameApp::delete_selected_world_object(){
                 auto removed=placed_resources_[index];
                 sync_stored_resource_totals(removed);
                 const auto mesh=resource_models_.mesh(removed);
-                const ResourceBundle construction_used=removed.resource_plan.consumed(removed.construction.step);
+                const ResourceBundle construction_used=bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer);
 
                 if(removed.kind==ResourceKind::StorageDome && !removed.stored_resources.empty()){
                     // Removing a dome releases its stored boxes unchanged. The shared
@@ -786,7 +795,7 @@ void GameApp::delete_selected_world_object(){
             if(selected_corridor_>=0 && (std::size_t)selected_corridor_<corridor_network_.connections().size()){
                 const std::size_t index=(std::size_t)selected_corridor_;
                 const auto removed=corridor_network_.connections()[index];
-                const ResourceBundle used=removed.resource_plan.consumed(removed.construction.step);
+                const ResourceBundle used=bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer);
                 walkway_network_.remove_corridor(index);
                 corridor_network_.remove_corridor(index);
                 // Routed construction is recovered where it physically existed.
@@ -799,7 +808,7 @@ void GameApp::delete_selected_world_object(){
             if(selected_utility_>=0 && (std::size_t)selected_utility_<utility_network_.connections().size()){
                 const std::size_t index=(std::size_t)selected_utility_;
                 const auto removed=utility_network_.connections()[index];
-                const ResourceBundle used=removed.resource_plan.consumed(removed.construction.step);
+                const ResourceBundle used=bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer);
                 walkway_network_.remove_utility(index);
                 utility_network_.remove_connection(index);
                 drop_path_resources(removed.path,1.4f,used);
@@ -809,7 +818,7 @@ void GameApp::delete_selected_world_object(){
             if(selected_walkway_>=0 && (std::size_t)selected_walkway_<walkway_network_.connections().size()){
                 const std::size_t index=(std::size_t)selected_walkway_;
                 const auto removed=walkway_network_.connections()[index];
-                const ResourceBundle used=removed.resource_plan.consumed(removed.construction.step);
+                const ResourceBundle used=bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer);
                 walkway_network_.remove_connection(index);
                 drop_path_resources(removed.path,1.8f,used);
             }

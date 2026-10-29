@@ -1,3 +1,11 @@
+0.40.4
+- Added PAUSE as a fourth game-speed state alongside NORMAL 1X / QUICK 2X / FAST 4X. Pause uses a 0X simulation multiplier so colony time, robots, production and construction stop while the UI/camera remain responsive; +/- cycles PAUSE <-> NORMAL <-> QUICK <-> FAST and the selected state persists through save/load.
+
+0.40.3
+- CR-01 carriers now reserve and deliver the complete remaining bill of materials for active constructions, continuing repeated trips until all outstanding demand is staged or covered by fleet reservations.
+- All robot locomotion is 50% faster; acceleration, braking and turn rates scale with the new movement speed to preserve smooth route following.
+- Construction progress is now continuous inside every welding/build-up operation; HUD percentages and staged wire-mesh reveal advance throughout each builder action instead of only jumping when a full stage commits.
+
 0.19.1
 - Returned to plain release.major.minor versioning.
 - Ground resource boxes are selectable and show material, amount and condition in an adjacent status frame.
@@ -114,3 +122,44 @@
 0.31.17 -> 0.31.18 : construction-placement and fleet-scheduling stabilization; replaced full-map multi-pass route rasterization with cached corridor-local A* that widens only for required detours, split route-plan budgets between constructors and carriers, rebuilt the starter depot into hull-safe parking plus deterministic material entry/pickup/exit lanes, serialized only same-source pickup traffic, returned idle carriers to clear standby bays, made normal logistics carrier-first with delayed coordinator-only builder fallback, fixed operation stations for each trip, and kept loaded logistics reservations authoritative while blocked. QA covers live second-structure placement with 6 builders + 6 carriers and placement scaling across 16/64/128/256/512 playfields.
 0.31.18 -> 0.31.19 : concurrent logistics-lane refinement; BR-02 work stations now follow the actual rotated structure perimeter with ~0.20 m front tool clearance, construction and Storage Dome service positions are hull-reserved before travel, starter-depot same-material trips use a stable staged queue with one-way outer-gate -> lane -> pallet flow and a clear loaded-rover exit, source reservations may queue without double-counting physical stock, fleet prediction integrates actual speed/acceleration rather than assuming instant cruise, carrier site selection balances concurrent construction demand, and any active builder may claim the single stage commit so a delayed original site owner cannot freeze construction. QA places two structures simultaneously with 6 builders + 6 carriers and verifies parallel deliveries/building with zero hull collisions.
 0.31.19 -> 0.31.20 : construction logistics handoff overhaul; every site now uses one deterministic visible material drop zone, CR-01s queue/stage/exit around that single apron, BR-02 fallback hauling covers only uncovered stage demand and uses the same drop queue, builders physically collect the current stage bundle from the drop before assembly, every build step is worked from all four structure sides via planned perimeter/corner waypoints, future construction geometry is reserved before segments appear so robots cannot occupy the next-step volume, and carrier depot ownership/queue ageing is stabilized to prevent lane deadlocks during ongoing construction.
+0.31.20 -> 0.40.0 : baseline architecture refactor; the game build is partitioned into explicit CMake implementation/context clusters (app, interaction, rendering, UI, construction, robots, pathfinding, simulation, world core, habitats, resources, networks), with a compact cluster map and next-chat baseline context. Robot geometry search is extracted from the monolithic autonomy system into `game_cluster_pathfinding` behind floor/occupancy/segment/traffic callbacks. Route resolution adds a hard 2.0 s watchdog: repeated local replans do not reset it, and after the timeout the rover discards local traffic assumptions and performs a full-width world-geometry route search while runtime hull collision enforcement remains active.
+
+0.40.0 -> 0.40.1 : fixed construction-route deadlocks reproduced from 001-construction-stuck.gmsave; future-segment collision tests now reject degenerate X/Z triangle projections robustly, preventing distant vertical walls from becoming invisible map-wide blockers. Route clearing no longer cancels the 2 s full-resolution escalation through cleared stop-radius metadata. Starter-pallet reservations gain a final lease break if mandatory recovery still cannot move the front rover, and nose-to-nose fleet deadlocks use a deterministic hull-safe pull-aside waypoint for the lower-priority rover before both robots resume their original tasks.
+0.40.1 -> 0.40.2 : fixed the no-building.gmsave construction loop and non-holonomic robot sliding; idle CR-01s now vacate active construction approaches into deterministic standby bays and active construction traffic has right-of-way over idle parking traffic. Route execution aligns the chassis to the actual next displacement before translation, allows collision-safe in-place rotation inside soft traffic clearance, and limits emergency separation to longitudinal forward/reverse motion. Starter-depot loaded egress now uses per-load hysteresis so a rover cannot oscillate across or stop just short of the exit threshold. Replay of no-building.gmsave advances the previously stuck structure from step 4 through step 9 with zero audited lateral-motion frames.
+
+v0.40.5
+- Resource packages are now first-class navigation obstacles using the full rendered robot hull envelope instead of the smaller legacy body radius.
+- Ground resource piles, Storage Dome boxes and visible construction-site staging boxes are avoided by route planning and continuous motion.
+- Construction-site packages were moved into a protected offset staging rack beside the shared drop point so builders/carriers can service the drop without driving through the visible crates.
+- Ground-pile pickup service distance now matches the full hull clearance used by pathfinding.
+- Global builder work speed increased by 50% for welding/build-up operations; stage counts and material costs are unchanged.
+
+0.40.6
+- Fixed a severe robot/pathfinding CPU regression reproduced with slowdown.gmsave.
+- Dormant step-0 blueprints are no longer reserved as imminent construction geometry until a constructor actually claims them.
+- Removed per-path-candidate construction mesh allocations; collision checks now scan only the revealed triangle ranges in-place.
+- Added path-based broad-phase rejection for corridor, utility and walkway construction geometry before detailed triangle collision checks.
+- Precomputes loose/staged/storage resource package obstacle poses once per fleet simulation slice instead of rebuilding up to 36 site packages for every A* cell and route sample.
+- Keeps physical resource avoidance and future-segment safety while preventing repeated 250-300 ms replanning spikes.
+
+0.40.7
+- Reworked robot planning performance around the 0-40-6.gmsave regression.
+- Route-search budgets are now reset once per rendered update and shared by all 90 Hz motion substeps.
+- Failed full-resolution searches honor a backoff and escalation is edge-triggered instead of retriggering every tick.
+- Normal A* widening is distributed across later planning opportunities instead of running three searches in one slice.
+- Added cheaper neighbour-edge validation while retaining strict final route and execution collision checks.
+- Full recovery searches use a coarser bounded grid to eliminate main-thread frame spikes.
+- Builders waiting for materials choose the perimeter sector farthest from the construction drop, keeping CR-01 delivery lanes physically solvable.
+- Construction-drop package rows are moved farther from the interaction point so resource collision avoidance does not invalidate the handoff position.
+
+0.40.7 -> 0.40.8 : fixed the 0-40-7.gmsave construction/logistics deadlock and added bounded multicore route sampling. Construction-target robots no longer treat their own target's future geometry as a hard service-path blocker; construction package racks are oriented relative to the target so crates do not cross the carrier exit lane; stale carrier reservations stop suppressing BR-02 self-haul after the 2 s unresolved-path threshold; uncovered site demand triggers near-immediate builder fallback while healthy carrier reservations remain authoritative. Broad/full route searches precompute independent occupancy/traffic grid cells across up to half of the system's logical CPUs while routine short replans remain single-threaded to avoid thread-launch jitter.
+v0.40.9
+- Added space-time collision avoidance inside path calculation: A*/Theta* rejects route edges whose estimated traversal overlaps another robot's predicted hull.
+- Kept continuous execution-time hull checks/speed negotiation as a safety layer after preplanned avoidance.
+- Reduced builder construction travel from four perimeter work positions to two opposite positions per stage; the pair rotates between stages and forced corner laps were removed.
+
+
+0.40.9 -> 0.40.10 : fixed the 0-40-9.gmsave construction deadlock by enforcing dependency-ordered corridor construction: corridors now wait for attached habitats/resources and host corridors to finish, and legacy in-progress assignments are suspended without losing staged/cargo materials. Partially installed structure geometry is now a hard rover obstacle as soon as it becomes visually present, eliminating routes through already-built meshes. Construction sequences are compacted from 10 to 6 stages for habitats/resources, 5 to 3 for corridors, and 3 to 2 for supply channels/walkways; older saves are migrated while preserving consumed-versus-remaining material totals.
+
+0.40.10 -> 0.40.11 : fixed the 0-40-10.gmsave same-pallet logistics deadlock. CR-01 now preempts an empty-cargo BR-02 fallback reservation for the same construction site, BR-02 does not self-haul while an idle/active carrier can service that site, and equal-age starter-depot lane ties prefer the carrier over the constructor. Existing saves with both roles already fetching the same site are reconciled at runtime without losing cargo or delivered materials. Delivered construction boxes are now rendered/staged inside habitat/resource footprints and directly on linear blueprints while the physical rover handoff remains outside the future wall envelope, preventing a delivery vehicle from being sealed into new geometry.
+0.40.11 -> 0.40.12 : moved delivered construction inventory from BR-02 ownership to each placed blueprint. CR-01 now keeps supplying every unfinished placed habitat/resource blueprint even when no constructor is assigned, and services dependency-ready corridor/utility/walkway blueprints afterward. Migrates schema-5 saves by transferring constructor site buffers onto their targets. Removed the per-stage BR-02 trip to the external drop apron; staged materials are consumed from the blueprint inventory while BR-02 proceeds directly to safe construction work positions, eliminating the 0-40-11 WAITING MATERIALS stall with a fully supplied site. Save schema is now 6.

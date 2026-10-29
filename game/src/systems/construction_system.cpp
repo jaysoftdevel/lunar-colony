@@ -77,6 +77,13 @@ void GameApp::update_construction(float dt){
     // stepping, interaction overshoot and more frequent robot-vs-robot stalls.
     // Keep the economy on the full simulation delta but advance the fleet in
     // small deterministic slices.
+    // Route calculation runs synchronously on the main thread. Budget it once
+    // per rendered update, not once per 90 Hz substep. A frame that arrived late
+    // may integrate several motion slices, but it cannot multiply A* work.
+    robot_constructor_route_plans_budget_=2;
+    robot_carrier_route_plans_budget_=2;
+    robot_full_route_plans_budget_=1;
+
     float remaining=std::max(0.0f,dt);
     // Continuous fleet motion is integrated at 90 Hz.  A larger guard prevents
     // low-render-FPS / FAST mode frames from silently dropping the tail of the

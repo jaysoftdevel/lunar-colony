@@ -28,21 +28,30 @@ void GameApp::render_view_selector(Renderer& r,float y,float logical_w){
     const float x=logical_w-total_w-margin;
     const float by=y+35.0f;
 
-    // Three deterministic simulation rates. Camera/POV input remains real-time;
+    // Pause plus three deterministic simulation rates. Camera/POV input remains real-time;
     // colony time, robots, production and construction consume scaled sim time.
     game_label(r,{x,y+6.0f},"GAME SPEED",0.48f,theme_,true);
     const Rect minus{x,by,31.0f,button_h};
     const Rect plus{x+145.0f,by,31.0f,button_h};
     if(ui::button(r,ui_input_,minus,"-",theme_)){
-        const int v=std::max(0,(int)game_speed_-1);
-        game_speed_=(GameSpeed)v;
+        switch(game_speed_){
+            case GameSpeed::Fast: game_speed_=GameSpeed::Quick; break;
+            case GameSpeed::Quick: game_speed_=GameSpeed::Normal; break;
+            case GameSpeed::Normal: game_speed_=GameSpeed::Pause; break;
+            case GameSpeed::Pause: break;
+        }
     }
     if(ui::button(r,ui_input_,plus,"+",theme_)){
-        const int v=std::min(2,(int)game_speed_+1);
-        game_speed_=(GameSpeed)v;
+        switch(game_speed_){
+            case GameSpeed::Pause: game_speed_=GameSpeed::Normal; break;
+            case GameSpeed::Normal: game_speed_=GameSpeed::Quick; break;
+            case GameSpeed::Quick: game_speed_=GameSpeed::Fast; break;
+            case GameSpeed::Fast: break;
+        }
     }
     const char* speed_name="NORMAL";
     const char* speed_mult="1X";
+    if(game_speed_==GameSpeed::Pause){ speed_name="PAUSE"; speed_mult="0X"; }
     if(game_speed_==GameSpeed::Quick){ speed_name="QUICK"; speed_mult="2X"; }
     if(game_speed_==GameSpeed::Fast){ speed_name="FAST"; speed_mult="4X"; }
     const Rect speed_box{x+36.0f,by,104.0f,button_h};

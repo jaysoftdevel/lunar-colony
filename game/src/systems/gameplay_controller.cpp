@@ -20,6 +20,7 @@ float GameApp::game_speed_multiplier() const {
         case GameSpeed::Normal: return 1.0f;
         case GameSpeed::Quick: return 2.0f;
         case GameSpeed::Fast: return 4.0f;
+        case GameSpeed::Pause: return 0.0f;
     }
     return 1.0f;
 }
