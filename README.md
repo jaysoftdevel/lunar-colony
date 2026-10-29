@@ -91,3 +91,22 @@ Multi-robot operation is fully local: each unit owns its route, resource reserva
 Robot travel no longer executes fixed Cooperative-A* time slots. Each task builds an any-angle, line-of-sight-reduced route before departure, rounds legal corners, predicts the complete fleet trajectory and prefers a separate traffic lane when conflicts are detected. During execution a continuous speed governor negotiates right-of-way without changing the planned steering line; persistent yielding triggers a whole-route replan instead of reverse/steer/spin recovery. Dynamic priority age prevents one robot from being starved indefinitely. Authoritative and rendered robot poses are now identical, and robot simulation uses 90 Hz bounded substeps so NORMAL/QUICK/FAST modes do not expose stop/go solver quantization.
 
 Habitats, resource structures, corridors, supply channels and walkways remain mesh-only at every build state. Blue denotes unbuilt target geometry, yellow denotes installed construction and completed geometry is rendered as a heavier green mesh; filled structure surfaces/textures are intentionally disabled.
+
+## v0.31.18 balanced construction-fleet scheduling
+Structure placement no longer triggers full-playfield route searches. Robot paths use a bounded corridor-local A* search that widens only for real detours and caches occupancy checks, keeping planning cost proportional to the useful route instead of map area. Constructor and carrier route planning use separate per-slice budgets so builders cannot monopolize the planner while logistics waits.
+
+The starter depot is a deterministic traffic layout with hull-safe parking, one front pickup lane per material and a clear entry/exit spine. Same-material pickup is serialized only at the source lane; different materials and construction routes continue in parallel. Idle carriers return to dedicated standby bays instead of blocking pallet exits. Construction logistics are carrier-first; builders remain at their worksite unless the site coordinator sees a genuine carrier-service timeout. Pickup/delivery/work stations stay fixed for the current operation so destinations cannot drift while a robot is travelling.
+
+The release QA places an Air Lock, adds a Factory while 6 BR-02 builders and 6 CR-01 carriers are already active, and checks fleet collisions, carrier delivery liveness, low-speed spin, simultaneous movement and placement/update timing. Placement scaling is also checked from 16 m through 512 m playfields.
+
+
+## v0.31.19 concurrent logistics lanes and close-range construction
+BR-02 construction stations are calculated from the actual rotated structure perimeter. Constructors face the work and stop with the front of the chassis roughly 0.20 m outside the modeled shell instead of using the old footprint-diagonal stand-off ring.
+
+CR-01 starter-depot traffic uses a per-material admission queue with an outer staging spine, one-way lane entry, front pickup bay, and dedicated outbound clearance point. Multiple trips for the same material may be reserved concurrently, while only the front rover enters the pallet throat; queued rovers remain far enough away for the loaded rover's full hull to leave without intersection. Storage Dome pickup stations are also hull-reserved before travel.
+
+Short-horizon fleet prediction now integrates each rover's real current velocity with the same acceleration limit used by movement. A yielding rover is predicted at its actual held velocity rather than being assumed to jump to cruise speed, reducing false future conflicts and stop/go traffic. Construction-stage commit leadership is claimed by a builder actually working at the site, so a delayed original site owner cannot freeze helpers that have already completed the stage work.
+
+## v0.31.20 construction handoff and four-side builder work
+
+Construction logistics now use one explicit material drop area per construction target. Carriers unload there, clear the apron before releasing it, and builders pick the current stage material from that pile before assembly. If the delivered and already-reserved material does not cover the active stage, one builder may self-haul only the uncovered amount from the stash/storage and rejoins the same drop queue. Each construction step is worked from four perimeter sectors with outside-corner transitions, and the next construction segment is reserved as future geometry before robots plan through it.

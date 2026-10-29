@@ -174,16 +174,16 @@ void GameApp::render_builder_robot(Renderer& r){
     // The depot outline covers the complete starter-pallet row. It uses the
     // same relative center as reset_builder_robot_and_starter_stash(), so the
     // rendered stash and physical resources stay aligned on every map size.
-    const float hx=2.55f;
-    const float hz=4.95f;
+    const float hx=2.75f;
+    const float hz=6.65f;
     std::vector<Vec3> pad{
         {c.x-hx,y,c.z-hz},{c.x+hx,y,c.z-hz},{c.x+hx,y,c.z-hz},{c.x+hx,y,c.z+hz},
         {c.x+hx,y,c.z+hz},{c.x-hx,y,c.z+hz},{c.x-hx,y,c.z+hz},{c.x-hx,y,c.z-hz},
         {c.x-hx,y,c.z},{c.x+hx,y,c.z},{c.x,y,c.z-hz},{c.x,y,c.z+hz}};
     r.draw_lines_3d(pad,{0.72f,0.52f,0.16f,0.85f},1.5f);
-    for(int column=0;column<2;++column){
-        for(int row=0;row<3;++row){
-            const Vec3 bay{c.x+3.15f+(float)column*1.55f,y,c.z+((float)row-1.0f)*1.55f};
+    for(int column=0;column<3;++column){
+        for(int row=0;row<2;++row){
+            const Vec3 bay{c.x+3.20f+(float)column*2.20f,y,c.z-1.20f+(float)row*2.40f};
             const float bx=0.58f,bz=0.72f;
             r.draw_lines_3d({{bay.x-bx,y,bay.z-bz},{bay.x+bx,y,bay.z-bz},
                              {bay.x+bx,y,bay.z-bz},{bay.x+bx,y,bay.z+bz},
@@ -192,9 +192,9 @@ void GameApp::render_builder_robot(Renderer& r){
                             {0.46f,0.50f,0.48f,0.55f},1.0f);
         }
     }
-    for(int column=0;column<2;++column){
-        for(int row=0;row<3;++row){
-            const Vec3 carrier_bay{c.x+6.35f+(float)column*1.65f,y,c.z+((float)row-1.0f)*1.65f};
+    for(int column=0;column<3;++column){
+        for(int row=0;row<2;++row){
+            const Vec3 carrier_bay{c.x+5.10f+(float)column*1.70f,y,c.z+4.00f+(float)row*2.20f};
             r.draw_lines_3d({{carrier_bay.x-0.58f,y,carrier_bay.z-0.76f},{carrier_bay.x+0.58f,y,carrier_bay.z-0.76f},
                              {carrier_bay.x+0.58f,y,carrier_bay.z-0.76f},{carrier_bay.x+0.58f,y,carrier_bay.z+0.76f},
                              {carrier_bay.x+0.58f,y,carrier_bay.z+0.76f},{carrier_bay.x-0.58f,y,carrier_bay.z+0.76f},
@@ -235,13 +235,23 @@ void GameApp::render_builder_robot(Renderer& r){
         const auto& owner=builder_robots_[owner_index];
         if(owner.role!=RobotRole::Constructor || !owner.target.valid() || owner.site_buffer.empty()) continue;
         if(construction_site_owner_index(owner.target)!=owner_index) continue;
-        Vec3 site=construction_target_position(owner.target);
+        Vec3 site=construction_drop_position(owner.target);
         site.y=first_person_floor_height(site);
+        ResourceBundle visible_buffer=owner.site_buffer;
+        if(owner.stage_materials_picked){
+            if(const auto* plan=construction_target_plan(owner.target)){
+                const ResourceBundle picked=plan->next_step_cost(construction_target_step(owner.target));
+                for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
+                    const auto material=(MaterialResource)ri;
+                    visible_buffer.amount(material)=std::max<std::int64_t>(0,visible_buffer.amount(material)-picked.amount(material));
+                }
+            }
+        }
         int visual_slot=0;
         constexpr int max_visual_packages=36;
         for(std::size_t mi=0;mi<kMaterialResourceCount && visual_slot<max_visual_packages;++mi){
             const auto material=(MaterialResource)mi;
-            std::int64_t remaining=owner.site_buffer.amount(material);
+            std::int64_t remaining=visible_buffer.amount(material);
             const std::int64_t capacity=std::max<std::int64_t>(1,resource_package_capacity_kg(material));
             while(remaining>0 && visual_slot<max_visual_packages){
                 const std::int64_t package_amount=std::min(remaining,capacity);

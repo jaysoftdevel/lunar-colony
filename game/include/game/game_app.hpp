@@ -173,6 +173,7 @@ private:
     void update_resource_economy(float dt);
     ResourceBundle starter_resource_reserve() const;
     eng::Vec3 construction_target_position(const ConstructionTargetRef& target) const;
+    eng::Vec3 construction_drop_position(const ConstructionTargetRef& target) const;
     bool construction_target_complete(const ConstructionTargetRef& target) const;
     const ConstructionResourcePlan* construction_target_plan(const ConstructionTargetRef& target) const;
     std::uint8_t construction_target_step(const ConstructionTargetRef& target) const;

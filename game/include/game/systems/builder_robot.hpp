@@ -113,6 +113,7 @@ struct BuilderRobotState {
     float current_speed_mps{0.0f};
     float blocked_elapsed{0.0f};
     float build_orbit_phase{0.0f};
+    bool build_side_corner_reached{false};
     // Legacy steering bias retained for save/source compatibility. The continuous
     // navigation controller no longer performs reactive steering or retreat
     // maneuvers; all fleet conflicts are resolved in the route schedule before
@@ -168,6 +169,22 @@ struct BuilderRobotState {
     MaterialResource interaction_material{MaterialResource::Iron};
     bool interaction_position_valid{false};
 
+    // Exclusive ownership of the narrow starter-depot pallet throat. This is
+    // transient and acquired only once the rover actually reaches the lane
+    // mouth, so two approaching robots cannot swap priority every tick.
+    bool pickup_lane_claimed{false};
+    // Stable FIFO age for a starter-depot material lane. Dynamic distance-based
+    // ranking can reorder two approaching rovers every frame and put both into
+    // the throat. Older assignments keep priority until pickup/egress completes.
+    float pickup_queue_age{0.0f};
+
+    // After unloading at a construction site's single material drop, a CR-01
+    // must physically clear the apron before the site reservation is released.
+    // Otherwise an "idle" carrier can remain parked on the only legal drop bay
+    // and block the rest of the logistics fleet.
+    bool drop_exit_pending{false};
+    bool post_delivery_hold{false};
+
     // Independent high-level progress watchdog. Route blocking alone is not
     // sufficient to detect an operation deadlock (for example a valid route to
     // an interaction point whose source disappeared). Each robot monitors its
@@ -189,6 +206,14 @@ struct BuilderRobotState {
     // transient and intentionally need no save-schema change.
     bool stage_commit_pending{false};
     eng::Vec3 stage_commit_safe_position{};
+
+    // Current construction-step material handoff. Carriers always place
+    // delivered resources at the site's single drop zone. Before assembly can
+    // start, one BR-02 must physically visit that drop zone and pick the
+    // current step's materials. This flag is transient: after load the builder
+    // simply repeats the handoff animation against the still-authoritative
+    // site_buffer, so resources can never be duplicated or lost.
+    bool stage_materials_picked{false};
 
     // Action animation is deliberately transient. Save/load preserves the
     // underlying logistics transaction (cargo/site buffer/mode), then resumes
