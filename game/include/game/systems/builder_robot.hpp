@@ -121,10 +121,9 @@ struct BuilderRobotState {
     float blocked_elapsed{0.0f};
     float build_orbit_phase{0.0f};
     bool build_side_corner_reached{false};
-    // Legacy steering bias retained for save/source compatibility. The continuous
-    // navigation controller no longer performs reactive steering or retreat
-    // maneuvers; all fleet conflicts are resolved in the route schedule before
-    // movement starts.
+    // Rolling-horizon side preference. When a 0.5 s local plan has to skirt an
+    // obstacle, the chosen side is retained briefly so consecutive replans do not
+    // alternate left/right at the same wall or rover conflict. Transient on load.
     float avoidance_offset_degrees{0.0f};
 
     // Render-only smoothing state. Navigation/collision always use position and
@@ -136,12 +135,12 @@ struct BuilderRobotState {
     eng::Vec3 visual_velocity{};
     bool visual_initialized{false};
 
-    // Every trip is geometrically planned before motion begins, but execution is
-    // continuous rather than quantized into stop/go time slots.  The route is a
-    // dense, rounded polyline with cumulative arc-length metadata.  Fleet traffic
-    // is predicted against the complete route before departure and continuously
-    // negotiated with a speed governor while driving; steering never improvises a
-    // new direction around another robot.  Routes are transient after save/load.
+    // Navigation is receding-horizon: planned_route contains only the motion the
+    // rover may execute during the next ~0.5 seconds, never the complete trip to
+    // route_destination. At the end of each horizon the rover plans again from its
+    // measured pose. Structures/resources and predicted robot hulls are checked
+    // before publication; execution-time hull checks remain the final safety layer.
+    // Routes are transient after save/load.
     std::vector<eng::Vec3> planned_route{};
     std::vector<float> planned_route_distances{};
     std::size_t route_cursor{0};
@@ -183,18 +182,16 @@ struct BuilderRobotState {
     // wall. The trail is bounded and rebuilt naturally after load/spawn.
     std::vector<eng::Vec3> traffic_motion_history{};
 
-    // Route-resolution watchdog. Static route failures are intentionally kept
-    // separate from traffic waiting so a harmless one-lane yield can never
-    // escalate into repeated full-map replans.
-    // but a rover must never remain trapped in that local search indefinitely.
-    // If no useful path/progress is obtained for two seconds the integration
-    // layer requests one full-map/world-geometry replan and discards the local
-    // traffic assumptions which may have created a mutual wait.
+    // Local-resolution watchdog. Static local-plan failures are intentionally
+    // separate from traffic waiting so a harmless one-lane yield never triggers
+    // repeated recovery work. If the rolling 0.5 s planner makes no useful
+    // progress, the integration layer schedules one urgent local fallback/escape
+    // attempt; it never asks for a full-destination route.
     float route_resolution_elapsed{0.0f};
     bool route_force_full_replan{false};
     std::uint16_t route_full_replan_count{0};
 
-    // Deterministic fleet-deadlock escape. If the 2 s full-route watchdog
+    // Deterministic fleet-deadlock escape. If the local recovery watchdog
     // detects a nose-to-nose traffic lock, only the lower-priority rover is
     // assigned a short hull-safe pull-aside waypoint. The original task/goal is
     // untouched; after reaching this transient waypoint the robot replans its

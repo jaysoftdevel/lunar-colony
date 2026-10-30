@@ -1,13 +1,11 @@
 #include "game/game_app.hpp"
 #include "game/systems/construction_costs.hpp"
-#include "game/robots/path_planner.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/construction_sequence.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
-#include <thread>
 #include <vector>
 
 namespace game {
@@ -1757,14 +1755,15 @@ void GameApp::update_builder_robot(float dt){
         return fleet_hull_clear(robot_index,candidate,heading);
     };
 
-    // v0.40.25 fleet navigator. Static world routing and rover traffic are two
-    // separate systems: A*/Theta* solves terrain/structures only, while the
-    // traffic coordinator negotiates moving chassis with pair-stable priority,
-    // WAIT, breadcrumb backout/passing pockets, and detour as the last fallback.
-    // A temporary rover can therefore never make the static world "unroutable".
-    constexpr float kRouteGridCellM=0.46f;
-    constexpr float kRoutePointSpacingM=0.30f;
-    constexpr float kFullRouteResolutionSeconds=2.00f;
+    // v0.40.27 rolling-horizon fleet navigator. A robot never commits a path
+    // to its complete task destination. It plans only the motion it can execute
+    // during the next 0.5 seconds, then repeats from its newly observed pose.
+    // Every short horizon is checked against structures, staged resources and
+    // predicted fleet motion. If the preferred horizon is blocked, a bounded
+    // local collision-fallback trajectory is selected instead.
+    constexpr float kLocalPlanningHorizonSeconds=0.50f;
+    constexpr float kRoutePointSpacingM=0.24f;
+    constexpr float kLocalRecoveryEscalationSeconds=1.25f;
 
     auto heading_between=[](Vec3 from,Vec3 to,float fallback){
         const float dx=to.x-from.x,dz=to.z-from.z;
@@ -1987,94 +1986,141 @@ void GameApp::update_builder_robot(float dt){
         return true;
     };
 
-    // Path searches are bounded per role rather than by one global token. The
-    // single-token implementation could be consumed forever by an early-index
-    // constructor, starving every CR-01 later in the array even though the CPU
-    // budget was otherwise idle. Separate quotas keep construction and
-    // logistics progressing in parallel while still bounding placement cost.
-    // Two construction crews and three logistics rovers may publish/replan in
-    // the same 90 Hz slice. The searches are corridor-bounded, so this remains
-    // a small deterministic CPU budget while preventing low-index robots on one
-    // site from starving a second simultaneously active construction.
+    // Short-horizon planning remains budgeted per role. The planner is now a
+    // bounded local trajectory sampler rather than a full-destination A* search,
+    // so each planning opportunity has a predictable small CPU cost even with a
+    // large world and many completed structures.
     int& constructor_route_plans_remaining=robot_constructor_route_plans_budget_;
     int& carrier_route_plans_remaining=robot_carrier_route_plans_budget_;
 
-    // Spatial path search lives in the robot-pathfinding implementation target.
-    // This integration layer supplies game-specific occupancy, structure and
-    // fleet-traffic callbacks without exposing construction/logistics state to
-    // the generic A*/Theta*-style planner.
-    auto build_spatial_route=[&](std::size_t robot_index,Vec3 direct_goal,float stop_radius,float corridor_half_width,
-                                 float traffic_weight,int max_expansions,float grid_cell,float nominal_speed_mps,
-                                 bool include_stationary_fleet,std::vector<Vec3>& geometric){
-        auto& robot=builder_robots_[robot_index];
-        const float half=(float)playfield_.size()*0.5f-0.52f;
-        const float nominal_heading=heading_between(robot.position,direct_goal,robot.heading_degrees);
-        robots::PathPlannerCallbacks callbacks;
-        callbacks.floor_height=[&](Vec3 p){ return first_person_floor_height(p); };
-        callbacks.point_clear=[&](Vec3 p){
-            if(std::abs(p.x)>half || std::abs(p.z)>half) return false;
-            if(!robot_position_clear(robot_index,p)) return false;
-            (void)include_stationary_fleet;
-            (void)nominal_heading;
-            // A traffic-detour retry may temporarily route around the one rover
-            // that could not be resolved by waiting/passing. Other fleet mates
-            // remain dynamic and never enter the world occupancy map.
-            if(robot.traffic_detour_active && robot.traffic_detour_avoid_index<builder_robots_.size() &&
-               robot.traffic_detour_avoid_index!=robot_index){
-                const auto& blocker=builder_robots_[robot.traffic_detour_avoid_index];
-                if(robot_hulls_overlap(p,robot.heading_degrees,robot.role,
-                                       blocker.position,blocker.heading_degrees,blocker.role,0.65f)) return false;
-            }
-            return true;
-        };
-        callbacks.segment_clear=[&](Vec3 a,Vec3 b){
-            // Static geometry only. Fleet separation is already checked by the
-            // point occupancy and time-aware dynamic_segment_clear callback;
-            // re-scanning stationary hulls for every visibility edge duplicated
-            // the hottest work in long corridor routes.
-            return route_segment_plannable_clear(robot_index,a,b);
-        };
-        callbacks.neighbor_clear=[&](Vec3 a,Vec3 b){
-            // A search-grid edge is shorter than one metre and all navigation
-            // obstacles are already inflated by the rover hull. Checking its
-            // midpoint avoids repeating the strict segment sampler 3-5 times for
-            // every A* neighbour. Final path simplification still uses the strict
-            // segment callback, and execution revalidates every actual movement.
-            if(std::abs(b.y-a.y)>0.38f) return false;
-            Vec3 mid=(a+b)*0.5f;
-            // Midpoint terrain height is unnecessary for an edge shorter than
-            // one grid cell; endpoint heights already enforce the slope limit.
-            // Fleet motion is checked once by dynamic_segment_clear below.
-            if(!robot_position_clear(robot_index,mid)) return false;
-            return true;
-        };
-        callbacks.traffic_cost=[](Vec3){ return 0.0f; };
-        // Space-time fleet conflicts are resolved during execution. Publishing
-        // a static path must never fail just because another rover is currently
-        // crossing it.
-        callbacks.dynamic_segment_clear={};
+    auto horizon_travel_distance=[&](const BuilderRobotState& robot,float cruise_speed){
+        const float cruise=std::max(0.10f,cruise_speed);
+        const float start_speed=std::clamp(robot.current_speed_mps,0.0f,cruise);
+        const float t_to_cruise=std::max(0.0f,(cruise-start_speed)/kRobotAccelerationMps2);
+        float travel=0.0f;
+        if(kLocalPlanningHorizonSeconds<=t_to_cruise){
+            travel=start_speed*kLocalPlanningHorizonSeconds+
+                   0.5f*kRobotAccelerationMps2*kLocalPlanningHorizonSeconds*kLocalPlanningHorizonSeconds;
+        }else{
+            travel=start_speed*t_to_cruise+0.5f*kRobotAccelerationMps2*t_to_cruise*t_to_cruise+
+                   cruise*(kLocalPlanningHorizonSeconds-t_to_cruise);
+        }
+        // A stationary rover still needs enough geometric look-ahead to choose a
+        // side around a nearby obstacle, but the committed path remains below the
+        // distance it can physically cover in roughly half a second at low speed.
+        const float physical_cap=std::max(0.10f,cruise*kLocalPlanningHorizonSeconds+0.02f);
+        return std::clamp(travel,0.10f,physical_cap);
+    };
 
-        robots::PathPlanRequest request;
-        request.start=robot.position;
-        request.goal=direct_goal;
-        request.stop_radius=stop_radius;
-        request.corridor_half_width=corridor_half_width;
-        request.cell_size=grid_cell;
-        request.max_expansions=max_expansions;
-        request.traffic_weight=traffic_weight;
-        request.alternating_side_preference=((robot_index&1u)==0u)?-1.0f:1.0f;
-        request.visibility_skip_limit=8;
-        request.nominal_speed_mps=std::max(0.10f,nominal_speed_mps);
-        // Use roughly half of the host's logical CPUs for the expensive,
-        // embarrassingly-parallel occupancy sampling inside broad path searches.
-        // The A* ordering itself remains deterministic on the calling thread.
-        const unsigned logical_cpus=std::max(1u,std::thread::hardware_concurrency());
-        const unsigned half_system=std::max(1u,logical_cpus/2u);
-        // Threading is reserved for broad recovery searches. Small 5/10 m
-        // corridor replans stay serial so thread start/join overhead cannot
-        // become a new source of micro-stutter.
-        request.worker_count=corridor_half_width>=17.5f?half_system:1u;
-        return robots::plan_corridor_path(request,callbacks,geometric);
+    auto point_on_polyline=[&](Vec3 origin,const std::vector<Vec3>& points,float distance,float& heading_out){
+        Vec3 previous=origin;
+        float walked=0.0f;
+        heading_out=0.0f;
+        for(const Vec3& endpoint:points){
+            const float segment=dist_xz(previous,endpoint);
+            if(segment>0.0001f && walked+segment>=distance){
+                const float t=std::clamp((distance-walked)/segment,0.0f,1.0f);
+                Vec3 p=previous+(endpoint-previous)*t;
+                p.y=first_person_floor_height(p);
+                heading_out=heading_between(previous,endpoint,heading_out);
+                return p;
+            }
+            if(segment>0.0001f) heading_out=heading_between(previous,endpoint,heading_out);
+            walked+=segment;
+            previous=endpoint;
+        }
+        Vec3 p=points.empty()?origin:points.back();
+        p.y=first_person_floor_height(p);
+        return p;
+    };
+
+    auto short_route_static_clear=[&](std::size_t robot_index,const std::vector<Vec3>& points){
+        if(robot_index>=builder_robots_.size() || points.empty()) return false;
+        Vec3 previous=builder_robots_[robot_index].position;
+        for(const Vec3& endpoint:points){
+            if(dist_xz(previous,endpoint)<0.008f){ previous=endpoint; continue; }
+            if(!route_segment_plannable_clear(robot_index,previous,endpoint)) return false;
+            previous=endpoint;
+        }
+        return true;
+    };
+
+    auto short_route_dynamic_clear=[&](std::size_t robot_index,const std::vector<Vec3>& points,float cruise_speed,
+                                       std::size_t& blocker_out){
+        blocker_out=kNoRobotIndex;
+        if(robot_index>=builder_robots_.size() || points.empty()) return false;
+        const auto& robot=builder_robots_[robot_index];
+        const auto distances=route_distances(robot.position,points);
+        if(distances.empty()) return false;
+        const float total=distances.back();
+        if(total<0.008f) return false;
+        const float cruise=std::max(0.10f,cruise_speed);
+        const float start_speed=std::clamp(robot.current_speed_mps,0.0f,cruise);
+        constexpr std::array<float,6> sample_times{{0.08f,0.16f,0.25f,0.34f,0.42f,0.50f}};
+        for(float t:sample_times){
+            const float t_to_cruise=std::max(0.0f,(cruise-start_speed)/kRobotAccelerationMps2);
+            float advance=0.0f;
+            if(t<=t_to_cruise) advance=start_speed*t+0.5f*kRobotAccelerationMps2*t*t;
+            else advance=start_speed*t_to_cruise+0.5f*kRobotAccelerationMps2*t_to_cruise*t_to_cruise+
+                         cruise*(t-t_to_cruise);
+            advance=std::min(total,advance);
+            float own_heading=robot.heading_degrees;
+            const Vec3 own=point_on_polyline(robot.position,points,advance,own_heading);
+            for(std::size_t i=0;i<builder_robots_.size();++i){
+                if(i==robot_index) continue;
+                const auto& other=builder_robots_[i];
+                const auto predicted=predict_robot_pose(i,t);
+                if(!robot_hulls_overlap(own,own_heading,robot.role,
+                                        predicted.position,predicted.heading_degrees,other.role,
+                                        kRobotHullClearanceM+0.07f)) continue;
+
+                // If two safety envelopes already touch, allow only a candidate
+                // that increases separation without creating a real hull overlap.
+                // This is essential for a fallback route to pull a rover out of a
+                // tight encounter instead of rejecting every escape because the
+                // first 80 ms sample is still inside the soft clearance margin.
+                const bool initially_soft=robot_hulls_overlap(robot.position,robot.heading_degrees,robot.role,
+                                                               other.position,other.heading_degrees,other.role,
+                                                               kRobotHullClearanceM+0.07f);
+                const bool candidate_hard=robot_hulls_overlap(own,own_heading,robot.role,
+                                                              predicted.position,predicted.heading_degrees,other.role,0.0f);
+                if(initially_soft && !candidate_hard &&
+                   dist_xz(own,predicted.position)>dist_xz(robot.position,other.position)+0.015f)
+                    continue;
+                blocker_out=i;
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto dense_local_candidate=[&](std::size_t robot_index,const std::vector<Vec3>& geometric,float horizon_distance){
+        auto dense=make_continuous_path(robot_index,geometric);
+        if(dense.empty()) return dense;
+        // Guard the core invariant: even after corner rounding, never publish
+        // more than one 0.5 s motion horizon. Trim the final segment if needed.
+        std::vector<Vec3> trimmed;
+        trimmed.reserve(dense.size());
+        Vec3 previous=builder_robots_[robot_index].position;
+        float used=0.0f;
+        for(Vec3 endpoint:dense){
+            const float segment=dist_xz(previous,endpoint);
+            if(segment<0.002f) continue;
+            if(used+segment<=horizon_distance+0.001f){
+                trimmed.push_back(endpoint);
+                used+=segment;
+                previous=endpoint;
+                continue;
+            }
+            const float remain=horizon_distance-used;
+            if(remain>0.02f){
+                Vec3 clipped=previous+(endpoint-previous)*(remain/segment);
+                clipped.y=first_person_floor_height(clipped);
+                trimmed.push_back(clipped);
+            }
+            break;
+        }
+        return trimmed;
     };
 
     auto plan_route=[&](std::size_t robot_index,Vec3 destination,float stop_radius,float speed_scale){
@@ -2085,110 +2131,135 @@ void GameApp::update_builder_robot(float dt){
         robot.route_stop_radius=std::max(0.0f,stop_radius);
         robot.route_speed_scale=std::clamp(speed_scale,0.10f,1.0f);
 
-        const float d=dist_xz(robot.position,destination);
-        if(d<=stop_radius+0.06f) return true;
-        Vec3 direct_goal=destination;
-        if(d>0.001f && stop_radius>0.0f){
-            const float travel=std::max(0.0f,d-stop_radius*0.94f);
-            Vec3 shortened=robot.position+(destination-robot.position)*(travel/d);
-            shortened.y=first_person_floor_height(shortened);
-            // Stop-radius shortening is only an optimisation. Around corridor
-            // material stacks or a growing structure, moving the geometric goal
-            // a few centimetres toward the rover can move it from a validated
-            // apron into a blocked hull envelope. Never launch A* toward that
-            // artificial impossible point; route to the real safe destination
-            // and let the executor stop inside the requested radius instead.
-            if(robot_position_clear(robot_index,shortened) &&
-               robot_structure_move_allowed(robot,shortened,shortened))
-                direct_goal=shortened;
+        const float distance_to_goal=dist_xz(robot.position,destination);
+        if(distance_to_goal<=stop_radius+0.06f) return true;
+
+        const float cruise_speed=std::max(0.10f,robot.move_speed_mps*robot.route_speed_scale);
+        const float horizon_distance=std::min(std::max(0.05f,distance_to_goal-stop_radius*0.92f),
+                                              horizon_travel_distance(robot,cruise_speed));
+        if(horizon_distance<0.025f) return true;
+
+        const float goal_heading=heading_between(robot.position,destination,robot.heading_degrees);
+        const float preferred_side=(robot.avoidance_offset_degrees>1.0f)?1.0f:
+                                   (robot.avoidance_offset_degrees<-1.0f?-1.0f:
+                                    ((robot_index&1u)==0u?-1.0f:1.0f));
+
+        struct LocalCandidate {
+            std::vector<Vec3> points;
+            float score{-std::numeric_limits<float>::infinity()};
+            float offset_degrees{0.0f};
+            std::size_t blocker{kNoRobotIndex};
+            bool dynamic_blocked{false};
+            bool fallback{false};
+        };
+        LocalCandidate best{};
+        std::size_t nearest_dynamic_blocker=kNoRobotIndex;
+
+        auto evaluate=[&](float offset_degrees,bool bend_back,bool fallback,float length_scale){
+            const float local_length=std::min(horizon_distance,std::max(0.10f,horizon_distance*length_scale));
+            const float heading=(goal_heading+offset_degrees)*PI/180.0f;
+            const Vec3 direction{std::sin(heading),0.0f,std::cos(heading)};
+            std::vector<Vec3> geometric;
+            if(bend_back && std::abs(offset_degrees)>8.0f && local_length>0.55f){
+                const float first_length=local_length*0.62f;
+                Vec3 first=robot.position+direction*first_length;
+                first.y=first_person_floor_height(first);
+                geometric.push_back(first);
+                Vec3 to_goal=destination-first; to_goal.y=0.0f;
+                const float to_goal_len=std::sqrt(to_goal.x*to_goal.x+to_goal.z*to_goal.z);
+                const float remaining=local_length-first_length;
+                if(to_goal_len>0.04f && remaining>0.04f){
+                    Vec3 second=first+to_goal*(std::min(remaining,to_goal_len)/to_goal_len);
+                    second.y=first_person_floor_height(second);
+                    geometric.push_back(second);
+                }
+            }else{
+                Vec3 endpoint=robot.position+direction*local_length;
+                endpoint.y=first_person_floor_height(endpoint);
+                geometric.push_back(endpoint);
+            }
+
+            auto points=dense_local_candidate(robot_index,geometric,local_length);
+            if(points.empty() || !short_route_static_clear(robot_index,points)) return;
+            std::size_t blocker=kNoRobotIndex;
+            if(!short_route_dynamic_clear(robot_index,points,cruise_speed,blocker)){
+                if(blocker!=kNoRobotIndex) nearest_dynamic_blocker=blocker;
+                return;
+            }
+
+            const Vec3 endpoint=points.back();
+            const float progress=distance_to_goal-dist_xz(endpoint,destination);
+            const float side_match=(offset_degrees*preferred_side>0.0f)?1.0f:0.0f;
+            const float heading_penalty=std::abs(offset_degrees)*0.0065f;
+            float score=progress*2.25f-heading_penalty+side_match*0.08f;
+            if(fallback) score-=0.42f;
+            if(std::abs(offset_degrees)<1.0f) score+=0.18f;
+            if(robot.avoidance_offset_degrees*offset_degrees>0.0f) score+=0.15f;
+            if(score>best.score){
+                best.points=std::move(points);
+                best.score=score;
+                best.offset_degrees=offset_degrees;
+                best.blocker=blocker;
+                best.dynamic_blocked=false;
+                best.fallback=fallback;
+            }
+        };
+
+        // Preferred 0.5 s horizon. The order is deterministic and side-stable so
+        // two robots do not oscillate left/right when both see the same obstacle.
+        evaluate(0.0f,false,false,1.00f);
+        constexpr std::array<float,5> primary_offsets{{18.0f,32.0f,48.0f,66.0f,82.0f}};
+        for(float angle:primary_offsets){
+            evaluate(angle*preferred_side,false,false,1.00f);
+            evaluate(-angle*preferred_side,false,false,1.00f);
+            if(angle<=82.0f){
+                evaluate(angle*preferred_side,true,false,1.00f);
+                evaluate(-angle*preferred_side,true,false,1.00f);
+            }
         }
 
-        const bool full_resolution=robot.route_force_full_replan;
-        const float nominal_speed=std::max(0.10f,robot.move_speed_mps*std::clamp(speed_scale,0.10f,1.0f));
-        std::vector<Vec3> geometric;
-        // Even a full-resolution recovery must respect a rover that is
-        // physically stationary in front of us.  The previous recovery used
-        // only static-world clearance here, so a head-on pair could repeatedly
-        // republish the same straight route through each other's hull.
-        const bool direct_clear=route_segment_plannable_clear(robot_index,robot.position,direct_goal);
-        if(direct_clear){
-            geometric.push_back(direct_goal);
-        }else if(full_resolution){
-            // Two seconds without a resolvable/progressing route promotes the
-            // next attempt to a full-resolution world search. Stationary/held
-            // fleet hulls remain hard obstacles during that search so recovery
-            // cannot simply republish a straight path through another rover.
-            // A physically nose-to-nose start is resolved separately by the
-            // deterministic traffic pull-aside maneuver below.
-            const float full_width=std::max(18.0f,(float)playfield_.size()*0.72f);
-            if(!build_spatial_route(robot_index,direct_goal,stop_radius,full_width,
-                                    0.22f,16000,kRouteGridCellM*1.65f,nominal_speed,true,geometric)){
-                // A traffic detour is optional. If even the broad search cannot
-                // route around the latched rover, drop the temporary obstacle
-                // and return to cooperative waiting/backout instead of retrying
-                // an impossible detour forever.
-                if(robot.traffic_detour_active){
-                    robot.traffic_detour_active=false;
-                    robot.traffic_detour_avoid_index=kNoRobotIndex;
-                    robot.route_force_full_replan=false;
-                    robot.route_search_tier=0;
-                }
-                robot.route_replan_cooldown=0.45f;
-                return false;
+        // Collision fallback route: if every normal horizon is blocked, search a
+        // shorter local escape fan, including lateral and reverse motion. This is
+        // still a <=0.5 s trajectory and is revalidated against both structures
+        // and predicted robot hulls before it is committed.
+        if(best.points.empty()){
+            robot.traffic_detour_active=true;
+            robot.traffic_detour_avoid_index=nearest_dynamic_blocker;
+            constexpr std::array<float,10> fallback_offsets{{88.0f,-88.0f,108.0f,-108.0f,128.0f,-128.0f,150.0f,-150.0f,180.0f,0.0f}};
+            for(float angle:fallback_offsets){
+                const float signed_angle=(angle==180.0f || angle==0.0f)?angle:angle*preferred_side;
+                evaluate(signed_angle,false,true,0.58f);
             }
+        }
+
+        if(best.points.empty()){
+            robot.route_search_tier=(std::uint8_t)std::min<int>(3,(int)robot.route_search_tier+1);
+            robot.route_replan_cooldown=0.055f+0.025f*(float)robot.route_search_tier;
+            robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*0.05f);
+            return false;
+        }
+
+        const bool committed=commit_route(robot_index,best.points,speed_scale);
+        if(!committed) return false;
+        robot.route_search_tier=0;
+        robot.route_force_full_replan=false;
+        robot.route_resolution_elapsed=0.0f;
+        robot.route_full_replan_count=0;
+        if(best.fallback){
+            robot.traffic_detour_active=true;
+            robot.traffic_detour_avoid_index=nearest_dynamic_blocker;
+            if(std::abs(best.offset_degrees)>1.0f)
+                robot.avoidance_offset_degrees=(best.offset_degrees>0.0f)?45.0f:-45.0f;
+        }else if(std::abs(best.offset_degrees)>8.0f){
+            robot.avoidance_offset_degrees=(best.offset_degrees>0.0f)?45.0f:-45.0f;
+            robot.traffic_detour_active=false;
+            robot.traffic_detour_avoid_index=kNoRobotIndex;
         }else{
-            // Normal replans remain corridor-local and cheap. The full-map
-            // fallback is deliberately reserved for the 2 s resolution
-            // watchdog so routine traffic never causes a frame spike.
-            // One spatial search per planning opportunity. A failure advances to
-            // a wider corridor on a later tick rather than executing three full
-            // searches back-to-back and freezing the visible frame.
-            constexpr std::array<float,3> widths{{5.0f,10.0f,18.0f}};
-            constexpr std::array<int,3> expansion_caps{{6500,10000,15000}};
-            const std::size_t tier=std::min<std::size_t>(robot.route_search_tier,widths.size()-1);
-            const float traffic_weight=0.58f+(float)tier*0.18f;
-            if(!build_spatial_route(robot_index,direct_goal,stop_radius,widths[tier],
-                                    traffic_weight,expansion_caps[tier],kRouteGridCellM,nominal_speed,true,geometric)){
-                if(robot.traffic_detour_active && tier+1>=widths.size()){
-                    robot.traffic_detour_active=false;
-                    robot.traffic_detour_avoid_index=kNoRobotIndex;
-                    robot.route_search_tier=0;
-                }else{
-                    robot.route_search_tier=(std::uint8_t)std::min<std::size_t>(widths.size()-1,tier+1);
-                }
-                robot.route_replan_cooldown=0.10f+0.06f*(float)tier;
-                return false;
-            }
+            robot.avoidance_offset_degrees=0.0f;
+            robot.traffic_detour_active=false;
+            robot.traffic_detour_avoid_index=kNoRobotIndex;
         }
-
-        auto dense=make_continuous_path(robot_index,geometric);
-        if(dense.empty()){ robot.route_replan_cooldown=full_resolution?0.45f:0.16f; return false; }
-
-        // Rounding/densification changes the exact spatial trajectory, so run
-        // one final STATIC validation on the route that will actually be driven.
-        // Rover traffic is resolved later by the cooperative coordinator.
-        {
-            Vec3 previous=robot.position;
-            for(const Vec3& point:dense){
-                if(!route_segment_plannable_clear(robot_index,previous,point)){
-                    robot.route_replan_cooldown=full_resolution?0.28f:0.08f;
-                    return false;
-                }
-                previous=point;
-            }
-        }
-
-        // The route is published immediately. Full-fleet trajectory prediction
-        // remains in the continuous speed governor. A successful full-resolution
-        // recovery returns the rover to the normal cheap planner immediately.
-        const bool committed=commit_route(robot_index,dense,speed_scale);
-        if(committed) robot.route_search_tier=0;
-        if(committed && full_resolution){
-            ++robot.route_full_replan_count;
-            robot.route_force_full_replan=false;
-            robot.route_resolution_elapsed=0.0f;
-        }
-        return committed;
+        return true;
     };
 
     auto carrier_standby_position=[&](std::size_t robot_index){
@@ -2641,7 +2712,7 @@ void GameApp::update_builder_robot(float dt){
         if(robot_index>=builder_robots_.size()) return false;
         const auto& robot=builder_robots_[robot_index];
         if(!robot.route_active) return false;
-        constexpr std::array<float,7> horizons{{0.0f,0.16f,0.30f,0.52f,0.78f,1.08f,1.42f}};
+        constexpr std::array<float,7> horizons{{0.0f,0.08f,0.16f,0.25f,0.34f,0.42f,0.50f}};
         const float speed=std::max(robot.current_speed_mps,requested_speed*0.72f);
         for(std::size_t i=0;i<builder_robots_.size();++i){
             if(i==robot_index) continue;
@@ -2741,11 +2812,11 @@ void GameApp::update_builder_robot(float dt){
             }
         }
 
-        // FALLBACK DETOUR. A detour is deliberately delayed so two robots do not
-        // both abandon otherwise good paths at the first encounter. Only the
-        // yielding rover routes around the latched blocker; if no alternate path
-        // exists it falls back to waiting/backing rather than spinning/replanning.
-        if(robot.route_wait_elapsed>=4.00f && !robot.traffic_detour_active){
+        // FALLBACK DETOUR. The rolling-horizon planner normally avoids the
+        // conflict before publication. If the other rover changes state after
+        // publication and cooperative WAIT/PASS cannot resolve it quickly, latch
+        // that blocker so the very next <=0.5 s plan samples around its hull.
+        if(robot.route_wait_elapsed>=0.95f && !robot.traffic_detour_active){
             robot.traffic_detour_active=true;
             robot.traffic_detour_avoid_index=blocker;
             robot.route_replan_cooldown=0.0f;
@@ -2815,7 +2886,7 @@ void GameApp::update_builder_robot(float dt){
                     robot.blocked_elapsed+=dt;
                     robot.route_resolution_elapsed+=dt;
                 }
-                if(robot.route_resolution_elapsed>=kFullRouteResolutionSeconds){
+                if(robot.route_resolution_elapsed>=kLocalRecoveryEscalationSeconds){
                     robot.traffic_escape_active=false;
                     robot.route_force_full_replan=true;
                     robot.route_replan_cooldown=0.0f;
@@ -2861,7 +2932,7 @@ void GameApp::update_builder_robot(float dt){
             robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*dt);
             robot.blocked_elapsed+=dt;
             robot.route_resolution_elapsed+=dt;
-            if(robot.route_resolution_elapsed>=kFullRouteResolutionSeconds){
+            if(robot.route_resolution_elapsed>=kLocalRecoveryEscalationSeconds){
                 robot.traffic_escape_active=false;
                 robot.route_force_full_replan=true;
                 robot.route_replan_cooldown=0.0f;
@@ -2871,14 +2942,13 @@ void GameApp::update_builder_robot(float dt){
         speed_scale=std::clamp(speed_scale,0.10f,1.0f);
 
         auto escalate_resolution=[&](){
-            if(robot.route_resolution_elapsed<kFullRouteResolutionSeconds) return false;
-            // Escalation is an edge, not a level. Once a full search is already
-            // pending, do not clear its failure backoff on every simulation tick.
-            // v0.40.6 could otherwise execute the same failed A* search at 90 Hz.
+            if(robot.route_resolution_elapsed<kLocalRecoveryEscalationSeconds) return false;
+            // Escalation is an edge, not a level. The compatibility flag below
+            // no longer requests a full-destination search; it only prioritises
+            // one urgent rolling-horizon recovery attempt on the next tick.
             if(robot.route_force_full_replan) return false;
-            // Traffic waiting has its own coordinator and must never enter the
-            // legacy full-route/escape watchdog. Static construction geometry
-            // can still use the outward recovery path.
+            // Traffic waiting has its own coordinator. Static construction
+            // geometry can still use the outward recovery path.
             if(robot.traffic_blocker_index==kNoRobotIndex && !robot.traffic_escape_active &&
                try_activate_traffic_escape(robot_index)) return true;
             robot.route_force_full_replan=true;
@@ -2920,8 +2990,9 @@ void GameApp::update_builder_robot(float dt){
         }
 
         if(!robot.route_active){
-            // Full-resolution retries need backoff as well. Ignoring cooldown
-            // while route_force_full_replan was set caused the v0.40.6 CPU spike.
+            // Urgent local-recovery retries still honor backoff. Ignoring the
+            // cooldown here would allow the same blocked 0.5 s fan to be sampled
+            // at every 90 Hz simulation tick.
             if(robot.route_replan_cooldown>0.0f){
                 robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*dt);
                 robot.blocked_elapsed+=dt;
@@ -3076,71 +3147,13 @@ void GameApp::update_builder_robot(float dt){
         return false;
     };
 
-    // Construction aprons are deliberately only a few metres from the rover.
-    // Once a complete chassis-safe straight segment has been selected, routing
-    // that tiny departure through the global A* grid is both unnecessary and
-    // dangerous: an unreachable service coordinate used to block the game
-    // thread for seconds at a time. This local maneuver turns the rover first,
-    // then advances only through continuously revalidated body-clear samples.
+    // Construction aprons and emergency pull-aside moves use the exact same
+    // rolling-horizon navigator as normal transit. The former direct-drive path
+    // bypassed 0.5 s traffic prediction and could therefore enter a collision
+    // before the next frame noticed the blocker. The local planner is cheap
+    // enough that there is no longer a reason to maintain that bypass.
     auto move_construction_service_direct=[&](std::size_t robot_index,Vec3 destination,float stop_radius,float speed_scale){
-        if(robot_index>=builder_robots_.size()) return false;
-        auto& robot=builder_robots_[robot_index];
-        destination.y=first_person_floor_height(destination);
-        clear_route(robot);
-        robot.route_force_full_replan=false;
-        robot.route_resolution_elapsed=0.0f;
-        robot.route_replan_cooldown=0.0f;
-
-        const float distance=dist_xz(robot.position,destination);
-        if(distance<=stop_radius+0.025f){
-            robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*dt);
-            robot.blocked_elapsed=0.0f;
-            robot.route_waiting_for_clearance=false;
-            return true;
-        }
-
-        const float desired_heading=heading_between(robot.position,destination,robot.heading_degrees);
-        const float turned=turn_towards_heading(robot.heading_degrees,desired_heading,
-                                                std::max(kRobotTurnRateDegreesPerSecond,210.0f)*dt);
-        const float heading_error=std::abs(wrap_radians((desired_heading-turned)*PI/180.0f)*180.0f/PI);
-        if(heading_error>5.0f){
-            robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*dt);
-            if(fleet_hull_clear(robot_index,robot.position,turned) ||
-               fleet_hull_hard_clear(robot_index,robot.position,turned)){
-                robot.heading_degrees=turned;
-                robot.blocked_elapsed=0.0f;
-            }else{
-                robot.blocked_elapsed+=dt;
-            }
-            return false;
-        }
-
-        const float cruise=std::min(0.92f,std::max(0.42f,robot.move_speed_mps*std::clamp(speed_scale,0.15f,1.0f)));
-        robot.current_speed_mps=approach(robot.current_speed_mps,cruise,kRobotAccelerationMps2*dt);
-        const float travel=std::min(std::max(0.0f,distance-stop_radius),robot.current_speed_mps*dt);
-        if(travel<=0.0005f) return false;
-        Vec3 candidate=robot.position+(destination-robot.position)*(travel/distance);
-        candidate.y=first_person_floor_height(candidate);
-        Vec3 midpoint=(robot.position+candidate)*0.5f;
-        midpoint.y=first_person_floor_height(midpoint);
-        const bool legal=robot_position_clear(robot_index,midpoint) &&
-                         robot_position_clear(robot_index,candidate) &&
-                         robot_structure_move_allowed(robot,robot.position,midpoint) &&
-                         robot_structure_move_allowed(robot,midpoint,candidate) &&
-                         fleet_hull_clear(robot_index,midpoint,desired_heading) &&
-                         fleet_hull_clear(robot_index,candidate,desired_heading);
-        if(!legal){
-            robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*dt);
-            robot.blocked_elapsed+=dt;
-            robot.route_waiting_for_clearance=true;
-            return false;
-        }
-
-        robot.position=candidate;
-        robot.heading_degrees=desired_heading;
-        robot.blocked_elapsed=0.0f;
-        robot.route_waiting_for_clearance=false;
-        return dist_xz(robot.position,destination)<=stop_radius+0.030f;
+        return move_towards(robot_index,destination,stop_radius,speed_scale);
     };
 
     auto robot_safe_for_next_stage=[&](std::size_t robot_index,const ConstructionTargetRef& target,std::uint8_t next_step){

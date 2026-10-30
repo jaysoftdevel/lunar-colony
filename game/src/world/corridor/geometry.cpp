@@ -1,9 +1,59 @@
 #include "game/world/corridor/detail.hpp"
 #include <array>
+#include <limits>
 #include <vector>
 
 namespace game::corridor_detail {
 void tri(std::vector<Vec3>& dst,Vec3 a,Vec3 b,Vec3 c){ dst.push_back(a); dst.push_back(b); dst.push_back(c); }
+namespace {
+float segment_distance_approx_for_self_test(Vec3 a0,Vec3 a1,Vec3 b0,Vec3 b1){
+    float best=std::numeric_limits<float>::max();
+    for(int i=0;i<=5;++i){
+        const float t=(float)i/5.0f;
+        const Vec3 p=a0+(a1-a0)*t;
+        best=std::min(best,point_segment_distance_xz(p,b0,b1));
+    }
+    for(int i=0;i<=5;++i){
+        const float t=(float)i/5.0f;
+        const Vec3 p=b0+(b1-b0)*t;
+        best=std::min(best,point_segment_distance_xz(p,a0,a1));
+    }
+    return best;
+}
+}
+
+bool corridor_path_self_overlaps(const std::vector<Vec3>& path){
+    constexpr float CLEARANCE=CORRIDOR_HALF_WIDTH*1.82f;
+    if(path.size()<4) return false;
+    std::vector<float> along(path.size(),0.0f);
+    for(std::size_t i=1;i<path.size();++i) along[i]=along[i-1]+distance_xz(path[i-1],path[i]);
+    for(std::size_t i=0;i+1<path.size();++i){
+        const Vec3 di=flat_normal(path[i+1]-path[i]);
+        const float li=distance_xz(path[i],path[i+1]);
+        for(std::size_t j=i+2;j+1<path.size();++j){
+            const float lj=distance_xz(path[j],path[j+1]);
+            const float route_separation=(along[j]+lj*0.5f)-(along[i]+li*0.5f);
+            if(route_separation<CORRIDOR_HALF_WIDTH*1.35f) continue;
+
+            Vec3 hit{};
+            if(segment_intersection_xz(path[i],path[i+1],path[j],path[j+1],hit,0.001f)) return true;
+
+            const float spacing=segment_distance_approx_for_self_test(path[i],path[i+1],path[j],path[j+1]);
+            if(spacing>=CLEARANCE) continue;
+            const Vec3 dj=flat_normal(path[j+1]-path[j]);
+            // Catch a tight hairpin even when its two legs do not mathematically
+            // cross. Their swept pressure shells still overlap and form the
+            // impassable knot seen in the 0.40.25 triangle save.
+            if(length(di)>0.001f && length(dj)>0.001f && dot(di,dj)<-0.35f) return true;
+
+            // For same-direction/non-hairpin portions retain the wider route-
+            // distance exemption so ordinary smooth bends are not rejected.
+            if(route_separation>=CLEARANCE*2.4f) return true;
+        }
+    }
+    return false;
+}
+
 void edge(std::vector<Vec3>& dst,Vec3 a,Vec3 b){ dst.push_back(a); dst.push_back(b); }
 
 std::vector<Vec2> corridor_cross_section(float scale){

@@ -129,7 +129,9 @@ bool paths_conflict(const std::vector<Vec3>& a,const std::vector<Vec3>& b,Vec3 a
         for(std::size_t j=0;j+1<b.size();++j){
             const Vec3 amid=(a[i]+a[i+1])*0.5f;
             const Vec3 bmid=(b[j]+b[j+1])*0.5f;
-            if(distance_xz(amid,allowed_junction)<1.55f && distance_xz(bmid,allowed_junction)<1.55f) continue;
+            constexpr float EXPLICIT_JUNCTION_ZONE=CORRIDOR_HALF_WIDTH*2.0f+0.32f;
+            if(distance_xz(amid,allowed_junction)<EXPLICIT_JUNCTION_ZONE &&
+               distance_xz(bmid,allowed_junction)<EXPLICIT_JUNCTION_ZONE) continue;
             if(segment_distance_approx(a[i],a[i+1],b[j],b[j+1])>=ROUTE_CLEARANCE_BETWEEN_CORRIDORS) continue;
             bool merged=false;
             for(Vec3 hit:crossings){
@@ -161,6 +163,7 @@ bool network_has_conflicts(const std::vector<CorridorConnection>& connections){
     constexpr Vec3 FAR_AWAY{1000000.0f,0.0f,1000000.0f};
     for(std::size_t a=0;a<connections.size();++a){
         if(connections[a].path.size()<2) continue;
+        if(corridor_path_self_overlaps(connections[a].path)) return true;
         for(std::size_t b=a+1;b<connections.size();++b){
             if(connections[b].path.size()<2) continue;
             const auto junction=shared_junction(connections,a,b);
@@ -228,7 +231,17 @@ void optimize_group(std::vector<CorridorConnection>& connections,std::size_t roo
         for(int es=0;es<2;++es){
             const CorridorEndpoint& ep=es==0?connections[ci].endpoint_a:connections[ci].endpoint_b;
             if(ep.kind!=CorridorEndpointKind::Corridor || ep.index!=root_index || !ep.surface_matched_junction) continue;
-            if(distance_along_from_end(root,root_from_a,ep.host_position)>FAN_ZONE) continue;
+            const float current_along=distance_along_from_end(root,root_from_a,ep.host_position);
+            const float opposite_along=distance_along_from_end(root,!root_from_a,ep.host_position);
+            if(current_along>FAN_ZONE) continue;
+            // A corridor with structures at both ends used to optimize the same
+            // branch twice. The second pass could flip the branch to the opposite
+            // side and create a tight U-turn/self-overlap. A branch belongs to
+            // exactly one entrance fan: whichever root end is physically closer.
+            // Resolve exact midpoint ties deterministically to endpoint A.
+            constexpr float OWNER_TIE_EPS=0.12f;
+            if(current_along>opposite_along+OWNER_TIE_EPS) continue;
+            if(std::abs(current_along-opposite_along)<=OWNER_TIE_EPS && !root_from_a) continue;
             GroupMember m;
             m.connection=ci;
             m.attach_endpoint_a=es==0;
@@ -324,10 +337,19 @@ void optimize_group(std::vector<CorridorConnection>& connections,std::size_t roo
         const float slot=FIRST_BRANCH_SLOT+(float)m->side_rank*SAME_SIDE_SPACING;
         const Vec3 host_point=point_along_from_end(root,root_from_a,slot);
         CorridorEndpoint attach=make_surface_branch(root_index,root,host_point,far.position);
-        // Force the intended side when a destination is almost centered.
-        Vec3 side=perp_xz(attach.host_tangent);
-        if(m->side<0) side=side*-1.0f;
-        attach.tangent=flat_normal(side);
+        // make_surface_branch() already chooses the local host side that faces
+        // the destination. Do not overwrite that choice with the entrance-wide
+        // left/right rank: when optimizing from endpoint B, the root path's
+        // stored tangent orientation is reversed relative to that entrance and
+        // the old forced sign sent branches to the wrong side. Only resolve the
+        // genuinely ambiguous centered case with the fan's balanced side rank.
+        Vec3 local_side=perp_xz(attach.host_tangent);
+        const float local_lateral=dot(flatten(far.position-attach.host_position),local_side);
+        if(std::abs(local_lateral)<0.18f){
+            Vec3 desired=lateral_axis*(float)m->side;
+            if(dot(local_side,desired)<0.0f) local_side=local_side*-1.0f;
+            attach.tangent=flat_normal(local_side);
+        }
         const float center_gap=distance_xz(far.position,attach.host_position);
         const float free_gap=std::max(0.0f,center_gap-CORRIDOR_HALF_WIDTH);
         const float adapter_run=std::clamp(free_gap*0.45f,0.08f,0.42f);

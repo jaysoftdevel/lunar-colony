@@ -100,38 +100,38 @@ bool paths_have_merged_crossing(const CorridorConnection& a,const CorridorConnec
     return false;
 }
 
+bool endpoint_matches_direct_anchor(const CorridorEndpoint& ep,const CorridorBuildAnchor& anchor,
+                                  const std::vector<CorridorConnection>& connections){
+    if(anchor.kind==CorridorEndpointKind::Habitat)
+        return ep.kind==CorridorEndpointKind::Habitat && ep.index==anchor.index;
+    if(anchor.kind==CorridorEndpointKind::Resource)
+        return ep.kind==CorridorEndpointKind::Resource && ep.index==anchor.index;
+    if(anchor.kind==CorridorEndpointKind::Corridor){
+        if(ep.kind!=CorridorEndpointKind::Corridor || ep.index!=anchor.index || anchor.index>=connections.size()) return false;
+        const Vec3 selected=nearest_path_point(connections[anchor.index].path,anchor.position);
+        const Vec3 existing=ep.surface_matched_junction?ep.host_position:ep.position;
+        return distance_xz(selected,existing)<0.85f;
+    }
+    return ep.kind==CorridorEndpointKind::OpenDoor && distance_xz(ep.position,anchor.position)<0.85f;
+}
+
 bool corridor_anchors_already_connected(const CorridorBuildAnchor& a,const CorridorBuildAnchor& b,
                                         const std::vector<CorridorConnection>& connections){
     if(a.kind==b.kind && a.index==b.index &&
        (a.kind==CorridorEndpointKind::Habitat || a.kind==CorridorEndpointKind::Resource))
         return true;
-    if(connections.empty()) return false;
 
-    DisjointSets sets(connections.size());
-    for(std::size_t i=0;i<connections.size();++i){
-        for(const CorridorEndpoint* ep:{&connections[i].endpoint_a,&connections[i].endpoint_b})
-            if(ep->kind==CorridorEndpointKind::Corridor && ep->index<connections.size()) sets.unite(i,ep->index);
+    // Only suppress an actual duplicate physical link. Being reachable through
+    // the wider corridor graph is not a duplicate: players must be able to add
+    // the third side of a triangle and to connect already-blueprinted corridor
+    // runs even when those runs belong to the same network component.
+    for(const auto& c:connections){
+        const bool forward=endpoint_matches_direct_anchor(c.endpoint_a,a,connections) &&
+                           endpoint_matches_direct_anchor(c.endpoint_b,b,connections);
+        const bool reverse=endpoint_matches_direct_anchor(c.endpoint_a,b,connections) &&
+                           endpoint_matches_direct_anchor(c.endpoint_b,a,connections);
+        if(forward || reverse) return true;
     }
-    // Connections that enter the same structure are part of one traversable
-    // network through that structure interior. Transversal corridor crossings
-    // are also real merged junctions and therefore share a component.
-    for(std::size_t i=0;i<connections.size();++i) for(std::size_t j=i+1;j<connections.size();++j){
-        const bool same_owner=endpoint_same_owner(connections[i].endpoint_a,connections[j].endpoint_a) ||
-                              endpoint_same_owner(connections[i].endpoint_a,connections[j].endpoint_b) ||
-                              endpoint_same_owner(connections[i].endpoint_b,connections[j].endpoint_a) ||
-                              endpoint_same_owner(connections[i].endpoint_b,connections[j].endpoint_b);
-        if(same_owner || paths_have_merged_crossing(connections[i],connections[j])) sets.unite(i,j);
-    }
-
-    std::vector<std::size_t> comps_a,comps_b;
-    auto append_unique=[&](std::vector<std::size_t>& dst,std::size_t c){ c=sets.find(c); if(std::find(dst.begin(),dst.end(),c)==dst.end()) dst.push_back(c); };
-    if(a.kind==CorridorEndpointKind::Corridor && a.index<connections.size()) append_unique(comps_a,a.index);
-    if(b.kind==CorridorEndpointKind::Corridor && b.index<connections.size()) append_unique(comps_b,b.index);
-    for(std::size_t i=0;i<connections.size();++i){
-        if(endpoint_matches_anchor(connections[i].endpoint_a,a) || endpoint_matches_anchor(connections[i].endpoint_b,a)) append_unique(comps_a,i);
-        if(endpoint_matches_anchor(connections[i].endpoint_a,b) || endpoint_matches_anchor(connections[i].endpoint_b,b)) append_unique(comps_b,i);
-    }
-    for(std::size_t ca:comps_a) for(std::size_t cb:comps_b) if(ca==cb) return true;
     return false;
 }
 
@@ -238,9 +238,7 @@ std::optional<CorridorEndpoint> CorridorNetwork::preview_anchor(
 }
 
 CorridorMesh CorridorNetwork::preview_endpoint_mesh(const CorridorEndpoint& endpoint) const {
-    CorridorMesh mesh;
-    append_docking_collar(mesh,endpoint);
-    return mesh;
+    return build_endpoint_fitting(endpoint);
 }
 
 std::optional<CorridorConnection> CorridorNetwork::preview_built_corridor(
@@ -514,6 +512,20 @@ bool CorridorNetwork::connect_corridors(std::size_t corridor_a,std::size_t corri
     connections_.push_back(std::move(*c));
     rebuild_all_meshes(connections_);
     return true;
+}
+
+void CorridorNetwork::repair_invalid_topology(const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library){
+    bool invalid=false;
+    for(const auto& c:connections_){
+        if(corridor_path_self_overlaps(c.path)){ invalid=true; break; }
+    }
+    if(!invalid) return;
+
+    // Re-run the deterministic shared-entrance fan layout using the corrected
+    // single-owner rule. This repairs 0.40.25 saves whose branch was flipped by
+    // the second entrance pass, without rearranging healthy saved networks.
+    optimize_shared_entrance_groups(connections_,habitats,library);
+    rebuild_all_meshes(connections_);
 }
 
 void CorridorNetwork::update_construction(float dt,ResourceManagement& resources,bool allow_negative){

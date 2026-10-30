@@ -212,23 +212,6 @@ std::vector<Vec3> smooth_candidate(std::vector<Vec3> controls){
     return compact;
 }
 
-bool path_self_overlaps(const std::vector<Vec3>& path){
-    constexpr float CLEARANCE=CORRIDOR_HALF_WIDTH*1.82f;
-    if(path.size()<4) return false;
-    std::vector<float> along(path.size(),0.0f);
-    for(std::size_t i=1;i<path.size();++i) along[i]=along[i-1]+distance_xz(path[i-1],path[i]);
-    for(std::size_t i=0;i+1<path.size();++i){
-        for(std::size_t j=i+2;j+1<path.size();++j){
-            // Nearby samples belong to the same physical bend and are expected
-            // to be closer than one tube diameter. Only compare portions that
-            // are well separated along the route itself.
-            if(along[j]-along[i+1] < CLEARANCE*2.4f) continue;
-            if(segment_distance_approx(path[i],path[i+1],path[j],path[j+1])<CLEARANCE) return true;
-        }
-    }
-    return false;
-}
-
 
 std::vector<Vec3> compact_connection_route(const CorridorEndpoint& a,const CorridorEndpoint& b){
     const float d=distance_xz(a.position,b.position);
@@ -270,7 +253,7 @@ bool route_is_valid(const std::vector<Vec3>& path,
                     const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                     const std::vector<CorridorConnection>& existing,
                     const CorridorEndpoint& a,const CorridorEndpoint& b){
-    if(path.size()<2 || path_self_overlaps(path)) return false;
+    if(path.size()<2 || corridor_path_self_overlaps(path)) return false;
     if(route_overlaps_structures(path,habitats,library,resources,resource_library,a,b)) return false;
     if(route_overlaps_corridor(path,existing,a,b)) return false;
     return true;

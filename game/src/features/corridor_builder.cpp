@@ -239,20 +239,19 @@ void GameApp::render_corridor_placement(Renderer& r){
         highlight_resource_anchor(hover);
         auto candidate=corridor_network_.preview_anchor(hover,source_hint(hover,hit,placed_habitats_,placed_resources_),placed_habitats_,habitat_models_,placed_resources_,resource_models_);
         std::optional<CorridorConnection> sample;
-        if(candidate){
+        if(candidate && candidate->kind!=CorridorEndpointKind::Corridor){
             const Vec3 dir=flat_dir(candidate->tangent);
             const CorridorBuildAnchor sample_end{CorridorEndpointKind::OpenDoor,0,candidate->position+dir*2.75f};
             sample=corridor_network_.preview_built_corridor(hover,sample_end,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
         }
-        // The first click selects a connection node, not a finished route.
-        // Never reject a valid entrance/corridor point just because the
-        // arbitrary one-section indicator happens to point into nearby
-        // geometry.  Route collision and resource checks belong to the second
-        // click, when the actual destination is known.
+        // The first click selects a connection node, not a finished route. A
+        // corridor node therefore previews only its junction/adapter mesh; the
+        // route itself appears after the source has been selected and the mouse
+        // provides a real destination. This avoids the misleading initial stub.
         const bool start_valid=candidate.has_value();
         if(sample){
             draw_compact_corridor_blueprint(r,*sample,true);
-        }else{
+        }else if(!candidate || candidate->kind!=CorridorEndpointKind::Corridor){
             draw_corridor_start_sample(r,candidate?candidate->position:hit,candidate?candidate->tangent:Vec3{1,0,0},start_valid);
         }
         if(candidate){
@@ -262,7 +261,8 @@ void GameApp::render_corridor_placement(Renderer& r){
             // Generated entrances therefore float over the hull while built-in
             // doors show their exact pressure adapter. Reused entrances resolve
             // to their shared corridor manifold and show that junction instead.
-            if(candidate->kind==CorridorEndpointKind::Habitat || candidate->kind==CorridorEndpointKind::Resource){
+            if(candidate->kind==CorridorEndpointKind::Habitat || candidate->kind==CorridorEndpointKind::Resource ||
+               candidate->kind==CorridorEndpointKind::Corridor){
                 const auto entrance_mesh=corridor_network_.preview_endpoint_mesh(*candidate);
                 const Color shell=start_valid?Color{0.34f,1.00f,0.72f,0.88f}:Color{1.00f,0.24f,0.18f,0.80f};
                 const Color details=start_valid?Color{0.24f,0.88f,0.68f,0.82f}:Color{1.00f,0.34f,0.24f,0.78f};

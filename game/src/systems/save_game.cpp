@@ -657,6 +657,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     ground_resource_piles_=std::move(piles);
     corridor_network_.restore_connections(std::move(corridors));
     corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
+    corridor_network_.repair_invalid_topology(placed_habitats_,habitat_models_);
     utility_network_.restore_connections(std::move(utilities));
     utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     walkway_network_.restore_connections(std::move(walkways));

@@ -675,6 +675,13 @@ void append_crossing_hubs(CorridorMesh& mesh,const std::vector<MergedCrossingJun
     }
 }
 
+CorridorMesh build_endpoint_fitting(const CorridorEndpoint& endpoint){
+    CorridorMesh mesh;
+    append_docking_collar(mesh,endpoint);
+    append_corridor_junction(mesh,endpoint);
+    return mesh;
+}
+
 CorridorMesh build_mesh(const CorridorEndpoint& a,const CorridorEndpoint& b,const std::vector<Vec3>& path,
                         const std::vector<CorridorConnection>& existing,std::size_t self_index){
     CorridorMesh mesh;

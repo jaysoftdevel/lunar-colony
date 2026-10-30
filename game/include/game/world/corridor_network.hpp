@@ -126,6 +126,7 @@ public:
     const std::vector<CorridorConnection>& connections() const { return connections_; }
     std::vector<CorridorConnection>& mutable_connections() { return connections_; }
     void restore_connections(std::vector<CorridorConnection> connections){ connections_=std::move(connections); }
+    void repair_invalid_topology(const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library);
 
 private:
     std::vector<CorridorConnection> connections_{};

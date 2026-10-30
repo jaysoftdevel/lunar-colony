@@ -110,6 +110,8 @@ std::vector<Vec3> smooth_route(const CorridorEndpoint& a,const CorridorEndpoint&
 std::vector<Vec3> seamless_end_splice_route(Vec3 a,Vec3 outward_a,Vec3 b,Vec3 outward_b);
 CorridorMesh build_mesh(const CorridorEndpoint& a,const CorridorEndpoint& b,const std::vector<Vec3>& path,
                         const std::vector<CorridorConnection>& existing,std::size_t self_index=NONE_INDEX);
+CorridorMesh build_endpoint_fitting(const CorridorEndpoint& endpoint);
+bool corridor_path_self_overlaps(const std::vector<Vec3>& path);
 void rebuild_all_meshes(std::vector<CorridorConnection>& connections);
 std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anchor,const CorridorBuildAnchor& b_anchor,
                                                CorridorConnectionKind kind,

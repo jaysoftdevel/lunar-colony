@@ -278,11 +278,11 @@ void GameApp::render_builder_robot(Renderer& r){
     for(std::size_t i=0;i<walkway_network_.connections().size();++i)
         render_site_buffer({ConstructionTargetKind::Walkway,i},walkway_network_.connections()[i].site_buffer);
 
-    // Every moving task exposes its complete precomputed continuous trajectory
-    // on the ground. Cyan is the planned lane; amber means the reciprocal speed
-    // governor is currently yielding right-of-way. The lane itself never jitters
-    // left/right because traffic negotiation changes speed or triggers a complete
-    // lane replan instead of reactive steering.
+    // Every moving robot exposes only its current rolling ~0.5 s trajectory on
+    // the ground. Cyan is the locally validated motion horizon; amber means the
+    // reciprocal speed governor is currently yielding right-of-way. The short
+    // line therefore updates as the rover observes new structures/traffic rather
+    // than drawing a precomputed path all the way to the task destination.
     for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
         const auto& robot=builder_robots_[robot_index];
         if(!robot.route_active || robot.route_cursor>=robot.planned_route.size()) continue;

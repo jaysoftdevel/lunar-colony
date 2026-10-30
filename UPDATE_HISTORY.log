@@ -1,3 +1,16 @@
+0.40.27
+- Replaced full-destination rover route publication with a 0.5 s receding/rolling navigation horizon.
+- Each short horizon is re-planned from the robot's current pose and validates completed/partial structures, staged resources, terrain/slope and predicted robot hull motion before it is committed.
+- Added deterministic local collision fallback trajectories (lateral, angled and reverse) when the preferred horizon is blocked; fallback remains bounded to the same <=0.5 s planning window.
+- Limited fleet conflict prediction to the same 0.5 s horizon and shortened the WAIT/PASS-to-fallback transition so changing traffic is handled locally instead of triggering long full-map searches.
+- Robot inspector/debug route rendering now identifies the rolling horizon / local fallback rather than presenting it as a complete trip route.
+
+0.40.26
+- Fixed corridor fan ownership so a branch on a corridor between two structures is optimized from only the nearest entrance; this prevents the second pass from flipping the branch into a self-overlapping U-turn.
+- Added a corridor self-overlap safety check and a load-time repair for invalid saved corridor topology.
+- Corridor placement now suppresses only true duplicate physical links, allowing triangle links and new links between already-blueprinted corridor runs in the same network component.
+- Initial corridor-on-corridor blueprint preview now shows only the junction/adapter fitting until a destination is selected.
+
 0.40.22 - Multi-structure robot deadlock recovery; universal SMALL structure tier; mouse-wheel size-only placement.
 0.40.4
 - Added PAUSE as a fourth game-speed state alongside NORMAL 1X / QUICK 2X / FAST 4X. Pause uses a 0X simulation multiplier so colony time, robots, production and construction stop while the UI/camera remain responsive; +/- cycles PAUSE <-> NORMAL <-> QUICK <-> FAST and the selected state persists through save/load.

@@ -161,9 +161,9 @@ void GameApp::render_selection_panel(Renderer& r){
         cargo_mass<<"CARGO  "<<robot.cargo.total_amount()<<" / "<<robot.payload_capacity_kg<<" KG";
         if(robot.route_active){
             const float remaining_m=std::max(0.0f,robot.route_total_length_m-robot.route_progress_m);
-            const char* traffic_state=robot.traffic_detour_active?"DETOUR":
-                                      (robot.route_waiting_for_clearance?"WAIT / PASS":"FLOW / CLEAR");
-            route<<"ROUTE  "<<traffic_state
+            const char* traffic_state=robot.traffic_detour_active?"LOCAL FALLBACK":
+                                      (robot.route_waiting_for_clearance?"WAIT / PASS":"0.5S ROLLING");
+            route<<"NAV  "<<traffic_state
                  <<" / "<<std::fixed<<std::setprecision(1)<<remaining_m<<" M";
         }else route<<"ROUTE  STATIONARY";
         if(robot.target.valid()){
