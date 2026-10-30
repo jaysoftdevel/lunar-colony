@@ -4330,6 +4330,64 @@ void GameApp::update_builder_robot(float dt){
     // interaction state stopped making progress. Recovery is strictly local:
     // the affected robot clears/replans its own work, while shared kilograms are
     // released back to the site ledger when appropriate.
+    // Hard-stall breaker. route_waiting_for_clearance disarms the generic
+    // watchdog below, so two robots yielding to each other (or one wedged
+    // against a structure boundary) could wait forever. A robot with obstructed
+    // active work which has not moved for kHardStallSeconds is relocated to the
+    // nearest pose that is clear of every structure, obstacle and fleet hull,
+    // then replans from there with a fresh full-resolution search.
+    constexpr float kHardStallSeconds=9.0f;
+    for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
+        auto& robot=builder_robots_[robot_index];
+        const bool active_work=robot.action==BuilderRobotAction::None &&
+            (robot.mode==BuilderRobotMode::Fetching || robot.mode==BuilderRobotMode::Delivering ||
+             robot.mode==BuilderRobotMode::Building || robot.mode==BuilderRobotMode::AwaitingMaterials ||
+             robot.mode==BuilderRobotMode::DepotTransfer);
+        const bool obstructed=robot.route_waiting_for_clearance || robot.route_force_full_replan ||
+            robot.route_resolution_elapsed>1.0f || robot.blocked_elapsed>0.5f;
+        const bool pickup_queue=robot.mode==BuilderRobotMode::Fetching &&
+            robot.interaction_position_valid && starter_pallet_focus(robot.interaction_focus_position) &&
+            (starter_depot_admission_rank(robot_index)>=3u ||
+             starter_lane_queue_rank(robot_index,robot.interaction_material)>0);
+        if(!active_work || !obstructed || pickup_queue || dist_xz(robot.position,robot.hard_stall_position)>0.10f){
+            robot.hard_stall_position=robot.position;
+            robot.hard_stall_elapsed=0.0f;
+            continue;
+        }
+        robot.hard_stall_elapsed+=dt;
+        if(robot.hard_stall_elapsed<kHardStallSeconds) continue;
+        robot.hard_stall_elapsed=0.0f;
+
+        const float half=(float)playfield_.size()*0.5f-0.60f;
+        bool relocated=false;
+        for(int ring=1;ring<=20 && !relocated;++ring){
+            const float radius=0.50f*(float)ring;
+            for(int k=0;k<16 && !relocated;++k){
+                const float angle=((float)((k+robot_index*3u)%16u)/16.0f)*2.0f*PI;
+                Vec3 candidate=robot.position+Vec3{std::sin(angle)*radius,0.0f,std::cos(angle)*radius};
+                if(std::abs(candidate.x)>half || std::abs(candidate.z)>half) continue;
+                candidate.y=first_person_floor_height(candidate);
+                if(!robot_position_clear(robot_index,candidate) ||
+                   !robot_structure_move_allowed(robot,candidate,candidate) ||
+                   !fleet_hull_clear(robot_index,candidate,robot.heading_degrees)) continue;
+                robot.position=candidate;
+                relocated=true;
+            }
+        }
+        robot.service_slot_offset=(std::uint8_t)((robot.service_slot_offset+5u)%24u);
+        robot.traffic_escape_active=false;
+        clear_interaction_station(robot);
+        clear_route(robot);
+        robot.current_speed_mps=0.0f;
+        robot.blocked_elapsed=0.0f;
+        robot.route_resolution_elapsed=0.0f;
+        robot.route_force_full_replan=true;
+        robot.route_replan_cooldown=0.0f;
+        robot.route_priority_age=std::min(120.0f,robot.route_priority_age+30.0f);
+        robot.hard_stall_position=robot.position;
+        (void)relocated;
+    }
+
     for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
         auto& robot=builder_robots_[robot_index];
         if(robot.route_waiting_for_clearance){

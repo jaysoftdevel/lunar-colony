@@ -177,6 +177,12 @@ struct BuilderRobotState {
     // traffic assumptions which may have created a mutual wait.
     float route_resolution_elapsed{0.0f};
     bool route_force_full_replan{false};
+    // Hard-stall breaker. Tracks how long a robot with active work and an
+    // obstructed route has failed to move. Unlike the operation watchdog it is
+    // never disarmed by route_waiting_for_clearance, so mutual yielding or a
+    // wedged chassis is always resolved by a local relocation to free space.
+    float hard_stall_elapsed{0.0f};
+    eng::Vec3 hard_stall_position{};
     std::uint16_t route_full_replan_count{0};
 
     // Deterministic fleet-deadlock escape. If the 2 s full-route watchdog
