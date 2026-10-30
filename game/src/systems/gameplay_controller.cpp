@@ -82,7 +82,8 @@ void GameApp::update(float dt,const InputState& in){
             selection_marquee_dragged_=false;
             build_catalog_.clear_selection();
             placement_rotation_degrees_=0.0f;
-            placement_habitat_size_=HabitatSizeTier::Standard;
+            placement_habitat_size_=HabitatSizeTier::Small;
+            placement_resource_size_=ResourceSizeTier::Small;
             placement_storage_size_=StorageDomeSize::Small;
             corridor_build_start_.reset();
             utility_build_start_.reset();
@@ -99,7 +100,8 @@ void GameApp::update(float dt,const InputState& in){
             if(build_catalog_.selected()!=nullptr){
                 build_catalog_.clear_selection();
                 placement_rotation_degrees_=0.0f;
-                placement_habitat_size_=HabitatSizeTier::Standard;
+                placement_habitat_size_=HabitatSizeTier::Small;
+                placement_resource_size_=ResourceSizeTier::Small;
                 placement_storage_size_=StorageDomeSize::Small;
                 corridor_build_start_.reset();
                 utility_build_start_.reset();
@@ -123,17 +125,22 @@ void GameApp::update(float dt,const InputState& in){
         InputState camera_input=in;
         if(const BuildObjectDefinition* selected=build_catalog_.selected(); selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
             constexpr float step=15.0f;
-            const bool scalable_habitat=selected->kind==BuildObjectKind::Habitat && habitat_has_size_tiers(selected->habitat_kind);
-            const bool scalable_storage=selected->kind==BuildObjectKind::Resource && selected->resource_kind==ResourceKind::StorageDome;
-            if(scalable_habitat){
-                auto cycle_size=[&](int delta){
-                    int v=(int)placement_habitat_size_;
-                    v=(v+delta+3)%3;
-                    placement_habitat_size_=(HabitatSizeTier)v;
+            if(selected->kind==BuildObjectKind::Habitat){
+                auto cycle_habitat=[&](int delta){
+                    if(habitat_has_extended_size_tiers(selected->habitat_kind)){
+                        constexpr HabitatSizeTier order[]{HabitatSizeTier::Small,HabitatSizeTier::Standard,HabitatSizeTier::Mid,HabitatSizeTier::Big};
+                        int idx=0; for(int i=0;i<4;++i) if(order[i]==placement_habitat_size_) idx=i;
+                        idx=(idx+delta+4)%4; placement_habitat_size_=order[idx];
+                    }else{
+                        constexpr HabitatSizeTier order[]{HabitatSizeTier::Small,HabitatSizeTier::Standard};
+                        int idx=placement_habitat_size_==HabitatSizeTier::Small?0:1;
+                        idx=(idx+delta+2)%2; placement_habitat_size_=order[idx];
+                    }
                 };
-                if(in.wheel>0.0f) cycle_size(+1);
-                if(in.wheel<0.0f) cycle_size(-1);
-            }else if(scalable_storage){
+                if(in.wheel>0.0f) cycle_habitat(+1);
+                if(in.wheel<0.0f) cycle_habitat(-1);
+                camera_input.wheel=0.0f;
+            }else if(selected->resource_kind==ResourceKind::StorageDome){
                 auto cycle_storage=[&](int delta){
                     int v=(int)placement_storage_size_;
                     v=(v+delta+4)%4;
@@ -141,13 +148,18 @@ void GameApp::update(float dt,const InputState& in){
                 };
                 if(in.wheel>0.0f) cycle_storage(+1);
                 if(in.wheel<0.0f) cycle_storage(-1);
+                camera_input.wheel=0.0f;
+            }else{
+                auto cycle_resource=[&](int){
+                    placement_resource_size_=placement_resource_size_==ResourceSizeTier::Small?ResourceSizeTier::Standard:ResourceSizeTier::Small;
+                };
+                if(in.wheel!=0.0f) cycle_resource(in.wheel>0.0f?1:-1);
+                camera_input.wheel=0.0f;
             }
-            // Structure rotation is intentionally keyboard-only. Mouse-wheel
-            // input remains available for size-tier selection (where applicable)
-            // or normal camera zoom; N/M are the sole placement rotation keys.
+            // Mouse wheel is exclusively a structure-size control while a
+            // structure is being placed. Rotation is keyboard-only (N/M).
             if(in.key_n_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
             if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
-            if(scalable_habitat || scalable_storage) camera_input.wheel=0.0f;
         }
         camera_.update(camera_input,playfield_.size(),viewport_height_);
         status_.update(sim_dt);

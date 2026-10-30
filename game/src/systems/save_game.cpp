@@ -1,6 +1,7 @@
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
 #include "game/version.hpp"
+#include "game/world/geometry_standards.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -15,7 +16,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=6;
+constexpr std::uint32_t kSaveSchema=9;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -428,6 +429,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     w.pod(placement_rotation_degrees_);
     w.pod((std::uint8_t)placement_habitat_size_);
     w.pod((std::uint8_t)placement_storage_size_);
+    w.pod((std::uint8_t)placement_resource_size_);
     w.pod((std::uint8_t)game_speed_);
 
     const CameraState camera_state=camera_.state();
@@ -444,6 +446,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,placed_resources_,[](Writer& out,const PlacedResource& item){
         out.pod((std::uint8_t)item.kind); write_vec3(out,item.position); out.pod(item.rotation_degrees); write_construction(out,item.construction); write_plan(out,item.resource_plan); write_bundle(out,item.site_buffer);
         out.pod((std::uint8_t)item.storage_size);
+        out.pod((std::uint8_t)item.size);
         out.pod((std::uint64_t)item.stored_boxes.size());
         for(const auto& box:item.stored_boxes){ out.pod((std::uint8_t)box.resource); out.pod(box.amount); out.pod(box.condition); }
     });
@@ -455,7 +458,10 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,utility_network_.connections(),write_utility);
     write_object_vector(w,walkway_network_.connections(),write_walkway);
 
-    // Save schema 6: blueprint-owned delivered-material buffers plus the mixed fleet.
+    // Save schema 9: supply-channel geometry is restored to a flat, visible, rover-crossable ground profile.
+    // Save schema 8: supply-channel geometry was buried below the rover plane.
+    // Save schema 7: adds persistent SMALL/STANDARD sizing for non-storage resource structures.
+    // Schema 6: blueprint-owned delivered-material buffers plus the mixed fleet.
     // Schema 5 already persisted exact per-robot construction logistics
     // reservations and persistent mechanical condition. This keeps carrier
     // demand accounting synchronized across save/load boundaries.
@@ -499,6 +505,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     const float saved_rotation=r.pod<float>();
     const auto saved_habitat_size=(HabitatSizeTier)r.pod<std::uint8_t>();
     const auto saved_storage_size=(StorageDomeSize)r.pod<std::uint8_t>();
+    const auto saved_resource_size=source_schema>=7?(ResourceSizeTier)r.pod<std::uint8_t>():ResourceSizeTier::Standard;
     const auto saved_game_speed=source_schema>=4?(GameSpeed)r.pod<std::uint8_t>():GameSpeed::Normal;
     if(saved_playfield<16 || saved_playfield>512){ error="Savegame playfield size is invalid."; return false; }
 
@@ -519,6 +526,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     if(!read_object_vector(r,structures,[&](Reader& in){
         PlacedResource item{}; item.kind=(ResourceKind)in.pod<std::uint8_t>(); item.position=read_vec3(in); item.rotation_degrees=in.pod<float>(); item.construction=read_construction(in); item.resource_plan=read_plan(in); if(source_schema>=6) item.site_buffer=read_bundle(in);
         item.storage_size=(StorageDomeSize)in.pod<std::uint8_t>();
+        item.size=source_schema>=7?(ResourceSizeTier)in.pod<std::uint8_t>():ResourceSizeTier::Standard;
         const auto n=in.pod<std::uint64_t>(); if(n>kMaxObjects) in.valid=false;
         item.stored_boxes.reserve((std::size_t)std::min(n,kMaxObjects));
         for(std::uint64_t i=0;i<n&&in.valid;++i){ StoredResourceBox box{}; box.resource=(MaterialResource)in.pod<std::uint8_t>(); box.amount=in.pod<std::int64_t>(); box.condition=in.pod<float>(); item.stored_boxes.push_back(box); }
@@ -546,6 +554,27 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     for(auto& c:corridors) compact_construction(c.construction,c.resource_plan,kCorridorConstructionSteps);
     for(auto& c:utilities) compact_construction(c.construction,c.resource_plan,kSupplyConstructionSteps);
     for(auto& c:walkways) compact_construction(c.construction,c.resource_plan,kWalkwayConstructionSteps);
+
+    // Schema <=7 used the original raised centerline (+0.30 m); schema 8 used
+    // the temporarily buried centerline (-0.24 m). Schema 9 restores channels
+    // to a very low but visible ground profile. Shift the complete saved
+    // connection so old colonies immediately get the same crossable geometry.
+    if(source_schema<9){
+        constexpr float kLegacyRaisedSupplyChannelY=0.30f;
+        constexpr float kLegacyBuriedSupplyChannelY=-0.24f;
+        const float old_y=source_schema<8?kLegacyRaisedSupplyChannelY:kLegacyBuriedSupplyChannelY;
+        const float dy=geometry::kSupplyChannelY-old_y;
+        auto shift_y=[&](eng::Vec3& v){ v.y+=dy; };
+        for(auto& c:utilities){
+            shift_y(c.endpoint_a.position);
+            shift_y(c.endpoint_b.position);
+            for(auto& v:c.path) shift_y(v);
+            for(auto& v:c.junctions) shift_y(v);
+            for(auto& v:c.mesh.shell) shift_y(v);
+            for(auto& v:c.mesh.details) shift_y(v);
+            for(auto& v:c.mesh.edges) shift_y(v);
+        }
+    }
 
     std::vector<BuilderRobotState> saved_robots;
     eng::Vec3 saved_stash{};
@@ -736,6 +765,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     placement_rotation_degrees_=saved_rotation;
     placement_habitat_size_=saved_habitat_size;
     placement_storage_size_=saved_storage_size;
+    placement_resource_size_=saved_resource_size;
 
     first_person_mode_=FirstPersonMode::Off;
     app_.set_relative_mouse_mode(false);

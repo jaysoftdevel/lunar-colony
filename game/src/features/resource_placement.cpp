@@ -28,8 +28,8 @@ float degrees_for_minus_z(Vec3 direction){
 }
 }
 
-bool GameApp::resource_placement_valid(ResourceKind kind,StorageDomeSize storage_size,Vec3 position,float rotation_degrees) const {
-    const ResourceMesh& candidate=resource_models_.mesh(kind,storage_size);
+bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,Vec3 position,float rotation_degrees) const {
+    const ResourceMesh& candidate=kind==ResourceKind::StorageDome?resource_models_.mesh(kind,storage_size):resource_models_.mesh(kind,size);
     const float half_field=(float)playfield_.size()*0.5f;
     const float a=radians(rotation_degrees);
     const float hx=std::abs(std::cos(a))*candidate.footprint_x*0.5f+std::abs(std::sin(a))*candidate.footprint_z*0.5f;
@@ -112,11 +112,13 @@ void GameApp::render_resource_placement(Renderer& r){
     Vec3 hit{};
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
     const StorageDomeSize storage_size=selected->resource_kind==ResourceKind::StorageDome?placement_storage_size_:StorageDomeSize::Small;
+    const ResourceSizeTier resource_size=selected->resource_kind==ResourceKind::StorageDome?ResourceSizeTier::Standard:placement_resource_size_;
     float rotation=placement_rotation_degrees_;
     const Vec3 snapped=selected->resource_kind==ResourceKind::StorageDome?snap_storage_dome(hit,storage_size,rotation):Vec3{std::round(hit.x),0.0f,std::round(hit.z)};
-    const auto& mesh=resource_models_.mesh(selected->resource_kind,storage_size);
+    const auto& mesh=selected->resource_kind==ResourceKind::StorageDome?
+        resource_models_.mesh(selected->resource_kind,storage_size):resource_models_.mesh(selected->resource_kind,resource_size);
     const auto plan=construction_costs::structure(selected->resource_kind,mesh);
-    const bool valid=resource_placement_valid(selected->resource_kind,storage_size,snapped,rotation) && can_start_construction(plan);
+    const bool valid=resource_placement_valid(selected->resource_kind,resource_size,storage_size,snapped,rotation) && can_start_construction(plan);
     render_resource_mesh(r,mesh,snapped,rotation,true,valid);
 
     if(valid && input_.left_pressed){
@@ -125,10 +127,12 @@ void GameApp::render_resource_placement(Renderer& r){
         placed.position=snapped;
         placed.rotation_degrees=rotation;
         placed.storage_size=storage_size;
+        placed.size=resource_size;
         placed.resource_plan=plan;
         placed_resources_.push_back(std::move(placed));
         build_catalog_.clear_selection();
         placement_rotation_degrees_=0.0f;
+        placement_resource_size_=ResourceSizeTier::Small;
         placement_storage_size_=StorageDomeSize::Small;
         corridor_build_start_.reset();
     }

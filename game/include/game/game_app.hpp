@@ -93,7 +93,8 @@ private:
     UtilityNetwork utility_network_{};
     WalkwayNetwork walkway_network_{};
     float placement_rotation_degrees_=0.0f;
-    HabitatSizeTier placement_habitat_size_{HabitatSizeTier::Standard};
+    HabitatSizeTier placement_habitat_size_{HabitatSizeTier::Small};
+    ResourceSizeTier placement_resource_size_{ResourceSizeTier::Small};
     StorageDomeSize placement_storage_size_{StorageDomeSize::Small};
     HabitatViewMode habitat_view_mode_=HabitatViewMode::Default;
     GameSpeed game_speed_=GameSpeed::Normal;
@@ -153,7 +154,7 @@ private:
     void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
     void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
     bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees) const;
-    bool resource_placement_valid(ResourceKind kind,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees) const;
+    bool resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees) const;
     eng::Vec3 snap_storage_dome(eng::Vec3 hit,StorageDomeSize size,float& rotation_degrees) const;
     void select_world_at(int screen_x,int screen_y);
     int pick_habitat(eng::Vec3 ground_hit) const;

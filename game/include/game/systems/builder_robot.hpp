@@ -165,12 +165,27 @@ struct BuilderRobotState {
     eng::Vec3 route_segment_origin{};
     bool route_segment_origin_valid{false};
     bool route_active{false};
-    // True only while the smooth traffic governor is yielding to another rover.
-    // A yield changes speed, never steering direction, so it cannot cause spins.
+    // Fleet traffic is deliberately separate from static route planning. A rover
+    // may wait on its published route for a higher-priority rover, back into a
+    // nearby passing pocket when a one-lane section is occupied, and only then
+    // request a static detour. None of these transient fields are persisted.
     bool route_waiting_for_clearance{false};
     float route_wait_elapsed{0.0f};
+    std::size_t traffic_blocker_index{kNoRobotIndex};
+    eng::Vec3 traffic_wait_position{};
+    bool traffic_wait_position_valid{false};
+    bool traffic_detour_active{false};
+    std::size_t traffic_detour_avoid_index{kNoRobotIndex};
+    float traffic_clear_elapsed{0.0f};
+    // Short non-persisted breadcrumb trail of positions the rover actually
+    // traversed. During a one-lane encounter the yielding rover reverses along
+    // these proven-clear points instead of guessing a side-step that may hit a
+    // wall. The trail is bounded and rebuilt naturally after load/spawn.
+    std::vector<eng::Vec3> traffic_motion_history{};
 
-    // Route-resolution watchdog. Local lane replans are intentionally cheap,
+    // Route-resolution watchdog. Static route failures are intentionally kept
+    // separate from traffic waiting so a harmless one-lane yield can never
+    // escalate into repeated full-map replans.
     // but a rover must never remain trapped in that local search indefinitely.
     // If no useful path/progress is obtained for two seconds the integration
     // layer requests one full-map/world-geometry replan and discards the local

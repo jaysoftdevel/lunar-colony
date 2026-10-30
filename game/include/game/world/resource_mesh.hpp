@@ -20,6 +20,21 @@ enum class ResourceKind {
     Count
 };
 
+
+enum class ResourceSizeTier {
+    Standard = 0,
+    Small,
+    Count
+};
+
+inline const char* resource_size_name(ResourceSizeTier size){
+    switch(size){
+        case ResourceSizeTier::Standard: return "STANDARD";
+        case ResourceSizeTier::Small: return "SMALL";
+        default: return "STANDARD";
+    }
+}
+
 enum class StorageDomeSize {
     Small = 0,
     Mid,
@@ -104,6 +119,9 @@ struct PlacedResource {
     ResourceBundle stored_resources{};
     std::vector<StoredResourceBox> stored_boxes{};
     StorageDomeSize storage_size{StorageDomeSize::Small};
+    // Non-storage outdoor structures support STANDARD + SMALL. Storage domes
+    // retain their dedicated SMALL/MID/BIG/HUGE tiers.
+    ResourceSizeTier size{ResourceSizeTier::Standard};
 };
 
 inline ResourceBundle stored_resource_box_totals(const PlacedResource& placed){
@@ -121,11 +139,14 @@ inline void sync_stored_resource_totals(PlacedResource& placed){
 class ResourceModelLibrary {
 public:
     ResourceModelLibrary();
-    const ResourceMesh& mesh(ResourceKind kind) const;
+    const ResourceMesh& mesh(ResourceKind kind,ResourceSizeTier size=ResourceSizeTier::Standard) const;
     const ResourceMesh& mesh(ResourceKind kind,StorageDomeSize storage_size) const;
-    const ResourceMesh& mesh(const PlacedResource& placed) const { return mesh(placed.kind,placed.storage_size); }
+    const ResourceMesh& mesh(const PlacedResource& placed) const {
+        return placed.kind==ResourceKind::StorageDome?mesh(placed.kind,placed.storage_size):mesh(placed.kind,placed.size);
+    }
 private:
     std::array<ResourceMesh,(size_t)ResourceKind::Count> meshes_{};
+    std::array<ResourceMesh,(size_t)ResourceKind::Count> small_meshes_{};
     std::array<ResourceMesh,(size_t)StorageDomeSize::Count> storage_domes_{};
 };
 

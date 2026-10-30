@@ -64,12 +64,14 @@ inline constexpr float kWalkwayAccessHeight = 2.45f;
 inline constexpr float kWalkwayBridgeRise = 0.95f;
 inline constexpr float kWalkwayBridgeHalfSpan = 3.40f;
 
-// Low service carrier.  These values keep the tray/pipe visibly serviceable
-// while clearly smaller than crew-access infrastructure.
-inline constexpr float kSupplyChannelY = 0.30f;
-inline constexpr float kSupplyTrayWidth = 0.62f;
-inline constexpr float kSupplyTrayHeight = 0.18f;
-inline constexpr float kSupplyWaterRadius = 0.18f;
+// Flush service carrier. The complete run stays visibly above the terrain,
+// but its vertical profile is deliberately lower than a rover wheel radius.
+// Rover navigation treats the channel as traversable, so robots drive across
+// it instead of stopping/replanning around utility infrastructure.
+inline constexpr float kSupplyChannelY = 0.035f;
+inline constexpr float kSupplyTrayWidth = 0.70f;
+inline constexpr float kSupplyTrayHeight = 0.055f;
+inline constexpr float kSupplyWaterRadius = 0.040f;
 inline constexpr float kSupplyJunctionWidth = 0.78f;
 
 static_assert(kCorridorWallY + kCorridorRoofRadius - kCorridorDeckY >=

@@ -25,21 +25,29 @@ enum class HabitatSizeTier {
     Standard = 0,
     Mid,
     Big,
+    // Appended to preserve the serialized numeric values of all existing
+    // 0.40.x saves. Small scales only X/Z; vertical dimensions stay unchanged.
+    Small,
     Count
 };
 
-inline bool habitat_has_size_tiers(HabitatKind kind){
+inline bool habitat_has_extended_size_tiers(HabitatKind kind){
     return kind==HabitatKind::OxygenGeneratorDome ||
            kind==HabitatKind::CantineDome ||
            kind==HabitatKind::BioDome ||
            kind==HabitatKind::CrewQuarters;
 }
 
+// Every habitat now supports at least SMALL + STANDARD. The four historically
+// scalable domes additionally retain MID + BIG.
+inline bool habitat_has_size_tiers(HabitatKind){ return true; }
+
 inline const char* habitat_size_name(HabitatSizeTier size){
     switch(size){
         case HabitatSizeTier::Standard: return "STANDARD";
         case HabitatSizeTier::Mid: return "MID";
         case HabitatSizeTier::Big: return "BIG";
+        case HabitatSizeTier::Small: return "SMALL";
         default: return "STANDARD";
     }
 }

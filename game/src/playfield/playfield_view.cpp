@@ -67,10 +67,9 @@ void GameApp::render_playfield(Renderer& r){
             (utility_build_start_?"MOVE TARGET TO ADJUST PORT / LMB CONNECT / ESC CANCEL":"LMB SELECT SUPPLY SOURCE / ESC CANCEL"):
         (active_build && active_build->kind==BuildObjectKind::Walkway?
             (walkway_build_start_?"MOVE TO ADJUST WALKWAY BLUEPRINT / LMB BUILD / ESC CANCEL":"LMB SET WALKWAY START / ESC CANCEL"):
-        (active_build && ((active_build->kind==BuildObjectKind::Habitat && habitat_has_size_tiers(active_build->habitat_kind)) ||
-                          (active_build->kind==BuildObjectKind::Resource && active_build->resource_kind==ResourceKind::StorageDome))?
+        (active_build && (active_build->kind==BuildObjectKind::Habitat || active_build->kind==BuildObjectKind::Resource)?
             "LMB PLACE / WHEEL SIZE / N-M ROTATE / ESC CANCEL":
-        (active_build?"LMB PLACE / N-M ROTATE / WHEEL ZOOM / ESC CANCEL":"LMB SELECT / DRAG SELECT RESOURCE BOXES / WHEEL ZOOM / MMB ORBIT / RMB PAN / V FPV / ESC MENU")))));
+        (active_build?"LMB PLACE / N-M ROTATE / ESC CANCEL":"LMB SELECT / DRAG SELECT RESOURCE BOXES / WHEEL ZOOM / MMB ORBIT / RMB PAN / V FPV / ESC MENU")))));
     game_label(r,{info.x+12,info.y+31},controls,0.52f,theme_,true);
 
     Rect robot_info={info.x,info.y+info.h+6.0f,560,40};

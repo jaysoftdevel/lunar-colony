@@ -33,6 +33,12 @@ bool plan_corridor_path(const PathPlanRequest& request,
     start.y=callbacks.floor_height(start);
     goal.y=callbacks.floor_height(goal);
 
+    // Reject an impossible destination before allocating/searching a grid.
+    // Construction logistics can temporarily select a service point that is
+    // invalid for the rover's complete hull; searching thousands of cells for
+    // such a goal only freezes the main thread and can never succeed.
+    if(!callbacks.point_clear(goal)) return false;
+
     Vec3 delta=goal-start;
     delta.y=0.0f;
     const float direct_length=std::sqrt(delta.x*delta.x+delta.z*delta.z);
@@ -52,11 +58,20 @@ bool plan_corridor_path(const PathPlanRequest& request,
     const int nv=std::max(5,(int)std::ceil((side_extent*2.0f)/cell)+1);
     const int total=nu*nv;
     auto index=[&](int u,int v){ return v*nu+u; };
+    // Terrain height is one of the more expensive callbacks in a wide search.
+    // A* used to query the same grid point repeatedly from occupancy, traffic,
+    // expansion and simplification. Cache each grid coordinate on first use.
+    std::vector<Vec3> point_cache((std::size_t)total);
+    std::vector<std::uint8_t> point_ready((std::size_t)total,0);
     auto point=[&](int u,int v){
+        const int idx=index(u,v);
+        if(point_ready[(std::size_t)idx]) return point_cache[(std::size_t)idx];
         const float along=u_min+(float)u*cell;
         const float side=-side_extent+(float)v*cell;
         Vec3 p=start+forward*along+lateral*side;
         p.y=callbacks.floor_height(p);
+        point_cache[(std::size_t)idx]=p;
+        point_ready[(std::size_t)idx]=1;
         return p;
     };
 
@@ -67,37 +82,12 @@ bool plan_corridor_path(const PathPlanRequest& request,
     std::vector<std::int8_t> walkable((std::size_t)total,-1);
     std::vector<float> traffic_cache((std::size_t)total,-1.0f);
 
-    // Failed wide-corridor searches used to spend all of their time on one
-    // core evaluating the same static occupancy callbacks serially. For broad
-    // searches, precompute those independent cells on a bounded worker set.
-    // A* itself remains deterministic/serial; only immutable clearance and
-    // traffic samples are evaluated concurrently.
-    const unsigned requested_workers=std::max(1u,request.worker_count);
-    const unsigned workers=std::min<unsigned>(requested_workers,(unsigned)std::max(1,total/160));
-    if(workers>1u && total>=640){
-        std::vector<std::thread> pool;
-        pool.reserve(workers);
-        for(unsigned worker=0;worker<workers;++worker){
-            const int begin=(int)((std::int64_t)total*(std::int64_t)worker/(std::int64_t)workers);
-            const int end=(int)((std::int64_t)total*(std::int64_t)(worker+1u)/(std::int64_t)workers);
-            pool.emplace_back([&,begin,end]{
-                for(int idx=begin;idx<end;++idx){
-                    if(idx==start_index){ walkable[(std::size_t)idx]=1; traffic_cache[(std::size_t)idx]=0.0f; continue; }
-                    const int u=idx%nu;
-                    const int v=idx/nu;
-                    const Vec3 p=point(u,v);
-                    walkable[(std::size_t)idx]=callbacks.point_clear(p)?1:0;
-                    float traffic=std::max(0.0f,callbacks.traffic_cost(p));
-                    if(std::abs(request.alternating_side_preference)>0.001f){
-                        const float signed_side=-side_extent+(float)v*cell;
-                        traffic+=std::max(0.0f,signed_side*request.alternating_side_preference)*0.035f;
-                    }
-                    traffic_cache[(std::size_t)idx]=traffic;
-                }
-            });
-        }
-        for(auto& thread:pool) thread.join();
-    }
+    // Occupancy is evaluated lazily by A*. Eagerly precomputing every cell in
+    // a broad corridor made one failed logistics route consume 100-250 ms on
+    // the render thread, which caused visible FPS and mouse/view stalls. Most
+    // successful routes touch only a fraction of the candidate grid, so lazy
+    // caching keeps the common case bounded without changing path semantics.
+    (void)request.worker_count;
     auto cell_clear=[&](int u,int v){
         const int idx=index(u,v);
         if(idx==start_index) return true;

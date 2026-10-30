@@ -161,7 +161,9 @@ void GameApp::render_selection_panel(Renderer& r){
         cargo_mass<<"CARGO  "<<robot.cargo.total_amount()<<" / "<<robot.payload_capacity_kg<<" KG";
         if(robot.route_active){
             const float remaining_m=std::max(0.0f,robot.route_total_length_m-robot.route_progress_m);
-            route<<"ROUTE  "<<(robot.route_waiting_for_clearance?"FLOW YIELD":"FLOW / CLEAR")
+            const char* traffic_state=robot.traffic_detour_active?"DETOUR":
+                                      (robot.route_waiting_for_clearance?"WAIT / PASS":"FLOW / CLEAR");
+            route<<"ROUTE  "<<traffic_state
                  <<" / "<<std::fixed<<std::setprecision(1)<<remaining_m<<" M";
         }else route<<"ROUTE  STATIONARY";
         if(robot.target.valid()){
@@ -233,7 +235,10 @@ void GameApp::render_selection_panel(Renderer& r){
         rot<<"ROTATION "<<(int)std::round(item.rotation_degrees)<<" DEG";
         utilities<<"SUPPLY LINKS "<<(utility_network_.endpoint_connection_count(UtilityEndpointKind::Resource,(size_t)selected_resource_)+walkway_network_.endpoint_connection_count(WalkwayEndpointKind::Resource,(size_t)selected_resource_));
         game_label(r,{x,p.y+10},"RESOURCE #"+std::to_string(selected_resource_+1),0.64f,theme_,true);
-        game_label(r,{x,p.y+34},item.kind==ResourceKind::StorageDome?std::string(resource_name(item.kind))+" / "+storage_dome_size_name(item.storage_size):resource_name(item.kind),0.76f,theme_);
+        const std::string resource_title=item.kind==ResourceKind::StorageDome?
+            std::string(resource_name(item.kind))+" / "+storage_dome_size_name(item.storage_size):
+            std::string(resource_name(item.kind))+" / "+resource_size_name(item.size);
+        game_label(r,{x,p.y+34},resource_title,0.76f,theme_);
         if(item.construction.complete()){
             game_label(r,{x,p.y+60},"STATUS  PLACED / AVAILABLE",0.58f,theme_);
         }else{

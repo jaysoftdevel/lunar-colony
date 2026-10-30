@@ -76,7 +76,8 @@ void GameApp::render_new_game(Renderer& r){
         reset_builder_robot_and_starter_stash();
         build_catalog_.clear_selection();
         placement_rotation_degrees_=0.0f;
-        placement_habitat_size_=HabitatSizeTier::Standard;
+        placement_habitat_size_=HabitatSizeTier::Small;
+        placement_resource_size_=ResourceSizeTier::Small;
         placement_storage_size_=StorageDomeSize::Small;
         habitat_view_mode_=HabitatViewMode::Default;
         game_speed_=GameSpeed::Normal;

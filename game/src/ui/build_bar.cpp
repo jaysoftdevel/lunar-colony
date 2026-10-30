@@ -50,7 +50,8 @@ void GameApp::render_build_bar(Renderer& r){
         if(hover && ui_input_.left_pressed){
             build_catalog_.set_category(CATEGORIES[i].category);
             placement_rotation_degrees_=0.0f;
-            placement_habitat_size_=HabitatSizeTier::Standard;
+            placement_habitat_size_=HabitatSizeTier::Small;
+            placement_resource_size_=ResourceSizeTier::Small;
             placement_storage_size_=StorageDomeSize::Small;
             corridor_build_start_.reset();
             utility_build_start_.reset();
@@ -107,7 +108,8 @@ void GameApp::render_build_bar(Renderer& r){
             build_catalog_.select(item_index);
             if(build_catalog_.selected_index()!=before){
                 placement_rotation_degrees_=0.0f;
-                placement_habitat_size_=HabitatSizeTier::Standard;
+                placement_habitat_size_=HabitatSizeTier::Small;
+                placement_resource_size_=ResourceSizeTier::Small;
                 placement_storage_size_=StorageDomeSize::Small;
                 corridor_build_start_.reset();
                 utility_build_start_.reset();
@@ -126,10 +128,14 @@ void GameApp::render_build_bar(Renderer& r){
         const auto& item=items[(size_t)hovered_item];
         line1=item.name;
         line2="TYPE " + item.type;
-        if(item.kind==BuildObjectKind::Habitat && habitat_has_size_tiers(item.habitat_kind) && hovered_item==build_catalog_.selected_index())
+        if(item.kind==BuildObjectKind::Habitat && hovered_item==build_catalog_.selected_index())
             line2 += " / SIZE " + std::string(habitat_size_name(placement_habitat_size_));
-        if(item.kind==BuildObjectKind::Resource && item.resource_kind==ResourceKind::StorageDome && hovered_item==build_catalog_.selected_index())
-            line2 += " / SIZE " + std::string(storage_dome_size_name(placement_storage_size_));
+        if(item.kind==BuildObjectKind::Resource && hovered_item==build_catalog_.selected_index()){
+            if(item.resource_kind==ResourceKind::StorageDome)
+                line2 += " / SIZE " + std::string(storage_dome_size_name(placement_storage_size_));
+            else
+                line2 += " / SIZE " + std::string(resource_size_name(placement_resource_size_));
+        }
     }else if(hovered_category>=0){
         line1=CATEGORIES[hovered_category].name;
         line2="BUILD SUBMENU";

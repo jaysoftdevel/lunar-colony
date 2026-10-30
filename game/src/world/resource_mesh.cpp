@@ -3,6 +3,23 @@
 #include "game/world/resource_builder.hpp"
 
 namespace game {
+namespace {
+ResourceMesh scale_xz(const ResourceMesh& source,float scale){
+    ResourceMesh out=source;
+    auto scale_vertices=[scale](std::vector<eng::Vec3>& vertices){
+        for(auto& v:vertices){ v.x*=scale; v.z*=scale; }
+    };
+    scale_vertices(out.body);
+    scale_vertices(out.foundation);
+    scale_vertices(out.details);
+    scale_vertices(out.edges);
+    out.footprint_x*=scale;
+    out.footprint_z*=scale;
+    // Intentionally leave out.height and all Y coordinates untouched.
+    return out;
+}
+}
+
 ResourceModelLibrary::ResourceModelLibrary(){
     meshes_[(size_t)ResourceKind::SolarPanel]=resources::refine_future_resource(resources::make_solar_panel(),ResourceKind::SolarPanel);
     meshes_[(size_t)ResourceKind::WaterDriller]=resources::refine_future_resource(resources::make_water_driller(),ResourceKind::WaterDriller);
@@ -17,10 +34,15 @@ ResourceModelLibrary::ResourceModelLibrary(){
     storage_domes_[(size_t)StorageDomeSize::Big]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Big),ResourceKind::StorageDome);
     storage_domes_[(size_t)StorageDomeSize::Huge]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Huge),ResourceKind::StorageDome);
     meshes_[(size_t)ResourceKind::StorageDome]=storage_domes_[(size_t)StorageDomeSize::Small];
+    for(std::size_t i=0;i<(std::size_t)ResourceKind::Count;++i){
+        const auto kind=(ResourceKind)i;
+        small_meshes_[i]=(kind==ResourceKind::StorageDome)?meshes_[i]:scale_xz(meshes_[i],0.76f);
+    }
 }
 
-const ResourceMesh& ResourceModelLibrary::mesh(ResourceKind kind) const {
-    return meshes_[(size_t)kind];
+const ResourceMesh& ResourceModelLibrary::mesh(ResourceKind kind,ResourceSizeTier size) const {
+    if(kind==ResourceKind::StorageDome) return meshes_[(size_t)kind];
+    return size==ResourceSizeTier::Small?small_meshes_[(size_t)kind]:meshes_[(size_t)kind];
 }
 
 const ResourceMesh& ResourceModelLibrary::mesh(ResourceKind kind,StorageDomeSize storage_size) const {

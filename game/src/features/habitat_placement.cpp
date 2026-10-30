@@ -67,7 +67,7 @@ void GameApp::render_habitat_placement(Renderer& r){
     Vec3 hit{};
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
     Vec3 snapped{std::round(hit.x),0.0f,std::round(hit.z)};
-    const HabitatSizeTier size=habitat_has_size_tiers(selected->habitat_kind)?placement_habitat_size_:selected->habitat_size;
+    const HabitatSizeTier size=placement_habitat_size_;
     const auto plan=construction_costs::habitat(selected->habitat_kind,size,habitat_models_.mesh(selected->habitat_kind,size));
     const bool valid=placement_valid(selected->habitat_kind,size,snapped,placement_rotation_degrees_) && can_start_construction(plan);
 
@@ -83,7 +83,7 @@ void GameApp::render_habitat_placement(Renderer& r){
         placed_habitats_.push_back(std::move(placed));
         build_catalog_.clear_selection();
         placement_rotation_degrees_=0.0f;
-        placement_habitat_size_=HabitatSizeTier::Standard;
+        placement_habitat_size_=HabitatSizeTier::Small;
         corridor_build_start_.reset();
     }
 }
