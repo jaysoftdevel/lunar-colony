@@ -1,3 +1,13 @@
+0.40.29
+- Added persistent, type/size-aware unique names for every placed habitat and resource-structure blueprint; names remain unchanged after construction and across save/load.
+- Expanded selected-robot telemetry with contextual task/action, named target, navigation/traffic state, blocker details, construction progress, cargo/reservation and worksite material state.
+
+0.40.28
+- Construction blueprint HUD: unselected unfinished blueprints now render only a compact construction progress bar.
+- Selecting an unfinished habitat, resource structure, corridor, supply channel or walkway restores the detailed step/progress/material frame.
+- Passive blueprint status rendering no longer calculates shipped/needed material text unless that blueprint is selected.
+- Raised the shared default robot movement multiplier from 150% to 200%; builder and carrier transit speeds, acceleration, braking and turning scale consistently, and loaded saves normalize to the new role defaults.
+
 0.40.27
 - Replaced full-destination rover route publication with a 0.5 s receding/rolling navigation horizon.
 - Each short horizon is re-planned from the robot's current pose and validates completed/partial structures, staged resources, terrain/slope and predicted robot hull motion before it is committed.

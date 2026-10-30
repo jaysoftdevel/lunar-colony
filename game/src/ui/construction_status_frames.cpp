@@ -26,6 +26,7 @@ struct ConstructionFrame {
     float screen_x{0.0f};
     float screen_y{0.0f};
     Rect rect{};
+    bool selected{false};
 };
 
 bool project_world_to_logical(const Mat4& m,Vec3 p,int viewport_width,int viewport_height,float ui_scale,float& sx,float& sy){
@@ -125,6 +126,24 @@ void GameApp::render_construction_status_frames(Renderer& r){
                    corridor_network_.connections().size()+utility_network_.connections().size()+
                    walkway_network_.connections().size());
 
+    auto target_selected=[&](const ConstructionTargetRef& target){
+        switch(target.kind){
+            case ConstructionTargetKind::Habitat:
+                return selection_kind_==SelectionKind::Habitat && selected_habitat_==(int)target.index;
+            case ConstructionTargetKind::Resource:
+                return selection_kind_==SelectionKind::Resource && selected_resource_==(int)target.index;
+            case ConstructionTargetKind::Corridor:
+                return selection_kind_==SelectionKind::Corridor && selected_corridor_==(int)target.index;
+            case ConstructionTargetKind::Utility:
+                return selection_kind_==SelectionKind::Utility && selected_utility_==(int)target.index;
+            case ConstructionTargetKind::Walkway:
+                return selection_kind_==SelectionKind::Walkway && selected_walkway_==(int)target.index;
+            case ConstructionTargetKind::None:
+                break;
+        }
+        return false;
+    };
+
     auto add_frame=[&](ConstructionTargetRef target,Vec3 anchor,std::string title,float progress,
                        const ConstructionResourcePlan& plan,std::uint8_t step){
         if(progress>=1.0f) return;
@@ -135,10 +154,16 @@ void GameApp::render_construction_status_frames(Renderer& r){
         f.progress=std::clamp(progress,0.0f,1.0f);
         f.step=step;
         f.total_steps=construction_target_total_steps(target);
-        const ResourceBundle* delivered=construction_site_buffer(target);
-        const ResourceBundle reserved=construction_site_reserved(target);
-        f.shipped=shipped_resources(plan,step,delivered,reserved);
-        f.needed=remaining_need(plan,step,delivered,reserved);
+        f.selected=target_selected(target);
+        // Keep the passive blueprint HUD intentionally cheap and quiet. The
+        // material ledger is only needed for the blueprint the player actually
+        // selected; every other unfinished blueprint renders a progress bar only.
+        if(f.selected){
+            const ResourceBundle* delivered=construction_site_buffer(target);
+            const ResourceBundle reserved=construction_site_reserved(target);
+            f.shipped=shipped_resources(plan,step,delivered,reserved);
+            f.needed=remaining_need(plan,step,delivered,reserved);
+        }
         frames.push_back(std::move(f));
     };
 
@@ -147,14 +172,14 @@ void GameApp::render_construction_status_frames(Renderer& r){
         if(h.construction.complete()) continue;
         const auto& mesh=habitat_models_.mesh(h);
         add_frame({ConstructionTargetKind::Habitat,i},h.position+Vec3{0,mesh.height+0.85f,0},
-                  std::string(habitat_name(h.kind))+" #"+std::to_string(i+1),h.construction.progress(),h.resource_plan,h.construction.step);
+                  habitat_instance_name(h),h.construction.progress(),h.resource_plan,h.construction.step);
     }
     for(std::size_t i=0;i<placed_resources_.size();++i){
         const auto& item=placed_resources_[i];
         if(item.construction.complete()) continue;
         const auto& mesh=resource_models_.mesh(item);
         add_frame({ConstructionTargetKind::Resource,i},item.position+Vec3{0,mesh.height+0.85f,0},
-                  std::string(resource_name(item.kind))+" #"+std::to_string(i+1),item.construction.progress(),item.resource_plan,item.construction.step);
+                  resource_instance_name(item),item.construction.progress(),item.resource_plan,item.construction.step);
     }
     const auto& corridors=corridor_network_.connections();
     for(std::size_t i=0;i<corridors.size();++i){
@@ -193,10 +218,10 @@ void GameApp::render_construction_status_frames(Renderer& r){
     std::vector<Rect> occupied;
     occupied.reserve(visible.size());
     for(auto& frame:visible){
-        const auto needed_lines=resource_lines("NEEDED",frame.needed,"NONE");
-        const auto shipped_lines=resource_lines("SHIPPED",frame.shipped,"NONE");
-        constexpr float width=255.0f;
-        const float height=52.0f+18.0f*(float)(needed_lines.size()+shipped_lines.size());
+        const auto needed_lines=frame.selected?resource_lines("NEEDED",frame.needed,"NONE"):std::vector<std::string>{};
+        const auto shipped_lines=frame.selected?resource_lines("SHIPPED",frame.shipped,"NONE"):std::vector<std::string>{};
+        const float width=frame.selected?255.0f:126.0f;
+        const float height=frame.selected?52.0f+18.0f*(float)(needed_lines.size()+shipped_lines.size()):9.0f;
         float x=frame.screen_x-width*0.5f;
         float y=frame.screen_y-height-13.0f;
         x=std::clamp(x,6.0f,std::max(6.0f,logical_w-width-6.0f));
@@ -204,8 +229,8 @@ void GameApp::render_construction_status_frames(Renderer& r){
         Rect candidate{x,y,width,height};
 
         // Dense construction sites can project several objects onto almost the
-        // same screen location. Keep every requested frame visible by finding
-        // the nearest free vertical slot rather than hiding one of them.
+        // same screen location. Keep every progress indicator visible, while
+        // selected detailed frames reserve their larger footprint.
         for(int attempt=0;attempt<12;++attempt){
             bool hit=false;
             for(const Rect& other:occupied) if(overlaps(candidate,other)){ hit=true; break; }
@@ -218,10 +243,19 @@ void GameApp::render_construction_status_frames(Renderer& r){
         frame.rect=candidate;
         occupied.push_back(candidate);
 
-        const Color border{0.31f,0.79f,0.93f,0.95f};
-        const Color fill{0.020f,0.032f,0.041f,0.93f};
         const Color track{0.09f,0.13f,0.15f,0.96f};
         const Color bar{1.00f,0.68f,0.12f,0.98f};
+        if(!frame.selected){
+            // Unselected blueprints intentionally expose no name, stage,
+            // percentage or material details: only construction progress.
+            r.draw_rect(candidate,track);
+            if(frame.progress>0.0f)
+                r.draw_rect({candidate.x,candidate.y,candidate.w*frame.progress,candidate.h},bar);
+            continue;
+        }
+
+        const Color border{0.31f,0.79f,0.93f,0.95f};
+        const Color fill{0.020f,0.032f,0.041f,0.93f};
         r.draw_rect(candidate,fill);
         r.draw_line({candidate.x,candidate.y},{candidate.x+candidate.w,candidate.y},border,1.5f*ui_scale_);
 

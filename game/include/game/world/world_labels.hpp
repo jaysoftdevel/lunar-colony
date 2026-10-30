@@ -1,6 +1,9 @@
 #pragma once
 #include "game/world/corridor_network.hpp"
 #include "game/world/resource_mesh.hpp"
+#include <algorithm>
+#include <cstdint>
+#include <iomanip>
 #include <sstream>
 #include <string>
 
@@ -34,6 +37,25 @@ inline const char* resource_name(ResourceKind kind){
         default: return "RESOURCE STRUCTURE";
     }
 }
+
+inline std::string habitat_instance_name(const PlacedHabitat& placed){
+    std::ostringstream out;
+    out<<habitat_name(placed.kind)<<" / "<<habitat_size_name(placed.size)<<" / #"
+       <<std::setfill('0')<<std::setw(3)<<std::max<std::uint32_t>(1,placed.instance_serial);
+    return out.str();
+}
+
+inline const char* resource_instance_size_name(const PlacedResource& placed){
+    return placed.kind==ResourceKind::StorageDome?storage_dome_size_name(placed.storage_size):resource_size_name(placed.size);
+}
+
+inline std::string resource_instance_name(const PlacedResource& placed){
+    std::ostringstream out;
+    out<<resource_name(placed.kind)<<" / "<<resource_instance_size_name(placed)<<" / #"
+       <<std::setfill('0')<<std::setw(3)<<std::max<std::uint32_t>(1,placed.instance_serial);
+    return out.str();
+}
+
 inline std::string corridor_endpoint_name(const CorridorEndpoint& endpoint){
     std::ostringstream out;
     switch(endpoint.kind){

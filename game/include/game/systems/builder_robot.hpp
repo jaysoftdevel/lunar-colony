@@ -42,7 +42,7 @@ enum class BuilderRobotAction : std::uint8_t {
 
 inline constexpr float kBuilderRobotBodyRadiusM = 0.48f;
 inline constexpr float kCarrierRobotBodyRadiusM = 0.44f;
-inline constexpr float kRobotMovementSpeedMultiplier = 1.50f;
+inline constexpr float kRobotMovementSpeedMultiplier = 2.00f;
 inline constexpr float kBuilderRobotTransitSpeedMps = 2.20f*kRobotMovementSpeedMultiplier;
 inline constexpr float kCarrierRobotTransitSpeedMps = kBuilderRobotTransitSpeedMps*1.10f;
 // Physical construction-drop package layout. Keeping these dimensions shared

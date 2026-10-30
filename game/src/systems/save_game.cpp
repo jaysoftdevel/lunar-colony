@@ -16,7 +16,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=9;
+constexpr std::uint32_t kSaveSchema=10;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -442,6 +442,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,placed_habitats_,[](Writer& out,const PlacedHabitat& h){
         out.pod((std::uint8_t)h.kind); write_vec3(out,h.position); out.pod(h.rotation_degrees); out.pod((std::uint8_t)h.size);
         write_construction(out,h.construction); write_plan(out,h.resource_plan); write_bundle(out,h.site_buffer);
+        out.pod(h.instance_serial);
     });
     write_object_vector(w,placed_resources_,[](Writer& out,const PlacedResource& item){
         out.pod((std::uint8_t)item.kind); write_vec3(out,item.position); out.pod(item.rotation_degrees); write_construction(out,item.construction); write_plan(out,item.resource_plan); write_bundle(out,item.site_buffer);
@@ -449,6 +450,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         out.pod((std::uint8_t)item.size);
         out.pod((std::uint64_t)item.stored_boxes.size());
         for(const auto& box:item.stored_boxes){ out.pod((std::uint8_t)box.resource); out.pod(box.amount); out.pod(box.condition); }
+        out.pod(item.instance_serial);
     });
     write_object_vector(w,ground_resource_piles_,[](Writer& out,const GroundResourcePile& pile){
         out.pod((std::uint8_t)pile.resource); out.pod(pile.amount); write_vec3(out,pile.position); out.pod(pile.radius); out.pod(pile.condition);
@@ -458,6 +460,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,utility_network_.connections(),write_utility);
     write_object_vector(w,walkway_network_.connections(),write_walkway);
 
+    // Save schema 10: persistent type/size-aware serial identities for habitat and resource structures.
     // Save schema 9: supply-channel geometry is restored to a flat, visible, rover-crossable ground profile.
     // Save schema 8: supply-channel geometry was buried below the rover plane.
     // Save schema 7: adds persistent SMALL/STANDARD sizing for non-storage resource structures.
@@ -519,7 +522,9 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     std::vector<PlacedHabitat> habitats;
     if(!read_object_vector(r,habitats,[&](Reader& in){
         PlacedHabitat h{}; h.kind=(HabitatKind)in.pod<std::uint8_t>(); h.position=read_vec3(in); h.rotation_degrees=in.pod<float>(); h.size=(HabitatSizeTier)in.pod<std::uint8_t>();
-        h.construction=read_construction(in); h.resource_plan=read_plan(in); if(source_schema>=6) h.site_buffer=read_bundle(in); return h;
+        h.construction=read_construction(in); h.resource_plan=read_plan(in); if(source_schema>=6) h.site_buffer=read_bundle(in);
+        if(source_schema>=10) h.instance_serial=in.pod<std::uint32_t>();
+        return h;
     })){ error="Savegame habitat data is damaged."; return false; }
 
     std::vector<PlacedResource> structures;
@@ -530,8 +535,40 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         const auto n=in.pod<std::uint64_t>(); if(n>kMaxObjects) in.valid=false;
         item.stored_boxes.reserve((std::size_t)std::min(n,kMaxObjects));
         for(std::uint64_t i=0;i<n&&in.valid;++i){ StoredResourceBox box{}; box.resource=(MaterialResource)in.pod<std::uint8_t>(); box.amount=in.pod<std::int64_t>(); box.condition=in.pod<float>(); item.stored_boxes.push_back(box); }
+        if(source_schema>=10) item.instance_serial=in.pod<std::uint32_t>();
         sync_stored_resource_totals(item); return item;
     })){ error="Savegame structure data is damaged."; return false; }
+
+    // Older saves had no stable structure identity. Assign deterministic serials
+    // in saved placement order. Also repair a zero/duplicate serial defensively
+    // so every loaded structure name remains unique inside its type/size group.
+    for(std::size_t i=0;i<habitats.size();++i){
+        auto& h=habitats[i];
+        bool duplicate=h.instance_serial==0;
+        std::uint32_t next=1;
+        for(std::size_t j=0;j<i;++j){
+            const auto& previous=habitats[j];
+            if(previous.kind!=h.kind || previous.size!=h.size) continue;
+            next=std::max(next,previous.instance_serial+1);
+            if(previous.instance_serial==h.instance_serial) duplicate=true;
+        }
+        if(duplicate) h.instance_serial=next;
+    }
+    for(std::size_t i=0;i<structures.size();++i){
+        auto& item=structures[i];
+        bool duplicate=item.instance_serial==0;
+        std::uint32_t next=1;
+        for(std::size_t j=0;j<i;++j){
+            const auto& previous=structures[j];
+            if(previous.kind!=item.kind) continue;
+            const bool same_size=item.kind==ResourceKind::StorageDome?
+                previous.storage_size==item.storage_size:previous.size==item.size;
+            if(!same_size) continue;
+            next=std::max(next,previous.instance_serial+1);
+            if(previous.instance_serial==item.instance_serial) duplicate=true;
+        }
+        if(duplicate) item.instance_serial=next;
+    }
 
     std::vector<GroundResourcePile> piles;
     if(!read_object_vector(r,piles,[](Reader& in){

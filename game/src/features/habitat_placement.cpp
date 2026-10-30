@@ -76,6 +76,11 @@ void GameApp::render_habitat_placement(Renderer& r){
     if(valid && input_.left_pressed){
         PlacedHabitat placed;
         placed.kind=selected->habitat_kind;
+        std::uint32_t serial=1;
+        for(const auto& existing:placed_habitats_){
+            if(existing.kind==placed.kind && existing.size==size) serial=std::max(serial,existing.instance_serial+1);
+        }
+        placed.instance_serial=serial;
         placed.position=snapped;
         placed.rotation_degrees=placement_rotation_degrees_;
         placed.size=size;

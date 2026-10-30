@@ -124,6 +124,14 @@ void GameApp::render_resource_placement(Renderer& r){
     if(valid && input_.left_pressed){
         PlacedResource placed;
         placed.kind=selected->resource_kind;
+        std::uint32_t serial=1;
+        for(const auto& existing:placed_resources_){
+            if(existing.kind!=placed.kind) continue;
+            const bool same_size=placed.kind==ResourceKind::StorageDome?
+                existing.storage_size==storage_size:existing.size==resource_size;
+            if(same_size) serial=std::max(serial,existing.instance_serial+1);
+        }
+        placed.instance_serial=serial;
         placed.position=snapped;
         placed.rotation_degrees=rotation;
         placed.storage_size=storage_size;

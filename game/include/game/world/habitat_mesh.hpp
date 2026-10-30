@@ -3,6 +3,7 @@
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
 #include <array>
+#include <cstdint>
 #include <vector>
 
 namespace game {
@@ -85,6 +86,9 @@ struct HabitatMesh {
 
 struct PlacedHabitat {
     HabitatKind kind{HabitatKind::AirLock};
+    // Stable serial within this exact habitat type/size. It is assigned when
+    // the blueprint is placed and remains unchanged after construction.
+    std::uint32_t instance_serial{0};
     eng::Vec3 position{};
     float rotation_degrees{0.0f};
     HabitatSizeTier size{HabitatSizeTier::Standard};
