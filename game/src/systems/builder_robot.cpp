@@ -1304,6 +1304,33 @@ void GameApp::update_builder_robot(float dt){
         return true;
     };
 
+    // Departure-tolerant hull test. A rover which already sits inside another
+    // hull's safety margin (it stopped at the braking envelope, a neighbour
+    // parked next to it, or a save was loaded that way) used to be unable to
+    // move in ANY direction: every candidate pose also overlapped the margin.
+    // Both rovers then waited for each other forever. Moving is allowed when
+    // the physical hulls stay disjoint and the move does not approach a hull
+    // whose margin is already violated at the start pose.
+    auto fleet_hull_departure_clear=[&](std::size_t robot_index,Vec3 from,Vec3 candidate,float candidate_heading_degrees,
+                                        float margin,const Vec3* other_position_override=nullptr,std::size_t only_other=(std::size_t)-1){
+        if(robot_index>=builder_robots_.size()) return false;
+        const auto& robot=builder_robots_[robot_index];
+        for(std::size_t i=0;i<builder_robots_.size();++i){
+            if(i==robot_index || (only_other!=(std::size_t)-1 && i!=only_other)) continue;
+            const auto& other=builder_robots_[i];
+            const Vec3 other_position=other_position_override?*other_position_override:other.position;
+            if(!robot_hulls_overlap(candidate,candidate_heading_degrees,robot.role,
+                                    other_position,other.heading_degrees,other.role,margin)) continue;
+            if(robot_hulls_overlap(candidate,candidate_heading_degrees,robot.role,
+                                   other_position,other.heading_degrees,other.role,0.0f)) return false;
+            const bool already_close=robot_hulls_overlap(from,robot.heading_degrees,robot.role,
+                                                         other.position,other.heading_degrees,other.role,margin);
+            if(!already_close) return false;
+            if(dist_xz(candidate,other_position)+0.02f<dist_xz(from,other.position)) return false;
+        }
+        return true;
+    };
+
     auto fleet_position_clear=[&](std::size_t robot_index,Vec3 candidate){
         const auto& robot=builder_robots_[robot_index];
         float heading=robot.heading_degrees;
@@ -1399,8 +1426,7 @@ void GameApp::update_builder_robot(float dt){
                 // can all publish paths through the same parking bay and then
                 // deadlock when the hard collision guard refuses execution.
                 if(other.route_active && other.current_speed_mps>0.12f && !other.route_waiting_for_clearance) continue;
-                if(robot_hulls_overlap(p,heading,robot.role,other.position,other.heading_degrees,
-                                       other.role,kRobotHullClearanceM+0.12f)) return false;
+                if(!fleet_hull_departure_clear(robot_index,robot.position,p,heading,kRobotHullClearanceM+0.12f,nullptr,i)) return false;
             }
         }
         return true;
@@ -1653,9 +1679,7 @@ void GameApp::update_builder_robot(float dt){
                     if(i==robot_index) continue;
                     const auto& other=builder_robots_[i];
                     if(other.route_active && other.current_speed_mps>0.12f && !other.route_waiting_for_clearance) continue;
-                    if(robot_hulls_overlap(p,nominal_heading,robot.role,
-                                           other.position,other.heading_degrees,other.role,
-                                           kRobotHullClearanceM+0.12f)) return false;
+                    if(!fleet_hull_departure_clear(robot_index,robot.position,p,nominal_heading,kRobotHullClearanceM+0.12f,nullptr,i)) return false;
                 }
             }
             return true;
@@ -1682,8 +1706,7 @@ void GameApp::update_builder_robot(float dt){
                     if(i==robot_index) continue;
                     const auto& other=builder_robots_[i];
                     if(other.route_active && other.current_speed_mps>0.12f && !other.route_waiting_for_clearance) continue;
-                    if(robot_hulls_overlap(mid,heading,robot.role,other.position,other.heading_degrees,other.role,
-                                           kRobotHullClearanceM+0.12f)) return false;
+                    if(!fleet_hull_departure_clear(robot_index,robot.position,mid,heading,kRobotHullClearanceM+0.12f,nullptr,i)) return false;
                 }
             }
             return true;
@@ -2107,6 +2130,14 @@ void GameApp::update_builder_robot(float dt){
                     const auto other=predict_robot_pose(i,horizon);
                     if(!robot_hulls_overlap(own,own_heading,robot.role,other.position,other.heading_degrees,
                                             builder_robots_[i].role,kRobotHullClearanceM+0.13f)) continue;
+                    // Pre-existing margin overlap: keep moving as long as the
+                    // hulls stay disjoint and this rover is not closing in.
+                    if(!robot_hulls_overlap(own,own_heading,robot.role,other.position,other.heading_degrees,
+                                            builder_robots_[i].role,0.0f) &&
+                       robot_hulls_overlap(robot.position,robot.heading_degrees,robot.role,
+                                           builder_robots_[i].position,builder_robots_[i].heading_degrees,
+                                           builder_robots_[i].role,kRobotHullClearanceM+0.13f) &&
+                       dist_xz(own,other.position)+0.02f>=dist_xz(robot.position,builder_robots_[i].position)) continue;
                     // The right-of-way rover may trust the other moving rover to
                     // yield in the medium horizon, but never ignores an imminent
                     // collision or a parked chassis.
@@ -2380,8 +2411,8 @@ void GameApp::update_builder_robot(float dt){
         const bool legal=robot_position_clear(robot_index,midpoint) && robot_position_clear(robot_index,candidate) &&
                          robot_structure_move_allowed(robot,robot.position,midpoint) &&
                          robot_structure_move_allowed(robot,midpoint,candidate) &&
-                         fleet_hull_clear(robot_index,midpoint,candidate_heading) &&
-                         fleet_hull_clear(robot_index,candidate,candidate_heading);
+                         fleet_hull_departure_clear(robot_index,robot.position,midpoint,candidate_heading,kRobotHullClearanceM) &&
+                         fleet_hull_departure_clear(robot_index,robot.position,candidate,candidate_heading,kRobotHullClearanceM);
         if(!legal){
             robot.current_speed_mps=approach(robot.current_speed_mps,0.0f,kRobotBrakingMps2*dt);
             robot.blocked_elapsed+=dt;
@@ -4330,6 +4361,69 @@ void GameApp::update_builder_robot(float dt){
     // interaction state stopped making progress. Recovery is strictly local:
     // the affected robot clears/replans its own work, while shared kilograms are
     // released back to the site ledger when appropriate.
+    // Hard-stall breaker. route_waiting_for_clearance disarms the generic
+    // watchdog below, so two robots yielding to each other (or one wedged
+    // against a structure boundary) could wait forever. A robot with obstructed
+    // active work which has not moved for kHardStallSeconds is relocated to the
+    // nearest pose that is clear of every structure, obstacle and fleet hull,
+    // then replans from there with a fresh full-resolution search.
+    constexpr float kHardStallSeconds=9.0f;
+    for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
+        auto& robot=builder_robots_[robot_index];
+        const bool active_work=robot.action==BuilderRobotAction::None &&
+            (robot.mode==BuilderRobotMode::Fetching || robot.mode==BuilderRobotMode::Delivering ||
+             robot.mode==BuilderRobotMode::Building || robot.mode==BuilderRobotMode::AwaitingMaterials ||
+             robot.mode==BuilderRobotMode::DepotTransfer);
+        const bool obstructed=robot.route_waiting_for_clearance || robot.route_force_full_replan ||
+            robot.route_resolution_elapsed>1.0f || robot.blocked_elapsed>0.5f;
+        const bool pickup_queue=robot.mode==BuilderRobotMode::Fetching &&
+            robot.interaction_position_valid && starter_pallet_focus(robot.interaction_focus_position) &&
+            (starter_depot_admission_rank(robot_index)>=3u ||
+             starter_lane_queue_rank(robot_index,robot.interaction_material)>0);
+        if(!active_work || !obstructed || pickup_queue || dist_xz(robot.position,robot.hard_stall_position)>0.10f){
+            robot.hard_stall_position=robot.position;
+            robot.hard_stall_elapsed=0.0f;
+            continue;
+        }
+        robot.hard_stall_elapsed+=dt;
+        if(robot.hard_stall_elapsed<kHardStallSeconds) continue;
+        robot.hard_stall_elapsed=0.0f;
+
+        const float half=(float)playfield_.size()*0.5f-0.60f;
+        bool relocated=false;
+        const bool start_clear=robot_position_clear(robot_index,robot.position);
+        for(int ring=1;ring<=20 && !relocated;++ring){
+            const float radius=0.50f*(float)ring;
+            for(int k=0;k<16 && !relocated;++k){
+                const float angle=((float)((k+robot_index*3u)%16u)/16.0f)*2.0f*PI;
+                Vec3 candidate=robot.position+Vec3{std::sin(angle)*radius,0.0f,std::cos(angle)*radius};
+                if(std::abs(candidate.x)>half || std::abs(candidate.z)>half) continue;
+                candidate.y=first_person_floor_height(candidate);
+                if(!robot_position_clear(robot_index,candidate) ||
+                   !robot_structure_move_allowed(robot,candidate,candidate) ||
+                   !fleet_hull_clear(robot_index,candidate,robot.heading_degrees)) continue;
+                // Never hop across a built structure: unless the chassis is
+                // itself wedged inside an obstruction, the straight path to
+                // the new pose must be legal as well.
+                if(start_clear && !route_segment_clear(robot_index,robot.position,candidate)) continue;
+                robot.position=candidate;
+                relocated=true;
+            }
+        }
+        robot.service_slot_offset=(std::uint8_t)((robot.service_slot_offset+5u)%24u);
+        robot.traffic_escape_active=false;
+        clear_interaction_station(robot);
+        clear_route(robot);
+        robot.current_speed_mps=0.0f;
+        robot.blocked_elapsed=0.0f;
+        robot.route_resolution_elapsed=0.0f;
+        robot.route_force_full_replan=true;
+        robot.route_replan_cooldown=0.0f;
+        robot.route_priority_age=std::min(120.0f,robot.route_priority_age+30.0f);
+        robot.hard_stall_position=robot.position;
+        (void)relocated;
+    }
+
     for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
         auto& robot=builder_robots_[robot_index];
         if(robot.route_waiting_for_clearance){
