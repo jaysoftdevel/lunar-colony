@@ -1,4 +1,9 @@
-# Current navigation/access behavior (v0.41.0)
+# Current navigation/access behavior (v0.41.5)
+
+## v0.41.5 close-range carrier blueprint drop-offs
+
+- CR-01 delivery aprons for incomplete habitat/resource targets now allow close side approach inside the target's conservative service envelope.
+- This applies only to the current incomplete delivery target so unloads visually occur at the construction side; completed structures and non-target geometry keep full conservative clearance behavior.
 
 `BASELINE_CONTEXT.md` describes the current runtime. Global D* Lite and fleet-aware A* routes feed a projection-based moving corridor follower; RVO2 supplies reciprocal velocity advice. The common 100 Hz coordinator certifies acceleration-limited swept motion, brakes and terminal holds. Personal comfort space is a preference and coarse cell ownership is an ordering hint. Blocked robots use certified detours and passing pockets; a real task may request a parked idle robot to yield. No speculative reversing or pose nudges are used.
 

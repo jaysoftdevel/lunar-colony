@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <limits>
 #include <unordered_map>
@@ -42,6 +43,89 @@ Vec3 forward_from_heading(float degrees){
 }
 float turn_towards(float current,float target,float max_delta){
     return wrap_degrees(current+std::clamp(wrap_degrees(target-current),-max_delta,max_delta));
+}
+
+float planner_phase_offset_seconds(std::size_t robot_id){
+    // Spread proposal refreshes across time so many robots do not replan in
+    // the same frame. This lowers frame-time spikes without changing contract
+    // safety because already-certified motion remains authoritative at 100 Hz.
+    return 0.016f*(float)(robot_id%5u);
+}
+
+std::size_t configured_route_search_lanes(std::size_t available_lanes){
+    const std::size_t clamped_available=std::max<std::size_t>(1,available_lanes);
+    static const std::size_t env_override=[](){
+        if(const char* env=std::getenv("GAME_ROUTE_SEARCH_LANES")){
+            char* end=nullptr;
+            const long parsed=std::strtol(env,&end,10);
+            if(end!=env && parsed>0) return (std::size_t)parsed;
+        }
+        return (std::size_t)0;
+    }();
+    if(env_override>0)
+        return std::max<std::size_t>(1,std::min(clamped_available,env_override));
+
+    // Default to a bounded subset of lanes for heavy global route searches.
+    // This keeps aggregate CPU utilization high while avoiding all-core
+    // microbursts that can starve rendering and produce visible stutter.
+    return std::max<std::size_t>(1,std::min<std::size_t>(4,clamped_available/2));
+}
+
+std::size_t planner_job_budget_per_tick(std::size_t robot_count,std::size_t lanes){
+    if(robot_count<=2) return robot_count;
+    const std::size_t bounded_lanes=std::max<std::size_t>(1,lanes);
+    // Refresh planning for a bounded working set each tick. Deferred robots
+    // keep certified motion/holds and are serviced in the next ticks.
+    const std::size_t budget=std::max<std::size_t>(4,bounded_lanes+2);
+    return std::min(robot_count,budget);
+}
+
+float cross_xz(Vec3 a,Vec3 b){ return a.x*b.z-a.z*b.x; }
+
+float head_on_right_bias_degrees(const SafetyAgent& self,const std::vector<SafetyAgent>& agents){
+    const auto& rt=*self.runtime;
+    if((!rt.goal_valid && !rt.temporary_goal_valid) || std::abs(self.speed_mps)<0.03f)
+        return 0.0f;
+
+    const Vec3 self_forward=forward_from_heading(self.heading_degrees);
+    float best_bias=0.0f;
+    for(const auto& other:agents){
+        if(other.id==self.id || !other.runtime) continue;
+        const auto& ort=*other.runtime;
+        if((!ort.goal_valid && !ort.temporary_goal_valid) || std::abs(other.speed_mps)<0.03f) continue;
+
+        Vec3 delta=other.position-self.position;
+        delta.y=0.0f;
+        const float d2=dot_xz(delta,delta);
+        if(d2<0.0001f) continue;
+        const float d=std::sqrt(d2);
+        if(d>7.5f) continue;
+
+        const Vec3 other_forward=forward_from_heading(other.heading_degrees);
+        // Require roughly opposing headings and both robots in each other's front arc.
+        if(dot_xz(self_forward,other_forward)>-0.45f) continue;
+        if(dot_xz(self_forward,delta)<=0.0f) continue;
+        if(dot_xz(other_forward,self.position-other.position)<=0.0f) continue;
+
+        // Require a near centerline approach, otherwise keep normal corridor follow.
+        const Vec3 dir=delta*(1.0f/d);
+        const float lateral=std::abs(cross_xz(self_forward,dir));
+        if(lateral>0.52f) continue;
+
+        // Predict whether they are actually closing.
+        const Vec3 self_vel=self_forward*std::abs(self.speed_mps);
+        const Vec3 other_vel=other_forward*std::abs(other.speed_mps);
+        const Vec3 rel_vel=other_vel-self_vel;
+        const float closing=-dot_xz(rel_vel,dir);
+        if(closing<0.10f) continue;
+
+        // Stronger right bias when close and centered.
+        const float proximity=1.0f-std::clamp((d-1.4f)/4.8f,0.0f,1.0f);
+        const float centerline=1.0f-std::clamp(lateral/0.52f,0.0f,1.0f);
+        const float bias=std::clamp(9.0f+17.0f*(0.65f*proximity+0.35f*centerline),9.0f,26.0f);
+        best_bias=std::max(best_bias,bias);
+    }
+    return best_bias;
 }
 
 std::int64_t passage_key(Vec3 p){
@@ -497,9 +581,10 @@ void update_reciprocal_velocities(std::vector<SafetyAgent>& agents,const SafetyW
             const Vec3 target=rt.cached_route.empty()?current_target(rt):
                 corridor_steering(a,{a.position,a.heading_degrees,a.speed_mps},world).target;
             const float heading=heading_between(a.position,target,a.heading_degrees);
-            // Everyone keeps right in symmetric encounters. This removes the
-            // arbitrary left/right tie that otherwise repeats on every update.
-            const float bias=rt.nearby_robot_count?5.0f:0.0f;
+            // Head-on encounter rule: each rover evades to ITS own right.
+            // Outside that case, keep a small stable right-bias for symmetry.
+            const float right_bias=head_on_right_bias_degrees(a,agents);
+            const float bias=right_bias>0.0f?right_bias:(rt.nearby_robot_count?5.0f:0.0f);
             const float room=std::max(0.0f,dist_xz(a.position,current_target(rt))-rt.stop_radius);
             const float speed=std::min(a.max_speed_mps*rt.speed_scale,std::sqrt(2.0f*a.braking_mps2*room)*0.8f);
             preferred=forward_from_heading(heading+bias)*speed;
@@ -1597,8 +1682,9 @@ SafetyTickStats safety_tick(float dt,
     // route job per available CPU lane (up to the fleet size); each individual
     // D* search is still expansion-bounded/resumable, so this increases parallel
     // throughput without turning one rover into an unbounded frame-time task.
+    const std::size_t visible_lanes=std::max<std::size_t>(1,eng::cpu_parallel_lanes());
     const std::size_t route_search_lane_limit=std::min<std::size_t>(
-        agents.size(),std::max<std::size_t>(1,eng::cpu_parallel_lanes()));
+        agents.size(),configured_route_search_lanes(visible_lanes));
     std::size_t remaining_route_search_budget=route_search_lane_limit;
     while(remaining>1.0e-6f){
         const float tick=std::min(kSafetyDtSeconds,remaining);
@@ -1691,12 +1777,32 @@ SafetyTickStats safety_tick(float dt,
         for(std::size_t ai=0;ai<agents.size();++ai){
             auto& rt=*agents[ai].runtime;
             if(rt.mode==SafetyMode::Fault) continue;
-            if(rt.planner_elapsed>=kPlannerReplanSeconds || rt.proposals.empty() || rt.route_replan_required){
-                rt.planner_elapsed=0.0f;
+            const float interval=kPlannerReplanSeconds+planner_phase_offset_seconds(ai);
+            if(rt.planner_elapsed>=interval || rt.proposals.empty() || rt.route_replan_required){
                 planner_jobs.push_back(ai);
-                if(route_search_due(agents[ai],world_epoch)) full_route_candidates.push_back(ai);
             }
         }
+
+        // Limit planning work per tick to smooth worst-case frame spikes.
+        std::stable_sort(planner_jobs.begin(),planner_jobs.end(),[&](std::size_t lhs,std::size_t rhs){
+            const auto& a=*agents[lhs].runtime;
+            const auto& b=*agents[rhs].runtime;
+            const bool a_hard=a.route_replan_required || a.proposals.empty();
+            const bool b_hard=b.route_replan_required || b.proposals.empty();
+            if(a_hard!=b_hard) return a_hard>b_hard;
+            const auto lp=lhs<requests.size()?requests[lhs].task_priority:0u;
+            const auto rp=rhs<requests.size()?requests[rhs].task_priority:0u;
+            if(lp!=rp) return lp>rp;
+            const float lw=a.blocked_elapsed+a.wait_age;
+            const float rw=b.blocked_elapsed+b.wait_age;
+            if(std::abs(lw-rw)>1.0e-4f) return lw>rw;
+            return agents[lhs].id<agents[rhs].id;
+        });
+        const std::size_t planner_budget=planner_job_budget_per_tick(agents.size(),visible_lanes);
+        if(planner_jobs.size()>planner_budget) planner_jobs.resize(planner_budget);
+
+        for(const std::size_t ai:planner_jobs)
+            if(route_search_due(agents[ai],world_epoch)) full_route_candidates.push_back(ai);
 
         // Grant the limited full-search slots to the most important/most blocked
         // navigation requests first. All other planner jobs may still refresh
@@ -1736,6 +1842,7 @@ SafetyTickStats safety_tick(float dt,
         // arbitration and world mutation remain on the game thread.
         eng::TaskPool::shared().parallel_for(planner_jobs.size(),[&](std::size_t job){
             const std::size_t ai=planner_jobs[job];
+            agents[ai].runtime->planner_elapsed=0.0f;
             generate_proposals(agents[ai],world_epoch,world,agents,now,route_search_granted[ai]!=0);
         });
 

@@ -23,6 +23,10 @@ struct GLApi {
     void (*glXSwapBuffers)(Display*,GLXDrawable)=nullptr;
     void (*glBindAttribLocation)(GLuint,GLuint,const GLchar*)=nullptr;
     void* (*glXGetProcAddressARB)(const GLubyte*)=nullptr;
+    const char* (*glXQueryExtensionsString)(Display*,int)=nullptr;
+    void (*glXSwapIntervalEXT)(Display*,GLXDrawable,int)=nullptr;
+    int (*glXSwapIntervalMESA)(unsigned int)=nullptr;
+    int (*glXSwapIntervalSGI)(int)=nullptr;
     const GLubyte* (*glGetString)(GLenum)=nullptr;
     void (*glClearColor)(GLfloat,GLfloat,GLfloat,GLfloat)=nullptr; void (*glClear)(GLbitfield)=nullptr; void (*glViewport)(GLint,GLint,GLsizei,GLsizei)=nullptr; void (*glEnable)(GLenum)=nullptr; void (*glDisable)(GLenum)=nullptr; void (*glBlendFunc)(GLenum,GLenum)=nullptr; void (*glLineWidth)(GLfloat)=nullptr;
     GLuint (*glCreateShader)(GLenum)=nullptr; void (*glShaderSource)(GLuint,GLsizei,const GLchar* const*,const GLint*)=nullptr; void (*glCompileShader)(GLuint)=nullptr; void (*glGetShaderiv)(GLuint,GLenum,GLint*)=nullptr; void (*glGetShaderInfoLog)(GLuint,GLsizei,GLsizei*,GLchar*)=nullptr;
@@ -34,6 +38,10 @@ struct GLApi {
     bool init(){
         lib=dlopen("libGL.so.1",RTLD_NOW|RTLD_GLOBAL); if(!lib)return false;
         load(glXCreateContext,"glXCreateContext"); load(glXMakeCurrent,"glXMakeCurrent"); load(glXIsDirect,"glXIsDirect"); load(glXSwapBuffers,"glXSwapBuffers"); load(glXGetProcAddressARB,"glXGetProcAddressARB");
+        load(glXQueryExtensionsString,"glXQueryExtensionsString");
+        load(glXSwapIntervalEXT,"glXSwapIntervalEXT");
+        load(glXSwapIntervalMESA,"glXSwapIntervalMESA");
+        load(glXSwapIntervalSGI,"glXSwapIntervalSGI");
         bool ok=true;
 #define L(x) ok=load(x,#x)&&ok
         L(glGetString);L(glClearColor);L(glClear);L(glViewport);L(glEnable);L(glDisable);L(glBlendFunc);L(glLineWidth);L(glBindAttribLocation);L(glCreateShader);L(glShaderSource);L(glCompileShader);L(glGetShaderiv);L(glGetShaderInfoLog);L(glCreateProgram);L(glAttachShader);L(glLinkProgram);L(glGetProgramiv);L(glGetProgramInfoLog);L(glUseProgram);L(glGenBuffers);L(glBindBuffer);L(glBufferData);L(glBufferSubData);L(glEnableVertexAttribArray);L(glVertexAttribPointer);L(glDrawArrays);L(glGetUniformLocation);L(glUniformMatrix4fv);L(glUniform4f);
@@ -49,6 +57,28 @@ class GLRenderer final: public Renderer {
     std::string gpu_vendor_{};
     std::string gpu_renderer_{};
     std::string gpu_version_{};
+
+    void configure_swap_interval(){
+        int requested=0;
+        if(const char* env=std::getenv("GAME_VSYNC")){
+            if(std::strcmp(env,"1")==0 || std::strcmp(env,"true")==0 || std::strcmp(env,"on")==0) requested=1;
+            else requested=0;
+        }
+        bool applied=false;
+        if(gl_.glXSwapIntervalEXT){
+            gl_.glXSwapIntervalEXT(d_,w_,requested);
+            applied=true;
+        }else if(gl_.glXSwapIntervalMESA){
+            applied=gl_.glXSwapIntervalMESA((unsigned int)std::max(0,requested))==0;
+        }else if(gl_.glXSwapIntervalSGI){
+            applied=gl_.glXSwapIntervalSGI(std::max(0,requested))==0;
+        }
+        if(applied)
+            std::cout<<"GPU present interval: "<<(requested==0?"unlimited (vsync off)":"vsync")
+                     <<" (override with GAME_VSYNC=0|1)\n";
+        else
+            std::cout<<"GPU present interval control unavailable; driver default is active\n";
+    }
 
     static bool software_renderer_name(std::string value){
         std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){ return (char)std::tolower(c); });
@@ -98,6 +128,7 @@ public:
             return false;
         }
         std::cout<<"GPU renderer: "<<gpu_vendor_<<" | "<<gpu_renderer_<<" | OpenGL "<<gpu_version_<<" (direct GLX)\n";
+        configure_swap_interval();
 
         const char* vs="#version 120\nattribute vec3 aPos; uniform mat4 uMVP; void main(){ gl_Position=uMVP*vec4(aPos,1.0); }";
         const char* fs="#version 120\nuniform vec4 uColor; void main(){ gl_FragColor=uColor; }";

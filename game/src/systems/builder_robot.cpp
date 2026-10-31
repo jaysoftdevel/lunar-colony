@@ -648,16 +648,30 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
     auto inside_service_bounds=[&](Vec3 p){
         return std::abs(p.x)<=service_half && std::abs(p.z)<=service_half;
     };
+
+    const bool target_is_incomplete_habitat=
+        target.kind==ConstructionTargetKind::Habitat &&
+        target.index<placed_habitats_.size() &&
+        !placed_habitats_[target.index].construction.complete();
+    const bool target_is_incomplete_resource=
+        target.kind==ConstructionTargetKind::Resource &&
+        target.index<placed_resources_.size() &&
+        !placed_resources_[target.index].construction.complete();
+
     auto clear_of_structure_footprints=[&](Vec3 p){
         const float clearance=largest_hull+kRobotObstacleMargin+0.20f;
-        for(const auto& h:placed_habitats_){
+        for(std::size_t hi=0;hi<placed_habitats_.size();++hi){
+            if(target_is_incomplete_habitat && hi==target.index) continue;
+            const auto& h=placed_habitats_[hi];
             if(!h.construction.complete() && h.construction.progress()<=0.0001f) continue;
             const auto& mesh=habitat_models_.mesh(h);
             const Vec3 local=world_math::rotate_y(p-h.position,-h.rotation_degrees);
             if(std::abs(local.x)<mesh.footprint_x*0.5f+clearance &&
                std::abs(local.z)<mesh.footprint_z*0.5f+clearance) return false;
         }
-        for(const auto& item:placed_resources_){
+        for(std::size_t ri=0;ri<placed_resources_.size();++ri){
+            if(target_is_incomplete_resource && ri==target.index) continue;
+            const auto& item=placed_resources_[ri];
             if(!item.construction.complete() && item.construction.progress()<=0.0001f) continue;
             const auto& mesh=resource_models_.mesh(item);
             const Vec3 local=world_math::rotate_y(p-item.position,-item.rotation_degrees);
@@ -722,8 +736,13 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
                clear_of_staged_site_packages(p);
     };
 
-    auto choose_structure_apron=[&](Vec3 center,float rotation,float footprint_x,float footprint_z){
-        const float apron=std::max(1.55f,largest_hull+kRobotObstacleMargin+0.42f);
+    auto choose_structure_apron=[&](Vec3 center,float rotation,float footprint_x,float footprint_z,bool close_incomplete_target){
+        // For active blueprint logistics, keep the carrier visually close to
+        // the structure side so unloading reads as a real handoff into the
+        // staged boxes. Completed structures keep the wider service apron.
+        const float apron=close_incomplete_target
+            ? std::max(0.60f,largest_hull*0.35f+0.18f)
+            : std::max(1.55f,largest_hull+kRobotObstacleMargin+0.42f);
         const float hx=footprint_x*0.5f+apron;
         const float hz=footprint_z*0.5f+apron;
         // Include side-centre bays as well as corners. A structure near one map
@@ -860,14 +879,16 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
             if(target.index<placed_habitats_.size()){
                 const auto& h=placed_habitats_[target.index];
                 const auto& m=habitat_models_.mesh(h);
-                return choose_structure_apron(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z);
+                return choose_structure_apron(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z,
+                                              !h.construction.complete());
             }
             break;
         case ConstructionTargetKind::Resource:
             if(target.index<placed_resources_.size()){
                 const auto& item=placed_resources_[target.index];
                 const auto& m=resource_models_.mesh(item);
-                return choose_structure_apron(item.position,item.rotation_degrees,m.footprint_x,m.footprint_z);
+                return choose_structure_apron(item.position,item.rotation_degrees,m.footprint_x,m.footprint_z,
+                                              !item.construction.complete());
             }
             break;
         case ConstructionTargetKind::Corridor:

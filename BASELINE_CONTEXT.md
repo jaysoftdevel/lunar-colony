@@ -1,14 +1,19 @@
-# game v0.41.0 baseline context
+# game v0.41.5 baseline context
 
 - Standalone C++20 Linux/X11 game, separate `engine/` and `game/` trees.
 - Root `VERSION` is the release source. Build with `./build.sh`; `./run.sh` runs `build/bin/game`.
 - All visible CPU lanes remain available through the persistent task pool. `GAME_CPU_LANES` is an optional diagnostic cap. Per-rover planning runs concurrently; arbitration, pose commit and resource/world mutation remain deterministic on the game thread.
+- Render presents with swap interval 0 by default (VSync off) so the GPU can run at full host throughput; `GAME_VSYNC=1` re-enables synchronized present.
+- The runtime loop is uncapped by default (no forced 1 ms idle sleep). Optional `GAME_FRAME_LIMIT_FPS=<n>` applies an explicit limiter when profiling or thermally constrained.
 
 ## Robot movement
 
 - `safety_coordinator.*` is the only pose authority. Job routines submit goals and work holds.
 - Global routing uses bounded persistent D* Lite with clearance costs and epoch-tagged parked-robot footprints, plus fleet-aware A*/dogleg recovery routes. Moving actors remain local traffic. The returned clearance callbacks capture margin values by value.
 - Local rollouts and execution follow a moving geometric corridor with projection, visibility-limited lookahead, arrival braking and acceleration/turn limits. A preview follows turns over the full 1 s horizon instead of holding one heading for that second.
+- In true head-on closing encounters, both active rovers apply an explicit local right-side evasion bias from their own frame before contract arbitration, producing stable symmetric passes.
+- Planner load is phase-staggered per rover, heavy route-search concurrency is bounded by default, and per-tick planner-job intake is budgeted to smooth frame spikes under multi-rover replans. `GAME_ROUTE_SEARCH_LANES` may override heavy search lanes.
+- CR-01 carriers delivering to incomplete habitat/resource blueprints may approach the target apron more closely so resource drop-offs visually align with staged blueprint packages.
 - Local proposals refresh at 10 Hz; authoritative motion/braking/terminal contracts remain at 100 Hz. Path progress, rather than distance to a corner alone, scores candidates and detects circling.
 - Vendored RVO2 (Apache-2.0) provides reciprocal velocity advice. See `third_party/rvo2/UPSTREAM.md` and `LICENSE`. It never commits poses or bypasses contracts. No online dependency fetch occurs at build time.
 - Physical hull discs plus numeric margin are mandatory. Additional personal space is a steering preference, so a physically passable narrow gap remains usable. Coarse cell tokens are scheduling hints, not another spatial exclusion grid.

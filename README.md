@@ -40,6 +40,32 @@ Crew-accessible habitats and corridors share a common structural access contract
 - Supply channels include structural supports, electrical/data routing and water-service hardware.
 - World construction geometry is mesh-only in the current development phase: blue target mesh, yellow installed mesh and substantially bolder green mesh at completion. No structure textures or filled surfaces are emitted yet.
 
+## v0.41.5 close-range carrier blueprint drop-offs
+
+CR-01 carriers delivering to habitat/resource blueprints can now approach much closer to the target structure side. The delivery-apron picker no longer enforces the same conservative own-target footprint clearance used for unrelated structures while that target is still incomplete, and the selected apron offset for incomplete targets is reduced. This keeps unloading visibly near the blueprint so staged resource boxes appear where the carrier is actually servicing, while completed structures and non-target obstacles retain the wider safety clearances.
+
+## v0.41.4 planner peak-load smoothing
+
+Large multi-rover collision-avoidance replans could still create frame-time spikes when many robots refreshed route/proposal work in the same safety tick. Planner refresh now uses deterministic per-rover phase offsets, a bounded per-tick planner-job budget, and a bounded default lane count for concurrent heavy global route searches. The shared 10 ms contract authority remains unchanged and continues to certify every accepted movement.
+
+Operational override:
+
+- `GAME_ROUTE_SEARCH_LANES=<n>` sets concurrent heavy global route-search lanes explicitly.
+
+## v0.41.3 deterministic head-on rover evasion
+
+When two active rovers approach each other head-on on a near-centerline closing path, local reciprocal steering now applies an explicit right-side evasion bias from each rover's own frame of reference. This makes opposing encounters deterministic and symmetric: both robots select their own right-hand pass direction before motion-contract arbitration, reducing left/right indecision and repeated stop-brake micro-cycles in narrow lanes.
+
+## v0.41.2 host-resource throughput defaults
+
+Runtime defaults are now intentionally aggressive for host utilization. CPU planning already scales across all visible logical CPUs via the persistent task pool. GPU presentation now explicitly requests swap interval 0 by default (VSync off) so render throughput is not implicitly refresh-capped by driver defaults. The main loop no longer applies an unconditional 1 ms per-frame sleep, allowing update/render to run at full available host throughput.
+
+Operational controls remain available for diagnostics and thermals:
+
+- `GAME_CPU_LANES=<n>` caps runtime CPU lanes.
+- `GAME_VSYNC=1` enables synchronized present (`0` or unset keeps uncapped present).
+- `GAME_FRAME_LIMIT_FPS=<n>` applies an explicit frame-rate cap.
+
 ### 0.31.2
 BR-02 builders use chassis-sized collision avoidance around structures, resource packages and fleet mates. Construction work is visibly animated through pick-up, put-down, material application, welding and build-up; stages advance only after the resource-backed animation sequence completes.
 

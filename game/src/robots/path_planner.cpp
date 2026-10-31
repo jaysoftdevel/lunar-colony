@@ -117,144 +117,164 @@ bool plan_corridor_path(const PathPlanRequest& request,
     }
     if(!request.allow_grid_fallback) return false;
 
-    const float cell=std::max(0.45f,request.cell_size);
-    const float side_extent=std::max(2.2f,request.corridor_half_width);
-    // A path around a large structure is not always monotonic along the direct
-    // start->goal axis. The old fixed 1.45 m end margin made a perfectly valid
-    // detour impossible whenever the rover had to back away from the obstacle
-    // first (or pass slightly beyond the goal and return). Give the A* rectangle
-    // a bounded longitudinal escape band derived from its lateral width.
-    const float along_margin=std::clamp(side_extent*0.55f,2.2f,14.0f);
-    const float u_min=-along_margin;
-    const float u_max=direct_length+along_margin;
-    const int nu=std::max(3,(int)std::ceil((u_max-u_min)/cell)+1);
-    const int nv=std::max(5,(int)std::ceil((side_extent*2.0f)/cell)+1);
-    const int total=nu*nv;
-    auto index=[&](int u,int v){ return v*nu+u; };
-    // Terrain height is one of the more expensive callbacks in a wide search.
-    // A* used to query the same grid point repeatedly from occupancy, expansion and simplification. Cache each grid coordinate on first use.
-    std::vector<Vec3> point_cache((std::size_t)total);
-    std::vector<std::uint8_t> point_ready((std::size_t)total,0);
-    auto point=[&](int u,int v){
-        const int idx=index(u,v);
-        if(point_ready[(std::size_t)idx]) return point_cache[(std::size_t)idx];
-        const float along=u_min+(float)u*cell;
-        const float side=-side_extent+(float)v*cell;
-        Vec3 p=start+forward*along+lateral*side;
-        p.y=callbacks.floor_height(p);
-        point_cache[(std::size_t)idx]=p;
-        point_ready[(std::size_t)idx]=1;
-        return p;
+    struct GridAttempt {
+        float cell_size{1.0f};
+        float side_extent{8.0f};
+        float along_margin{4.0f};
+        int requested_expansions{1200};
     };
 
-    const int su=std::clamp((int)std::lround((0.0f-u_min)/cell),0,nu-1);
-    const int sv=std::clamp((int)std::lround(side_extent/cell),0,nv-1);
-    const int start_index=index(su,sv);
+    // If the normal corridor search fails in a blocked scene, run one broader
+    // fallback that allows backing away from the direct chord and routing around
+    // large built structures. This is still bounded and remains advisory only.
+    const float base_cell=std::max(0.45f,request.cell_size);
+    const float base_side_extent=std::max(2.2f,request.corridor_half_width);
+    const float base_along_margin=std::clamp(base_side_extent*0.90f,2.4f,22.0f);
+    const float fallback_side_extent=std::max(base_side_extent+8.0f,base_side_extent*1.55f);
+    const float fallback_along_margin=std::max(base_along_margin*1.65f,fallback_side_extent*1.10f);
+    const int fallback_expansions=std::max(request.max_expansions+900,request.max_expansions*2);
+    const std::array<GridAttempt,2> attempts{{
+        {base_cell,base_side_extent,base_along_margin,request.max_expansions},
+        {std::max(0.70f,base_cell*1.18f),fallback_side_extent,fallback_along_margin,fallback_expansions}
+    }};
 
-    std::vector<std::int8_t> walkable((std::size_t)total,-1);
-    // Occupancy is evaluated lazily by A*. The caller may include current
-    // fleet positions as temporary local obstacles for route choice; dynamic
-    // time-indexed arbitration and continuous collision certification still
-    // belong exclusively to the safety coordinator.
-    auto cell_clear=[&](int u,int v){
-        const int idx=index(u,v);
-        if(idx==start_index) return true;
-        auto& cached=walkable[(std::size_t)idx];
-        if(cached>=0) return cached!=0;
-        const bool ok=callbacks.point_clear(point(u,v));
-        cached=ok?1:0;
-        return ok;
-    };
-    std::vector<float> g((std::size_t)total,std::numeric_limits<float>::infinity());
-    std::vector<int> parent((std::size_t)total,-1);
-    std::vector<std::uint8_t> closed((std::size_t)total,0);
-    struct OpenNode {
-        float f;
-        int idx;
-        bool operator<(const OpenNode& other) const { return f>other.f; }
-    };
-    std::priority_queue<OpenNode> open;
-    g[(std::size_t)start_index]=0.0f;
-    open.push({direct_length,start_index});
+    for(const auto& attempt:attempts){
+        const float cell=attempt.cell_size;
+        const float side_extent=attempt.side_extent;
+        const float along_margin=attempt.along_margin;
+        const float u_min=-along_margin;
+        const float u_max=direct_length+along_margin;
+        const int nu=std::max(3,(int)std::ceil((u_max-u_min)/cell)+1);
+        const int nv=std::max(5,(int)std::ceil((side_extent*2.0f)/cell)+1);
+        const int total=nu*nv;
+        auto index=[&](int u,int v){ return v*nu+u; };
+        // Terrain height is one of the more expensive callbacks in a wide search.
+        // A* used to query the same grid point repeatedly from occupancy,
+        // expansion and simplification. Cache each grid coordinate on first use.
+        std::vector<Vec3> point_cache((std::size_t)total);
+        std::vector<std::uint8_t> point_ready((std::size_t)total,0);
+        auto point=[&](int u,int v){
+            const int idx=index(u,v);
+            if(point_ready[(std::size_t)idx]) return point_cache[(std::size_t)idx];
+            const float along=u_min+(float)u*cell;
+            const float side=-side_extent+(float)v*cell;
+            Vec3 p=start+forward*along+lateral*side;
+            p.y=callbacks.floor_height(p);
+            point_cache[(std::size_t)idx]=p;
+            point_ready[(std::size_t)idx]=1;
+            return p;
+        };
 
-    constexpr std::array<int,8> du{{1,-1,0,0,1,1,-1,-1}};
-    constexpr std::array<int,8> dv{{0,0,1,-1,1,-1,1,-1}};
-    int goal_index=-1;
-    int expansions=0;
-    const int max_expansions=std::clamp(request.max_expansions,64,std::max(64,total));
-    const float goal_tolerance=std::max(request.stop_radius+0.16f,cell*0.82f);
+        const int su=std::clamp((int)std::lround((0.0f-u_min)/cell),0,nu-1);
+        const int sv=std::clamp((int)std::lround(side_extent/cell),0,nv-1);
+        const int start_index=index(su,sv);
 
-    while(!open.empty() && expansions<max_expansions){
-        const int cur=open.top().idx;
-        open.pop();
-        if(closed[(std::size_t)cur]) continue;
-        closed[(std::size_t)cur]=1;
-        ++expansions;
+        std::vector<std::int8_t> walkable((std::size_t)total,-1);
+        // Occupancy is evaluated lazily by A*. The caller may include current
+        // fleet positions as temporary local obstacles for route choice;
+        // dynamic arbitration remains in the safety coordinator.
+        auto cell_clear=[&](int u,int v){
+            const int idx=index(u,v);
+            if(idx==start_index) return true;
+            auto& cached=walkable[(std::size_t)idx];
+            if(cached>=0) return cached!=0;
+            const bool ok=callbacks.point_clear(point(u,v));
+            cached=ok?1:0;
+            return ok;
+        };
+        std::vector<float> g((std::size_t)total,std::numeric_limits<float>::infinity());
+        std::vector<int> parent((std::size_t)total,-1);
+        std::vector<std::uint8_t> closed((std::size_t)total,0);
+        struct OpenNode {
+            float f;
+            int idx;
+            bool operator<(const OpenNode& other) const { return f>other.f; }
+        };
+        std::priority_queue<OpenNode> open;
+        g[(std::size_t)start_index]=0.0f;
+        open.push({direct_length,start_index});
 
-        const int cu=cur%nu;
-        const int cv=cur/nu;
-        const Vec3 cp=(cur==start_index)?start:point(cu,cv);
-        if(dist_xz(cp,goal)<=goal_tolerance && callbacks.segment_clear(cp,goal)){
-            goal_index=cur;
-            break;
-        }
+        constexpr std::array<int,8> du{{1,-1,0,0,1,1,-1,-1}};
+        constexpr std::array<int,8> dv{{0,0,1,-1,1,-1,1,-1}};
+        int goal_index=-1;
+        int expansions=0;
+        const int max_expansions=std::clamp(attempt.requested_expansions,64,std::max(64,total));
+        const float goal_tolerance=std::max(request.stop_radius+0.16f,cell*0.82f);
 
-        for(std::size_t n=0;n<du.size();++n){
-            const int u=cu+du[n];
-            const int v=cv+dv[n];
-            if(u<0 || v<0 || u>=nu || v>=nv) continue;
-            const int ni=index(u,v);
-            if(closed[(std::size_t)ni] || !cell_clear(u,v)) continue;
-            if(du[n]!=0 && dv[n]!=0 && (!cell_clear(cu+du[n],cv) || !cell_clear(cu,cv+dv[n]))) continue;
-            const Vec3 np=point(u,v);
-            if(std::abs(np.y-cp.y)>0.38f) continue;
-            if(callbacks.neighbor_clear){
-                if(!callbacks.neighbor_clear(cp,np)) continue;
-            }else if(!callbacks.segment_clear(cp,np)) continue;
-            const float step=dist_xz(cp,np);
-            const float ng=g[(std::size_t)cur]+step;
-            if(ng>=g[(std::size_t)ni]) continue;
-            g[(std::size_t)ni]=ng;
-            parent[(std::size_t)ni]=cur;
-            open.push({ng+dist_xz(np,goal),ni});
-        }
-    }
-    if(goal_index<0) return false;
+        while(!open.empty() && expansions<max_expansions){
+            const int cur=open.top().idx;
+            open.pop();
+            if(closed[(std::size_t)cur]) continue;
+            closed[(std::size_t)cur]=1;
+            ++expansions;
 
-    std::vector<Vec3> raw;
-    raw.reserve((std::size_t)std::max(8,(int)(direct_length/cell)+8));
-    for(int cur=goal_index,guard=0;cur!=start_index && cur>=0 && guard++<total;cur=parent[(std::size_t)cur]){
-        raw.push_back(point(cur%nu,cur/nu));
-        if(parent[(std::size_t)cur]<0) break;
-    }
-    std::reverse(raw.begin(),raw.end());
-    if(raw.empty()) return false;
-    if(dist_xz(raw.back(),goal)>0.04f){
-        if(!callbacks.segment_clear(raw.back(),goal)) return false;
-        raw.push_back(goal);
-    }
-
-    // Theta*-style bounded line-of-sight simplification. It intentionally keeps
-    // the lookahead bounded so a large map cannot turn one replan into O(N^2)
-    // segment validation.
-    Vec3 anchor=start;
-    std::size_t i=0;
-    const std::size_t max_skip=std::max<std::size_t>(1,request.visibility_skip_limit);
-    while(i<raw.size()){
-        const std::size_t farthest=std::min(raw.size()-1,i+max_skip);
-        std::size_t best=i;
-        for(std::size_t candidate=farthest+1;candidate>i;--candidate){
-            const std::size_t j=candidate-1;
-            if(callbacks.segment_clear(anchor,raw[j])){
-                best=j;
+            const int cu=cur%nu;
+            const int cv=cur/nu;
+            const Vec3 cp=(cur==start_index)?start:point(cu,cv);
+            if(dist_xz(cp,goal)<=goal_tolerance && callbacks.segment_clear(cp,goal)){
+                goal_index=cur;
                 break;
             }
+
+            for(std::size_t n=0;n<du.size();++n){
+                const int u=cu+du[n];
+                const int v=cv+dv[n];
+                if(u<0 || v<0 || u>=nu || v>=nv) continue;
+                const int ni=index(u,v);
+                if(closed[(std::size_t)ni] || !cell_clear(u,v)) continue;
+                if(du[n]!=0 && dv[n]!=0 && (!cell_clear(cu+du[n],cv) || !cell_clear(cu,cv+dv[n]))) continue;
+                const Vec3 np=point(u,v);
+                if(std::abs(np.y-cp.y)>0.38f) continue;
+                if(callbacks.neighbor_clear){
+                    if(!callbacks.neighbor_clear(cp,np)) continue;
+                }else if(!callbacks.segment_clear(cp,np)) continue;
+                const float step=dist_xz(cp,np);
+                const float ng=g[(std::size_t)cur]+step;
+                if(ng>=g[(std::size_t)ni]) continue;
+                g[(std::size_t)ni]=ng;
+                parent[(std::size_t)ni]=cur;
+                open.push({ng+dist_xz(np,goal),ni});
+            }
         }
-        geometric.push_back(raw[best]);
-        anchor=raw[best];
-        i=best+1;
+        if(goal_index<0) continue;
+
+        std::vector<Vec3> raw;
+        raw.reserve((std::size_t)std::max(8,(int)(direct_length/cell)+8));
+        for(int cur=goal_index,guard=0;cur!=start_index && cur>=0 && guard++<total;cur=parent[(std::size_t)cur]){
+            raw.push_back(point(cur%nu,cur/nu));
+            if(parent[(std::size_t)cur]<0) break;
+        }
+        std::reverse(raw.begin(),raw.end());
+        if(raw.empty()) continue;
+        if(dist_xz(raw.back(),goal)>0.04f){
+            if(!callbacks.segment_clear(raw.back(),goal)) continue;
+            raw.push_back(goal);
+        }
+
+        // Theta*-style bounded line-of-sight simplification. It intentionally
+        // keeps the lookahead bounded so a large map cannot turn one replan
+        // into O(N^2) segment validation.
+        geometric.clear();
+        Vec3 anchor=start;
+        std::size_t i=0;
+        const std::size_t max_skip=std::max<std::size_t>(1,request.visibility_skip_limit);
+        while(i<raw.size()){
+            const std::size_t farthest=std::min(raw.size()-1,i+max_skip);
+            std::size_t best=i;
+            for(std::size_t candidate=farthest+1;candidate>i;--candidate){
+                const std::size_t j=candidate-1;
+                if(callbacks.segment_clear(anchor,raw[j])){
+                    best=j;
+                    break;
+                }
+            }
+            geometric.push_back(raw[best]);
+            anchor=raw[best];
+            i=best+1;
+        }
+        if(!geometric.empty()) return true;
     }
-    return !geometric.empty();
+    return false;
 }
 
 } // namespace game::robots

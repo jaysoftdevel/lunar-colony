@@ -1,4 +1,4 @@
-# v0.41.0 Implementation Clusters
+# v0.41.5 Implementation Clusters
 
 This file is the context map for future changes. Start from the smallest build target(s) below and load additional clusters only when an interface crosses the requested change. The target names are real CMake OBJECT targets in `game/cmake/GameClusters.cmake`.
 
@@ -54,6 +54,28 @@ No job routine may directly change a robot pose, insert an avoidance steering im
 
 For GPU backend, GLX/OpenGL hardware validation, or renderer diagnostics, start with `engine/src/renderer_gl.cpp`, `engine/src/platform_x11.cpp`, and `engine/include/engine/engine.hpp` (`game_engine`). For CPU worker-count policy or task dispatch, use `engine/src/task_pool.cpp`. Since v0.40.50 the runtime pool uses all logical CPUs visible to the process. Rover multi-core work includes world-revision route validation, D* repair/full route preparation and local proposal preview in `game/src/robots/safety_coordinator.cpp` (`game_cluster_pathfinding`). Heavy route jobs are dynamically allocated first, with up to one heavy search per CPU lane. Do not parallelize reservation arbitration, pose commit or world/resource mutation without preserving the shared safety epoch.
 
-## v0.41.0 shared access and crowd advice
+## v0.41.1 shared access and crowd advice
 
 The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; it retains sole contract authority over actual movement. `game/world/mesh_portals.hpp` supplies exact doorway and circulation cuts. Habitat size normalization, storage port placement, corridor collars and the POV floor resolver share model-declared thresholds. The optional `navigation_regression` target links the same game objects and runs without an X11 window.
+
+## v0.41.2 host-throughput runtime defaults
+
+- `engine/src/task_pool.cpp` keeps host-wide CPU lane usage (`GAME_CPU_LANES` remains the diagnostic cap).
+- `engine/src/renderer_gl.cpp` now explicitly requests swap interval 0 by default so GPU present is uncapped; `GAME_VSYNC=1` enables synchronized present.
+- `engine/src/platform_x11.cpp` removes the unconditional per-frame 1 ms sleep and runs uncapped by default; `GAME_FRAME_LIMIT_FPS=<n>` provides an explicit cap.
+
+## v0.41.3 head-on right-side evasion
+
+- `game/src/robots/safety_coordinator.cpp` adds explicit head-on closing detection and applies a per-rover right-turn evasion bias from each robot's local frame.
+- This behavior is local steering guidance only; the existing shared 10 ms motion-contract safety arbitration remains authoritative.
+
+## v0.41.4 planner peak-load smoothing
+
+- `game/src/robots/safety_coordinator.cpp` adds deterministic per-rover planner phase offsets so large fleets do not synchronize route/proposal refreshes in one frame.
+- Heavy global route-search concurrency now uses a bounded default lane count to avoid all-core bursts; `GAME_ROUTE_SEARCH_LANES` provides an explicit override.
+- Planner intake per safety tick is budgeted, prioritizing hard/blocked requests first and deferring lower-priority refreshes to following ticks while certified contracts remain authoritative.
+
+## v0.41.5 close-range carrier blueprint drop-offs
+
+- `game/src/systems/builder_robot.cpp` now allows CR-01 delivery aprons to be selected closer to incomplete habitat/resource blueprint targets.
+- Own-target conservative footprint clearance is relaxed only for that incomplete target during apron selection, preserving strict clearance for completed structures and all non-target geometry.

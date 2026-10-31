@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <dlfcn.h>
 #include <iostream>
 #include <thread>
@@ -448,11 +449,20 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
         return 3;
     }
     std::cout<<"CPU simulation lanes: "<<cpu_parallel_lanes()<<" (all visible logical CPUs; GAME_CPU_LANES may cap)\n";
+    int frame_limit_fps=0;
+    if(const char* env=std::getenv("GAME_FRAME_LIMIT_FPS")){
+        char* end=nullptr;
+        const long parsed=std::strtol(env,&end,10);
+        if(end!=env && parsed>0) frame_limit_fps=(int)std::clamp<long>(parsed,15,1000);
+    }
+    if(frame_limit_fps>0) std::cout<<"Frame limiter: "<<frame_limit_fps<<" FPS (GAME_FRAME_LIMIT_FPS)\n";
+    else std::cout<<"Frame limiter: disabled (full host throughput)\n";
     if(config.fullscreen) p.send_fullscreen(true);
     game->on_start();
     auto prev=std::chrono::steady_clock::now();
     int lastx=0,lasty=0;
     while(!p.quit){
+        const auto frame_begin=std::chrono::steady_clock::now();
         p.input.left_pressed=p.input.middle_pressed=p.input.right_pressed=false;
         p.input.escape_pressed=p.input.key_n_pressed=p.input.key_m_pressed=p.input.key_v_pressed=p.input.delete_pressed=false;
         p.input.backspace_pressed=p.input.enter_pressed=false;
@@ -530,7 +540,12 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
         }
         auto now=std::chrono::steady_clock::now(); float dt=std::chrono::duration<float>(now-prev).count(); prev=now; if(dt>0.1f)dt=0.1f;
         game->update(dt,p.input); game->render(*p.renderer);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if(frame_limit_fps>0){
+            const auto frame_budget=std::chrono::duration<double>(1.0/(double)frame_limit_fps);
+            const auto elapsed=std::chrono::steady_clock::now()-frame_begin;
+            if(elapsed<frame_budget)
+                std::this_thread::sleep_for(frame_budget-elapsed);
+        }
     }
     p.restore_mode();
     return 0;
