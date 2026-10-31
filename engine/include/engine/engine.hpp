@@ -78,32 +78,48 @@ public:
     std::size_t background_workers() const;
     std::future<void> submit(std::function<void()> task);
 
+    // Runs fn(0..count-1) across the calling thread and the helper workers and
+    // returns when every index finished. Indices are claimed dynamically, so a
+    // helper that never gets scheduled cannot stall the caller; only a helper
+    // that claimed an index and was preempted mid-item can delay it.
     template<class Fn>
     void parallel_for(std::size_t count, Fn&& fn){
         if(count==0) return;
-        const std::size_t lanes=std::max<std::size_t>(1,parallel_lanes());
-        if(lanes<=1 || count==1){
+        const std::size_t helpers=std::min<std::size_t>(background_workers(),count-1);
+        if(helpers==0){
             for(std::size_t i=0;i<count;++i) fn(i);
             return;
         }
-        auto next=std::make_shared<std::atomic<std::size_t>>(0);
-        auto shared_fn=std::make_shared<std::decay_t<Fn>>(std::forward<Fn>(fn));
-        auto worker=[next,shared_fn,count](){
-            for(;;){
-                const std::size_t i=next->fetch_add(1,std::memory_order_relaxed);
-                if(i>=count) break;
-                (*shared_fn)(i);
-            }
+        // The functor stays on the caller's stack: helpers only dereference it
+        // for an index they claimed, and the caller does not return before every
+        // index completed. A late helper finds no index left and never touches it.
+        using Callable=std::remove_reference_t<Fn>;
+        struct Job {
+            std::atomic<std::size_t> next{0};
+            std::atomic<std::size_t> done{0};
+            std::size_t count{0};
+            Callable* fn{nullptr};
         };
-        const std::size_t helpers=std::min<std::size_t>(background_workers(),count-1);
-        std::vector<std::future<void>> futures;
-        futures.reserve(helpers);
-        for(std::size_t i=0;i<helpers;++i) futures.push_back(submit(worker));
-        worker();
-        for(auto& f:futures) f.get();
+        auto job=std::make_shared<Job>();
+        job->count=count;
+        job->fn=&fn;
+        auto run=std::make_shared<std::function<void()>>([job](){
+            for(;;){
+                const std::size_t i=job->next.fetch_add(1,std::memory_order_relaxed);
+                if(i>=job->count) break;
+                (*job->fn)(i);
+                if(job->done.fetch_add(1,std::memory_order_acq_rel)+1==job->count) job->done.notify_all();
+            }
+        });
+        post_shared(run,helpers);
+        (*run)();
+        for(std::size_t cur=job->done.load(std::memory_order_acquire);cur<count;cur=job->done.load(std::memory_order_acquire))
+            job->done.wait(cur);
     }
 
 private:
+    // Queues the same task for `copies` workers with a single lock/allocation.
+    void post_shared(const std::shared_ptr<std::function<void()>>& task,std::size_t copies);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

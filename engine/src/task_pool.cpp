@@ -19,7 +19,7 @@ namespace eng {
 struct TaskPool::Impl {
     std::mutex mutex{};
     std::condition_variable cv{};
-    std::deque<std::packaged_task<void()>> queue{};
+    std::deque<std::shared_ptr<std::function<void()>>> queue{};
     std::vector<std::thread> workers{};
     bool stop{false};
     std::size_t lanes{1};
@@ -57,7 +57,7 @@ struct TaskPool::Impl {
         for(std::size_t i=0;i<helpers;++i){
             workers.emplace_back([this](){
                 for(;;){
-                    std::packaged_task<void()> task;
+                    std::shared_ptr<std::function<void()>> task;
                     {
                         std::unique_lock lock(mutex);
                         cv.wait(lock,[&](){ return stop || !queue.empty(); });
@@ -65,7 +65,7 @@ struct TaskPool::Impl {
                         task=std::move(queue.front());
                         queue.pop_front();
                     }
-                    task();
+                    (*task)();
                 }
             });
         }
@@ -88,18 +88,27 @@ std::size_t TaskPool::parallel_lanes() const { return impl_?impl_->lanes:1; }
 std::size_t TaskPool::background_workers() const { return impl_?impl_->workers.size():0; }
 
 std::future<void> TaskPool::submit(std::function<void()> task){
-    std::packaged_task<void()> packaged(std::move(task));
-    auto future=packaged.get_future();
+    auto packaged=std::make_shared<std::packaged_task<void()>>(std::move(task));
+    auto future=packaged->get_future();
     if(!impl_ || impl_->workers.empty()){
-        packaged();
+        (*packaged)();
         return future;
+    }
+    post_shared(std::make_shared<std::function<void()>>([packaged](){ (*packaged)(); }),1);
+    return future;
+}
+
+void TaskPool::post_shared(const std::shared_ptr<std::function<void()>>& task,std::size_t copies){
+    if(copies==0) return;
+    if(!impl_ || impl_->workers.empty()){
+        (*task)();
+        return;
     }
     {
         std::lock_guard lock(impl_->mutex);
-        impl_->queue.emplace_back(std::move(packaged));
+        for(std::size_t i=0;i<copies;++i) impl_->queue.push_back(task);
     }
-    impl_->cv.notify_one();
-    return future;
+    for(std::size_t i=0;i<copies;++i) impl_->cv.notify_one();
 }
 
 std::size_t cpu_parallel_lanes(){ return TaskPool::shared().parallel_lanes(); }

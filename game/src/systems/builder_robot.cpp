@@ -8,8 +8,11 @@
 #include "game/robots/safety_coordinator.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <cstring>
 #include <limits>
+#include <unordered_map>
 #include <vector>
 
 namespace game {
@@ -230,6 +233,97 @@ bool segment_intersects_rectangle(Vec3 a,Vec3 b,Vec3 center,float rotation,float
     return slab(a.x,b.x,hx) && slab(a.z,b.z,hz);
 }
 
+// Rover-blocking (wall-like) triangle in world space with its planar bounds.
+struct WallTri {
+    Vec3 a{},b{},c{};
+    float min_x{0.0f},max_x{0.0f},min_z{0.0f},max_z{0.0f};
+};
+
+struct WallSet {
+    std::vector<WallTri> tris{};
+};
+
+// Axis-aligned rover obstacle with the instance rotation (sin/cos) evaluated
+// once per fleet tick instead of in every point/segment clearance query.
+struct NavRect {
+    Vec3 center{};
+    float c{1.0f},s{0.0f};
+    float half_x{0.0f},half_z{0.0f};
+};
+
+NavRect make_nav_rect(Vec3 center,float rotation_degrees,float footprint_x,float footprint_z){
+    const float a=eng::radians(-rotation_degrees);
+    return {center,std::cos(a),std::sin(a),footprint_x*0.5f,footprint_z*0.5f};
+}
+
+Vec3 nav_rect_local(const NavRect& r,Vec3 p){
+    const Vec3 v=p-r.center;
+    return {v.x*r.c+v.z*r.s,v.y,-v.x*r.s+v.z*r.c};
+}
+
+bool segment_intersects_nav_rect(Vec3 a,Vec3 b,const NavRect& r,float hx,float hz){
+    // Broad phase: a rotated rectangle lies inside its circumscribed circle.
+    const float reach=std::sqrt(hx*hx+hz*hz)+0.01f;
+    if(std::max(a.x,b.x)<r.center.x-reach || std::min(a.x,b.x)>r.center.x+reach ||
+       std::max(a.z,b.z)<r.center.z-reach || std::min(a.z,b.z)>r.center.z+reach) return false;
+    a=nav_rect_local(r,a);b=nav_rect_local(r,b);
+    float enter=0.0f,leave=1.0f;
+    auto slab=[&](float start,float end,float half){
+        const float delta=end-start;
+        if(std::abs(delta)<1.0e-7f) return std::abs(start)<=half;
+        float lo=(-half-start)/delta,hi=(half-start)/delta;
+        if(lo>hi) std::swap(lo,hi);
+        enter=std::max(enter,lo);leave=std::min(leave,hi);
+        return enter<=leave;
+    };
+    return slab(a.x,b.x,hx) && slab(a.z,b.z,hz);
+}
+
+// Frozen per-tick view of completed rover-blocking structures plus the list of
+// still-unfinished targets. Rover clearance queries run millions of times per
+// minute (A*, D*, previews, 100 Hz contracts); they must not rescan every
+// completed building or recompute its rotation each time.
+struct NavSnapshot {
+    struct Polyline {
+        const std::vector<Vec3>* path{nullptr};
+        float min_x{0.0f},max_x{0.0f},min_z{0.0f},max_z{0.0f};
+    };
+    // Planar extent of a target's own geometry. Partial-construction and
+    // future-stage reservations never reach further than a fixed halo around it.
+    struct Bounds {
+        float min_x{0.0f},max_x{0.0f},min_z{0.0f},max_z{0.0f};
+        bool near(Vec3 p,float inflate) const {
+            return !(p.x<min_x-inflate || p.x>max_x+inflate || p.z<min_z-inflate || p.z>max_z+inflate);
+        }
+    };
+    // Collision data of one unfinished construction target.
+    struct PendingGeometry {
+        NavRect rect{};
+        const WallSet* partial{nullptr}; // already revealed mesh (corridors/walkways)
+        const WallSet* next{nullptr};    // triangles the next stage will add
+    };
+    bool valid{false};
+    // Union of every unfinished target's bounds; points/segments farther than
+    // the largest reservation halo from it need no partial/future-stage test.
+    bool any_pending{false};
+    Bounds pending_union{};
+    std::vector<PendingGeometry> habitat_geo{};
+    std::vector<PendingGeometry> resource_geo{};
+    std::vector<PendingGeometry> corridor_geo{};
+    std::vector<PendingGeometry> walkway_geo{};
+    std::vector<NavRect> solids{};
+    std::vector<Bounds> habitat_bounds{};
+    std::vector<Bounds> resource_bounds{};
+    std::vector<Bounds> corridor_bounds{};
+    std::vector<Bounds> walkway_bounds{};
+    std::vector<std::size_t> workshops{};
+    std::vector<Polyline> corridors{};
+    std::vector<std::size_t> pending_habitats{};
+    std::vector<std::size_t> pending_resources{};
+    std::vector<std::size_t> pending_corridors{};
+    std::vector<std::size_t> pending_walkways{};
+};
+
 float segment_pair_distance(Vec3 a,Vec3 b,Vec3 c,Vec3 d){
     auto cross=[](Vec3 u,Vec3 v){return u.x*v.z-u.z*v.x;};
     const Vec3 u=b-a,v=d-c;
@@ -325,7 +419,75 @@ bool polyline_near_xz(Vec3 candidate,const std::vector<Vec3>& path,float clearan
     return false;
 }
 
+// Same filtering as construction_triangles_block_circle_range(), applied once
+// to a triangle range so repeated circle queries only touch candidate walls.
+template<class Transform>
+void append_wall_triangles(WallSet& set,const std::vector<Vec3>& tris,std::size_t first,std::size_t last,Transform&& transform){
+    first=(first/3)*3;
+    last=std::min((last/3)*3,(tris.size()/3)*3);
+    if(first>=last) return;
+    for(std::size_t i=first;i+2<last;i+=3){
+        const Vec3 a=transform(tris[i]),b=transform(tris[i+1]),c=transform(tris[i+2]);
+        const Vec3 ab=b-a,ac=c-a;
+        const Vec3 n{ab.y*ac.z-ab.z*ac.y,ab.z*ac.x-ab.x*ac.z,ab.x*ac.y-ab.y*ac.x};
+        const float nlen=std::sqrt(n.x*n.x+n.y*n.y+n.z*n.z);
+        if(nlen<1.0e-6f) continue;
+        if(std::abs(n.y)/nlen>0.78f) continue;
+        const float ymin=std::min({a.y,b.y,c.y});
+        const float ymax=std::max({a.y,b.y,c.y});
+        if(ymax<0.30f || ymax-ymin<0.08f) continue;
+        set.tris.push_back({a,b,c,std::min({a.x,b.x,c.x}),std::max({a.x,b.x,c.x}),
+                            std::min({a.z,b.z,c.z}),std::max({a.z,b.z,c.z})});
+    }
+}
+
+bool wall_set_blocks(const WallSet& set,Vec3 candidate,float radius){
+    for(const auto& t:set.tris){
+        // A circle farther than its radius from the triangle's bounds cannot
+        // touch it.
+        if(candidate.x<t.min_x-radius || candidate.x>t.max_x+radius ||
+           candidate.z<t.min_z-radius || candidate.z>t.max_z+radius) continue;
+        if(point_in_triangle_xz(candidate,t.a,t.b,t.c) ||
+           segment_distance_xz(candidate,t.a,t.b)<radius ||
+           segment_distance_xz(candidate,t.b,t.c)<radius ||
+           segment_distance_xz(candidate,t.c,t.a)<radius) return true;
+    }
+    return false;
+}
+
+std::uint64_t nav_hash(std::uint64_t h,std::uint64_t v){
+    h^=v+0x9e3779b97f4a7c15ULL+(h<<6)+(h>>2);
+    return h;
+}
+
+std::uint64_t nav_float_bits(float f){
+    std::uint32_t u=0;
+    std::memcpy(&u,&f,sizeof(u));
+    return u;
+}
+
+std::uint64_t nav_mesh_signature(std::uint64_t h,const std::vector<Vec3>& mesh){
+    h=nav_hash(h,mesh.size());
+    if(mesh.empty()) return h;
+    for(const std::size_t i:{std::size_t{0},mesh.size()/2,mesh.size()-1}){
+        h=nav_hash(h,nav_float_bits(mesh[i].x));
+        h=nav_hash(h,nav_float_bits(mesh[i].y));
+        h=nav_hash(h,nav_float_bits(mesh[i].z));
+    }
+    return h;
+}
+
 } // namespace
+
+struct GameApp::NavWallCache {
+    struct Entry {
+        bool built{false};
+        std::uint64_t signature{0};
+        WallSet partial{};
+        WallSet next{};
+    };
+    std::unordered_map<std::uint64_t,Entry> entries{};
+};
 
 ResourceBundle GameApp::starter_resource_reserve() const {
     ResourceBundle total{};
@@ -716,36 +878,44 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
         }
         return true;
     };
+    // Staged-package poses depend only on the site buffers, which cannot change
+    // inside this query. Resolve them once instead of once per candidate point.
+    struct StagedPackage { Vec3 position{}; float radius{0.0f}; };
+    std::vector<StagedPackage> staged_packages;
+    bool staged_packages_ready=false;
     auto clear_of_staged_site_packages=[&](Vec3 p){
-        auto buffer_clear=[&](const ConstructionTargetRef& staged_target,const ResourceBundle& buffer){
-            if(buffer.empty()) return true;
-            int visual_slot=0;
-            constexpr int max_visual_packages=36;
-            for(std::size_t mi=0;mi<kMaterialResourceCount && visual_slot<max_visual_packages;++mi){
-                const auto material=(MaterialResource)mi;
-                std::int64_t remaining=std::max<std::int64_t>(0,buffer.amount(material));
-                const std::int64_t capacity=std::max<std::int64_t>(1,resource_package_capacity_kg(material));
-                while(remaining>0 && visual_slot<max_visual_packages){
-                    const std::int64_t package_amount=std::min(remaining,capacity);
-                    const float package_radius=resource_package_half_width(material,package_amount)*1.41421356f;
-                    const Vec3 package_position=construction_drop_package_position(staged_target,visual_slot);
-                    if(dist_xz(p,package_position)<largest_hull+package_radius+kRobotObstacleMargin+0.16f) return false;
-                    remaining-=package_amount;
-                    ++visual_slot;
+        if(!staged_packages_ready){
+            staged_packages_ready=true;
+            auto collect=[&](const ConstructionTargetRef& staged_target,const ResourceBundle& buffer){
+                if(buffer.empty()) return;
+                int visual_slot=0;
+                constexpr int max_visual_packages=36;
+                for(std::size_t mi=0;mi<kMaterialResourceCount && visual_slot<max_visual_packages;++mi){
+                    const auto material=(MaterialResource)mi;
+                    std::int64_t remaining=std::max<std::int64_t>(0,buffer.amount(material));
+                    const std::int64_t capacity=std::max<std::int64_t>(1,resource_package_capacity_kg(material));
+                    while(remaining>0 && visual_slot<max_visual_packages){
+                        const std::int64_t package_amount=std::min(remaining,capacity);
+                        const float package_radius=resource_package_half_width(material,package_amount)*1.41421356f;
+                        staged_packages.push_back({construction_drop_package_position(staged_target,visual_slot),package_radius});
+                        remaining-=package_amount;
+                        ++visual_slot;
+                    }
                 }
-            }
-            return true;
-        };
-        for(std::size_t i=0;i<placed_habitats_.size();++i)
-            if(!buffer_clear({ConstructionTargetKind::Habitat,i},placed_habitats_[i].site_buffer)) return false;
-        for(std::size_t i=0;i<placed_resources_.size();++i)
-            if(!buffer_clear({ConstructionTargetKind::Resource,i},placed_resources_[i].site_buffer)) return false;
-        for(std::size_t i=0;i<corridor_network_.connections().size();++i)
-            if(!buffer_clear({ConstructionTargetKind::Corridor,i},corridor_network_.connections()[i].site_buffer)) return false;
-        for(std::size_t i=0;i<utility_network_.connections().size();++i)
-            if(!buffer_clear({ConstructionTargetKind::Utility,i},utility_network_.connections()[i].site_buffer)) return false;
-        for(std::size_t i=0;i<walkway_network_.connections().size();++i)
-            if(!buffer_clear({ConstructionTargetKind::Walkway,i},walkway_network_.connections()[i].site_buffer)) return false;
+            };
+            for(std::size_t i=0;i<placed_habitats_.size();++i)
+                collect({ConstructionTargetKind::Habitat,i},placed_habitats_[i].site_buffer);
+            for(std::size_t i=0;i<placed_resources_.size();++i)
+                collect({ConstructionTargetKind::Resource,i},placed_resources_[i].site_buffer);
+            for(std::size_t i=0;i<corridor_network_.connections().size();++i)
+                collect({ConstructionTargetKind::Corridor,i},corridor_network_.connections()[i].site_buffer);
+            for(std::size_t i=0;i<utility_network_.connections().size();++i)
+                collect({ConstructionTargetKind::Utility,i},utility_network_.connections()[i].site_buffer);
+            for(std::size_t i=0;i<walkway_network_.connections().size();++i)
+                collect({ConstructionTargetKind::Walkway,i},walkway_network_.connections()[i].site_buffer);
+        }
+        for(const auto& package:staged_packages)
+            if(dist_xz(p,package.position)<largest_hull+package.radius+kRobotObstacleMargin+0.16f) return false;
         return true;
     };
     auto service_point_clear=[&](Vec3 p){
@@ -1190,12 +1360,41 @@ void GameApp::update_builder_robot(float dt){
     // Do not run the crew's pressure-hull/furniture queries in every A* edge,
     // 100 Hz contract and rollout sample. That also prevents a hull projection
     // from lifting a rover onto an indoor floor while it passes a corner.
+    NavSnapshot nav{};
     const auto rover_floor_height=[&](Vec3 p){
+        if(nav.valid){
+            for(const std::size_t index:nav.workshops){
+                const float y=workshop::floor(placed_resources_[index],p);if(y>0) return y;
+            }
+            return 0.0f;
+        }
         for(const auto& item:placed_resources_)
             if(item.kind==ResourceKind::RobotWorkshop && item.construction.complete()){
                 const float y=workshop::floor(item,p);if(y>0) return y;
             }
         return 0.0f;
+    };
+    // Visit only unfinished targets once the per-tick snapshot exists. A
+    // completed target can never contribute to partial/future reservations.
+    const auto any_habitat=[&](auto&& test){
+        if(nav.valid){ for(const std::size_t i:nav.pending_habitats) if(test(i)) return true; return false; }
+        for(std::size_t i=0;i<placed_habitats_.size();++i) if(test(i)) return true;
+        return false;
+    };
+    const auto any_resource=[&](auto&& test){
+        if(nav.valid){ for(const std::size_t i:nav.pending_resources) if(test(i)) return true; return false; }
+        for(std::size_t i=0;i<placed_resources_.size();++i) if(test(i)) return true;
+        return false;
+    };
+    const auto any_corridor=[&](auto&& test){
+        if(nav.valid){ for(const std::size_t i:nav.pending_corridors) if(test(i)) return true; return false; }
+        for(std::size_t i=0;i<corridor_network_.connections().size();++i) if(test(i)) return true;
+        return false;
+    };
+    const auto any_walkway=[&](auto&& test){
+        if(nav.valid){ for(const std::size_t i:nav.pending_walkways) if(test(i)) return true; return false; }
+        for(std::size_t i=0;i<walkway_network_.connections().size();++i) if(test(i)) return true;
+        return false;
     };
     bool has_workshop=false;
     for(std::size_t i=0;i<placed_resources_.size();++i) if(workshop_operational(i)){has_workshop=true;break;}
@@ -1388,11 +1587,36 @@ void GameApp::update_builder_robot(float dt){
     };
 
 
+    // Snapshot equivalent of target_blocks_at_step(target,current+1,...) for an
+    // unfinished target: same broad phases, then only the pre-filtered wall
+    // triangles that the next stage adds.
+    auto nav_next_blocks=[&](const ConstructionTargetRef& target,Vec3 candidate,float radius){
+        switch(target.kind){
+            case ConstructionTargetKind::Habitat:
+            case ConstructionTargetKind::Resource:{
+                const auto& geo=target.kind==ConstructionTargetKind::Habitat?nav.habitat_geo[target.index]:nav.resource_geo[target.index];
+                const Vec3 local=nav_rect_local(geo.rect,candidate);
+                const float halo=radius+1.35f;
+                if(std::abs(local.x)>geo.rect.half_x+halo || std::abs(local.z)>geo.rect.half_z+halo) return false;
+                return wall_set_blocks(*geo.next,candidate,radius);
+            }
+            case ConstructionTargetKind::Corridor:
+                if(!polyline_near_xz(candidate,corridor_network_.connections()[target.index].path,radius+geometry::kCorridorHalfWidth+1.0f)) return false;
+                return wall_set_blocks(*nav.corridor_geo[target.index].next,candidate,radius);
+            case ConstructionTargetKind::Walkway:
+                if(!polyline_near_xz(candidate,walkway_network_.connections()[target.index].path,radius+geometry::kWalkwayHalfWidth+0.9f)) return false;
+                return wall_set_blocks(*nav.walkway_geo[target.index].next,candidate,radius);
+            default:
+                return false;
+        }
+    };
+
     auto partial_construction_blocks=[&](Vec3 candidate,float radius,const ConstructionTargetRef* ignore_target=nullptr){
-        for(std::size_t i=0;i<placed_habitats_.size();++i){
-            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Habitat && ignore_target->index==i) continue;
+        if(any_habitat([&](std::size_t i){
+            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Habitat && ignore_target->index==i) return false;
+            if(nav.valid && !nav.habitat_bounds[i].near(candidate,radius+1.40f)) return false;
             const auto& h=placed_habitats_[i];
-            if(h.construction.complete()) continue;
+            if(h.construction.complete()) return false;
             const auto& mesh=habitat_models_.mesh(h);
             // Only COMMITTED construction stages are hard collision geometry.
             // step_elapsed is a visual build-up animation; making that partial
@@ -1404,50 +1628,64 @@ void GameApp::update_builder_robot(float dt){
             const auto v=construction_sequence::habitat_visibility((float)h.construction.step);
             const bool visible=v.foundation>0.0f || v.shell>0.0f || v.interior>0.0f ||
                                v.details>0.0f || v.glazing>0.0f || v.access>0.0f;
-            if(!visible) continue;
-            const Vec3 local=world_math::rotate_y(candidate-h.position,-h.rotation_degrees);
+            if(!visible) return false;
             // Once visible, the current structure footprint is a hard rover
             // obstacle. During a one-way escape from the exact target being
             // built, callers may ignore only this conservative footprint; the
             // real mesh/structure collision test still applies to every move.
-            if(std::abs(local.x)<mesh.footprint_x*0.5f+radius &&
-               std::abs(local.z)<mesh.footprint_z*0.5f+radius) return true;
-        }
-        for(std::size_t i=0;i<placed_resources_.size();++i){
-            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Resource && ignore_target->index==i) continue;
+            if(nav.valid){
+                const auto& rect=nav.habitat_geo[i].rect;
+                const Vec3 local=nav_rect_local(rect,candidate);
+                return std::abs(local.x)<rect.half_x+radius && std::abs(local.z)<rect.half_z+radius;
+            }
+            const Vec3 local=world_math::rotate_y(candidate-h.position,-h.rotation_degrees);
+            return std::abs(local.x)<mesh.footprint_x*0.5f+radius &&
+                   std::abs(local.z)<mesh.footprint_z*0.5f+radius;
+        })) return true;
+        if(any_resource([&](std::size_t i){
+            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Resource && ignore_target->index==i) return false;
+            if(nav.valid && !nav.resource_bounds[i].near(candidate,radius+1.40f)) return false;
             const auto& item=placed_resources_[i];
-            if(item.construction.complete()) continue;
+            if(item.construction.complete()) return false;
             const auto& mesh=resource_models_.mesh(item);
             const auto v=construction_sequence::resource_visibility((float)item.construction.step);
             const bool visible=v.foundation>0.0f || v.body>0.0f || v.details>0.0f;
-            if(!visible) continue;
+            if(!visible) return false;
             if(item.kind==ResourceKind::RobotWorkshop && workshop::approach_hits(item,candidate,candidate,radius)) return true;
+            if(nav.valid){
+                const auto& rect=nav.resource_geo[i].rect;
+                const Vec3 local=nav_rect_local(rect,candidate);
+                return std::abs(local.x)<rect.half_x+radius && std::abs(local.z)<rect.half_z+radius;
+            }
             const Vec3 local=world_math::rotate_y(candidate-item.position,-item.rotation_degrees);
-            if(std::abs(local.x)<mesh.footprint_x*0.5f+radius &&
-               std::abs(local.z)<mesh.footprint_z*0.5f+radius) return true;
-        }
-        for(std::size_t i=0;i<corridor_network_.connections().size();++i){
-            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Corridor && ignore_target->index==i) continue;
+            return std::abs(local.x)<mesh.footprint_x*0.5f+radius &&
+                   std::abs(local.z)<mesh.footprint_z*0.5f+radius;
+        })) return true;
+        if(any_corridor([&](std::size_t i){
+            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Corridor && ignore_target->index==i) return false;
+            if(nav.valid && !nav.corridor_bounds[i].near(candidate,radius+geometry::kCorridorHalfWidth+1.05f)) return false;
             const auto& c=corridor_network_.connections()[i];
-            if(c.construction.complete() || c.construction.step==0) continue;
-            if(!polyline_near_xz(candidate,c.path,radius+geometry::kCorridorHalfWidth+1.0f)) continue;
+            if(c.construction.complete() || c.construction.step==0) return false;
+            if(!polyline_near_xz(candidate,c.path,radius+geometry::kCorridorHalfWidth+1.0f)) return false;
+            if(nav.valid) return wall_set_blocks(*nav.corridor_geo[i].partial,candidate,radius);
             const float f=(float)c.construction.step/(float)std::max<std::uint8_t>(1,c.construction.total_steps);
-            if(construction_triangles_block_circle_range(c.mesh.shell,0,revealed_triangle_vertex_count(c.mesh.shell,f),candidate,radius,[](Vec3 v){return v;}) ||
-               construction_triangles_block_circle_range(c.mesh.details,0,revealed_triangle_vertex_count(c.mesh.details,f),candidate,radius,[](Vec3 v){return v;})) return true;
-        }
+            return construction_triangles_block_circle_range(c.mesh.shell,0,revealed_triangle_vertex_count(c.mesh.shell,f),candidate,radius,[](Vec3 v){return v;}) ||
+                   construction_triangles_block_circle_range(c.mesh.details,0,revealed_triangle_vertex_count(c.mesh.details,f),candidate,radius,[](Vec3 v){return v;});
+        })) return true;
         // Supply channels are buried service runs. Their construction mesh is
         // deliberately below the rover wheel/chassis plane, so neither partial
         // nor completed channel geometry is a rover obstacle. Resource boxes at
         // an active construction site remain normal hard obstacles until used.
-        for(std::size_t i=0;i<walkway_network_.connections().size();++i){
-            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Walkway && ignore_target->index==i) continue;
+        return any_walkway([&](std::size_t i){
+            if(ignore_target && ignore_target->kind==ConstructionTargetKind::Walkway && ignore_target->index==i) return false;
+            if(nav.valid && !nav.walkway_bounds[i].near(candidate,radius+geometry::kWalkwayHalfWidth+0.95f)) return false;
             const auto& c=walkway_network_.connections()[i];
-            if(c.construction.complete() || c.construction.step==0) continue;
-            if(!polyline_near_xz(candidate,c.path,radius+geometry::kWalkwayHalfWidth+0.9f)) continue;
+            if(c.construction.complete() || c.construction.step==0) return false;
+            if(!polyline_near_xz(candidate,c.path,radius+geometry::kWalkwayHalfWidth+0.9f)) return false;
+            if(nav.valid) return wall_set_blocks(*nav.walkway_geo[i].partial,candidate,radius);
             const float f=(float)c.construction.step/(float)std::max<std::uint8_t>(1,c.construction.total_steps);
-            if(construction_triangles_block_circle_range(c.mesh.details,0,revealed_triangle_vertex_count(c.mesh.details,f),candidate,radius,[](Vec3 v){return v;})) return true;
-        }
-        return false;
+            return construction_triangles_block_circle_range(c.mesh.details,0,revealed_triangle_vertex_count(c.mesh.details,f),candidate,radius,[](Vec3 v){return v;});
+        });
     };
 
     auto target_blocks_at_step=[&](const ConstructionTargetRef& target,std::uint8_t step,Vec3 candidate,float radius){
@@ -1719,6 +1957,215 @@ void GameApp::update_builder_robot(float dt){
         }
     }
 
+    auto build_nav_snapshot=[&](){
+        nav=NavSnapshot{};
+        for(const auto& h:placed_habitats_){
+            if(!h.construction.complete()) continue;
+            const auto& mesh=habitat_models_.mesh(h);
+            nav.solids.push_back(make_nav_rect(h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z));
+        }
+        for(std::size_t i=0;i<placed_resources_.size();++i){
+            const auto& item=placed_resources_[i];
+            if(!item.construction.complete()) continue;
+            if(item.kind==ResourceKind::RobotWorkshop){ nav.workshops.push_back(i); continue; }
+            const auto& mesh=resource_models_.mesh(item);
+            nav.solids.push_back(make_nav_rect(item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z));
+        }
+        for(const auto& corridor:corridor_network_.connections()){
+            if(!corridor.construction.complete() || corridor.path.size()<2) continue;
+            NavSnapshot::Polyline poly{&corridor.path,corridor.path.front().x,corridor.path.front().x,
+                                       corridor.path.front().z,corridor.path.front().z};
+            for(const Vec3 q:corridor.path){
+                poly.min_x=std::min(poly.min_x,q.x);poly.max_x=std::max(poly.max_x,q.x);
+                poly.min_z=std::min(poly.min_z,q.z);poly.max_z=std::max(poly.max_z,q.z);
+            }
+            nav.corridors.push_back(poly);
+        }
+        auto circle_bounds=[](Vec3 center,float reach){
+            return NavSnapshot::Bounds{center.x-reach,center.x+reach,center.z-reach,center.z+reach};
+        };
+        auto path_bounds=[](const std::vector<Vec3>& path){
+            NavSnapshot::Bounds b{};
+            if(path.empty()) return b;
+            b={path.front().x,path.front().x,path.front().z,path.front().z};
+            for(const Vec3 q:path){
+                b.min_x=std::min(b.min_x,q.x);b.max_x=std::max(b.max_x,q.x);
+                b.min_z=std::min(b.min_z,q.z);b.max_z=std::max(b.max_z,q.z);
+            }
+            return b;
+        };
+        nav.habitat_bounds.assign(placed_habitats_.size(),{});
+        nav.resource_bounds.assign(placed_resources_.size(),{});
+        nav.corridor_bounds.assign(corridor_network_.connections().size(),{});
+        nav.walkway_bounds.assign(walkway_network_.connections().size(),{});
+        nav.habitat_geo.assign(placed_habitats_.size(),{});
+        nav.resource_geo.assign(placed_resources_.size(),{});
+        nav.corridor_geo.assign(corridor_network_.connections().size(),{});
+        nav.walkway_geo.assign(walkway_network_.connections().size(),{});
+        if(!nav_wall_cache_) nav_wall_cache_=std::make_shared<NavWallCache>();
+        auto& wall_cache=nav_wall_cache_->entries;
+        auto wall_key=[](ConstructionTargetKind kind,std::size_t index){
+            return ((std::uint64_t)kind<<56)|(std::uint64_t)index;
+        };
+        // Returns the cached wall sets of one target, rebuilding them through
+        // `fill` only when its construction stage/geometry signature changed.
+        auto wall_entry=[&](ConstructionTargetKind kind,std::size_t index,std::uint64_t signature,auto&& fill)->NavWallCache::Entry&{
+            auto& entry=wall_cache[wall_key(kind,index)];
+            if(!entry.built || entry.signature!=signature){
+                entry=NavWallCache::Entry{};
+                entry.built=true;
+                entry.signature=signature;
+                fill(entry);
+            }
+            return entry;
+        };
+        for(std::size_t i=0;i<placed_habitats_.size();++i){
+            const auto& h=placed_habitats_[i];
+            if(h.construction.complete()){ wall_cache.erase(wall_key(ConstructionTargetKind::Habitat,i)); continue; }
+            nav.pending_habitats.push_back(i);
+            const auto& mesh=habitat_models_.mesh(h);
+            nav.habitat_bounds[i]=circle_bounds(h.position,
+                std::sqrt(mesh.footprint_x*mesh.footprint_x+mesh.footprint_z*mesh.footprint_z)*0.5f);
+            const ConstructionTargetRef ref{ConstructionTargetKind::Habitat,i};
+            const std::uint8_t current=construction_target_step(ref);
+            const std::uint8_t total=construction_target_total_steps(ref);
+            std::uint64_t sig=nav_hash(nav_hash(current,total),nav_float_bits(h.position.x));
+            sig=nav_hash(nav_hash(sig,nav_float_bits(h.position.z)),nav_float_bits(h.rotation_degrees));
+            for(const auto* part:{&mesh.foundation,&mesh.shell,&mesh.interior,&mesh.details,&mesh.glazing})
+                sig=nav_mesh_signature(sig,*part);
+            auto& entry=wall_entry(ConstructionTargetKind::Habitat,i,sig,[&](NavWallCache::Entry& e){
+                const std::uint8_t next=(std::uint8_t)std::min<int>((int)current+1,(int)total);
+                if(next<=current) return;
+                const auto from=construction_sequence::habitat_visibility(current);
+                const auto to=construction_sequence::habitat_visibility(next);
+                auto transform=[&](Vec3 v){ return world_math::rotate_y(v,h.rotation_degrees)+h.position; };
+                auto add=[&](const std::vector<Vec3>& src,float f0,float f1){
+                    const std::size_t first=revealed_triangle_vertex_count(src,f0);
+                    const std::size_t last=revealed_triangle_vertex_count(src,f1);
+                    if(last>first) append_wall_triangles(e.next,src,first,last,transform);
+                };
+                add(mesh.foundation,from.foundation,to.foundation);
+                add(mesh.shell,from.shell,to.shell);
+                add(mesh.interior,from.interior,to.interior);
+                add(mesh.details,from.details,to.details);
+                add(mesh.glazing,from.glazing,to.glazing);
+            });
+            nav.habitat_geo[i]={make_nav_rect(h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z),&entry.partial,&entry.next};
+        }
+        for(std::size_t i=0;i<placed_resources_.size();++i){
+            const auto& item=placed_resources_[i];
+            if(item.construction.complete()){ wall_cache.erase(wall_key(ConstructionTargetKind::Resource,i)); continue; }
+            nav.pending_resources.push_back(i);
+            const auto& mesh=resource_models_.mesh(item);
+            // The workshop approach apron reaches ~16 m in front of the hall.
+            const float extra=item.kind==ResourceKind::RobotWorkshop?18.0f:0.0f;
+            nav.resource_bounds[i]=circle_bounds(item.position,
+                std::sqrt(mesh.footprint_x*mesh.footprint_x+mesh.footprint_z*mesh.footprint_z)*0.5f+extra);
+            const ConstructionTargetRef ref{ConstructionTargetKind::Resource,i};
+            const std::uint8_t current=construction_target_step(ref);
+            const std::uint8_t total=construction_target_total_steps(ref);
+            std::uint64_t sig=nav_hash(nav_hash(current,total),nav_float_bits(item.position.x));
+            sig=nav_hash(nav_hash(sig,nav_float_bits(item.position.z)),nav_float_bits(item.rotation_degrees));
+            for(const auto* part:{&mesh.foundation,&mesh.body,&mesh.details})
+                sig=nav_mesh_signature(sig,*part);
+            auto& entry=wall_entry(ConstructionTargetKind::Resource,i,sig,[&](NavWallCache::Entry& e){
+                const std::uint8_t next=(std::uint8_t)std::min<int>((int)current+1,(int)total);
+                if(next<=current) return;
+                const auto from=construction_sequence::resource_visibility(current);
+                const auto to=construction_sequence::resource_visibility(next);
+                auto transform=[&](Vec3 v){ return world_math::rotate_y(v,item.rotation_degrees)+item.position; };
+                auto add=[&](const std::vector<Vec3>& src,float f0,float f1){
+                    const std::size_t first=revealed_triangle_vertex_count(src,f0);
+                    const std::size_t last=revealed_triangle_vertex_count(src,f1);
+                    if(last>first) append_wall_triangles(e.next,src,first,last,transform);
+                };
+                add(mesh.foundation,from.foundation,to.foundation);
+                add(mesh.body,from.body,to.body);
+                add(mesh.details,from.details,to.details);
+            });
+            nav.resource_geo[i]={make_nav_rect(item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z),&entry.partial,&entry.next};
+        }
+        auto identity=[](Vec3 v){ return v; };
+        for(std::size_t i=0;i<corridor_network_.connections().size();++i){
+            const auto& c=corridor_network_.connections()[i];
+            if(c.construction.complete()){ wall_cache.erase(wall_key(ConstructionTargetKind::Corridor,i)); continue; }
+            nav.pending_corridors.push_back(i);
+            nav.corridor_bounds[i]=path_bounds(c.path);
+            const ConstructionTargetRef ref{ConstructionTargetKind::Corridor,i};
+            const std::uint8_t current=construction_target_step(ref);
+            const std::uint8_t total=construction_target_total_steps(ref);
+            std::uint64_t sig=nav_hash(nav_hash(current,total),c.construction.total_steps);
+            sig=nav_mesh_signature(nav_mesh_signature(sig,c.mesh.shell),c.mesh.details);
+            auto& entry=wall_entry(ConstructionTargetKind::Corridor,i,sig,[&](NavWallCache::Entry& e){
+                const float steps=(float)std::max<std::uint8_t>(1,c.construction.total_steps);
+                if(c.construction.step>0){
+                    const float f=(float)c.construction.step/steps;
+                    append_wall_triangles(e.partial,c.mesh.shell,0,revealed_triangle_vertex_count(c.mesh.shell,f),identity);
+                    append_wall_triangles(e.partial,c.mesh.details,0,revealed_triangle_vertex_count(c.mesh.details,f),identity);
+                }
+                const std::uint8_t next=(std::uint8_t)std::min<int>((int)current+1,(int)total);
+                if(next<=current) return;
+                const float a=(float)current/steps;
+                const float b=(float)next/steps;
+                for(const auto* src:{&c.mesh.shell,&c.mesh.details}){
+                    const std::size_t first=revealed_triangle_vertex_count(*src,a);
+                    const std::size_t last=revealed_triangle_vertex_count(*src,b);
+                    if(last>first) append_wall_triangles(e.next,*src,first,last,identity);
+                }
+            });
+            nav.corridor_geo[i]={{},&entry.partial,&entry.next};
+        }
+        for(std::size_t i=0;i<walkway_network_.connections().size();++i){
+            const auto& c=walkway_network_.connections()[i];
+            if(c.construction.complete()){ wall_cache.erase(wall_key(ConstructionTargetKind::Walkway,i)); continue; }
+            nav.pending_walkways.push_back(i);
+            nav.walkway_bounds[i]=path_bounds(c.path);
+            const ConstructionTargetRef ref{ConstructionTargetKind::Walkway,i};
+            const std::uint8_t current=construction_target_step(ref);
+            const std::uint8_t total=construction_target_total_steps(ref);
+            std::uint64_t sig=nav_hash(nav_hash(current,total),c.construction.total_steps);
+            sig=nav_mesh_signature(sig,c.mesh.details);
+            auto& entry=wall_entry(ConstructionTargetKind::Walkway,i,sig,[&](NavWallCache::Entry& e){
+                const float steps=(float)std::max<std::uint8_t>(1,c.construction.total_steps);
+                if(c.construction.step>0){
+                    const float f=(float)c.construction.step/steps;
+                    append_wall_triangles(e.partial,c.mesh.details,0,revealed_triangle_vertex_count(c.mesh.details,f),identity);
+                }
+                const std::uint8_t next=(std::uint8_t)std::min<int>((int)current+1,(int)total);
+                if(next<=current) return;
+                const std::size_t first=revealed_triangle_vertex_count(c.mesh.details,(float)current/steps);
+                const std::size_t last=revealed_triangle_vertex_count(c.mesh.details,(float)next/steps);
+                if(last>first) append_wall_triangles(e.next,c.mesh.details,first,last,identity);
+            });
+            nav.walkway_geo[i]={{},&entry.partial,&entry.next};
+        }
+        auto merge_bounds=[&](const NavSnapshot::Bounds& b){
+            if(!nav.any_pending){ nav.pending_union=b; nav.any_pending=true; return; }
+            nav.pending_union.min_x=std::min(nav.pending_union.min_x,b.min_x);
+            nav.pending_union.max_x=std::max(nav.pending_union.max_x,b.max_x);
+            nav.pending_union.min_z=std::min(nav.pending_union.min_z,b.min_z);
+            nav.pending_union.max_z=std::max(nav.pending_union.max_z,b.max_z);
+        };
+        for(const std::size_t i:nav.pending_habitats) merge_bounds(nav.habitat_bounds[i]);
+        for(const std::size_t i:nav.pending_resources) merge_bounds(nav.resource_bounds[i]);
+        for(const std::size_t i:nav.pending_corridors) merge_bounds(nav.corridor_bounds[i]);
+        for(const std::size_t i:nav.pending_walkways) merge_bounds(nav.walkway_bounds[i]);
+        nav.valid=true;
+    };
+
+    // Largest halo (beyond the rover radius) any partial/future-stage test uses.
+    const float kPendingHalo=std::max({1.40f,geometry::kCorridorHalfWidth+1.05f,geometry::kWalkwayHalfWidth+0.95f})+0.05f;
+    auto near_pending_work=[&](Vec3 p,float radius){
+        return nav.any_pending && nav.pending_union.near(p,radius+kPendingHalo);
+    };
+    auto segment_near_pending_work=[&](Vec3 a,Vec3 b,float radius){
+        if(!nav.any_pending) return false;
+        const float reach=radius+kPendingHalo;
+        const auto& u=nav.pending_union;
+        return !(std::max(a.x,b.x)<u.min_x-reach || std::min(a.x,b.x)>u.max_x+reach ||
+                 std::max(a.z,b.z)<u.min_z-reach || std::min(a.z,b.z)>u.max_z+reach);
+    };
+
     auto construction_target_started=[&](const ConstructionTargetRef& target){
         switch(target.kind){
             case ConstructionTargetKind::Habitat:
@@ -1777,41 +2224,80 @@ void GameApp::update_builder_robot(float dt){
         // plan through the building interior and become trapped at the shell on
         // the far side. Rovers never use indoor structure navigation, therefore
         // preserving the full footprint is both cheaper and physically correct.
-        for(const auto& h:placed_habitats_){
-            if(!h.construction.complete()) continue;
-            const auto& mesh=habitat_models_.mesh(h);
-            const Vec3 local=world_math::rotate_y(candidate-h.position,-h.rotation_degrees);
-            if(std::abs(local.x)<mesh.footprint_x*0.5f+structure_radius &&
-               std::abs(local.z)<mesh.footprint_z*0.5f+structure_radius) return false;
-        }
-        for(const auto& item:placed_resources_){
-            if(!item.construction.complete()) continue;
-            if(item.kind==ResourceKind::RobotWorkshop){
-                if(!workshop::clear(item,candidate,candidate,structure_radius)) return false;
-                continue;
+        if(nav.valid){
+            for(const auto& rect:nav.solids){
+                const Vec3 local=nav_rect_local(rect,candidate);
+                if(std::abs(local.x)<rect.half_x+structure_radius &&
+                   std::abs(local.z)<rect.half_z+structure_radius) return false;
             }
-            const auto& mesh=resource_models_.mesh(item);
-            const Vec3 local=world_math::rotate_y(candidate-item.position,-item.rotation_degrees);
-            if(std::abs(local.x)<mesh.footprint_x*0.5f+structure_radius &&
-               std::abs(local.z)<mesh.footprint_z*0.5f+structure_radius) return false;
-        }
-        // Airtight completed corridors are permanent outdoor rover obstacles.
-        // Keeping their conservative centreline envelope in the cheap nav mask
-        // lets A* avoid them without invoking triangle-level FPV collision for
-        // every candidate grid cell. The final published route is still checked
-        // by the strict mesh-aware segment validator.
-        for(const auto& corridor:corridor_network_.connections()){
-            if(!corridor.construction.complete() || corridor.path.size()<2) continue;
-            if(polyline_near_xz(candidate,corridor.path,geometry::kCorridorHalfWidth+structure_radius+0.18f)) return false;
+            for(const std::size_t index:nav.workshops)
+                if(!workshop::clear(placed_resources_[index],candidate,candidate,structure_radius)) return false;
+            for(const auto& poly:nav.corridors){
+                const float reach=geometry::kCorridorHalfWidth+structure_radius+0.18f;
+                if(candidate.x<poly.min_x-reach-0.01f || candidate.x>poly.max_x+reach+0.01f ||
+                   candidate.z<poly.min_z-reach-0.01f || candidate.z>poly.max_z+reach+0.01f) continue;
+                if(polyline_near_xz(candidate,*poly.path,reach)) return false;
+            }
+        }else{
+            for(const auto& h:placed_habitats_){
+                if(!h.construction.complete()) continue;
+                const auto& mesh=habitat_models_.mesh(h);
+                const Vec3 local=world_math::rotate_y(candidate-h.position,-h.rotation_degrees);
+                if(std::abs(local.x)<mesh.footprint_x*0.5f+structure_radius &&
+                   std::abs(local.z)<mesh.footprint_z*0.5f+structure_radius) return false;
+            }
+            for(const auto& item:placed_resources_){
+                if(!item.construction.complete()) continue;
+                if(item.kind==ResourceKind::RobotWorkshop){
+                    if(!workshop::clear(item,candidate,candidate,structure_radius)) return false;
+                    continue;
+                }
+                const auto& mesh=resource_models_.mesh(item);
+                const Vec3 local=world_math::rotate_y(candidate-item.position,-item.rotation_degrees);
+                if(std::abs(local.x)<mesh.footprint_x*0.5f+structure_radius &&
+                   std::abs(local.z)<mesh.footprint_z*0.5f+structure_radius) return false;
+            }
+            // Airtight completed corridors are permanent outdoor rover obstacles.
+            // Keeping their conservative centreline envelope in the cheap nav mask
+            // lets A* avoid them without invoking triangle-level FPV collision for
+            // every candidate grid cell. The final published route is still checked
+            // by the strict mesh-aware segment validator.
+            for(const auto& corridor:corridor_network_.connections()){
+                if(!corridor.construction.complete() || corridor.path.size()<2) continue;
+                if(polyline_near_xz(candidate,corridor.path,geometry::kCorridorHalfWidth+structure_radius+0.18f)) return false;
+            }
         }
 
         // Erected geometry is solid, and the volume that will appear in the
         // NEXT construction step is reserved before any rover starts a route.
         // This turns construction into a predictable moving obstacle instead of
         // evacuating robots only at the instant a wall/segment appears.
-        if(partial_construction_blocks(candidate,structure_radius,ignore_partial_target)) return false;
+        const bool pending_possible=!nav.valid || near_pending_work(candidate,structure_radius);
+        if(pending_possible && partial_construction_blocks(candidate,structure_radius,ignore_partial_target)) return false;
         auto future_reserved=[&](const ConstructionTargetRef& target){
-            if(!target.valid() || construction_target_complete(target)) return false;
+            if(!target.valid()) return false;
+            // Every future-stage/blueprint volume lies within a fixed halo of the
+            // target's own geometry; skip the stage bookkeeping far away from it.
+            if(nav.valid){
+                bool reachable=true;
+                switch(target.kind){
+                    case ConstructionTargetKind::Habitat:
+                        reachable=nav.habitat_bounds[target.index].near(candidate,structure_radius+1.40f);
+                        break;
+                    case ConstructionTargetKind::Resource:
+                        reachable=nav.resource_bounds[target.index].near(candidate,structure_radius+1.40f);
+                        break;
+                    case ConstructionTargetKind::Corridor:
+                        reachable=nav.corridor_bounds[target.index].near(candidate,structure_radius+geometry::kCorridorHalfWidth+1.05f);
+                        break;
+                    case ConstructionTargetKind::Walkway:
+                        reachable=nav.walkway_bounds[target.index].near(candidate,structure_radius+geometry::kWalkwayHalfWidth+0.95f);
+                        break;
+                    default: break;
+                }
+                if(!reachable) return false;
+            }
+            if(construction_target_complete(target)) return false;
             // A robot servicing this exact construction target may enter its
             // dedicated material/work apron. The next segment is not committed
             // until the fleet-safe stage gate runs, so treating that future
@@ -1837,22 +2323,24 @@ void GameApp::update_builder_robot(float dt){
             if(next<=current) return false;
             if(robot.role==RobotRole::Constructor && robot.target.valid() && robot.target.same_as(target))
                 return false;
+            if(nav.valid) return nav_next_blocks(target,candidate,structure_radius);
             return target_blocks_at_step(target,next,candidate,structure_radius);
         };
-        for(std::size_t i=0;i<placed_habitats_.size();++i)
-            if(future_reserved({ConstructionTargetKind::Habitat,i})) return false;
-        for(std::size_t i=0;i<placed_resources_.size();++i)
-            if(future_reserved({ConstructionTargetKind::Resource,i})) return false;
-        for(std::size_t i=0;i<corridor_network_.connections().size();++i)
-            if(future_reserved({ConstructionTargetKind::Corridor,i})) return false;
-        // Buried supply channels never reserve rover path space after the
-        // initial blueprint-clear gate; robots may cross them during/after build.
-        for(std::size_t i=0;i<walkway_network_.connections().size();++i)
-            if(future_reserved({ConstructionTargetKind::Walkway,i})) return false;
+        if(pending_possible){
+            if(any_habitat([&](std::size_t i){ return future_reserved({ConstructionTargetKind::Habitat,i}); })) return false;
+            if(any_resource([&](std::size_t i){ return future_reserved({ConstructionTargetKind::Resource,i}); })) return false;
+            if(any_corridor([&](std::size_t i){ return future_reserved({ConstructionTargetKind::Corridor,i}); })) return false;
+            // Buried supply channels never reserve rover path space after the
+            // initial blueprint-clear gate; robots may cross them during/after build.
+            if(any_walkway([&](std::size_t i){ return future_reserved({ConstructionTargetKind::Walkway,i}); })) return false;
+        }
 
         const float resource_clearance=robot_resource_clearance_radius(robot.role);
-        for(const auto& obstacle:cached_resource_obstacles)
-            if(dist_xz(candidate,obstacle.position)<resource_clearance+obstacle.radius+kRobotObstacleMargin) return false;
+        for(const auto& obstacle:cached_resource_obstacles){
+            const float threshold=resource_clearance+obstacle.radius+kRobotObstacleMargin;
+            if(std::abs(candidate.x-obstacle.position.x)>=threshold || std::abs(candidate.z-obstacle.position.z)>=threshold) continue;
+            if(dist_xz(candidate,obstacle.position)<threshold) return false;
+        }
         return true;
     };
 
@@ -1891,31 +2379,51 @@ void GameApp::update_builder_robot(float dt){
            to.x<-half || to.x>half || to.z<-half || to.z>half) return false;
         // Exact swept-disc tests against conservative static envelopes. No
         // sampling interval can miss a thin wall, pallet or grazing corner.
-        for(const auto& h:placed_habitats_){
-            if(!h.construction.complete()) continue;
-            const auto& mesh=habitat_models_.mesh(h);
-            if(segment_intersects_rectangle(from,to,h.position,h.rotation_degrees,
-                mesh.footprint_x*0.5f+structure_radius,mesh.footprint_z*0.5f+structure_radius)) return false;
-        }
-        for(const auto& item:placed_resources_){
-            if(!item.construction.complete()) continue;
-            if(item.kind==ResourceKind::RobotWorkshop){
-                if(!workshop::clear(item,from,to,structure_radius)) return false;
-                continue;
-            }
-            const auto& mesh=resource_models_.mesh(item);
-            if(segment_intersects_rectangle(from,to,item.position,item.rotation_degrees,
-                mesh.footprint_x*0.5f+structure_radius,mesh.footprint_z*0.5f+structure_radius)) return false;
-        }
-        for(const auto& corridor:corridor_network_.connections()){
-            if(!corridor.construction.complete()) continue;
+        if(nav.valid){
+            for(const auto& rect:nav.solids)
+                if(segment_intersects_nav_rect(from,to,rect,rect.half_x+structure_radius,rect.half_z+structure_radius)) return false;
+            for(const std::size_t index:nav.workshops)
+                if(!workshop::clear(placed_resources_[index],from,to,structure_radius)) return false;
             const float clearance=geometry::kCorridorHalfWidth+structure_radius+0.18f;
-            for(std::size_t i=1;i<corridor.path.size();++i)
-                if(segment_pair_distance(from,to,corridor.path[i-1],corridor.path[i])<=clearance) return false;
+            const float seg_min_x=std::min(from.x,to.x)-clearance-0.01f,seg_max_x=std::max(from.x,to.x)+clearance+0.01f;
+            const float seg_min_z=std::min(from.z,to.z)-clearance-0.01f,seg_max_z=std::max(from.z,to.z)+clearance+0.01f;
+            for(const auto& poly:nav.corridors){
+                if(poly.max_x<seg_min_x || poly.min_x>seg_max_x || poly.max_z<seg_min_z || poly.min_z>seg_max_z) continue;
+                const auto& path=*poly.path;
+                for(std::size_t i=1;i<path.size();++i)
+                    if(segment_pair_distance(from,to,path[i-1],path[i])<=clearance) return false;
+            }
+        }else{
+            for(const auto& h:placed_habitats_){
+                if(!h.construction.complete()) continue;
+                const auto& mesh=habitat_models_.mesh(h);
+                if(segment_intersects_rectangle(from,to,h.position,h.rotation_degrees,
+                    mesh.footprint_x*0.5f+structure_radius,mesh.footprint_z*0.5f+structure_radius)) return false;
+            }
+            for(const auto& item:placed_resources_){
+                if(!item.construction.complete()) continue;
+                if(item.kind==ResourceKind::RobotWorkshop){
+                    if(!workshop::clear(item,from,to,structure_radius)) return false;
+                    continue;
+                }
+                const auto& mesh=resource_models_.mesh(item);
+                if(segment_intersects_rectangle(from,to,item.position,item.rotation_degrees,
+                    mesh.footprint_x*0.5f+structure_radius,mesh.footprint_z*0.5f+structure_radius)) return false;
+            }
+            for(const auto& corridor:corridor_network_.connections()){
+                if(!corridor.construction.complete()) continue;
+                const float clearance=geometry::kCorridorHalfWidth+structure_radius+0.18f;
+                for(std::size_t i=1;i<corridor.path.size();++i)
+                    if(segment_pair_distance(from,to,corridor.path[i-1],corridor.path[i])<=clearance) return false;
+            }
         }
-        for(const auto& obstacle:cached_resource_obstacles)
-            if(segment_distance_xz(obstacle.position,from,to)<robot_resource_clearance_radius(robot.role)+
-                extra_structure_margin+obstacle.radius+kRobotObstacleMargin) return false;
+        const float obstacle_base=robot_resource_clearance_radius(robot.role)+extra_structure_margin;
+        for(const auto& obstacle:cached_resource_obstacles){
+            const float threshold=obstacle_base+obstacle.radius+kRobotObstacleMargin;
+            if(obstacle.position.x<std::min(from.x,to.x)-threshold-0.01f || obstacle.position.x>std::max(from.x,to.x)+threshold+0.01f ||
+               obstacle.position.z<std::min(from.z,to.z)-threshold-0.01f || obstacle.position.z>std::max(from.z,to.z)+threshold+0.01f) continue;
+            if(segment_distance_xz(obstacle.position,from,to)<threshold) return false;
+        }
         return true;
     };
 
@@ -1933,6 +2441,15 @@ void GameApp::update_builder_robot(float dt){
             const float dz=footprint_z*0.5f+radius-std::abs(local.z);
             if(dx>0.0f && dz>0.0f) penetration=std::max(penetration,std::min(dx,dz));
         };
+        if(nav.valid){
+            for(const auto& rect:nav.solids){
+                const Vec3 local=nav_rect_local(rect,candidate);
+                const float dx=rect.half_x+radius-std::abs(local.x);
+                const float dz=rect.half_z+radius-std::abs(local.z);
+                if(dx>0.0f && dz>0.0f) penetration=std::max(penetration,std::min(dx,dz));
+            }
+            return penetration;
+        }
         for(const auto& h:placed_habitats_){
             if(!h.construction.complete()) continue;
             const auto& mesh=habitat_models_.mesh(h);
@@ -2017,16 +2534,30 @@ void GameApp::update_builder_robot(float dt){
         // then fault it. Two samples keep long-route cost unchanged while
         // closing that short-segment hole.
         const int samples=length>0.0001f?std::max(2,(int)std::ceil(length/0.18f)):1;
+        // The swept structure/obstacle tests are exact for any sub-interval, so
+        // one test of the whole segment replaces one test per 0.18 m sample.
+        // When it passes, every sample passes; with no preferred-halo margin a
+        // failing whole segment must fail at some sample, so reject it at once.
+        // Only a halo-margin segment that fails keeps the per-sample one-way
+        // escape logic below.
+        const bool structure_clear=robot_structure_move_allowed_with_margin(robot,from,to,extra_structure_margin);
+        if(!structure_clear && extra_structure_margin<=0.0001f) return false;
+        // With a passing exact structure/obstacle sweep, the only remaining
+        // point-wise reservations come from unfinished targets. Far from all of
+        // them every per-sample position test is trivially clear.
+        const bool samples_need_position_test=!(structure_clear && extra_structure_margin<=0.0001f && nav.valid &&
+            !segment_near_pending_work(from,to,robot_safety_corridor_radius(robot.role)));
         Vec3 previous=from;
         previous.y=rover_floor_height(previous);
-        float previous_margin_penetration=completed_structure_margin_penetration(robot,previous,extra_structure_margin);
+        float previous_margin_penetration=structure_clear?0.0f:
+            completed_structure_margin_penetration(robot,previous,extra_structure_margin);
         for(int sample=1;sample<=samples;++sample){
             const float t=(float)sample/(float)samples;
             Vec3 p=from+(to-from)*t;
             p.y=rover_floor_height(p);
             if(std::abs(p.y-previous.y)>0.38f) return false;
-            if(!robot_position_clear_while_exiting_own_target(robot_index,previous,p)) return false;
-            if(!robot_structure_move_allowed_with_margin(robot,previous,p,extra_structure_margin)){
+            if(samples_need_position_test && !robot_position_clear_while_exiting_own_target(robot_index,previous,p)) return false;
+            if(!structure_clear && !robot_structure_move_allowed_with_margin(robot,previous,p,extra_structure_margin)){
                 // If the rover already starts inside the preferred 1 m halo,
                 // allow it to leave monotonically. The hard hull collision test
                 // above still applies, so this is not permission to clip a wall.
@@ -2218,6 +2749,11 @@ void GameApp::update_builder_robot(float dt){
     auto coarse_safety_route=[&](std::size_t robot_index,Vec3 start,Vec3 goal,float stop_radius,std::vector<Vec3>& route){
         if(robot_index>=builder_robots_.size()) return false;
         auto& robot=builder_robots_[robot_index];
+        // Pull-out/detour recovery evaluates several coarse routes for the same
+        // rover concurrently, so this diagnostic field is written atomically.
+        auto record_margin=[&robot](float margin){
+            std::atomic_ref<float>(robot.route_structure_clearance_margin_m).store(margin,std::memory_order_relaxed);
+        };
         robots::PathPlanRequest request{};
         request.start=start;
         request.goal=goal;
@@ -2263,7 +2799,7 @@ void GameApp::update_builder_robot(float dt){
             request.allow_grid_fallback=allow_grid;
             route.clear();
             if(!robots::plan_corridor_path(request,callbacks,route)) return false;
-            robot.route_structure_clearance_margin_m=margin;
+            record_margin(margin);
             return true;
         };
 
@@ -2295,7 +2831,7 @@ void GameApp::update_builder_robot(float dt){
         request.visibility_skip_limit=8;
         if(try_margin(0.00f,true)) return true;
 
-        robot.route_structure_clearance_margin_m=0.0f;
+        record_margin(0.0f);
         route.clear();
         return false;
     };
@@ -5039,6 +5575,10 @@ void GameApp::update_builder_robot(float dt){
     // submitted intents. Build one authoritative fleet snapshot, arbitrate all
     // contracts against the same reservation board and commit the verified
     // motions simultaneously.
+    // The scene is frozen from here until the end of the safety tick (the only
+    // construction-step commit happens above). Every planner/contract query in
+    // this tick reads the same precomputed structure snapshot.
+    build_nav_snapshot();
     auto mix_epoch=[](std::uint64_t& h,std::uint64_t v){
         h^=v+0x9e3779b97f4a7c15ULL+(h<<6)+(h>>2);
     };

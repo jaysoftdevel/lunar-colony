@@ -1,4 +1,4 @@
-# Game 0.42.0 — Linux + Windows shared source
+# Game 0.42.2 — Linux + Windows shared source
 
 This is a single cross-platform game source tree. Linux uses X11/OpenGL and Windows 11 uses Win32/Direct3D 12; gameplay and simulation code are shared.
 
@@ -57,6 +57,18 @@ Crew-accessible habitats and corridors share a common structural access contract
 - Exterior walkways are non-pressurised and can meet the colony pressure system only at a connected Air Lock.
 - Supply channels include structural supports, electrical/data routing and water-service hardware.
 - World construction geometry is mesh-only in the current development phase: blue target mesh, yellow installed mesh and substantially bolder green mesh at completion. No structure textures or filled surfaces are emitted yet.
+
+## v0.42.2 robot path-negotiation performance
+
+Behaviour-preserving optimisation of rover navigation, targeting frame stutter whenever several robots were active:
+
+- Rover clearance queries read a per-tick structure snapshot (precomputed rotations, bounds of unfinished targets, wall triangles cached per construction stage) instead of rescanning every building and mesh for every sample.
+- Swept structure/obstacle tests run once per segment; contract arbitration skips contracts that are not spatially close.
+- Pull-out and stationary-detour candidate searches run across the worker pool and select the same winner as the serial scan.
+- Light planner batches run on the game thread; `eng::TaskPool::parallel_for` uses one shared job object instead of per-helper futures.
+- Heavy route-search concurrency now defaults to at most two lanes regardless of core count (`GAME_ROUTE_SEARCH_LANES` still overrides). Three or more simultaneous searches made the construction fleet livelock on hosts with six or more lanes.
+
+Measured with the headless `navigation_regression` suite: the late-corridor scenario dropped from 1.04 ms mean / 33.6 ms worst frame to 0.22 / 2.8 ms, and the full construction run now completes on every host size.
 
 ## v0.42.0 cross-platform Windows 11 / Linux workspace
 

@@ -17,6 +17,7 @@
 #include <optional>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include <string>
 
@@ -77,6 +78,11 @@ private:
     // Monotonic simulation time used by the shared robot safety coordinator.
     // It is transient and restarts when a game/session is loaded.
     float robot_safety_time_seconds_{0.0f};
+    // Rover-blocking wall triangles of unfinished construction targets, keyed by
+    // target and construction stage so they are filtered once per stage instead
+    // of once per collision query. Purely derived data; rebuilt on demand.
+    struct NavWallCache;
+    std::shared_ptr<NavWallCache> nav_wall_cache_{};
     eng::Vec3 starter_stash_center_{};
     std::array<double,kMaterialResourceCount> production_fraction_{};
     double life_support_fraction_seconds_{0.0};

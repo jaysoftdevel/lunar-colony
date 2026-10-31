@@ -68,7 +68,13 @@ std::size_t configured_route_search_lanes(std::size_t available_lanes){
     // Default to a bounded subset of lanes for heavy global route searches.
     // This keeps aggregate CPU utilization high while avoiding all-core
     // microbursts that can starve rendering and produce visible stutter.
-    return std::max<std::size_t>(1,std::min<std::size_t>(4,clamped_available/2));
+    // The cap is deliberately small and independent of the host size: when
+    // three or more rovers re-plan against each other's current positions in
+    // the same call, the navigation_construction fleet livelocks (rovers
+    // endlessly re-route around one another and never finish), while one or
+    // two concurrent searches complete. Gameplay must not depend on how many
+    // cores the machine has.
+    return std::max<std::size_t>(1,std::min<std::size_t>(2,clamped_available/2));
 }
 
 std::size_t planner_job_budget_per_tick(std::size_t robot_count,std::size_t lanes){
@@ -845,6 +851,7 @@ MotionContract build_contract(const SafetyAgent& a,const MotionControl& control,
 
 bool contract_static_clear(const MotionContract& c,const SafetyWorldCallbacks& world){
     if(!c.valid) return false;
+    
     for(const auto& p:c.occupancy_tube){
         if(world.point_clear && (!world.point_clear(c.robot_id,p.start) || !world.point_clear(c.robot_id,p.end))) return false;
         if(world.segment_clear && !world.segment_clear(c.robot_id,p.start,p.end)) return false;
@@ -888,6 +895,31 @@ void replace_contract(ReservationBoard& board,const MotionContract& c){
     return true;
 }
 
+// Planar bounds of every swept disc and terminal hold of a contract. Every
+// robot-vs-robot rejection below requires two discs to touch, so contracts
+// whose inflated bounds are disjoint cannot conflict and skip the O(P^2) tests.
+struct ContractBounds {
+    float min_x{std::numeric_limits<float>::infinity()},max_x{-std::numeric_limits<float>::infinity()};
+    float min_z{std::numeric_limits<float>::infinity()},max_z{-std::numeric_limits<float>::infinity()};
+};
+
+ContractBounds contract_bounds(const MotionContract& c){
+    ContractBounds b{};
+    auto add=[&](Vec3 p,float r){
+        b.min_x=std::min(b.min_x,p.x-r);b.max_x=std::max(b.max_x,p.x+r);
+        b.min_z=std::min(b.min_z,p.z-r);b.max_z=std::max(b.max_z,p.z+r);
+    };
+    for(const auto& piece:c.occupancy_tube){ add(piece.start,piece.radius); add(piece.end,piece.radius); }
+    for(const auto& hold:c.terminal_holds) add(hold.position,hold.radius);
+    return b;
+}
+
+bool contract_bounds_disjoint(const ContractBounds& a,const ContractBounds& b){
+    constexpr float slack=1.0e-3f;
+    return a.max_x+slack<b.min_x || b.max_x+slack<a.min_x ||
+           a.max_z+slack<b.min_z || b.max_z+slack<a.min_z;
+}
+
 bool contract_clear(const MotionContract& c,const SafetyWorldCallbacks& world,const ReservationBoard& board,std::size_t& blocker,BlockReason& reason){
     blocker=kNoSafetyRobot;
     reason=BlockReason::None;
@@ -897,8 +929,10 @@ bool contract_clear(const MotionContract& c,const SafetyWorldCallbacks& world,co
     }
     // Cell tokens are scheduling hints only. Two disjoint swept hulls may share
     // a coarse cell; the continuous motion/braking/hold tests below decide.
+    const ContractBounds own_bounds=contract_bounds(c);
     for(const auto& other:board.contracts){
         if(!other.valid || other.robot_id==c.robot_id) continue;
+        if(contract_bounds_disjoint(own_bounds,contract_bounds(other))) continue;
         if(tubes_overlap(c.occupancy_tube,other.occupancy_tube)){
             blocker=other.robot_id;
             reason=BlockReason::RobotReservation;
@@ -1045,6 +1079,26 @@ Vec3 find_pullout(const SafetyAgent& a,const SafetyWorldCallbacks& world,const s
     const float base=std::atan2(away.z,away.x);
     constexpr std::array<float,11> offsets{{1.57f,-1.57f,1.25f,-1.25f,0.95f,-0.95f,0.62f,-0.62f,0.32f,-0.32f,0.0f}};
     constexpr std::array<float,8> radii{{1.8f,2.4f,3.2f,4.2f,6.0f,9.0f,12.0f,18.0f}};
+    // Candidates whose straight chord is blocked need a coarse A* search to be
+    // accepted. Those searches are independent, so they are batched and run
+    // across the worker pool, but results are consumed strictly in candidate
+    // order: the chosen pull-out is identical to the serial scan.
+    std::vector<Vec3> pending;
+    const std::size_t batch=std::max<std::size_t>(1,std::min<std::size_t>(8,eng::cpu_parallel_lanes()));
+    auto resolve_pending=[&](Vec3& chosen){
+        if(pending.empty()) return false;
+        std::vector<std::uint8_t> reachable(pending.size(),0);
+        eng::TaskPool::shared().parallel_for(pending.size(),[&](std::size_t k){
+            std::vector<Vec3> route;
+            reachable[k]=world.coarse_route(a.id,a.position,pending[k],0.12f,route)?1:0;
+        });
+        for(std::size_t k=0;k<pending.size();++k){
+            if(reachable[k]){ chosen=pending[k]; pending.clear(); return true; }
+        }
+        pending.clear();
+        return false;
+    };
+    Vec3 chosen{};
     for(float r:radii){
         for(float off:offsets){
             const float ang=base+off;
@@ -1066,12 +1120,16 @@ Vec3 find_pullout(const SafetyAgent& a,const SafetyWorldCallbacks& world,const s
             }
             if(!fleet_clear) continue;
             if(world.segment_clear && !world.segment_clear(a.id,a.position,p)){
-                std::vector<Vec3> route;
-                if(!world.coarse_route || !world.coarse_route(a.id,a.position,p,0.12f,route)) continue;
+                if(!world.coarse_route) continue;
+                pending.push_back(p);
+                if(pending.size()>=batch && resolve_pending(chosen)) return chosen;
+                continue;
             }
+            if(resolve_pending(chosen)) return chosen;
             return p;
         }
     }
+    if(resolve_pending(chosen)) return chosen;
     return a.position;
 }
 
@@ -1162,6 +1220,9 @@ bool find_stationary_detour(const SafetyAgent& a,std::size_t blocker_index,
     // have nearly identical costs, while still allowing the other side when it
     // is materially shorter or the preferred side is unavailable.
     const float preferred_sign=(a.id%2u)==0u?1.0f:-1.0f;
+    struct Candidate { Vec3 position{}; float side_penalty{0.0f}; };
+    std::vector<Candidate> candidates;
+    candidates.reserve(extra.size()*forward_bias.size()*2u);
     for(float side_sign: {preferred_sign,-preferred_sign}){
         for(float add:extra){
             for(float ahead:forward_bias){
@@ -1169,22 +1230,31 @@ bool find_stationary_detour(const SafetyAgent& a,std::size_t blocker_index,
                 if(world.floor_height) candidate.y=world.floor_height(candidate);
                 if(world.point_clear && !world.point_clear(a.id,candidate)) continue;
                 if(!point_respects_fleet_zone(a,candidate,agents,blocker.id)) continue;
-
-                std::vector<Vec3> route;
-                if(!world.coarse_route(a.id,a.position,candidate,std::max(0.10f,stop_radius),route) || route.empty())
-                    continue;
-
-                // Prefer short reachable detours that still make progress
-                // toward the original task goal.  A tiny penalty for the
-                // non-preferred side keeps the decision stable across replans.
-                const float score=route_length(a.position,route)+0.42f*dist_xz(candidate,goal)+
-                                  (side_sign==preferred_sign?0.0f:0.12f);
-                if(score<best_score){
-                    best_score=score;
-                    best=candidate;
-                    found=true;
-                }
+                candidates.push_back({candidate,side_sign==preferred_sign?0.0f:0.12f});
             }
+        }
+    }
+    // Each surviving waypoint needs its own coarse A* route. They are
+    // independent, so evaluate them across the worker pool and then select the
+    // winner in the original candidate order (first minimum wins), which keeps
+    // the result identical to the serial search.
+    std::vector<float> scores(candidates.size(),std::numeric_limits<float>::infinity());
+    std::vector<std::uint8_t> reachable(candidates.size(),0);
+    eng::TaskPool::shared().parallel_for(candidates.size(),[&](std::size_t k){
+        std::vector<Vec3> route;
+        if(!world.coarse_route(a.id,a.position,candidates[k].position,std::max(0.10f,stop_radius),route) || route.empty())
+            return;
+        // Prefer short reachable detours that still make progress
+        // toward the original task goal.  A tiny penalty for the
+        // non-preferred side keeps the decision stable across replans.
+        scores[k]=route_length(a.position,route)+0.42f*dist_xz(candidates[k].position,goal)+candidates[k].side_penalty;
+        reachable[k]=1;
+    });
+    for(std::size_t k=0;k<candidates.size();++k){
+        if(reachable[k] && scores[k]<best_score){
+            best_score=scores[k];
+            best=candidates[k].position;
+            found=true;
         }
     }
     if(found) out_waypoint=best;
@@ -1677,11 +1747,11 @@ SafetyTickStats safety_tick(float dt,
     float remaining=std::min(dt,1.0f);
     float now=absolute_time;
     // Route searches are independent per rover and are the main CPU-heavy part
-    // of dense-base simulation. v0.40.49 capped this to two searches regardless
-    // of host size, leaving most cores idle during fleet replans. Allow one heavy
-    // route job per available CPU lane (up to the fleet size); each individual
-    // D* search is still expansion-bounded/resumable, so this increases parallel
-    // throughput without turning one rover into an unbounded frame-time task.
+    // of dense-base simulation. Concurrent heavy searches are bounded by
+    // configured_route_search_lanes() (at most two by default, independent of
+    // host size, so fleet behaviour does not depend on core count); each
+    // individual D* search is expansion-bounded/resumable, so no rover becomes
+    // an unbounded frame-time task. Cheap proposal work still uses every lane.
     const std::size_t visible_lanes=std::max<std::size_t>(1,eng::cpu_parallel_lanes());
     const std::size_t route_search_lane_limit=std::min<std::size_t>(
         agents.size(),configured_route_search_lanes(visible_lanes));
@@ -1849,11 +1919,19 @@ SafetyTickStats safety_tick(float dt,
         // rover. Dynamic scheduling across the host-wide pool allocates all
         // visible CPU lanes to the current fleet workload. Reservation/contract
         // arbitration and world mutation remain on the game thread.
-        eng::TaskPool::shared().parallel_for(planner_jobs.size(),[&](std::size_t job){
+        auto run_planner_job=[&](std::size_t job){
             const std::size_t ai=planner_jobs[job];
             agents[ai].runtime->planner_elapsed=0.0f;
             generate_proposals(agents[ai],world_epoch,world,agents,now,route_search_granted[ai]!=0);
-        });
+        };
+        // Cheap local-steering refreshes take well under a millisecond each;
+        // waking helper threads for a couple of them costs more than it saves
+        // and makes the frame wait on the slowest wake-up. Only fan out when a
+        // heavy route search is granted or the batch is large.
+        bool heavy_batch=planner_jobs.size()>3;
+        for(const std::size_t ai:planner_jobs) heavy_batch=heavy_batch || route_search_granted[ai]!=0;
+        if(heavy_batch) eng::TaskPool::shared().parallel_for(planner_jobs.size(),run_planner_job);
+        else for(std::size_t job=0;job<planner_jobs.size();++job) run_planner_job(job);
 
         ReservationBoard board{};
         board.contracts.resize(agents.size());
