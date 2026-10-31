@@ -195,6 +195,7 @@ inline ResourceMesh refine_future_resource(ResourceMesh source,ResourceKind kind
                 b.cylinder_y(b.mesh.details,{c.x,1.62f,c.z},0.22f,0.14f,8,true);
             }
             break;
+        case ResourceKind::RobotWorkshop: break;
         case ResourceKind::Count: break;
     }
     return std::move(b.mesh);

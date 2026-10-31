@@ -87,12 +87,14 @@ public:
         std::size_t corridor_a,
         std::size_t corridor_b,
         const std::vector<PlacedHabitat>& habitats,
-        const HabitatModelLibrary& library) const;
+        const HabitatModelLibrary& library,
+        const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const;
 
     bool connect_corridors(std::size_t corridor_a,
                            std::size_t corridor_b,
                            const std::vector<PlacedHabitat>& habitats,
-                           const HabitatModelLibrary& library);
+                           const HabitatModelLibrary& library,
+                           const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library);
 
     std::optional<CorridorEndpoint> preview_anchor(
         const CorridorBuildAnchor& anchor,eng::Vec3 other,

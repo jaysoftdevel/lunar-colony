@@ -189,6 +189,8 @@ void GameApp::render_selection_panel(Renderer& r){
         std::ostringstream state,task,operation,navigation,motion,target,build,cargo,assigned,team,recovery;
 
         state<<"STATE  "<<builder_robot_mode_name(robot.mode);
+        if(robot.workshop_parked) state<<" / PARKED IN WORKSHOP BAY "<<robot.workshop_bay+1;
+        else if(robot.workshop_returning) state<<" / RETURNING TO WORKSHOP";
         if(robot.action!=BuilderRobotAction::None) state<<" / "<<builder_robot_action_name(robot.action);
 
         if(robot.action!=BuilderRobotAction::None){
@@ -204,7 +206,11 @@ void GameApp::render_selection_panel(Renderer& r){
 
         switch(robot.mode){
             case BuilderRobotMode::Idle:
-                if(robot.post_delivery_hold || robot.drop_exit_pending) task<<"TASK  CLEARING CONSTRUCTION DROP ZONE";
+                if(robot.workshop_parked) task<<"TASK  CHARGING / MAINTENANCE DOCK "<<robot.workshop_bay+1;
+                else if(robot.workshop_returning) task<<"TASK  PARK IN ROBOT WORKSHOP";
+                else if(robot.post_delivery_hold || robot.drop_exit_pending) task<<"TASK  CLEARING CONSTRUCTION DROP ZONE";
+                else if(robot.workshop_index==kNoRobotIndex && std::any_of(placed_resources_.begin(),placed_resources_.end(),[](const auto& w){return w.kind==ResourceKind::RobotWorkshop && w.construction.complete();}))
+                    task<<"TASK  WAITING FOR A FREE WORKSHOP BAY";
                 else if(robot.role==RobotRole::Constructor && robot.route_active && !robot.target.valid())
                     task<<"TASK  RETURNING TO RESOURCE STASH PARKING";
                 else if(robot.role==RobotRole::Constructor) task<<"TASK  PARKED / WAITING FOR CONSTRUCTION MATERIALS";
@@ -385,6 +391,17 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+270},pos.str(),0.50f,theme_,true);
             game_label(r,{x,p.y+292},corridors.str()+" / "+utilities.str(),0.47f,theme_,true);
             game_label(r,{x,p.y+322},"DEL REMOVE / LMB SELECT OTHER",0.46f,theme_,true);
+            return;
+        }
+        if(item.kind==ResourceKind::RobotWorkshop){
+            int assigned=0,parked=0;
+            for(const auto& robot:builder_robots_) if(robot.workshop_index==(std::size_t)selected_resource_){++assigned;if(robot.workshop_parked) ++parked;}
+            game_label(r,{x,p.y+98},"SERVICE BAYS  "+std::to_string(parked)+" PARKED / 4 TOTAL",0.54f,theme_);
+            game_label(r,{x,p.y+122},"ASSIGNED ROBOTS  "+std::to_string(assigned),0.50f,theme_,true);
+            game_label(r,{x,p.y+148},"GATE  "+std::string(item.workshop_gate_open>=0.999f?"OPEN":(item.workshop_gate_open<=0?"CLOSED":"MOVING")),0.50f,theme_);
+            game_label(r,{x,p.y+174},"AUTOMATIC PARKING / DOCKED MAINTENANCE",0.44f,theme_,true);
+            game_label(r,{x,p.y+202},"RAMP APPROACH RESERVED",0.46f,theme_,true);
+            game_label(r,{x,p.y+236},"DEL REMOVE / LMB SELECT OTHER",0.46f,theme_,true);
             return;
         }
         game_label(r,{x,p.y+88},used_material_cost(item.resource_plan,item.construction.step),0.44f,theme_,true);

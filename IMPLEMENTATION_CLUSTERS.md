@@ -1,4 +1,4 @@
-# v0.41.5 Implementation Clusters
+# v0.41.7 Implementation Clusters
 
 This file is the context map for future changes. Start from the smallest build target(s) below and load additional clusters only when an interface crosses the requested change. The target names are real CMake OBJECT targets in `game/cmake/GameClusters.cmake`.
 
@@ -79,3 +79,16 @@ The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; i
 
 - `game/src/systems/builder_robot.cpp` now allows CR-01 delivery aprons to be selected closer to incomplete habitat/resource blueprint targets.
 - Own-target conservative footprint clearance is relaxed only for that incomplete target during apron selection, preserving strict clearance for completed structures and all non-target geometry.
+
+## v0.41.6 storage gates and pressure seals
+
+- `game/world/storage_loading_gate.hpp` is the shared fixed hatch/service/apron geometry contract for logistics, corridor routing, placement, rendering and crew collision. `PlacedResource::storage_loading_face` is persisted by save schema 14.
+- `game/world/pressure_door.hpp` defines seal dimensions, animation and swept body/leaf collision. `game/src/systems/pressure_doors.cpp` (interaction cluster) owns transient openings, cargo shutter animation, legacy gate assignment and Air Lock interlocking.
+- `world_renderer.cpp` draws filled pressure leaves, seals and the cargo transfer module in normal and POV views. Gate access is independent of the crew pressure network.
+
+## v0.41.7 outdoor workshop
+
+- `game/world/robot_workshop.hpp` owns the four bay poses, exact wall/dock/door/curb collision, ramp/deck heights and approach reservation. `world/resources/robot_workshop.cpp` builds the corresponding native mesh in the resource cluster.
+- `systems/robot_workshop.cpp` updates the automatic gate and caches placement-to-fleet reachability. `builder_robot.cpp` owns home assignment, inbound admission/queueing, idle-return requests and docked condition recovery; safety remains the only pose authority.
+- Placement, corridor routing and walkway routing protect the same rotated approach rectangle. Rendering shows its outline while placing the workshop. Save schema 15 accepts the appended ResourceKind while retaining old schemas.
+- `safety_coordinator.cpp` excludes stationary terminal holds from advisory planner intake, keeping budget slots available for returning robots without changing hold validation or fleet separation.

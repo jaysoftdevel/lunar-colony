@@ -28,6 +28,8 @@ add_library(game_cluster_interaction OBJECT
     src/systems/camera_controller.cpp
     src/systems/first_person_controller.cpp
     src/systems/first_person_mode.cpp
+    src/systems/pressure_doors.cpp
+    src/systems/robot_workshop.cpp
 )
 configure_game_cluster(game_cluster_interaction)
 
@@ -124,6 +126,7 @@ add_library(game_cluster_resources OBJECT
     src/world/resources/antenna.cpp
     src/world/resources/landing_pad.cpp
     src/world/resources/storage_dome.cpp
+    src/world/resources/robot_workshop.cpp
 )
 configure_game_cluster(game_cluster_resources)
 

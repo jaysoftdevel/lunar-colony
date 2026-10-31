@@ -1,5 +1,8 @@
 #include "game/game_app.hpp"
 #include "game/world/mesh_portals.hpp"
+#include "game/world/storage_loading_gate.hpp"
+#include "game/world/resource_builder.hpp"
+#include "game/world/robot_workshop.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
 #include "game/util/mesh_wireframe.hpp"
@@ -122,27 +125,72 @@ const std::vector<Vec3>& portal_layer(const std::vector<Vec3>& triangles,Vec3 po
     return cache.back().triangles;
 }
 
+// Filled pressure components keep their seals legible in both world views.
+void draw_pressure_box(Renderer& r,Vec3 center,Vec3 side,Vec3 normal,Vec3 size,Color color){
+    resources::Builder b;
+    b.oriented_box(b.mesh.body,center,side,{0,1,0},normal,size);
+    r.draw_triangles_3d(b.mesh.body,color);
+    r.draw_lines_3d(b.mesh.edges,{0.10f,0.18f,0.20f,1},1.8f);
+}
 void draw_sliding_door(Renderer& r,const CorridorDoor& door,float open_fraction){
-    Vec3 n=door.normal; n.y=0.0f; n=normalize(n);
+    Vec3 n=door.normal;n.y=0;n=normalize(n);
     if(length(n)<0.001f) n={1,0,0};
     const Vec3 side{-n.z,0,n.x};
-    const float base_y=door.position.y;
-    const float panel_h=2.48f;
-    const float panel_half=0.52f;
-    const float slide=0.84f*std::clamp(open_fraction,0.0f,1.0f);
-    const Vec3 base{door.wall_position.x,base_y+panel_h*0.5f,door.wall_position.z};
-    const Color fill{0.30f,0.39f,0.43f,0.96f};
-    const Color edge_color{0.08f,0.13f,0.15f,1.0f};
+    const float w=geometry::kDoorClearWidth,h=geometry::kDoorClearHeight;
+    const Vec3 base{door.wall_position.x,door.position.y,door.wall_position.z};
+    const float slide=pressure_door::kSlide*std::clamp(open_fraction,0.0f,1.0f);
+    const Color seal{0.08f,0.13f,0.14f,1};
+    // Continuous perimeter gasket, paired rail housings and sill. The leaves
+    // overlap the perimeter and centre seam rather than leaving an air gap.
     for(int sign:{-1,1}){
-        const float center_side=(float)sign*(panel_half+slide);
-        const Vec3 center=base+side*center_side+n*0.035f;
-        const Vec3 s=side*panel_half;
-        const Vec3 u{0,panel_h*0.5f,0};
-        const Vec3 p0=center-s-u,p1=center+s-u,p2=center+s+u,p3=center-s+u;
-        (void)fill;
-        r.draw_lines_3d({p0,p1,p1,p2,p2,p3,p3,p0},edge_color,2.15f);
+        draw_pressure_box(r,base+side*((float)sign*(w*0.5f+0.08f))+Vec3{0,h*0.5f,0},side,n,{0.16f,h+0.16f,0.24f},seal);
+        const Vec3 center=base+side*((float)sign*(w*0.25f+slide))+Vec3{0,h*0.5f,0};
+        draw_pressure_box(r,center,side,n,{2*pressure_door::kPanelHalfWidth,h+0.10f,pressure_door::kThickness},{0.27f,0.42f,0.46f,1});
+        const Vec3 brace=center+n*0.067f;
+        r.draw_lines_3d({brace-side*0.22f-Vec3{0,h*0.29f,0},brace+side*0.22f+Vec3{0,h*0.29f,0}},seal,2);
     }
+    draw_pressure_box(r,base+Vec3{0,h+0.08f,0},side,n,{w+0.50f,0.16f,0.28f},seal);
+    draw_pressure_box(r,base+Vec3{0,0.005f,0},side,n,{w+0.25f,0.03f,0.24f},seal);
+    const Color light=pressure_door::sealed(open_fraction)?Color{1.0f,0.57f,0.12f,1}:Color{0.24f,1.0f,0.56f,1};
+    r.draw_lines_3d({base+side*0.25f+Vec3{0,h+0.085f,0}+n*0.15f,base-side*0.25f+Vec3{0,h+0.085f,0}+n*0.15f},light,3.5f);
 }
+void draw_loading_gate(Renderer& r,const PlacedResource& item,float opening,bool preview=false){
+    const Vec3 n=storage_loading::normal(item),side{-n.z,0,n.x};
+    const Vec3 wall=storage_loading::wall(item),mouth=storage_loading::mouth(item);
+    const float depth=length(mouth-wall);
+    const float h=storage_loading::kHeight,w=storage_loading::kHalfWidth;
+    const Color steel{0.24f,0.36f,0.42f,1},seal{0.10f,0.15f,0.17f,1};
+    resources::Builder chamber;
+    auto box=[&](Vec3 center,Vec3 size){chamber.oriented_box(chamber.mesh.body,center,side,{0,1,0},n,size);};
+    const Vec3 mid=(wall+mouth)*0.5f;
+    box(mid+Vec3{0,0.14f,0},{2*w+0.18f,0.18f,depth+0.20f});
+    box(mid+Vec3{0,h+0.18f,0},{2*w+0.18f,0.16f,depth+0.20f});
+    for(int sign:{-1,1}) box(mid+side*((float)sign*(w+0.05f))+Vec3{0,h*0.5f+0.15f,0},{0.12f,h,depth+0.20f});
+    // Permanent inner pressure bulkhead: the robot services a transfer buffer,
+    // never opens a crew exit straight onto the lunar surface.
+    box(wall+Vec3{0,h*0.5f+0.15f,0},{2*w,h,0.12f});
+    if(preview){
+        mesh_wireframe::draw_layer(r,chamber.mesh.body,{1,0.70f,0.15f,0.85f},1.8f);
+    }else{
+        r.draw_triangles_3d(chamber.mesh.body,steel);
+        r.draw_lines_3d(chamber.mesh.edges,seal,2);
+        for(int sign:{-1,1}){
+            const Vec3 c=mouth+side*((float)sign*(w*0.5f+opening*(w+0.06f)))+Vec3{0,h*0.5f+0.15f,0}+n*0.08f;
+            draw_pressure_box(r,c,side,n,{w+0.04f,h,0.10f},{0.65f,0.43f,0.12f,1});
+        }
+        for(int i=0;i<6;++i){
+            const Vec3 c=wall+(mouth-wall)*((float)(i+1)/7)+Vec3{0,0.25f,0};
+            r.draw_lines_3d({c-side*(w-0.15f),c+side*(w-0.15f)},{0.75f,0.80f,0.81f,1},2);
+        }
+    }
+    const Vec3 service=storage_loading::service(item)+Vec3{0,0.04f,0};
+    r.draw_lines_3d({service-side*1.25f-n*0.7f,service-side*1.25f+n*0.8f,
+        service+side*1.25f-n*0.7f,service+side*1.25f+n*0.8f,
+        service-side*1.25f+n*0.8f,service+side*1.25f+n*0.8f},{1,0.70f,0.16f,1},2.2f);
+    const Vec3 tip=service-n*0.55f;
+    r.draw_lines_3d({service+n*0.4f,tip,tip,tip+n*0.3f+side*0.28f,tip,tip+n*0.3f-side*0.28f},{1,0.70f,0.16f,1},2.5f);
+}
+
 }
 
 void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
@@ -304,6 +352,39 @@ void GameApp::render_ground_resources(Renderer& r){
     }
 }
 
+void GameApp::render_storage_loading_gate(Renderer& r,const PlacedResource& item,float opening,bool preview) const {
+    draw_loading_gate(r,item,opening,preview);
+}
+
+void GameApp::render_workshop_gate(Renderer& r,const PlacedResource& item,bool preview,bool valid) const {
+    const Vec3 side=rotate_y({1,0,0},item.rotation_degrees),n=rotate_y({0,0,-1},item.rotation_degrees);
+    const Vec3 base=workshop::world(item,{0,workshop::kDeck,-workshop::kHalf});
+    const float open=item.construction.complete()?item.workshop_gate_open:0;
+    const Color color=valid?Color{0.75f,0.49f,0.14f,1}:Color{1,0.2f,0.1f,1};
+    for(float sign:{-1.0f,1.0f}){
+        const auto center=base+side*(sign*(workshop::kGateHalf*0.5f+open*(workshop::kGateHalf+0.12f)))+Vec3{0,1.45f,0};
+        if(preview){
+            resources::Builder b;b.oriented_box(b.mesh.body,center,side,{0,1,0},n,{workshop::kGateHalf+0.06f,2.90f,0.18f});
+            mesh_wireframe::draw_layer(r,b.mesh.body,color,1.8f);
+        }else draw_pressure_box(r,center,side,n,{workshop::kGateHalf+0.06f,2.90f,0.18f},color);
+    }
+    for(int slot=0;slot<workshop::kBays;++slot){
+        const Vec3 p=workshop::bay(item,slot);
+        bool docked=false;
+        for(const auto& robot:builder_robots_) if(robot.workshop_parked && distance_xz(robot.position,p)<0.50f) docked=true;
+        const Color lamp=docked?Color{0.25f,1,0.40f,1}:Color{0.22f,0.64f,1,1};
+        const Vec3 light=workshop::world(item,{(slot%2)?5.73f:-5.73f,1.90f,(slot/2)?3.0f:-3.0f});
+        r.draw_lines_3d({light+Vec3{0,-0.24f,0},light+Vec3{0,0.24f,0}},lamp,4);
+    }
+    const Color status=open>=0.999f?Color{0.25f,1,0.4f,1}:Color{1,0.64f,0.12f,1};
+    r.draw_lines_3d({base+side*0.4f+Vec3{0,3.18f,0}+n*0.2f,base-side*0.4f+Vec3{0,3.18f,0}+n*0.2f},status,4);
+    if(preview){
+        const Vec3 a=workshop::world(item,{-5.5f,0.04f,-19}),b=workshop::world(item,{5.5f,0.04f,-19});
+        const Vec3 c=workshop::world(item,{5.5f,0.04f,-6}),d=workshop::world(item,{-5.5f,0.04f,-6});
+        r.draw_lines_3d({a,b,b,c,c,d,d,a},valid?Color{1,0.70f,0.18f,1}:Color{1,0.15f,0.10f,1},2.4f);
+    }
+}
+
 void GameApp::render_resources(Renderer& r){
     for(size_t i=0;i<placed_resources_.size();++i){
         const auto& instance=placed_resources_[i];
@@ -317,6 +398,11 @@ void GameApp::render_resources(Renderer& r){
         }
         render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
+        if(instance.kind==ResourceKind::StorageDome){
+            const float opening=i<storage_gate_open_.size()?storage_gate_open_[i]:0;
+            draw_loading_gate(r,instance,opening,!instance.construction.complete());
+        }
+        if(instance.kind==ResourceKind::RobotWorkshop) render_workshop_gate(r,instance,!instance.construction.complete());
 
         if(instance.kind!=ResourceKind::StorageDome || !instance.construction.complete() || instance.stored_boxes.empty()) continue;
 

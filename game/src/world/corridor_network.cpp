@@ -1,6 +1,8 @@
+#include "game/world/robot_workshop.hpp"
 #include "game/world/corridor_network.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/world/corridor/detail.hpp"
+#include "game/world/storage_loading_gate.hpp"
 #include <limits>
 
 namespace game {
@@ -271,9 +273,17 @@ bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const Corridor
     // already connected through the merged corridor graph. A dense colony can
     // therefore accept repeated/all-to-all connection requests without growing
     // parallel overlapping tubes; the existing shared network is the route.
+    // Reject explicit cargo-face requests before topology reuse/fallback can
+    // silently turn them into a connection on a different storage face.
+    for(const auto* anchor:{&a,&b}) if(anchor->kind==CorridorEndpointKind::Resource){
+        if(anchor->index>=resources.size()) return false;
+        const auto other=anchor==&a?b.position:a.position;
+        if(!resolve_anchor(*anchor,other,habitats,library,resources,resource_library,connections_)) return false;
+    }
     if(corridor_anchors_already_connected(a,b,connections_)) return true;
 
     const auto commit=[&](CorridorConnection c){
+        const auto previous=connections_;
         for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
             if(ep->kind!=CorridorEndpointKind::Corridor || ep->index>=connections_.size()) continue;
             insert_shared_path_vertex(connections_[ep->index],
@@ -282,6 +292,21 @@ bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const Corridor
         c.resource_plan=construction_costs::corridor(c.path,network_junction_count(c));
         connections_.push_back(std::move(c));
         optimize_shared_entrance_groups(connections_,habitats,library);
+        // Shared-trunk optimization may move an already validated route.
+        // Validate every changed segment again before accepting the layout.
+        for(std::size_t i=0;i<connections_.size();++i){
+            const auto& path=connections_[i].path;
+            bool changed=i>=previous.size() || path.size()!=previous[i].path.size();
+            if(!changed) for(std::size_t j=0;j<path.size();++j)
+                if(length(path[j]-previous[i].path[j])>0.001f){changed=true;break;}
+            if(!changed) continue;
+            for(const auto& item:resources) for(std::size_t j=1;j<path.size();++j){
+                if(!storage_loading::segment_reserved(item,path[j-1],path[j],CORRIDOR_HALF_WIDTH+ROUTE_CLEARANCE) &&
+                   !workshop::approach_hits(item,path[j-1],path[j],CORRIDOR_HALF_WIDTH+ROUTE_CLEARANCE)) continue;
+                connections_=previous;
+                return false;
+            }
+        }
         rebuild_all_meshes(connections_);
         return true;
     };
@@ -322,6 +347,7 @@ bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const Corridor
         const float r=std::min(mesh.footprint_x,mesh.footprint_z)*0.40f;
         const Vec3 local_normals[4]={{0,0,-1},{1,0,0},{0,0,1},{-1,0,0}};
         for(Vec3 ln:local_normals){
+            if(dot(flat_normal(rotate_y(ln,placed.rotation_degrees)),storage_loading::normal(placed))>0.70f) continue;
             CorridorBuildAnchor v=src;
             v.position=placed.position+flat_normal(rotate_y(ln,placed.rotation_degrees))*r;
             bool duplicate=false;
@@ -454,7 +480,8 @@ bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const Corridor
 
 std::optional<CorridorConnection> CorridorNetwork::preview_corridor_link(
     std::size_t corridor_a,std::size_t corridor_b,
-    const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library) const {
+    const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+    const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const {
     if(corridor_a>=connections_.size() || corridor_b>=connections_.size() || corridor_a==corridor_b) return std::nullopt;
     const auto pair=closest_pair(connections_[corridor_a].path,connections_[corridor_b].path);
     // Close corridor ends are valid direct-link candidates. Older builds
@@ -488,20 +515,22 @@ std::optional<CorridorConnection> CorridorNetwork::preview_corridor_link(
         out.endpoint_b.host_tangent=end_b.outward*-1.0f;
         out.endpoint_b.seamless_splice=true;
         out.path=std::move(path);
+        for(const auto& item:resources) for(std::size_t j=1;j<out.path.size();++j)
+            if(storage_loading::segment_reserved(item,out.path[j-1],out.path[j],CORRIDOR_HALF_WIDTH+ROUTE_CLEARANCE) ||
+               workshop::approach_hits(item,out.path[j-1],out.path[j],CORRIDOR_HALF_WIDTH+ROUTE_CLEARANCE)) return std::nullopt;
         out.mesh=build_mesh(out.endpoint_a,out.endpoint_b,out.path,connections_);
         return out;
     }
 
     CorridorBuildAnchor a{CorridorEndpointKind::Corridor,corridor_a,pair.first};
     CorridorBuildAnchor b{CorridorEndpointKind::Corridor,corridor_b,pair.second};
-    static const std::vector<PlacedResource> no_resources;
-    static const ResourceModelLibrary resource_library;
-    return make_generic(a,b,CorridorConnectionKind::NetworkLink,habitats,library,no_resources,resource_library,connections_,playfield_half_extent_);
+    return make_generic(a,b,CorridorConnectionKind::NetworkLink,habitats,library,resources,resource_library,connections_,playfield_half_extent_);
 }
 
 bool CorridorNetwork::connect_corridors(std::size_t corridor_a,std::size_t corridor_b,
-                                        const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library){
-    auto c=preview_corridor_link(corridor_a,corridor_b,habitats,library);
+                                        const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                                        const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
+    auto c=preview_corridor_link(corridor_a,corridor_b,habitats,library,resources,resource_library);
     if(!c) return false;
     for(const CorridorEndpoint* ep:{&c->endpoint_a,&c->endpoint_b}){
         if(ep->kind!=CorridorEndpointKind::Corridor || ep->index>=connections_.size()) continue;

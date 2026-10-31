@@ -34,6 +34,7 @@ void GameApp::update(float dt,const InputState& in){
 
     if(screen_==Screen::Playfield){
         const float sim_dt=dt*game_speed_multiplier();
+        update_pressure_doors(dt);
         if(in.key_v_pressed){
             selection_marquee_active_=false;
             selection_marquee_dragged_=false;
@@ -148,6 +149,9 @@ void GameApp::update(float dt,const InputState& in){
                 };
                 if(in.wheel>0.0f) cycle_storage(+1);
                 if(in.wheel<0.0f) cycle_storage(-1);
+                camera_input.wheel=0.0f;
+            }else if(selected->resource_kind==ResourceKind::RobotWorkshop){
+                placement_resource_size_=ResourceSizeTier::Standard;
                 camera_input.wheel=0.0f;
             }else{
                 auto cycle_resource=[&](int){

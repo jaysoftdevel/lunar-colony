@@ -255,3 +255,7 @@ v0.40.9
 - Structures, corridors and ground resources use a soft graded clearance/inflation cost so open space is preferred while narrow physically valid passages remain available. Terrain grade is a secondary route cost.
 - A* remains as the fleet-aware/recovery fallback and the existing 10 ms motion-contract collision authority is unchanged.
 
+
+0.41.6: Fixed shared storage loading gates, reserved cargo aprons, sealed sliding corridor doors with swept collision and Air Lock interlocks, schema 14 gate-face persistence.
+
+0.41.7: Buildable outdoor four-bay robot workshop, automatic ramp gate, stable idle parking/task dispatch, docked condition recovery, protected reachable approach, and planner intake for stationary holds.

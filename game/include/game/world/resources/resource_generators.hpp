@@ -3,6 +3,7 @@
 
 namespace game::resources {
 ResourceMesh make_solar_panel();
+ResourceMesh make_robot_workshop();
 ResourceMesh make_water_driller();
 ResourceMesh make_power_storage();
 ResourceMesh make_water_storage();

@@ -1,5 +1,6 @@
 #include "game/world/corridor/detail.hpp"
 #include <array>
+#include "game/world/storage_loading_gate.hpp"
 
 namespace game::corridor_detail {
 float local_tangent_extent(const HabitatMesh& mesh,Vec3 local_normal){
@@ -577,6 +578,9 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
             if(score>best_dot){ best_dot=score; normal=n; wall=placed.position+n*wall_radius; }
         }
     }
+
+    // The fixed cargo face can never become a crew pressure connection.
+    if(dot(normal,storage_loading::normal(placed))>0.92f) return std::nullopt;
 
     // Storage-dome service doors are reusable pressure entrances too.  If the
     // selected face already owns a corridor, branch from its common trunk

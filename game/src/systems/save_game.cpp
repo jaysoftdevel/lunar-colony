@@ -16,7 +16,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=13;
+constexpr std::uint32_t kSaveSchema=15;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -465,6 +465,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         for(const auto& box:item.stored_boxes){ out.pod((std::uint8_t)box.resource); out.pod(box.amount); out.pod(box.condition); }
         out.pod(item.instance_serial);
         out.pod(item.placement_sequence);
+        out.pod(item.storage_loading_face);
     });
     write_object_vector(w,ground_resource_piles_,[](Writer& out,const GroundResourcePile& pile){
         out.pod((std::uint8_t)pile.resource); out.pod(pile.amount); write_vec3(out,pile.position); out.pod(pile.radius); out.pod(pile.condition);
@@ -590,6 +591,10 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         }
         if(source_schema>=10) item.instance_serial=in.pod<std::uint32_t>();
         if(source_schema>=13) item.placement_sequence=in.pod<std::uint64_t>();
+        if(source_schema>=14){
+            item.storage_loading_face=in.pod<std::int8_t>();
+            if(item.storage_loading_face < -1 || item.storage_loading_face > 4) in.valid=false;
+        }
         sync_stored_resource_totals(item);
         return item;
     })){ error="Template structure data is damaged."; return false; }
@@ -670,6 +675,8 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     corridor_network_.repair_invalid_topology(placed_habitats_,habitat_models_);
     corridor_network_.synchronize_structure_interfaces(placed_habitats_,habitat_models_,placed_resources_,resource_models_);
+    assign_storage_loading_faces();
+    pressure_doors_.clear();storage_gate_open_.clear();
     utility_network_.restore_connections(std::move(utilities));
     utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     walkway_network_.restore_connections(std::move(walkways));
@@ -741,6 +748,10 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         for(std::uint64_t i=0;i<n&&in.valid;++i){ StoredResourceBox box{}; box.resource=(MaterialResource)in.pod<std::uint8_t>(); box.amount=in.pod<std::int64_t>(); box.condition=in.pod<float>(); item.stored_boxes.push_back(box); }
         if(source_schema>=10) item.instance_serial=in.pod<std::uint32_t>();
         if(source_schema>=13) item.placement_sequence=in.pod<std::uint64_t>();
+        if(source_schema>=14){
+            item.storage_loading_face=in.pod<std::int8_t>();
+            if(item.storage_loading_face < -1 || item.storage_loading_face > 4) in.valid=false;
+        }
         sync_stored_resource_totals(item); return item;
     })){ error="Savegame structure data is damaged."; return false; }
 
@@ -913,6 +924,8 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     corridor_network_.repair_invalid_topology(placed_habitats_,habitat_models_);
     corridor_network_.synchronize_structure_interfaces(placed_habitats_,habitat_models_,placed_resources_,resource_models_);
+    assign_storage_loading_faces();
+    pressure_doors_.clear();storage_gate_open_.clear();
     utility_network_.restore_connections(std::move(utilities));
     utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     walkway_network_.restore_connections(std::move(walkways));

@@ -1,4 +1,4 @@
-# game v0.41.5 baseline context
+# game v0.41.7 baseline context
 
 - Standalone C++20 Linux/X11 game, separate `engine/` and `game/` trees.
 - Root `VERSION` is the release source. Build with `./build.sh`; `./run.sh` runs `build/bin/game`.
@@ -20,7 +20,7 @@
 - Completed static geometry uses exact swept tests against inflated rotated footprints, corridor capsules and resource discs. Construction geometry still uses scene-admission and next-stage evacuation gates. Delivered resource boxes are admitted atomically against current hulls and all active motion/braking/terminal reservations before inventory changes.
 - No speculative reverse fan or positional nudges. A blocked rover waits, pivots safely, obtains a stable detour, or retreats to a passing pocket. A parked idle robot may receive a certified yield task when it blocks a real destination or seals the only route; it holds the new bay until another job needs it. Active work holds remain protected. Untasked robots do not wander.
 - The existing FIFO shipping/material accounting and staged construction policy remain in `builder_robot.cpp`. Service and queue positions use the same disc clearance as locomotion.
-- Exterior rover queries use the planar playfield height. They do not run indoor crew/pressure-volume queries on every planner edge or safety sample.
+- Exterior rover queries use the planar playfield height except for the shared workshop ramp/deck height function. They do not run indoor crew/pressure-volume queries on every planner edge or safety sample.
 
 ## Structures and crew access
 
@@ -36,3 +36,22 @@
 - Optional headless regressions: configure with `-DGAME_BUILD_NAVIGATION_TESTS=ON`, then use CTest. They cover swept fleet separation, smooth open travel, obstacle corners, changed scenes, occupied service points, opposing traffic, single-lane yielding, rotations/size tiers, storage ports, interior headroom and construction logistics.
 - Update archive: `game-update-vX.Y.Z.zip` containing one `game-update-vX.Y.Z/` directory with only `apply.sh` and `update.patch`. Apply does not build. Clean builds preserve existing executable-adjacent savegames, including on build failure.
 - v0.40.47 remains the historical logistics/build baseline. For current locomotion and access behavior, this document supersedes older version notes in `ARCHITECTURE.md`.
+
+## v0.41.6 storage handling and pressure doors
+
+- Storage has one fixed robot loading gate with a sealed transfer buffer. Both BR-02 pickup and CR-01 deposit/pickup use its shared service point and off-axis queue. Crew cannot use it as a surface entrance.
+- New gates occupy local +X. Existing saves select a free docking face once (a spare diagonal if every cardinal face is already used); schema 14 persists that choice and still reads schemas 1-13.
+- The loading apron rejects crew-corridor attachments and crossing routes, including corridor-link shortcuts. Structure placement also keeps existing aprons accessible.
+- Every completed corridor/structure interface has solid paired sliding leaves with perimeter and centre seals. One transient opening state drives animation and swept POV collision; occupancy prevents closing on a person and Air Lock doors interlock. Doors reset sealed on load.
+- Added `navigation_pressure_gates` headless regression for seals, reservations, gate inventory, concurrent deposits and persistence; geometry regressions now wait for doors to open and exclude reserved cargo ports.
+
+## v0.41.7 outdoor robot workshop
+
+- Robot Workshop is a fixed-size outdoor structure in the Structures palette, independent of the habitat/corridor chain. Its procedural barrel-roof model has four independent charging/cargo/service docks, a wide automatic sliding gate and a continuous 0.4 m deck reached by a 5 m boarding ramp.
+- Each completed workshop assigns four unique home bays. Idle constructors/carriers with no active task or cargo return through a staged approach; inbound ramp admission is serialized, actual work exits take priority, and new tasks immediately preempt parking. Extra fleet members require additional workshops.
+- Parked robots hold their own bays without repeated route invalidation. Service restores mechanical condition at 1 percentage point per simulation second; charging hardware is provided for a future energy model.
+- Workshop walls, dock cabinets, gate plane and ramp curbs use exact swept disc/box tests in the existing motion authority. Rover/POV floors follow the shared ramp and deck geometry. No pose nudges or teleportation are added.
+- A visible, rotated approach reservation covers the boarding ramp and waiting/turning area. Placement checks bounds, structures, ground piles, corridors and walkways; a cached static path search rejects an enclosed approach with no route to the fleet. Later structure/corridor/walkway placement also respects the reservation.
+- Save schema 15 adds the new persisted structure kind; schemas 1-14 remain readable. Parking assignments and gate animation are transient and reconstructed from saved robot poses. A gate occupied on load restores open before collision certification.
+- Stationary certified holds no longer consume planner intake slots. This prevents parked high-priority actors from starving the last low-priority returning robot in larger fleets; all existing contract arbitration and collision checks remain active.
+- `navigation_workshops` covers four robots, rotated buildings, eight robots/two workshops, real task dispatch and return, save/load, construction completion, ramp clearance and static reachability.

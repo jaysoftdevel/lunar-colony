@@ -18,6 +18,7 @@ enum class ResourceKind {
     Antenna,
     LandingPad,
     StorageDome,
+    RobotWorkshop,
     Count
 };
 
@@ -126,6 +127,13 @@ struct PlacedResource {
     ResourceBundle stored_resources{};
     std::vector<StoredResourceBox> stored_boxes{};
     StorageDomeSize storage_size{StorageDomeSize::Small};
+    // Fixed cargo hatch; -1 is a legacy save awaiting free-face assignment.
+    // 0..3 are the authored cardinal faces, 4 is the spare diagonal face.
+    std::int8_t storage_loading_face{-1};
+    float workshop_gate_open{0.0f}; // transient; restored from live occupancy
+    float workshop_gate_hold{0.0f};
+    bool workshop_gate_initialized{false};
+    int workshop_entry_owner{-1};
     // Non-storage outdoor structures support STANDARD + SMALL. Storage domes
     // retain their dedicated SMALL/MID/BIG/HUGE tiers.
     ResourceSizeTier size{ResourceSizeTier::Standard};

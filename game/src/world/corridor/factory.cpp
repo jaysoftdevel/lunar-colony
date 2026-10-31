@@ -1,4 +1,6 @@
+#include "game/world/robot_workshop.hpp"
 #include "game/world/corridor/detail.hpp"
+#include "game/world/storage_loading_gate.hpp"
 #include <array>
 #include <cstdint>
 #include <queue>
@@ -145,6 +147,7 @@ bool point_overlaps_structures(Vec3 p,
            point_near_triangle_set_xz(local,hm.glazing,clearance)) return true;
     }
     for(std::size_t ri=0;ri<resources.size();++ri){
+        if(storage_loading::reserved(resources[ri],p,clearance) || workshop::approach_hits(resources[ri],p,p,clearance)) return true;
         if(endpoint_dock_exception(p,a,CorridorEndpointKind::Resource,ri) ||
            endpoint_dock_exception(p,b,CorridorEndpointKind::Resource,ri)) continue;
         const auto& rm=resource_library.mesh(resources[ri]);

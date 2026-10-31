@@ -111,6 +111,11 @@ struct BuilderRobotState {
     float condition{1.0f};
     float work_elapsed{0.0f};
     float idle_elapsed{0.0f};
+    std::size_t workshop_index{kNoRobotIndex};
+    int workshop_bay{-1};
+    bool workshop_parked{false};
+    bool workshop_returning{false};
+    bool workshop_entry_started{false};
 
     // Cooperative-site routing. For constructors this points to the BR-02
     // coordinator that owns the shared site buffer/stage commit. For carriers

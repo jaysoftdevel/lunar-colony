@@ -131,7 +131,9 @@ void GameApp::render_build_bar(Renderer& r){
         if(item.kind==BuildObjectKind::Habitat && hovered_item==build_catalog_.selected_index())
             line2 += " / SIZE " + std::string(habitat_size_name(placement_habitat_size_));
         if(item.kind==BuildObjectKind::Resource && hovered_item==build_catalog_.selected_index()){
-            if(item.resource_kind==ResourceKind::StorageDome)
+            if(item.resource_kind==ResourceKind::RobotWorkshop)
+                line2 += " / FOUR SERVICE BAYS";
+            else if(item.resource_kind==ResourceKind::StorageDome)
                 line2 += " / SIZE " + std::string(storage_dome_size_name(placement_storage_size_));
             else
                 line2 += " / SIZE " + std::string(resource_size_name(placement_resource_size_));

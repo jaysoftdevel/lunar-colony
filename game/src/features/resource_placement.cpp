@@ -1,4 +1,6 @@
+#include "game/world/robot_workshop.hpp"
 #include "game/game_app.hpp"
+#include "game/world/storage_loading_gate.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
@@ -44,6 +46,8 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
         if(overlaps(candidate_box,other_box,clearance)) return false;
     }
     for(const auto& placed:placed_resources_){
+        if(placed.kind==ResourceKind::RobotWorkshop && overlaps(candidate_box,workshop::approach(placed),clearance)) return false;
+        if(placed.kind==ResourceKind::StorageDome && overlaps(candidate_box,storage_loading::apron(placed),clearance)) return false;
         const ResourceMesh& other=resource_models_.mesh(placed);
         const auto other_box=footprint(placed.position,placed.rotation_degrees,other.footprint_x,other.footprint_z);
         if(overlaps(candidate_box,other_box,clearance)) return false;
@@ -59,6 +63,45 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
                                 geometry::kCorridorHalfWidth+geometry::kRouteClearance;
     for(const auto& c:corridor_network_.connections()) for(std::size_t i=0;i+1<c.path.size();++i)
         if(point_segment_distance_xz(position,c.path[i],c.path[i+1])<corridor_radius) return false;
+
+    if(kind==ResourceKind::RobotWorkshop){
+        PlacedResource item;item.kind=kind;item.size=ResourceSizeTier::Standard;
+        item.position=position;item.rotation_degrees=rotation_degrees;
+        const auto apron=workshop::approach(item);
+        for(float x:{-apron.half_x,apron.half_x}) for(float z:{-apron.half_z,apron.half_z}){
+            const Vec2 q{apron.center.x+apron.axis_x.x*x+apron.axis_z.x*z,apron.center.y+apron.axis_x.y*x+apron.axis_z.y*z};
+            if(std::abs(q.x)>half_field-0.20f || std::abs(q.y)>half_field-0.20f) return false;
+        }
+        for(const auto& h:placed_habitats_){const auto& m=habitat_models_.mesh(h);
+            if(overlaps(apron,footprint(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;}
+        for(const auto& r:placed_resources_){const auto& m=resource_models_.mesh(r);
+            if(overlaps(apron,footprint(r.position,r.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;
+            if(r.kind==ResourceKind::StorageDome && overlaps(apron,storage_loading::apron(r),clearance)) return false;}
+        for(const auto& pile:ground_resource_piles_)
+            if(overlaps(apron,footprint(pile.position,0,2*pile.radius,2*pile.radius),1.12f)) return false;
+        for(const auto& c:corridor_network_.connections()) for(std::size_t j=1;j<c.path.size();++j)
+            if(workshop::approach_hits(item,c.path[j-1],c.path[j],geometry::kCorridorHalfWidth+geometry::kRouteClearance)) return false;
+        for(const auto& w:walkway_network_.connections()) for(std::size_t j=1;j<w.path.size();++j)
+            if(workshop::approach_hits(item,w.path[j-1],w.path[j],geometry::kWalkwayHalfWidth+0.40f)) return false;
+        if(!workshop_accessible(item)) return false;
+    }
+
+    // A newly placed loading gate must have an accessible bay inside the map.
+    if(kind==ResourceKind::StorageDome){
+        PlacedResource gate;gate.kind=kind;gate.storage_size=storage_size;
+        gate.position=position;gate.rotation_degrees=rotation_degrees;gate.storage_loading_face=1;
+        const auto bay=storage_loading::apron(gate);
+        for(float x:{-bay.half_x,bay.half_x}) for(float z:{-bay.half_z,bay.half_z}){
+            const Vec2 q{bay.center.x+bay.axis_x.x*x+bay.axis_z.x*z,bay.center.y+bay.axis_x.y*x+bay.axis_z.y*z};
+            if(std::abs(q.x)>half_field || std::abs(q.y)>half_field) return false;
+        }
+        for(const auto& item:placed_habitats_){const auto& m=habitat_models_.mesh(item);
+            if(overlaps(bay,footprint(item.position,item.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;}
+        for(const auto& item:placed_resources_){const auto& m=resource_models_.mesh(item);
+            if(overlaps(bay,footprint(item.position,item.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;}
+        for(const auto& c:corridor_network_.connections()) for(std::size_t j=1;j<c.path.size();++j)
+            if(storage_loading::segment_reserved(gate,c.path[j-1],c.path[j],geometry::kCorridorHalfWidth+geometry::kRouteClearance)) return false;
+    }
 
     // Storage domes also keep their pressure/storage shell clear of service trays.
     if(kind==ResourceKind::StorageDome){
@@ -112,7 +155,7 @@ void GameApp::render_resource_placement(Renderer& r){
     Vec3 hit{};
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
     const StorageDomeSize storage_size=selected->resource_kind==ResourceKind::StorageDome?placement_storage_size_:StorageDomeSize::Small;
-    const ResourceSizeTier resource_size=selected->resource_kind==ResourceKind::StorageDome?ResourceSizeTier::Standard:placement_resource_size_;
+    const ResourceSizeTier resource_size=(selected->resource_kind==ResourceKind::StorageDome || selected->resource_kind==ResourceKind::RobotWorkshop)?ResourceSizeTier::Standard:placement_resource_size_;
     float rotation=placement_rotation_degrees_;
     const Vec3 snapped=selected->resource_kind==ResourceKind::StorageDome?snap_storage_dome(hit,storage_size,rotation):Vec3{std::round(hit.x),0.0f,std::round(hit.z)};
     const auto& mesh=selected->resource_kind==ResourceKind::StorageDome?
@@ -120,6 +163,15 @@ void GameApp::render_resource_placement(Renderer& r){
     const auto plan=construction_costs::structure(selected->resource_kind,mesh);
     const bool valid=resource_placement_valid(selected->resource_kind,resource_size,storage_size,snapped,rotation) && can_start_construction(plan);
     render_resource_mesh(r,mesh,snapped,rotation,true,valid);
+    if(selected->resource_kind==ResourceKind::RobotWorkshop){
+        PlacedResource item;item.kind=ResourceKind::RobotWorkshop;item.position=snapped;item.rotation_degrees=rotation;
+        render_workshop_gate(r,item,true,valid);
+    }
+    if(selected->resource_kind==ResourceKind::StorageDome){
+        PlacedResource gate;gate.kind=ResourceKind::StorageDome;gate.position=snapped;
+        gate.rotation_degrees=rotation;gate.storage_size=storage_size;gate.storage_loading_face=1;
+        render_storage_loading_gate(r,gate,0,true);
+    }
 
     if(valid && input_.left_pressed){
         PlacedResource placed;
@@ -136,6 +188,7 @@ void GameApp::render_resource_placement(Renderer& r){
         placed.position=snapped;
         placed.rotation_degrees=rotation;
         placed.storage_size=storage_size;
+        placed.storage_loading_face=1;
         placed.size=resource_size;
         placed.resource_plan=plan;
         placed_resources_.push_back(std::move(placed));

@@ -34,6 +34,7 @@ inline const char* resource_name(ResourceKind kind){
         case ResourceKind::Antenna: return "COMMUNICATION ANTENNA";
         case ResourceKind::LandingPad: return "LANDING PAD";
         case ResourceKind::StorageDome: return "STORAGE DOME";
+        case ResourceKind::RobotWorkshop: return "ROBOT WORKSHOP";
         default: return "RESOURCE STRUCTURE";
     }
 }
@@ -46,6 +47,7 @@ inline std::string habitat_instance_name(const PlacedHabitat& placed){
 }
 
 inline const char* resource_instance_size_name(const PlacedResource& placed){
+    if(placed.kind==ResourceKind::RobotWorkshop) return "FOUR BAYS";
     return placed.kind==ResourceKind::StorageDome?storage_dome_size_name(placed.storage_size):resource_size_name(placed.size);
 }
 

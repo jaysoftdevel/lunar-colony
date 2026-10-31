@@ -1,4 +1,5 @@
 #include "game/game_app.hpp"
+#include "game/world/storage_loading_gate.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
@@ -183,7 +184,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
     const int target=pick_corridor(hit,geometry::kCorridorHalfWidth+0.28f);
     if(target<0 || target==corridor_link_source_) return;
-    auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_);
+    auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     if(!preview) return;
     const bool affordable=can_start_construction(corridor_plan(*preview));
     draw_compact_corridor_blueprint(r,*preview,affordable);
@@ -194,7 +195,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     // blueprint in this frame. This keeps manual links consistent with corridor
     // build mode, utility channels and automatic habitat corridor previews.
     if(input_.left_pressed && affordable &&
-       corridor_network_.connect_corridors((std::size_t)corridor_link_source_,(std::size_t)target,placed_habitats_,habitat_models_)){
+       corridor_network_.connect_corridors((std::size_t)corridor_link_source_,(std::size_t)target,placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
         corridor_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
         selected_corridor_=(int)corridor_network_.connections().size()-1;
         selected_habitat_=-1;

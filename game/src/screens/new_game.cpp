@@ -90,6 +90,7 @@ void GameApp::render_new_game(Renderer& r){
         first_person_hover_storage_resource_=-1;
         first_person_hover_storage_box_=-1;
         corridor_network_.clear();
+        pressure_doors_.clear();storage_gate_open_.clear();
         corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
         utility_network_.clear();
         utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);

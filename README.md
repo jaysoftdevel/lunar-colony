@@ -40,6 +40,18 @@ Crew-accessible habitats and corridors share a common structural access contract
 - Supply channels include structural supports, electrical/data routing and water-service hardware.
 - World construction geometry is mesh-only in the current development phase: blue target mesh, yellow installed mesh and substantially bolder green mesh at completion. No structure textures or filled surfaces are emitted yet.
 
+## v0.41.7 outdoor robot workshop
+
+Build **Robot Workshop** from the Structures palette. Each workshop has four independent robot service bays, a boarding ramp and an automatic sliding gate. After construction completes, idle robots return to assigned bays inside; new construction/delivery work takes priority and dispatches them again. Docked service restores mechanical condition. Build additional workshops for fleets larger than four robots.
+
+The placement preview marks the ramp approach and waiting area in amber. The entire rotated area must remain inside the playfield and clear of blocking structures, pallets, corridors and walkways. Placement also checks a static route to the fleet. Later construction placement protects that approach. Robot collision and floor queries share the exact hollow workshop/ramp geometry. The workshop is an outdoor robot structure and does not accept pressure-corridor connections.
+
+## v0.41.6 fixed storage gates and hermetic sliding doors
+
+Storage domes have a dedicated robot loading gate with a marked approach bay. Robots put in and take out cargo at this one gate, queuing off-axis when occupied. Corridors cannot attach to the gate or cross its reserved loading area. Gate orientation is fixed; older saves retain their installed corridors and receive a gate on an unused face.
+
+Completed corridor-to-structure connections use solid paired sliding pressure doors with perimeter gaskets and overlapping centre seals. They open for a nearby POV user, wait while the doorway is occupied, and close afterward. Closed and partly open leaves block movement. Air Lock doors interlock, and the storage loading buffer remains sealed from crew interiors. Save schema 14 retains older-save support.
+
 ## v0.41.5 close-range carrier blueprint drop-offs
 
 CR-01 carriers delivering to habitat/resource blueprints can now approach much closer to the target structure side. The delivery-apron picker no longer enforces the same conservative own-target footprint clearance used for unrelated structures while that target is still incomplete, and the selected apron offset for incomplete targets is reduced. This keeps unloading visibly near the blueprint so staged resource boxes appear where the carrier is actually servicing, while completed structures and non-target obstacles retain the wider safety clearances.

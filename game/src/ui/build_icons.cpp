@@ -243,6 +243,16 @@ void GameApp::render_build_icon(Renderer& r,BuildIcon icon,Rect q,Color c) const
             r.draw_line({cx+8,cy-8},{cx+8,cy+8},c,2.2f);
             r.draw_line({cx-8,cy},{cx+8,cy},c,2.2f);
             break;
+        case BuildIcon::RobotWorkshop:
+            r.draw_rect({cx-19,cy-15,38,30},{c.r,c.g,c.b,0.16f});
+            r.draw_line({cx-19,cy+15},{cx-19,cy-12},c,2);
+            r.draw_line({cx+19,cy+15},{cx+19,cy-12},c,2);
+            r.draw_line({cx-19,cy-12},{cx,cy-22},c,2);
+            r.draw_line({cx,cy-22},{cx+19,cy-12},c,2);
+            for(float x:{cx-13,cx+7}) for(float y:{cy-8,cy+5}) r.draw_rect({x,y,7,8},c);
+            r.draw_line({cx-5,cy+15},{cx-9,cy+24},c,2);
+            r.draw_line({cx+5,cy+15},{cx+9,cy+24},c,2);
+            break;
         case BuildIcon::StorageDome:
             // Low geodesic storage dome with a central cargo door.
             r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);

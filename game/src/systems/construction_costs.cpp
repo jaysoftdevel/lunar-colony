@@ -159,6 +159,8 @@ ConstructionResourcePlan structure(ResourceKind kind,const ResourceMesh& mesh){
             total.plastic=kg(area*1.15+(double)mesh.height*4.2);
             aluminum_share=0.52;
             break;
+        case ResourceKind::RobotWorkshop:
+            total=scaled(total,1.30,1.65,1.80,1.15); aluminum_share=0.52; break;
         case ResourceKind::Count: break;
     }
     total=lunar_half_mass(total,aluminum_share);

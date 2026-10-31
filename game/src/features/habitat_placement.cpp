@@ -1,4 +1,6 @@
+#include "game/world/robot_workshop.hpp"
 #include "game/game_app.hpp"
+#include "game/world/storage_loading_gate.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
@@ -34,6 +36,8 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
         if(overlaps(candidate_box,other_box,clearance)) return false;
     }
     for(const auto& placed:placed_resources_){
+        if(placed.kind==ResourceKind::RobotWorkshop && overlaps(candidate_box,workshop::approach(placed),clearance)) return false;
+        if(placed.kind==ResourceKind::StorageDome && overlaps(candidate_box,storage_loading::apron(placed),clearance)) return false;
         const ResourceMesh& other=resource_models_.mesh(placed);
         const auto other_box=footprint(placed.position,placed.rotation_degrees,other.footprint_x,other.footprint_z);
         if(overlaps(candidate_box,other_box,clearance)) return false;

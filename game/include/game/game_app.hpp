@@ -11,6 +11,7 @@
 #include "game/world/habitat_mesh.hpp"
 #include "game/world/resource_mesh.hpp"
 #include "game/world/corridor_network.hpp"
+#include "game/world/pressure_door.hpp"
 #include "game/world/utility_network.hpp"
 #include "game/world/walkway_network.hpp"
 #include <optional>
@@ -92,6 +93,8 @@ private:
     int first_person_hover_storage_resource_=-1;
     int first_person_hover_storage_box_=-1;
     CorridorNetwork corridor_network_{};
+    std::vector<PressureDoorState> pressure_doors_{};
+    std::vector<float> storage_gate_open_{};
     UtilityNetwork utility_network_{};
     WalkwayNetwork walkway_network_{};
     float placement_rotation_degrees_=0.0f;
@@ -140,6 +143,7 @@ private:
     void render_corridors(eng::Renderer& r);
     void render_habitats(eng::Renderer& r);
     void render_resources(eng::Renderer& r);
+    void render_storage_loading_gate(eng::Renderer& r,const PlacedResource& item,float opening,bool preview=false) const;
     void render_ground_resources(eng::Renderer& r);
     void render_builder_robot(eng::Renderer& r);
     void render_utilities(eng::Renderer& r);
@@ -210,6 +214,11 @@ private:
     float first_person_floor_height(eng::Vec3 p) const;
     std::string first_person_environment_label() const;
     float first_person_door_open_fraction(eng::Vec3 door_position) const;
+    void update_pressure_doors(float dt);
+    void update_workshop_gates(float dt);
+    bool workshop_accessible(const PlacedResource& candidate) const;
+    void render_workshop_gate(eng::Renderer& r,const PlacedResource& item,bool preview=false,bool valid=true) const;
+    void assign_storage_loading_faces();
     std::vector<CorridorDoor> habitat_doors(std::size_t habitat_index) const;
     std::vector<CorridorDoor> storage_dome_doors(std::size_t resource_index) const;
     bool habitat_has_complete_corridor_connection(std::size_t habitat_index) const;

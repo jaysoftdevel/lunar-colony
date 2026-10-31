@@ -32,7 +32,8 @@ enum class BuildIcon {
     LandingPad,
     StorageDome,
     SupplyChannel,
-    Walkway
+    Walkway,
+    RobotWorkshop
 };
 
 enum class BuildCategory {

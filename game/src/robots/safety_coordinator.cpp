@@ -1777,6 +1777,15 @@ SafetyTickStats safety_tick(float dt,
         for(std::size_t ai=0;ai<agents.size();++ai){
             auto& rt=*agents[ai].runtime;
             if(rt.mode==SafetyMode::Fault) continue;
+            // A stationary terminal hold needs no route or local rollout.
+            // Idle actors otherwise retain route_replan_required after arrival
+            // and can consume every budget slot ahead of low-priority returns.
+            // Their certified hold is still checked/arbitrated below.
+            if(!rt.goal_valid && !rt.temporary_goal_valid && std::abs(agents[ai].speed_mps)<0.003f){
+                rt.route_replan_required=false;
+                rt.planner_elapsed=0.0f;
+                continue;
+            }
             const float interval=kPlannerReplanSeconds+planner_phase_offset_seconds(ai);
             if(rt.planner_elapsed>=interval || rt.proposals.empty() || rt.route_replan_required){
                 planner_jobs.push_back(ai);

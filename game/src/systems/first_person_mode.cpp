@@ -1,8 +1,10 @@
+#include "game/world/robot_workshop.hpp"
 #include "game/game_app.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/corridor/detail.hpp"
 #include "game/world/corridor/corridor_module.hpp"
 #include "game/world/geometry_standards.hpp"
+#include "game/world/storage_loading_gate.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -418,9 +420,9 @@ std::vector<CorridorDoor> GameApp::storage_dome_doors(std::size_t resource_index
 }
 
 float GameApp::first_person_door_open_fraction(Vec3 door_position) const {
-    if(first_person_mode_!=FirstPersonMode::Active) return 0.0f;
-    const float d=dist_xz_local(first_person_.feet_position(),door_position);
-    return std::clamp((geometry::kDoorTriggerRadius+0.35f-d)/1.25f,0.0f,1.0f);
+    for(const auto& state:pressure_doors_)
+        if(length(state.door.wall_position-door_position)<0.01f) return state.open_fraction;
+    return 0.0f;
 }
 
 bool GameApp::first_person_spawn_valid(Vec3 p) const {
@@ -432,6 +434,7 @@ bool GameApp::first_person_spawn_valid(Vec3 p) const {
     // Test the whole body footprint rather than only the avatar center.
     for(const auto& item:placed_resources_){
         if(!item.construction.complete() || item.kind==ResourceKind::StorageDome) continue;
+        if(item.kind==ResourceKind::RobotWorkshop){if(!workshop::clear(item,p,p,radius)) return false;continue;}
         const auto& mesh=resource_models_.mesh(item);
         if(!near_rotated_footprint(p,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius)) continue;
         if(body_overlaps_region(p,radius,[&](Vec3 q){
@@ -465,6 +468,7 @@ bool GameApp::first_person_spawn_valid(Vec3 p) const {
     for(std::size_t i=0;i<placed_resources_.size();++i){
         const auto& item=placed_resources_[i];
         if(!item.construction.complete() || item.kind!=ResourceKind::StorageDome) continue;
+        if(storage_loading::body_hits_buffer(item,p,radius)) return false;
         const auto& mesh=resource_models_.mesh(item);
         if(!near_rotated_footprint(p,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+0.8f)) continue;
         const auto doors=storage_dome_doors(i);
@@ -503,6 +507,9 @@ bool GameApp::first_person_spawn_valid(Vec3 p) const {
 }
 
 float GameApp::first_person_floor_height(Vec3 p) const {
+    for(const auto& item:placed_resources_) if(item.kind==ResourceKind::RobotWorkshop && item.construction.complete()){
+        const float y=workshop::floor(item,p);if(y>0) return y;
+    }
     // A click inside a completed structure belongs to that structure first.
     // The old implementation tested corridors first and used one hard-coded
     // 0.20 m floor for every habitat, which could spawn the character below the
@@ -585,6 +592,19 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
     const float radius=first_person_.body_radius();
     const float half=(float)playfield_.size()*0.5f-radius;
     if(to.x<-half || to.x>half || to.z<-half || to.z>half) return false;
+
+    // Closed/partly open leaves are physical seals. Use the same opening and
+    // travel as rendering, so an avatar cannot step through a closed outline.
+    for(std::size_t i=0;i<placed_habitats_.size();++i){
+        if(!placed_habitats_[i].construction.complete()) continue;
+        for(const auto& d:habitat_doors(i))
+            if(pressure_door::blocks(d,first_person_door_open_fraction(d.wall_position),from,to,radius)) return false;
+    }
+    for(std::size_t i=0;i<placed_resources_.size();++i){
+        if(!placed_resources_[i].construction.complete()) continue;
+        for(const auto& d:storage_dome_doors(i))
+            if(pressure_door::blocks(d,first_person_door_open_fraction(d.wall_position),from,to,radius)) return false;
+    }
 
     struct CorridorOccupancy {
         bool inside{false};       // full FPV body fits inside a pressure volume
@@ -678,6 +698,7 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
         // the avatar center is still technically outside the footprint.
         for(const auto& item:placed_resources_){
             if(!item.construction.complete() || item.kind==ResourceKind::StorageDome) continue;
+            if(item.kind==ResourceKind::RobotWorkshop){if(!workshop::clear(item,previous,current,radius)) return false;continue;}
             const auto& mesh=resource_models_.mesh(item);
             if(!near_rotated_footprint(current,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius)) continue;
             if(body_overlaps_region(current,radius,[&](Vec3 q){
@@ -718,6 +739,7 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
         for(std::size_t i=0;i<placed_resources_.size();++i){
             const auto& item=placed_resources_[i];
             if(!item.construction.complete() || item.kind!=ResourceKind::StorageDome) continue;
+            if(storage_loading::body_hits_buffer(item,current,radius)) return false;
             const auto& mesh=resource_models_.mesh(item);
             const bool near_previous=near_rotated_footprint(previous,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+0.8f);
             const bool near_current=near_rotated_footprint(current,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+0.8f);
