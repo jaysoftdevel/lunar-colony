@@ -46,7 +46,7 @@ BuildCatalog::BuildCatalog(){
         resource("water_purifier","Water Purifier","Facility / Water Recycling",BuildIcon::WaterPurifier,BuildCategory::Structures,ResourceKind::WaterPurifier),
         resource("antenna","Antenna","Facility / Communications",BuildIcon::Antenna,BuildCategory::Structures,ResourceKind::Antenna),
         resource("landing_pad","Landing Pad","Facility / Transport",BuildIcon::LandingPad,BuildCategory::Structures,ResourceKind::LandingPad),
-        resource("robot_workshop","Robot Workshop","Outdoor / Four Parking + Service Bays",BuildIcon::RobotWorkshop,BuildCategory::Structures,ResourceKind::RobotWorkshop),
+        resource("robot_workshop","Robot Workshop","Outdoor / Four Service Bays / Supply Required",BuildIcon::RobotWorkshop,BuildCategory::Structures,ResourceKind::RobotWorkshop),
         walkway()
     };
 }

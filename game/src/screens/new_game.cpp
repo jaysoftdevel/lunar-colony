@@ -110,6 +110,7 @@ void GameApp::render_new_game(Renderer& r){
         placement_habitat_size_=HabitatSizeTier::Small;
         placement_resource_size_=ResourceSizeTier::Small;
         placement_storage_size_=StorageDomeSize::Small;
+        storage_gate_placement_active_=false;
         habitat_view_mode_=HabitatViewMode::Default;
         game_speed_=debug_start_template_enabled_?GameSpeed::Pause:GameSpeed::Normal;
         clear_world_selection();

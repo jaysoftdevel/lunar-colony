@@ -101,6 +101,13 @@ private:
     HabitatSizeTier placement_habitat_size_{HabitatSizeTier::Small};
     ResourceSizeTier placement_resource_size_{ResourceSizeTier::Small};
     StorageDomeSize placement_storage_size_{StorageDomeSize::Small};
+    // Storage placement is deliberately two-phase.  The first click freezes
+    // the dome footprint/size; the second click chooses one of the free cargo
+    // sectors between the four crew pressure entrances.
+    bool storage_gate_placement_active_{false};
+    eng::Vec3 storage_gate_pending_position_{};
+    float storage_gate_pending_rotation_degrees_{0.0f};
+    StorageDomeSize storage_gate_pending_size_{StorageDomeSize::Small};
     HabitatViewMode habitat_view_mode_=HabitatViewMode::Default;
     GameSpeed game_speed_=GameSpeed::Normal;
     SelectionKind selection_kind_=SelectionKind::None;
@@ -217,9 +224,12 @@ private:
     void update_pressure_doors(float dt);
     void update_workshop_gates(float dt);
     bool workshop_accessible(const PlacedResource& candidate) const;
+    bool workshop_supplied(std::size_t resource_index) const;
+    bool workshop_operational(std::size_t resource_index) const;
     void render_workshop_gate(eng::Renderer& r,const PlacedResource& item,bool preview=false,bool valid=true) const;
     void assign_storage_loading_faces();
     void synchronize_storage_gates();
+    bool storage_gate_face_clear(const PlacedResource& owner,int face,std::optional<std::size_t> owner_index=std::nullopt) const;
     int available_storage_gate_face(std::size_t owner,int requested_face=-1) const;
     bool add_storage_gate(std::size_t owner,int requested_face=-1);
     void render_storage_gate_shutters(eng::Renderer& r,const PlacedResource& owner,int face,float opening,float progress,bool preview=false) const;

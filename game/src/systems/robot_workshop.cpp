@@ -3,6 +3,23 @@
 #include "game/robots/path_planner.hpp"
 
 namespace game {
+bool GameApp::workshop_supplied(std::size_t resource_index) const {
+    if(resource_index>=placed_resources_.size() || placed_resources_[resource_index].kind!=ResourceKind::RobotWorkshop) return false;
+    for(const auto& link:utility_network_.connections()){
+        if(link.kind!=UtilityKind::SupplyChannel || !link.construction.complete()) continue;
+        const auto attached=[&](const UtilityEndpoint& endpoint){
+            return endpoint.kind==UtilityEndpointKind::Resource && endpoint.index==resource_index;
+        };
+        if(attached(link.endpoint_a) || attached(link.endpoint_b)) return true;
+    }
+    return false;
+}
+
+bool GameApp::workshop_operational(std::size_t resource_index) const {
+    return resource_index<placed_resources_.size() && placed_resources_[resource_index].kind==ResourceKind::RobotWorkshop &&
+           placed_resources_[resource_index].construction.complete() && workshop_supplied(resource_index);
+}
+
 void GameApp::update_workshop_gates(float dt){
     dt=std::clamp(dt,0.0f,0.10f);
     for(std::size_t index=0;index<placed_resources_.size();++index){
@@ -11,7 +28,7 @@ void GameApp::update_workshop_gates(float dt){
         bool requested=false,occupied=false;
         for(const auto& robot:builder_robots_){
             const auto p=workshop::local(item,robot.position);
-            const bool threshold=std::abs(p.z+workshop::kHalf)<2.60f && std::abs(p.x)<workshop::kGateHalf+1.50f;
+            const bool threshold=std::abs(p.z+workshop::kHalfZ)<2.60f && std::abs(p.x)<workshop::kGateHalf+1.50f;
             occupied=occupied || threshold;
             if(robot.workshop_index==index && robot.workshop_returning) requested=true;
             if(workshop::inside(item,robot.position) &&
@@ -21,8 +38,8 @@ void GameApp::update_workshop_gates(float dt){
         }
         if(first_person_mode_==FirstPersonMode::Active){
             const auto p=workshop::local(item,first_person_.feet_position());
-            requested=requested || (std::abs(p.z+workshop::kHalf)<4.0f && std::abs(p.x)<4.0f);
-            occupied=occupied || (std::abs(p.z+workshop::kHalf)<1.2f && std::abs(p.x)<3.0f);
+            requested=requested || (std::abs(p.z+workshop::kHalfZ)<4.0f && std::abs(p.x)<4.0f);
+            occupied=occupied || (std::abs(p.z+workshop::kHalfZ)<1.2f && std::abs(p.x)<3.0f);
         }
         // A loaded save may contain a rover straddling the threshold. Restore
         // an open gate before it becomes authoritative collision geometry.
@@ -80,7 +97,7 @@ bool GameApp::workshop_accessible(const PlacedResource& candidate) const {
             if(world_math::distance_xz(p,pile.position)<pile.radius+radius) return false;
         return true;
     };
-    const auto start=workshop::world(candidate,{0,0,-15.0f});
+    const auto start=workshop::world(candidate,{0,0,workshop::kApproachFar+1.0f});
     eng::Vec3 goal{};float best=std::numeric_limits<float>::max();
     for(const auto& robot:builder_robots_){
         if(!point_clear(robot.position)) continue;

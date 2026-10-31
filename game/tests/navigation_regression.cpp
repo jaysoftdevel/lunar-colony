@@ -333,6 +333,19 @@ struct NavigationRegression {
         }
         // Inspect the emitted meshes at every storage size and rotated pose.
         GameApp geometry(engine);geometry.playfield_.rebuild(256);
+        // New primary gates use only the four sectors between the fixed crew
+        // entrances, so all four cardinal corridor doors remain selectable.
+        for(int cargo_face:storage_loading::kCargoFaces){
+            PlacedResource owner;owner.kind=ResourceKind::StorageDome;owner.storage_loading_face=(std::int8_t)cargo_face;
+            owner.storage_size=StorageDomeSize::Small;owner.construction.step=kConstructionSteps;
+            geometry.placed_resources_={owner};geometry.corridor_network_.clear();
+            for(int crew_face:{0,1,2,3}){
+                const auto n=storage_loading::normal(owner,crew_face);
+                CorridorBuildAnchor anchor{CorridorEndpointKind::Resource,0,owner.position+n*4.0f};
+                require(geometry.corridor_network_.preview_anchor(anchor,owner.position+n*12.0f,{},geometry.habitat_models_,geometry.placed_resources_,geometry.resource_models_).has_value(),
+                        "inter-door cargo gate blocked a crew entrance");
+            }
+        }
         for(int size=0;size<4;++size) for(float rotation:{0.0f,37.0f,90.0f,135.0f,270.0f}){
             PlacedResource owner;owner.kind=ResourceKind::StorageDome;owner.storage_size=(StorageDomeSize)size;
             owner.storage_loading_face=1;owner.rotation_degrees=rotation;owner.placement_sequence=1;owner.construction.step=kConstructionSteps;
@@ -391,6 +404,13 @@ struct NavigationRegression {
     static void workshops(){
         eng::Application engine;
         auto tick=[](GameApp& app){app.update_pressure_doors(1.0f/60);app.update_construction(1.0f/60);};
+        auto connect_supply=[](GameApp& app,std::size_t resource_index){
+            UtilityConnection link;link.kind=UtilityKind::SupplyChannel;
+            link.endpoint_a.kind=UtilityEndpointKind::Resource;link.endpoint_a.index=resource_index;
+            link.endpoint_b.kind=UtilityEndpointKind::Open;
+            link.construction.step=link.construction.total_steps;
+            app.utility_network_.mutable_connections().push_back(std::move(link));
+        };
         auto parked=[](const GameApp& app){return std::all_of(app.builder_robots_.begin(),app.builder_robots_.end(),[](const auto& r){return r.workshop_parked;});};
         auto verify=[](const GameApp& app){
             for(std::size_t i=0;i<app.builder_robots_.size();++i){const auto& r=app.builder_robots_[i];
@@ -428,6 +448,7 @@ struct NavigationRegression {
             app.reset_builder_robot_and_starter_stash();app.ground_resource_piles_.clear();
             PlacedResource w;w.kind=ResourceKind::RobotWorkshop;w.rotation_degrees=rotation;
             w.construction.step=kConstructionSteps;app.placed_resources_={w};
+            connect_supply(app,0);
             for(std::size_t i=0;i<4;++i){auto& r=app.builder_robots_[i];
                 r.position=workshop::world(w,{-7.5f+5.0f*(float)i,0,-20.0f});r.heading_degrees=rotation;
                 r.mode=BuilderRobotMode::Idle;r.target={};r.condition=0.50f;}
@@ -457,6 +478,8 @@ struct NavigationRegression {
         }
         GameApp placement(engine);placement.playfield_.rebuild(128);
         PlacedResource w;w.kind=ResourceKind::RobotWorkshop;
+        const auto& compact_mesh=placement.resource_models_.mesh(ResourceKind::RobotWorkshop,ResourceSizeTier::Standard);
+        require(compact_mesh.footprint_x<=11.01f && compact_mesh.footprint_z<=10.01f,"workshop footprint was not reduced");
         require(placement.resource_placement_valid(w.kind,ResourceSizeTier::Standard,StorageDomeSize::Small,{0,0,0},0),"open workshop placement rejected");
         require(!placement.resource_placement_valid(w.kind,ResourceSizeTier::Standard,StorageDomeSize::Small,{0,0,-51},0),"ramp clearance crossed map boundary");
         PlacedResource obstacle;obstacle.kind=ResourceKind::PowerStorage;obstacle.position={0,0,-14};placement.placed_resources_={obstacle};
@@ -466,12 +489,12 @@ struct NavigationRegression {
         require(!placement.placement_valid(HabitatKind::AirLock,HabitatSizeTier::Small,{0,0,-14},0),"new habitat blocked reserved workshop ramp");
         GeometryRecorder geometry;
         placement.render_workshop_gate(geometry,w);
-        const auto front=workshop::world(w,{0,1.3f,-7.5f}),back=workshop::world(w,{0,1.3f,-6.5f});
+        const auto front=workshop::world(w,{0,1.3f,-workshop::kHalfZ-0.5f}),back=workshop::world(w,{0,1.3f,-workshop::kHalfZ+0.5f});
         require(segment_hits_mesh(front,back,geometry.triangles),"closed workshop gate has no panel");
         w.workshop_gate_open=1;geometry.triangles.clear();placement.render_workshop_gate(geometry,w);
         require(!segment_hits_mesh(front,back,geometry.triangles),"open workshop gate still obstructs the centre");
         float last=0;
-        for(int i=0;i<=100;++i){const float z=-12.0f+5.0f*(float)i/100;
+        for(int i=0;i<=100;++i){const float z=workshop::kRampEnd+(-workshop::kHalfZ-workshop::kRampEnd)*(float)i/100;
             const float y=workshop::floor(w,workshop::world(w,{0,0,z}));
             require(y>=last-0.001f && y-last<0.02f,"ramp floor is discontinuous");last=y;}
         w.workshop_gate_open=0;
@@ -486,6 +509,7 @@ struct NavigationRegression {
         fleet.reset_builder_robot_and_starter_stash();fleet.ground_resource_piles_.clear();
         w.position={-18,0,0};PlacedResource other=w;other.position={18,0,0};other.rotation_degrees=180;
         fleet.placed_resources_={w,other};
+        connect_supply(fleet,0);connect_supply(fleet,1);
         for(std::size_t i=0;i<8;++i){auto& r=fleet.builder_robots_[i];const auto& home=fleet.placed_resources_[i/4];
             r.position=workshop::world(home,{-7.5f+5*(float)(i%4),0,-20});r.mode=BuilderRobotMode::Idle;r.target={};}
         wait_parking(fleet,"eight robots / two workshops");
@@ -497,6 +521,7 @@ struct NavigationRegression {
         blueprint.resource_plan.total_steps=kConstructionSteps;
         for(auto& step:blueprint.resource_plan.steps) step.amount(MaterialResource::Iron)=10;
         construction.placed_resources_={blueprint};
+        connect_supply(construction,0);
         for(int frame=0;frame<36000 && !construction.placed_resources_[0].construction.complete();++frame){
             tick(construction);
             for(const auto& r:construction.builder_robots_){
@@ -506,7 +531,20 @@ struct NavigationRegression {
         }
         require(construction.placed_resources_[0].construction.complete(),"workshop construction did not finish");
         wait_parking(construction,"newly constructed workshop");
-        std::cout<<"Workshop parking, task dispatch, ramp clearance, reachability, save/load and multi-workshop allocation passed\n";
+        // A completed but unconnected workshop is intentionally offline.  It
+        // must not attract idle robots or provide maintenance until a completed
+        // supply channel terminates at the structure.
+        GameApp offline(engine);offline.playfield_.rebuild(128);offline.starting_robot_count_=1;offline.starting_carrier_count_=1;
+        offline.reset_builder_robot_and_starter_stash();offline.ground_resource_piles_.clear();
+        PlacedResource unpowered;unpowered.kind=ResourceKind::RobotWorkshop;unpowered.construction.step=kConstructionSteps;
+        offline.placed_resources_={unpowered};
+        for(int i=0;i<240;++i) tick(offline);
+        require(!offline.workshop_supplied(0) && !offline.workshop_operational(0),"unconnected workshop reported online");
+        for(const auto& r:offline.builder_robots_) require(!r.workshop_parked && r.workshop_index==kNoRobotIndex,"robot used an unpowered workshop");
+        connect_supply(offline,0);
+        require(offline.workshop_operational(0),"completed supply channel did not enable workshop");
+        wait_parking(offline,"supply-enabled workshop");
+        std::cout<<"Workshop supply gating, compact parking, task dispatch, ramp clearance, reachability, save/load and multi-workshop allocation passed\n";
     }
     static void gates(){
         eng::Application engine;GameApp app(engine);app.playfield_.rebuild(256);

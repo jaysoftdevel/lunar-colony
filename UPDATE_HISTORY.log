@@ -263,3 +263,5 @@ v0.40.9
 0.41.8: Up to two resource-built storage gate upgrades on planned/completed domes, protected loading aprons, independent cargo stations, persistent parent links, cascade removal, and blue/yellow/green meshes for all pressure doors and loading gates.
 
 0.42.0: Unified Linux/Windows source workspace; Win32 + Direct3D 12/DXGI backend; matched shell/batch development scripts; isolated platform build trees; cross-platform executable paths and CPU topology; preserves v0.41.8 gameplay/save baseline.
+
+0.42.1: Linux-focused gameplay update: Storage Dome placement is now two-stage (shell/size first, then a cargo gate in a free inter-door sector); Robot Workshops require a completed Supply Channel to become operational; workshop hall reduced to an 11 x 10 m footprint while retaining four service bays, gate/ramp access, and a protected maneuvering apron.

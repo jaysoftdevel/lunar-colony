@@ -53,6 +53,7 @@ void GameApp::render_build_bar(Renderer& r){
             placement_habitat_size_=HabitatSizeTier::Small;
             placement_resource_size_=ResourceSizeTier::Small;
             placement_storage_size_=StorageDomeSize::Small;
+            storage_gate_placement_active_=false;
             corridor_build_start_.reset();
             utility_build_start_.reset();
             walkway_build_start_.reset();
@@ -111,6 +112,7 @@ void GameApp::render_build_bar(Renderer& r){
                 placement_habitat_size_=HabitatSizeTier::Small;
                 placement_resource_size_=ResourceSizeTier::Small;
                 placement_storage_size_=StorageDomeSize::Small;
+                storage_gate_placement_active_=false;
                 corridor_build_start_.reset();
                 utility_build_start_.reset();
                 walkway_build_start_.reset();
@@ -132,9 +134,10 @@ void GameApp::render_build_bar(Renderer& r){
             line2 += " / SIZE " + std::string(habitat_size_name(placement_habitat_size_));
         if(item.kind==BuildObjectKind::Resource && hovered_item==build_catalog_.selected_index()){
             if(item.resource_kind==ResourceKind::RobotWorkshop)
-                line2 += " / FOUR SERVICE BAYS";
+                line2 += " / FOUR SERVICE BAYS / SUPPLY REQUIRED";
             else if(item.resource_kind==ResourceKind::StorageDome)
-                line2 += " / SIZE " + std::string(storage_dome_size_name(placement_storage_size_));
+                line2 += storage_gate_placement_active_?" / STEP 2: CLICK FREE CARGO SECTOR":
+                    " / STEP 1: SIZE " + std::string(storage_dome_size_name(placement_storage_size_));
             else
                 line2 += " / SIZE " + std::string(resource_size_name(placement_resource_size_));
         }

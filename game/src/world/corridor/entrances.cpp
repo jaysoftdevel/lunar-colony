@@ -557,6 +557,13 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
     if(anchor.index>=resources.size()) return std::nullopt;
     const auto& placed=resources[anchor.index];
     if(placed.kind!=ResourceKind::StorageDome) return std::nullopt;
+
+    // Cargo sectors live between the four crew entrances.  A click inside a
+    // reserved loading apron must therefore remain a cargo-area click instead
+    // of being silently redirected to the nearest cardinal pressure door.
+    for(int face:storage_loading::faces(placed))
+        if(face>=0 && storage_loading::reserved_face(placed,anchor.position,0.10f,face)) return std::nullopt;
+
     const auto& mesh=library.mesh(placed);
     const float wall_radius=std::min(mesh.footprint_x,mesh.footprint_z)*(5.35f/13.0f);
     const Vec3 local_normals[4]={{0,0,-1},{1,0,0},{0,0,1},{-1,0,0}};

@@ -11,13 +11,20 @@ inline constexpr float kServiceOffset=1.55f;
 inline constexpr float kReach=0.55f;
 inline constexpr float kApronDepth=4.40f;
 inline constexpr float kApronHalfWidth=2.15f;
+inline constexpr std::array<int,4> kCargoFaces{{4,5,6,7}};
 
 inline eng::Vec3 local_normal(int face){
     switch(face){
         case 0:return {0,0,-1};
         case 2:return {0,0,1};
         case 3:return {-1,0,0};
+        // Cargo gates occupy the four sectors between the fixed cardinal crew
+        // pressure entrances.  Keeping them between those doors means a user
+        // never has to sacrifice a corridor entrance just to access storage.
         case 4:return {0.70710678f,0,0.70710678f};
+        case 5:return {-0.70710678f,0,0.70710678f};
+        case 6:return {-0.70710678f,0,-0.70710678f};
+        case 7:return {0.70710678f,0,-0.70710678f};
         default:return {1,0,0};
     }
 }
@@ -31,7 +38,7 @@ inline eng::Vec3 normal(const PlacedResource& item,int selected=-1){
 inline float outer_radius(const PlacedResource& item,int selected=-1){
     const auto n=local_normal(face(item,selected));
     const float half=storage_dome_diameter_m(item.storage_size)*0.5f;
-    return (half-(face(item,selected)==4?1.10f:0.0f))/std::max(std::abs(n.x),std::abs(n.z));
+    return (half-(face(item,selected)>=4?1.10f:0.0f))/std::max(std::abs(n.x),std::abs(n.z));
 }
 inline eng::Vec3 wall(const PlacedResource& item,int selected=-1){
     return item.position+normal(item,selected)*(storage_dome_diameter_m(item.storage_size)*(5.35f/13.0f));
@@ -40,7 +47,7 @@ inline eng::Vec3 mouth(const PlacedResource& item,int selected=-1){
     return item.position+normal(item,selected)*(outer_radius(item,selected)-0.20f);
 }
 inline eng::Vec3 service(const PlacedResource& item,int selected=-1){
-    const float radius=face(item,selected)==4?
+    const float radius=face(item,selected)>=4?
         storage_dome_diameter_m(item.storage_size)*0.5f/0.70710678f+1.85f:
         outer_radius(item,selected)+kServiceOffset;
     return item.position+normal(item,selected)*radius;

@@ -210,7 +210,7 @@ void GameApp::render_selection_panel(Renderer& r){
                 if(robot.workshop_parked) task<<"TASK  CHARGING / MAINTENANCE DOCK "<<robot.workshop_bay+1;
                 else if(robot.workshop_returning) task<<"TASK  PARK IN ROBOT WORKSHOP";
                 else if(robot.post_delivery_hold || robot.drop_exit_pending) task<<"TASK  CLEARING CONSTRUCTION DROP ZONE";
-                else if(robot.workshop_index==kNoRobotIndex && std::any_of(placed_resources_.begin(),placed_resources_.end(),[](const auto& w){return w.kind==ResourceKind::RobotWorkshop && w.construction.complete();}))
+                else if(robot.workshop_index==kNoRobotIndex && [&]{for(std::size_t wi=0;wi<placed_resources_.size();++wi) if(workshop_operational(wi)) return true;return false;}())
                     task<<"TASK  WAITING FOR A FREE WORKSHOP BAY";
                 else if(robot.role==RobotRole::Constructor && robot.route_active && !robot.target.valid())
                     task<<"TASK  RETURNING TO RESOURCE STASH PARKING";
@@ -414,12 +414,14 @@ void GameApp::render_selection_panel(Renderer& r){
         if(item.kind==ResourceKind::RobotWorkshop){
             int assigned=0,parked=0;
             for(const auto& robot:builder_robots_) if(robot.workshop_index==(std::size_t)selected_resource_){++assigned;if(robot.workshop_parked) ++parked;}
+            const bool supplied=workshop_supplied((std::size_t)selected_resource_);
             game_label(r,{x,p.y+98},"SERVICE BAYS  "+std::to_string(parked)+" PARKED / 4 TOTAL",0.54f,theme_);
             game_label(r,{x,p.y+122},"ASSIGNED ROBOTS  "+std::to_string(assigned),0.50f,theme_,true);
             game_label(r,{x,p.y+148},"GATE  "+std::string(item.workshop_gate_open>=0.999f?"OPEN":(item.workshop_gate_open<=0?"CLOSED":"MOVING")),0.50f,theme_);
-            game_label(r,{x,p.y+174},"AUTOMATIC PARKING / DOCKED MAINTENANCE",0.44f,theme_,true);
-            game_label(r,{x,p.y+202},"RAMP APPROACH RESERVED",0.46f,theme_,true);
-            game_label(r,{x,p.y+236},"DEL REMOVE / LMB SELECT OTHER",0.46f,theme_,true);
+            game_label(r,{x,p.y+174},supplied?"SUPPLY CHANNEL  ONLINE":"SUPPLY CHANNEL  REQUIRED / OFFLINE",0.46f,theme_,!supplied);
+            game_label(r,{x,p.y+198},supplied?"AUTOMATIC PARKING / DOCKED MAINTENANCE":"CONNECT A COMPLETED SUPPLY CHANNEL TO ENABLE",0.42f,theme_,true);
+            game_label(r,{x,p.y+222},"RAMP APPROACH RESERVED",0.44f,theme_,true);
+            game_label(r,{x,p.y+248},"DEL REMOVE / LMB SELECT OTHER",0.46f,theme_,true);
             return;
         }
         game_label(r,{x,p.y+88},used_material_cost(item.resource_plan,item.construction.step),0.44f,theme_,true);

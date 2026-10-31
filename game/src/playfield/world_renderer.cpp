@@ -384,7 +384,7 @@ void GameApp::render_storage_gate_shutters(Renderer& r,const PlacedResource& own
 
 void GameApp::render_workshop_gate(Renderer& r,const PlacedResource& item,bool preview,bool valid) const {
     const Vec3 side=rotate_y({1,0,0},item.rotation_degrees),n=rotate_y({0,0,-1},item.rotation_degrees);
-    const Vec3 base=workshop::world(item,{0,workshop::kDeck,-workshop::kHalf});
+    const Vec3 base=workshop::world(item,{0,workshop::kDeck,-workshop::kHalfZ});
     const float open=item.construction.complete()?item.workshop_gate_open:0;
     const Color color=valid?(preview?Color{0.10f,0.42f,0.96f,0.65f}:Color{0.24f,0.96f,0.42f,1}):Color{1,0.2f,0.1f,1};
     for(float sign:{-1.0f,1.0f}){
@@ -399,14 +399,17 @@ void GameApp::render_workshop_gate(Renderer& r,const PlacedResource& item,bool p
         bool docked=false;
         for(const auto& robot:builder_robots_) if(robot.workshop_parked && distance_xz(robot.position,p)<0.50f) docked=true;
         const Color lamp=docked?Color{0.25f,1,0.40f,1}:Color{0.22f,0.64f,1,1};
-        const Vec3 light=workshop::world(item,{(slot%2)?5.73f:-5.73f,1.90f,(slot/2)?3.0f:-3.0f});
+        const Vec3 bay=workshop::bay_local(slot);
+        const Vec3 light=workshop::world(item,{bay.x<0?-4.70f:4.70f,1.90f,bay.z});
         r.draw_lines_3d({light+Vec3{0,-0.24f,0},light+Vec3{0,0.24f,0}},lamp,4);
     }
     const Color status=open>=0.999f?Color{0.25f,1,0.4f,1}:Color{1,0.64f,0.12f,1};
     r.draw_lines_3d({base+side*0.4f+Vec3{0,3.18f,0}+n*0.2f,base-side*0.4f+Vec3{0,3.18f,0}+n*0.2f},status,4);
     if(preview){
-        const Vec3 a=workshop::world(item,{-5.5f,0.04f,-19}),b=workshop::world(item,{5.5f,0.04f,-19});
-        const Vec3 c=workshop::world(item,{5.5f,0.04f,-6}),d=workshop::world(item,{-5.5f,0.04f,-6});
+        const Vec3 a=workshop::world(item,{-workshop::kApproachHalfWidth,0.04f,workshop::kApproachFar});
+        const Vec3 b=workshop::world(item,{workshop::kApproachHalfWidth,0.04f,workshop::kApproachFar});
+        const Vec3 c=workshop::world(item,{workshop::kApproachHalfWidth,0.04f,-workshop::kHalfZ});
+        const Vec3 d=workshop::world(item,{-workshop::kApproachHalfWidth,0.04f,-workshop::kHalfZ});
         r.draw_lines_3d({a,b,b,c,c,d,d,a},valid?Color{1,0.70f,0.18f,1}:Color{1,0.15f,0.10f,1},2.4f);
     }
 }

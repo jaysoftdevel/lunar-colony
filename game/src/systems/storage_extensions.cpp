@@ -2,6 +2,7 @@
 #include "game/world/storage_loading_gate.hpp"
 #include "game/world/robot_workshop.hpp"
 #include "game/systems/construction_costs.hpp"
+#include <array>
 #include <unordered_map>
 
 namespace game {
@@ -27,43 +28,63 @@ void GameApp::synchronize_storage_gates(){
     }
 }
 
+bool GameApp::storage_gate_face_clear(const PlacedResource& owner,int face,std::optional<std::size_t> owner_index) const {
+    if(owner.kind!=ResourceKind::StorageDome || face<0 || face>7) return false;
+    const auto bay=storage_loading::apron(owner,face);
+    const float half=(float)playfield_.size()*0.5f;
+    constexpr float clearance=0.45f;
+
+    for(float x:{-bay.half_x,bay.half_x}) for(float z:{-bay.half_z,bay.half_z})
+        if(std::abs(bay.center.x+bay.axis_x.x*x+bay.axis_z.x*z)>half-0.10f ||
+           std::abs(bay.center.y+bay.axis_x.y*x+bay.axis_z.y*z)>half-0.10f) return false;
+
+    for(const auto& h:placed_habitats_){
+        const auto& m=habitat_models_.mesh(h);
+        if(world_math::overlaps(bay,world_math::footprint(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;
+    }
+    for(std::size_t j=0;j<placed_resources_.size();++j){
+        const auto& r=placed_resources_[j];
+        if(owner_index && j==*owner_index) continue;
+        if(owner.placement_sequence && r.kind==ResourceKind::StorageGate && r.storage_parent_sequence==owner.placement_sequence) continue;
+        const auto& m=resource_models_.mesh(r);
+        if(world_math::overlaps(bay,world_math::footprint(r.position,r.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;
+        if(r.kind==ResourceKind::RobotWorkshop && world_math::overlaps(bay,workshop::approach(r),clearance)) return false;
+    }
+    for(const auto& c:corridor_network_.connections()) for(std::size_t j=1;j<c.path.size();++j)
+        if(storage_loading::segment_reserved_face(owner,c.path[j-1],c.path[j],geometry::kCorridorHalfWidth+geometry::kRouteClearance,face)) return false;
+    for(const auto& w:walkway_network_.connections()) for(std::size_t j=1;j<w.path.size();++j)
+        if(storage_loading::segment_reserved_face(owner,w.path[j-1],w.path[j],geometry::kWalkwayHalfWidth+0.25f,face)) return false;
+    for(const auto& pile:ground_resource_piles_)
+        if(storage_loading::reserved_face(owner,pile.position,pile.radius+0.4f,face)) return false;
+    return true;
+}
+
 int GameApp::available_storage_gate_face(std::size_t index,int requested) const {
     if(index>=placed_resources_.size()) return -1;
     const auto& owner=placed_resources_[index];
     if(owner.kind!=ResourceKind::StorageDome) return -1;
     int count=0;for(int f:owner.storage_extra_faces) count+=f>=0;
     if(count>=2) return -1;
-    const int primary=storage_loading::face(owner)<0?1:storage_loading::face(owner);
-    const int order[]{(primary+2)%4,(primary+1)%4,(primary+3)%4,primary%4};
+
+    const int primary=storage_loading::face(owner);
+    std::array<int,4> order{};
+    if(primary>=0 && primary<=3){
+        // Preserve pre-0.42.1 savegame behavior for domes whose primary cargo
+        // hatch already occupies a legacy cardinal service face.
+        order={(primary+2)%4,(primary+1)%4,(primary+3)%4,primary};
+    }else{
+        order=storage_loading::kCargoFaces;
+    }
+    if(primary>=4 && primary<=7){
+        const int p=primary-4;
+        order={4+(p+2)%4,4+(p+1)%4,4+(p+3)%4,primary};
+    }
     for(int face:order){
         if(requested>=0 && requested!=face) continue;
         bool used=face==primary;
         for(int f:owner.storage_extra_faces) if(face==f) used=true;
-        const auto normal=storage_loading::normal(owner,face);
-        for(const auto& c:corridor_network_.connections()) for(const auto* ep:{&c.endpoint_a,&c.endpoint_b})
-            if(ep->kind==CorridorEndpointKind::Resource && ep->index==index && eng::dot(ep->door.normal,normal)>0.70f) used=true;
-        if(used) continue;
-        const auto bay=storage_loading::apron(owner,face);bool clear=true;
-        const float half=(float)playfield_.size()*0.5f;
-        for(float x:{-bay.half_x,bay.half_x}) for(float z:{-bay.half_z,bay.half_z})
-            if(std::abs(bay.center.x+bay.axis_x.x*x+bay.axis_z.x*z)>half-0.10f ||
-               std::abs(bay.center.y+bay.axis_x.y*x+bay.axis_z.y*z)>half-0.10f) clear=false;
-        for(const auto& h:placed_habitats_){const auto& m=habitat_models_.mesh(h);
-            if(world_math::overlaps(bay,world_math::footprint(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z),0.45f)) clear=false;}
-        for(std::size_t j=0;j<placed_resources_.size();++j){
-            const auto& r=placed_resources_[j];
-            if(j==index || (r.kind==ResourceKind::StorageGate && r.storage_parent_sequence==owner.placement_sequence)) continue;
-            const auto& m=resource_models_.mesh(r);
-            if(world_math::overlaps(bay,world_math::footprint(r.position,r.rotation_degrees,m.footprint_x,m.footprint_z),0.45f)) clear=false;
-            if(r.kind==ResourceKind::RobotWorkshop && world_math::overlaps(bay,workshop::approach(r),0.45f)) clear=false;
-        }
-        for(const auto& c:corridor_network_.connections()) for(std::size_t j=1;j<c.path.size();++j)
-            if(storage_loading::segment_reserved_face(owner,c.path[j-1],c.path[j],geometry::kCorridorHalfWidth+geometry::kRouteClearance,face)) clear=false;
-        for(const auto& w:walkway_network_.connections()) for(std::size_t j=1;j<w.path.size();++j)
-            if(storage_loading::segment_reserved_face(owner,w.path[j-1],w.path[j],geometry::kWalkwayHalfWidth+0.25f,face)) clear=false;
-        for(const auto& pile:ground_resource_piles_)
-            if(storage_loading::reserved_face(owner,pile.position,pile.radius+0.4f,face)) clear=false;
-        if(clear) return face;
+        if(used || !storage_gate_face_clear(owner,face,index)) continue;
+        return face;
     }
     return -1;
 }

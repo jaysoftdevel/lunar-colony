@@ -47,7 +47,7 @@ bool valid_storage_gate_links(const std::vector<PlacedResource>& items){
     std::unordered_map<std::uint64_t,std::vector<int>> used;
     for(const auto& item:items) if(item.kind==ResourceKind::StorageGate){
         const auto owner=owners.find(item.storage_parent_sequence);
-        if(owner==owners.end() || item.storage_loading_face<0 || item.storage_loading_face>3) return false;
+        if(owner==owners.end() || item.storage_loading_face<0 || item.storage_loading_face>7) return false;
         const auto& parent=items[owner->second];auto& faces=used[item.storage_parent_sequence];
         if(item.storage_size!=parent.storage_size || item.storage_loading_face==parent.storage_loading_face || faces.size()>=2 ||
            std::find(faces.begin(),faces.end(),item.storage_loading_face)!=faces.end()) return false;
@@ -627,7 +627,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         if(source_schema>=13) item.placement_sequence=in.pod<std::uint64_t>();
         if(source_schema>=14){
             item.storage_loading_face=in.pod<std::int8_t>();
-            if(item.storage_loading_face < -1 || item.storage_loading_face > 4) in.valid=false;
+            if(item.storage_loading_face < -1 || item.storage_loading_face > 7) in.valid=false;
         }
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
         sync_stored_resource_totals(item);
@@ -787,7 +787,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         if(source_schema>=13) item.placement_sequence=in.pod<std::uint64_t>();
         if(source_schema>=14){
             item.storage_loading_face=in.pod<std::int8_t>();
-            if(item.storage_loading_face < -1 || item.storage_loading_face > 4) in.valid=false;
+            if(item.storage_loading_face < -1 || item.storage_loading_face > 7) in.valid=false;
         }
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
         sync_stored_resource_totals(item); return item;
@@ -1234,6 +1234,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     placement_habitat_size_=saved_habitat_size;
     placement_storage_size_=saved_storage_size;
     placement_resource_size_=saved_resource_size;
+    storage_gate_placement_active_=false;
 
     first_person_mode_=FirstPersonMode::Off;
     app_.set_relative_mouse_mode(false);

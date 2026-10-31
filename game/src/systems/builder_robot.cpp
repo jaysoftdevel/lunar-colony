@@ -1197,9 +1197,8 @@ void GameApp::update_builder_robot(float dt){
             }
         return 0.0f;
     };
-    const bool has_workshop=std::any_of(placed_resources_.begin(),placed_resources_.end(),[](const auto& item){
-        return item.kind==ResourceKind::RobotWorkshop && item.construction.complete();
-    });
+    bool has_workshop=false;
+    for(std::size_t i=0;i<placed_resources_.size();++i) if(workshop_operational(i)){has_workshop=true;break;}
     if(dt<=0.0f || builder_robots_.empty()) return;
 
     // A completed depot-exit latch belongs to one physical load only. Once the
@@ -1613,7 +1612,7 @@ void GameApp::update_builder_robot(float dt){
             const auto& item=placed_resources_[target.index];
             if(item.kind==ResourceKind::RobotWorkshop){
                 const auto p=workshop::local(item,candidate);const float margin=radius+0.30f;
-                return (std::abs(p.x)<workshop::kHalf+margin && std::abs(p.z)<workshop::kHalf+margin) ||
+                return (std::abs(p.x)<workshop::kHalfX+margin && std::abs(p.z)<workshop::kHalfZ+margin) ||
                     workshop::approach_hits(item,candidate,candidate,margin);
             }
         }
@@ -4954,8 +4953,7 @@ void GameApp::update_builder_robot(float dt){
     std::vector<std::array<bool,workshop::kBays>> occupied(placed_resources_.size());
     for(auto& robot:builder_robots_){
         const auto home=robot.workshop_index;
-        const bool valid=home<placed_resources_.size() && placed_resources_[home].kind==ResourceKind::RobotWorkshop &&
-            placed_resources_[home].construction.complete() && robot.workshop_bay>=0 && robot.workshop_bay<workshop::kBays &&
+        const bool valid=workshop_operational(home) && robot.workshop_bay>=0 && robot.workshop_bay<workshop::kBays &&
             !occupied[home][robot.workshop_bay];
         if(valid) occupied[home][robot.workshop_bay]=true;
         else {robot.workshop_index=kNoRobotIndex;robot.workshop_bay=-1;robot.workshop_entry_started=false;}
@@ -4968,7 +4966,7 @@ void GameApp::update_builder_robot(float dt){
             float best=std::numeric_limits<float>::max();
             for(std::size_t home=0;home<placed_resources_.size();++home){
                 const auto& item=placed_resources_[home];
-                if(item.kind!=ResourceKind::RobotWorkshop || !item.construction.complete()) continue;
+                if(!workshop_operational(home)) continue;
                 for(int slot=0;slot<workshop::kBays;++slot){
                     if(occupied[home][slot]) continue;
                     const float distance=dist_xz(robot.position,workshop::bay(item,slot));
@@ -4982,7 +4980,7 @@ void GameApp::update_builder_robot(float dt){
     // leaving the building has priority over every cosmetic return trip.
     for(std::size_t home=0;home<placed_resources_.size();++home){
         auto& item=placed_resources_[home];
-        if(item.kind!=ResourceKind::RobotWorkshop || !item.construction.complete()) continue;
+        if(!workshop_operational(home)) continue;
         auto incoming=[&](std::size_t i){
             if(i>=builder_robots_.size()) return false;
             const auto& r=builder_robots_[i];

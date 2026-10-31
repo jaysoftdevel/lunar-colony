@@ -349,7 +349,7 @@ bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const Corridor
         for(Vec3 ln:local_normals){
             bool cargo_face=false;
             for(int face:storage_loading::faces(placed))
-                if(face>=0 && dot(flat_normal(rotate_y(ln,placed.rotation_degrees)),storage_loading::normal(placed,face))>0.70f) cargo_face=true;
+                if(face>=0 && dot(flat_normal(rotate_y(ln,placed.rotation_degrees)),storage_loading::normal(placed,face))>0.92f) cargo_face=true;
             if(cargo_face) continue;
             CorridorBuildAnchor v=src;
             v.position=placed.position+flat_normal(rotate_y(ln,placed.rotation_degrees))*r;

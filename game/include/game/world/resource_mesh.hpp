@@ -130,7 +130,8 @@ struct PlacedResource {
     std::vector<StoredResourceBox> stored_boxes{};
     StorageDomeSize storage_size{StorageDomeSize::Small};
     // Fixed cargo hatch; -1 is a legacy save awaiting free-face assignment.
-    // 0..3 are the authored cardinal faces, 4 is the spare diagonal face.
+    // 0..3 are legacy cardinal faces; 4..7 are the four inter-door cargo
+    // sectors used by current placement.
     std::int8_t storage_loading_face{-1};
     std::uint64_t storage_parent_sequence{0}; // StorageGate -> owning dome
     std::size_t storage_parent_index{std::numeric_limits<std::size_t>::max()}; // derived

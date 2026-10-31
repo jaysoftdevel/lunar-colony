@@ -81,6 +81,10 @@ void GameApp::update(float dt,const InputState& in){
         if(in.right_pressed && build_catalog_.selected()!=nullptr){
             selection_marquee_active_=false;
             selection_marquee_dragged_=false;
+            if(storage_gate_placement_active_){
+                storage_gate_placement_active_=false;
+                return;
+            }
             build_catalog_.clear_selection();
             placement_rotation_degrees_=0.0f;
             placement_habitat_size_=HabitatSizeTier::Small;
@@ -99,6 +103,10 @@ void GameApp::update(float dt,const InputState& in){
             selection_marquee_dragged_=false;
             // ESC cancels the most specific active gameplay operation first.
             if(build_catalog_.selected()!=nullptr){
+                if(storage_gate_placement_active_){
+                    storage_gate_placement_active_=false;
+                    return;
+                }
                 build_catalog_.clear_selection();
                 placement_rotation_degrees_=0.0f;
                 placement_habitat_size_=HabitatSizeTier::Small;
@@ -141,7 +149,7 @@ void GameApp::update(float dt,const InputState& in){
                 if(in.wheel>0.0f) cycle_habitat(+1);
                 if(in.wheel<0.0f) cycle_habitat(-1);
                 camera_input.wheel=0.0f;
-            }else if(selected->resource_kind==ResourceKind::StorageDome){
+            }else if(selected->resource_kind==ResourceKind::StorageDome && !storage_gate_placement_active_){
                 auto cycle_storage=[&](int delta){
                     int v=(int)placement_storage_size_;
                     v=(v+delta+4)%4;
@@ -162,8 +170,12 @@ void GameApp::update(float dt,const InputState& in){
             }
             // Mouse wheel is exclusively a structure-size control while a
             // structure is being placed. Rotation is keyboard-only (N/M).
-            if(in.key_n_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
-            if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
+            const bool freeze_storage=selected->kind==BuildObjectKind::Resource &&
+                selected->resource_kind==ResourceKind::StorageDome && storage_gate_placement_active_;
+            if(!freeze_storage){
+                if(in.key_n_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
+                if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
+            }
         }
         camera_.update(camera_input,playfield_.size(),viewport_height_);
         status_.update(sim_dt);
