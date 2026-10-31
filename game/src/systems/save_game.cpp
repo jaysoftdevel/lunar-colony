@@ -11,15 +11,31 @@
 #include <fstream>
 #include <limits>
 #include <system_error>
+#include <unordered_map>
 
 namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=15;
+constexpr std::uint32_t kSaveSchema=16;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
+
+bool valid_storage_gate_links(const std::vector<PlacedResource>& items){
+    std::unordered_map<std::uint64_t,std::size_t> owners;
+    for(std::size_t i=0;i<items.size();++i) if(items[i].kind==ResourceKind::StorageDome && items[i].placement_sequence) owners[items[i].placement_sequence]=i;
+    std::unordered_map<std::uint64_t,std::vector<int>> used;
+    for(const auto& item:items) if(item.kind==ResourceKind::StorageGate){
+        const auto owner=owners.find(item.storage_parent_sequence);
+        if(owner==owners.end() || item.storage_loading_face<0 || item.storage_loading_face>3) return false;
+        const auto& parent=items[owner->second];auto& faces=used[item.storage_parent_sequence];
+        if(item.storage_size!=parent.storage_size || item.storage_loading_face==parent.storage_loading_face || faces.size()>=2 ||
+           std::find(faces.begin(),faces.end(),item.storage_loading_face)!=faces.end()) return false;
+        faces.push_back(item.storage_loading_face);
+    }
+    return true;
+}
 
 struct Writer {
     std::ofstream out;
@@ -466,6 +482,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         out.pod(item.instance_serial);
         out.pod(item.placement_sequence);
         out.pod(item.storage_loading_face);
+        out.pod(item.storage_parent_sequence);
     });
     write_object_vector(w,ground_resource_piles_,[](Writer& out,const GroundResourcePile& pile){
         out.pod((std::uint8_t)pile.resource); out.pod(pile.amount); write_vec3(out,pile.position); out.pod(pile.radius); out.pod(pile.condition);
@@ -595,10 +612,12 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
             item.storage_loading_face=in.pod<std::int8_t>();
             if(item.storage_loading_face < -1 || item.storage_loading_face > 4) in.valid=false;
         }
+        if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
         sync_stored_resource_totals(item);
         return item;
     })){ error="Template structure data is damaged."; return false; }
 
+    if(!valid_storage_gate_links(structures)){error="Template storage-gate links are damaged.";return false;}
     std::vector<GroundResourcePile> ignored_piles;
     if(!read_object_vector(r,ignored_piles,[&](Reader& in){
         GroundResourcePile pile{};
@@ -676,6 +695,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     corridor_network_.repair_invalid_topology(placed_habitats_,habitat_models_);
     corridor_network_.synchronize_structure_interfaces(placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     assign_storage_loading_faces();
+    synchronize_storage_gates();
     pressure_doors_.clear();storage_gate_open_.clear();
     utility_network_.restore_connections(std::move(utilities));
     utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
@@ -752,9 +772,11 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
             item.storage_loading_face=in.pod<std::int8_t>();
             if(item.storage_loading_face < -1 || item.storage_loading_face > 4) in.valid=false;
         }
+        if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
         sync_stored_resource_totals(item); return item;
     })){ error="Savegame structure data is damaged."; return false; }
 
+    if(!valid_storage_gate_links(structures)){error="Savegame storage-gate links are damaged.";return false;}
     // Older saves had no stable structure identity. Assign deterministic serials
     // in saved placement order. Also repair a zero/duplicate serial defensively
     // so every loaded structure name remains unique inside its type/size group.
@@ -925,6 +947,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     corridor_network_.repair_invalid_topology(placed_habitats_,habitat_models_);
     corridor_network_.synchronize_structure_interfaces(placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     assign_storage_loading_faces();
+    synchronize_storage_gates();
     pressure_doors_.clear();storage_gate_open_.clear();
     utility_network_.restore_connections(std::move(utilities));
     utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);

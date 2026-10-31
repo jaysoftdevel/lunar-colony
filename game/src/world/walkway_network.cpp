@@ -1,3 +1,4 @@
+#include "game/world/storage_loading_gate.hpp"
 #include "game/world/robot_workshop.hpp"
 #include "game/world/walkway_network.hpp"
 #include "game/world/geometry_standards.hpp"
@@ -270,7 +271,8 @@ bool segment_clear(Vec3 a,Vec3 b,const WalkwayEndpoint& ea,const WalkwayEndpoint
         if(point_segment_distance(habitats[i].position,a,b)<r) return false;
     }
     for(std::size_t i=0;i<resources.size();++i){
-        if(workshop::approach_hits(resources[i],a,b,geometry::kWalkwayHalfWidth+0.40f)) return false;
+        if(workshop::approach_hits(resources[i],a,b,geometry::kWalkwayHalfWidth+0.40f) ||
+           storage_loading::segment_reserved(resources[i],a,b,geometry::kWalkwayHalfWidth+0.25f)) return false;
         if((ea.kind==WalkwayEndpointKind::Resource && ea.index==i)||(eb.kind==WalkwayEndpointKind::Resource && eb.index==i)) continue;
         const auto& m=rlib.mesh(resources[i].kind);
         const float r=0.46f*std::sqrt(m.footprint_x*m.footprint_x+m.footprint_z*m.footprint_z)+CLEARANCE;

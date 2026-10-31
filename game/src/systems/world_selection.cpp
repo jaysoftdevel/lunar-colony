@@ -721,6 +721,20 @@ bool GameApp::move_ground_resource_to_storage(std::size_t pile_index){
 }
 
 void GameApp::delete_selected_world_object(){
+    if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 &&
+       (std::size_t)selected_resource_<placed_resources_.size() && placed_resources_[selected_resource_].kind==ResourceKind::StorageDome){
+        const auto sequence=placed_resources_[selected_resource_].placement_sequence;
+        if(sequence){
+            for(std::size_t i=placed_resources_.size();i-->0;)
+                if(placed_resources_[i].kind==ResourceKind::StorageGate && placed_resources_[i].storage_parent_sequence==sequence){
+                    selection_kind_=SelectionKind::Resource;selected_resource_=(int)i;delete_selected_world_object();
+                }
+            for(std::size_t i=0;i<placed_resources_.size();++i)
+                if(placed_resources_[i].kind==ResourceKind::StorageDome && placed_resources_[i].placement_sequence==sequence){
+                    selection_kind_=SelectionKind::Resource;selected_resource_=(int)i;break;
+                }
+        }
+    }
     switch(selection_kind_){
         case SelectionKind::Habitat:
             if(selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size()){
@@ -772,6 +786,25 @@ void GameApp::delete_selected_world_object(){
                 utility_network_.remove_resource(index);
                 walkway_network_.remove_resource(index);
                 placed_resources_.erase(placed_resources_.begin()+(std::ptrdiff_t)index);
+                for(auto& robot:builder_robots_){
+                    if(robot.workshop_index!=kNoRobotIndex){
+                        if(robot.workshop_index==index){robot.workshop_index=kNoRobotIndex;robot.workshop_bay=-1;robot.workshop_parked=false;}
+                        else if(robot.workshop_index>index) --robot.workshop_index;
+                    }
+                    if(robot.target.kind!=ConstructionTargetKind::Resource) continue;
+                    if(robot.target.index>index){--robot.target.index;continue;}
+                    if(robot.target.index!=index) continue;
+                    if(robot.role==RobotRole::Constructor && !robot.cargo.empty()){
+                        if(!robot.cargo_committed_to_build) resources_.consume(robot.cargo,true);
+                        recover_removed_resources(robot.position,0,0.6f,0.6f,robot.cargo);
+                        robot.cargo={};robot.cargo_committed_to_build=false;
+                    }
+                    robot.target={};robot.logistics_reservation={};robot.support_robot_index=kNoRobotIndex;
+                    robot.action=BuilderRobotAction::None;robot.interaction_position_valid=false;robot.drop_exit_pending=false;
+                    robot.mode=robot.cargo.empty()?BuilderRobotMode::Idle:BuilderRobotMode::DepotTransfer;
+                    robot.safety.cached_route.clear();robot.safety.route_replan_required=true;
+                }
+                synchronize_storage_gates();
                 recover_removed_resources(removed.position,removed.rotation_degrees,mesh.footprint_x,mesh.footprint_z,construction_used);
             }
             break;

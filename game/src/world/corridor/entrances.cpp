@@ -580,7 +580,8 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
     }
 
     // The fixed cargo face can never become a crew pressure connection.
-    if(dot(normal,storage_loading::normal(placed))>0.92f) return std::nullopt;
+    for(int face:storage_loading::faces(placed))
+        if(face>=0 && dot(normal,storage_loading::normal(placed,face))>0.92f) return std::nullopt;
 
     // Storage-dome service doors are reusable pressure entrances too.  If the
     // selected face already owns a corridor, branch from its common trunk

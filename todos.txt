@@ -1,0 +1,55 @@
+generate a robot parking and maintenance structure, that fits the existing layout of the game (don't integrate it into the game yet)
+- it shall have parking space for four robots
+- it shall have a boarding ramp with an auto opening/closing gate
+- each parking slot shall offer a loading/maintenance facility
+
+Integrate the robot workshop into the game as buildable outside structure
+- if a robot structure is fully built, all the robots must return to it and park inside when they don't have any tasks open
+- the boarding ramp shall have an additional clearance area around it to prevent placing it where it cannot be reached by the robots
+
+when a storage blueprint is placed or build add an option to add max two more storage gates that will be added (they shall need resources too)
+display add newly added structure extension (doors and storage gates) also as meshes
+
+
+*** ToDo:
+
+rework the storage structure placement and make it two steps:
+1. the general build side and size setting
+2. let the user seamlessly decide in the not occupied (by entry gates) areas around the dome where to place the storage-access-gate
+also require the robot workshop to be connected with a supply channel to function propperly
+- reduce the size of the robot workshop but still keep it realistic for enter/park/leave for robots
+
+when a storage blueprint is placed or build add an option to add max two more storage gates that will be added (they shall need resources too)
+
+implement a pipe network that enables the the passing of resources between resource structures (and the inside base structures)
+- the pipenetwork transports water and power to all connected structures (if available within the network)
+- corridors shall have the pipe network be included
+
+add a game progress tree (when not in debugging mode) and display as checkpoint list at the screen border (no overlaps!)
+Stage 1:
+- build a solar collector (collect energy)
+- build a battery (store energy)
+- build a water tree (collect water, needed for oxygen generator)
+- build a water storage (store water)
+- connect all resource structures (to transport related resources, via pipes/supply-channels)
+	- a pipe network consists of connected structures via supply channels
+Stage 2:
+- build an air-lock (part of main base, required as very first inside structure)
+- build an oxygen-generator
+- connect one resource structure to one of the insde structures)
+	- all resource structures can exchange resources via a pipe netnetwork. In order to connect a resource structure there must be pipe a path available.
+
+add a priority shift for all not yet built structures to prior them in the building/processing queue
+
+
+
+to the day/night cycle add a (not yet visualized) movement of a star (sun-like) accross the playfield following a realistic position above the playfield:
+- the solar panel shall follow it orientation for maximum photovoltic collection of energy
+
+generate astronauts, the shall look like future astronauts and move like humans
+- create a preview picture of how they would look like
+- create an animation of how they would move
+  - walking
+  - jumping
+  - running
+dont integrate into the game yet, just show me sampled drafts

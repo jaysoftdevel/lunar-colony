@@ -34,10 +34,12 @@ ResourceModelLibrary::ResourceModelLibrary(){
     storage_domes_[(size_t)StorageDomeSize::Mid]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Mid),ResourceKind::StorageDome);
     storage_domes_[(size_t)StorageDomeSize::Big]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Big),ResourceKind::StorageDome);
     storage_domes_[(size_t)StorageDomeSize::Huge]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Huge),ResourceKind::StorageDome);
+    for(std::size_t i=0;i<(std::size_t)StorageDomeSize::Count;++i) storage_gates_[i]=resources::make_storage_gate((StorageDomeSize)i);
+    meshes_[(size_t)ResourceKind::StorageGate]=storage_gates_[0];
     meshes_[(size_t)ResourceKind::StorageDome]=storage_domes_[(size_t)StorageDomeSize::Small];
     for(std::size_t i=0;i<(std::size_t)ResourceKind::Count;++i){
         const auto kind=(ResourceKind)i;
-        small_meshes_[i]=(kind==ResourceKind::StorageDome || kind==ResourceKind::RobotWorkshop)?meshes_[i]:scale_xz(meshes_[i],0.76f);
+        small_meshes_[i]=(kind==ResourceKind::StorageDome || kind==ResourceKind::RobotWorkshop || kind==ResourceKind::StorageGate)?meshes_[i]:scale_xz(meshes_[i],0.76f);
     }
 }
 
@@ -48,6 +50,7 @@ const ResourceMesh& ResourceModelLibrary::mesh(ResourceKind kind,ResourceSizeTie
 
 const ResourceMesh& ResourceModelLibrary::mesh(ResourceKind kind,StorageDomeSize storage_size) const {
     if(kind==ResourceKind::StorageDome) return storage_domes_[(size_t)storage_size];
+    if(kind==ResourceKind::StorageGate) return storage_gates_[(size_t)storage_size];
     return meshes_[(size_t)kind];
 }
 }

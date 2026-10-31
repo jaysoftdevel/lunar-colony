@@ -68,6 +68,7 @@ void GameApp::consume_storage_inventory(const ResourceBundle& cost){
 
 void GameApp::update_construction(float dt){
     assign_storage_loading_faces();
+    synchronize_storage_gates();
     // v0.31: construction never advances by timer alone. The autonomous
     // builder robot is the sole stage gate: fetch -> transport -> deliver ->
     // build. Resource facilities run in parallel and replenish physical stock.
@@ -94,6 +95,7 @@ void GameApp::update_construction(float dt){
         remaining-=step;
     }
 
+    synchronize_storage_gates();
     for(auto& structure:placed_resources_)
         if(structure.kind==ResourceKind::StorageDome) sync_stored_resource_totals(structure);
 }

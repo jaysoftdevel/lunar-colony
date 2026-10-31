@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <vector>
+#include <limits>
 
 namespace game {
 
@@ -19,6 +20,7 @@ enum class ResourceKind {
     LandingPad,
     StorageDome,
     RobotWorkshop,
+    StorageGate,
     Count
 };
 
@@ -130,6 +132,12 @@ struct PlacedResource {
     // Fixed cargo hatch; -1 is a legacy save awaiting free-face assignment.
     // 0..3 are the authored cardinal faces, 4 is the spare diagonal face.
     std::int8_t storage_loading_face{-1};
+    std::uint64_t storage_parent_sequence{0}; // StorageGate -> owning dome
+    std::size_t storage_parent_index{std::numeric_limits<std::size_t>::max()}; // derived
+    std::array<std::int8_t,2> storage_extra_faces{{-1,-1}}; // derived from extensions
+    std::array<bool,2> storage_extra_ready{};
+    std::array<std::size_t,2> storage_extra_indices{{std::numeric_limits<std::size_t>::max(),std::numeric_limits<std::size_t>::max()}};
+    float storage_extension_open{0.0f}; // transient shutter animation
     float workshop_gate_open{0.0f}; // transient; restored from live occupancy
     float workshop_gate_hold{0.0f};
     bool workshop_gate_initialized{false};
@@ -157,12 +165,13 @@ public:
     const ResourceMesh& mesh(ResourceKind kind,ResourceSizeTier size=ResourceSizeTier::Standard) const;
     const ResourceMesh& mesh(ResourceKind kind,StorageDomeSize storage_size) const;
     const ResourceMesh& mesh(const PlacedResource& placed) const {
-        return placed.kind==ResourceKind::StorageDome?mesh(placed.kind,placed.storage_size):mesh(placed.kind,placed.size);
+        return (placed.kind==ResourceKind::StorageDome || placed.kind==ResourceKind::StorageGate)?mesh(placed.kind,placed.storage_size):mesh(placed.kind,placed.size);
     }
 private:
     std::array<ResourceMesh,(size_t)ResourceKind::Count> meshes_{};
     std::array<ResourceMesh,(size_t)ResourceKind::Count> small_meshes_{};
     std::array<ResourceMesh,(size_t)StorageDomeSize::Count> storage_domes_{};
+    std::array<ResourceMesh,(size_t)StorageDomeSize::Count> storage_gates_{};
 };
 
 } // namespace game

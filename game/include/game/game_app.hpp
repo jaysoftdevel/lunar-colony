@@ -219,6 +219,10 @@ private:
     bool workshop_accessible(const PlacedResource& candidate) const;
     void render_workshop_gate(eng::Renderer& r,const PlacedResource& item,bool preview=false,bool valid=true) const;
     void assign_storage_loading_faces();
+    void synchronize_storage_gates();
+    int available_storage_gate_face(std::size_t owner,int requested_face=-1) const;
+    bool add_storage_gate(std::size_t owner,int requested_face=-1);
+    void render_storage_gate_shutters(eng::Renderer& r,const PlacedResource& owner,int face,float opening,float progress,bool preview=false) const;
     std::vector<CorridorDoor> habitat_doors(std::size_t habitat_index) const;
     std::vector<CorridorDoor> storage_dome_doors(std::size_t resource_index) const;
     bool habitat_has_complete_corridor_connection(std::size_t habitat_index) const;

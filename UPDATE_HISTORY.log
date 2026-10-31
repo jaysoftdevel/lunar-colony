@@ -259,3 +259,5 @@ v0.40.9
 0.41.6: Fixed shared storage loading gates, reserved cargo aprons, sealed sliding corridor doors with swept collision and Air Lock interlocks, schema 14 gate-face persistence.
 
 0.41.7: Buildable outdoor four-bay robot workshop, automatic ramp gate, stable idle parking/task dispatch, docked condition recovery, protected reachable approach, and planner intake for stationary holds.
+
+0.41.8: Up to two resource-built storage gate upgrades on planned/completed domes, protected loading aprons, independent cargo stations, persistent parent links, cascade removal, and blue/yellow/green meshes for all pressure doors and loading gates.

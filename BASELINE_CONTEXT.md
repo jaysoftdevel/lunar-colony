@@ -1,4 +1,4 @@
-# game v0.41.7 baseline context
+# game v0.41.8 baseline context
 
 - Standalone C++20 Linux/X11 game, separate `engine/` and `game/` trees.
 - Root `VERSION` is the release source. Build with `./build.sh`; `./run.sh` runs `build/bin/game`.
@@ -39,7 +39,7 @@
 
 ## v0.41.6 storage handling and pressure doors
 
-- Storage has one fixed robot loading gate with a sealed transfer buffer. Both BR-02 pickup and CR-01 deposit/pickup use its shared service point and off-axis queue. Crew cannot use it as a surface entrance.
+- Storage includes one fixed robot loading gate with a sealed transfer buffer and supports two paid additional gates as of v0.41.8. Both BR-02 pickup and CR-01 deposit/pickup use completed gates and per-gate off-axis queues. Crew cannot use them as surface entrances.
 - New gates occupy local +X. Existing saves select a free docking face once (a spare diagonal if every cardinal face is already used); schema 14 persists that choice and still reads schemas 1-13.
 - The loading apron rejects crew-corridor attachments and crossing routes, including corridor-link shortcuts. Structure placement also keeps existing aprons accessible.
 - Every completed corridor/structure interface has solid paired sliding leaves with perimeter and centre seals. One transient opening state drives animation and swept POV collision; occupancy prevents closing on a person and Air Lock doors interlock. Doors reset sealed on load.
@@ -55,3 +55,11 @@
 - Save schema 15 adds the new persisted structure kind; schemas 1-14 remain readable. Parking assignments and gate animation are transient and reconstructed from saved robot poses. A gate occupied on load restores open before collision certification.
 - Stationary certified holds no longer consume planner intake slots. This prevents parked high-priority actors from starving the last low-priority returning robot in larger fleets; all existing contract arbitration and collision checks remain active.
 - `navigation_workshops` covers four robots, rotated buildings, eight robots/two workshops, real task dispatch and return, save/load, construction completion, ramp clearance and static reachability.
+
+## v0.41.8 storage extensions and mesh rendering
+
+- The storage selection panel plans at most two additional loading gates on blueprint or completed domes. Each is a child `StorageGate` construction target with its own material plan, site buffer, construction stages and stable parent placement sequence. Builders wait for the parent to complete; carriers may pre-stage materials. Each gate currently consumes 78 kg of construction materials. Inventory is charged by actual construction, not by clicking the option.
+- All planned gate faces reserve their loading aprons immediately. Placement/routing excludes those aprons and occupied crew corridor faces. Completed gates have separate service claims and queues, permitting parallel transfers against one shared inventory.
+- Gate builders work outside the parent hull. Gate mesh chambers, animated leaves and pressure doors follow blue/yellow/green construction rendering without opaque structure surfaces. Unused crew-port furniture is clipped only at cargo faces; hull and rear transfer seals remain intact.
+- Schema 16 persists child-parent links, validates the two-gate/unique-face limit and restores unfinished upgrades. Deleting a dome cascades to its gates and remaps active construction targets. Schemas 1-15 remain readable.
+- `navigation_storage_extensions` covers real selection-button clicks, both parent build states, exact material accounting, dependency order, all size/rotation gate meshes, sealed rear bulkheads, reserved faces, persistence, parallel transfers and cascading removal.

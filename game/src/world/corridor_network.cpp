@@ -347,7 +347,10 @@ bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const Corridor
         const float r=std::min(mesh.footprint_x,mesh.footprint_z)*0.40f;
         const Vec3 local_normals[4]={{0,0,-1},{1,0,0},{0,0,1},{-1,0,0}};
         for(Vec3 ln:local_normals){
-            if(dot(flat_normal(rotate_y(ln,placed.rotation_degrees)),storage_loading::normal(placed))>0.70f) continue;
+            bool cargo_face=false;
+            for(int face:storage_loading::faces(placed))
+                if(face>=0 && dot(flat_normal(rotate_y(ln,placed.rotation_degrees)),storage_loading::normal(placed,face))>0.70f) cargo_face=true;
+            if(cargo_face) continue;
             CorridorBuildAnchor v=src;
             v.position=placed.position+flat_normal(rotate_y(ln,placed.rotation_degrees))*r;
             bool duplicate=false;

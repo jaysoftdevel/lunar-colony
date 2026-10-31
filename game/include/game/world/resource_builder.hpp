@@ -196,6 +196,7 @@ inline ResourceMesh refine_future_resource(ResourceMesh source,ResourceKind kind
             }
             break;
         case ResourceKind::RobotWorkshop: break;
+        case ResourceKind::StorageGate: break;
         case ResourceKind::Count: break;
     }
     return std::move(b.mesh);

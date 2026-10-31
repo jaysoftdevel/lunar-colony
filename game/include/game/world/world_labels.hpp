@@ -35,6 +35,7 @@ inline const char* resource_name(ResourceKind kind){
         case ResourceKind::LandingPad: return "LANDING PAD";
         case ResourceKind::StorageDome: return "STORAGE DOME";
         case ResourceKind::RobotWorkshop: return "ROBOT WORKSHOP";
+        case ResourceKind::StorageGate: return "STORAGE GATE";
         default: return "RESOURCE STRUCTURE";
     }
 }

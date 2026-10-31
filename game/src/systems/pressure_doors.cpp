@@ -72,11 +72,19 @@ void GameApp::update_pressure_doors(float dt){
         const auto& item=placed_resources_[i];bool operating=false;
         if(item.kind==ResourceKind::StorageDome && item.construction.complete())
             for(const auto& robot:builder_robots_)
-                if(storage_loading::at_service(item,robot.position) &&
+                if(storage_loading::at_service_face(item,robot.position,storage_loading::face(item)) &&
                    (robot.action==BuilderRobotAction::Pickup || robot.action==BuilderRobotAction::PutDown)) operating=true;
         // Outer cargo shutters expose a sealed transfer buffer, never the
         // warehouse atmosphere or an exterior crew doorway.
         storage_gate_open_[i]=std::clamp(storage_gate_open_[i]+(operating?3.2f:-2.0f)*std::clamp(dt,0.0f,0.10f),0.0f,1.0f);
+        if(item.kind==ResourceKind::StorageGate && item.construction.complete() && item.storage_parent_index<placed_resources_.size()){
+            const auto& owner=placed_resources_[item.storage_parent_index];bool using_gate=false;
+            if(owner.construction.complete()) for(const auto& robot:builder_robots_)
+                if(storage_loading::at_service_face(owner,robot.position,item.storage_loading_face) &&
+                   (robot.action==BuilderRobotAction::Pickup || robot.action==BuilderRobotAction::PutDown)) using_gate=true;
+            auto& opening=placed_resources_[i].storage_extension_open;
+            opening=std::clamp(opening+(using_gate?3.2f:-2.0f)*std::clamp(dt,0.0f,0.10f),0.0f,1.0f);
+        }
     }
 }
 }

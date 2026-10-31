@@ -40,6 +40,14 @@ Crew-accessible habitats and corridors share a common structural access contract
 - Supply channels include structural supports, electrical/data routing and water-service hardware.
 - World construction geometry is mesh-only in the current development phase: blue target mesh, yellow installed mesh and substantially bolder green mesh at completion. No structure textures or filled surfaces are emitted yet.
 
+## v0.41.8 paid storage gate extensions and mesh doors
+
+Select a storage dome blueprint or completed dome and choose **ADD GATE** to plan up to two additional loading gates (three total). Each upgrade shows its material cost and construction progress in the storage panel, receives actual resource deliveries, and is assembled by builders once its parent dome is complete. The original gate remains included in the dome cost. Each added gate currently requires 78 kg of construction materials across six stages.
+
+Extra gates use free faces with clear loading aprons. Their aprons are reserved from planning onward against structures, crew corridors and walkways; occupied corridor faces cannot be replaced. Robots select independent completed loading stations for simultaneous deposits and withdrawals. Unfinished gates stay unavailable. Removing a dome also removes and recovers its upgrades. Save schema 16 retains parent links and construction state and reads older saves.
+
+Pressure doors and storage gates now follow the native mesh display: blue planned geometry, yellow installed construction and green completed meshes. Sliding leaves, perimeter seals and sealed transfer buffers remain physical geometry. Cargo modules replace the unused crew-port furniture at their faces so retracted gates have clear openings.
+
 ## v0.41.7 outdoor robot workshop
 
 Build **Robot Workshop** from the Structures palette. Each workshop has four independent robot service bays, a boarding ramp and an automatic sliding gate. After construction completes, idle robots return to assigned bays inside; new construction/delivery work takes priority and dispatches them again. Docked service restores mechanical condition. Build additional workshops for fleets larger than four robots.
@@ -48,7 +56,7 @@ The placement preview marks the ramp approach and waiting area in amber. The ent
 
 ## v0.41.6 fixed storage gates and hermetic sliding doors
 
-Storage domes have a dedicated robot loading gate with a marked approach bay. Robots put in and take out cargo at this one gate, queuing off-axis when occupied. Corridors cannot attach to the gate or cross its reserved loading area. Gate orientation is fixed; older saves retain their installed corridors and receive a gate on an unused face.
+Storage domes include a dedicated robot loading gate with a marked approach bay. Robots put in and take out cargo at a completed gate, queuing off-axis when occupied. Corridors cannot attach to gates or cross their reserved loading areas. Each gate orientation is fixed; older saves retain their installed corridors and receive the original gate on an unused face.
 
 Completed corridor-to-structure connections use solid paired sliding pressure doors with perimeter gaskets and overlapping centre seals. They open for a nearby POV user, wait while the doorway is occupied, and close afterward. Closed and partly open leaves block movement. Air Lock doors interlock, and the storage loading buffer remains sealed from crew interiors. Save schema 14 retains older-save support.
 

@@ -1,3 +1,4 @@
+#include "game/systems/construction_costs.hpp"
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
@@ -370,27 +371,44 @@ void GameApp::render_selection_panel(Renderer& r){
             const std::int64_t stored=stored_resources.total_amount();
             std::ostringstream capacity,corridors,boxes;
             capacity<<"STORAGE (BOX SUM)  "<<stored<<" / "<<storage_dome_capacity_kg(item.storage_size)<<" KG";
-            boxes<<"PHYSICAL BOXES  "<<item.stored_boxes.size();
+            const int extras=(item.storage_extra_faces[0]>=0)+(item.storage_extra_faces[1]>=0);
+            boxes<<"LOADING GATES  "<<1+extras<<" / 3";
             corridors<<"CORRIDORS "<<corridor_network_.resource_connection_count((size_t)selected_resource_);
             game_label(r,{x,p.y+84},used_material_cost(item.resource_plan,item.construction.step),0.44f,theme_,true);
             game_label(r,{x,p.y+108},capacity.str(),0.56f,theme_,true);
             game_label(r,{x,p.y+130},boxes.str(),0.50f,theme_,true);
-            game_label(r,{x,p.y+154},"STORED RESOURCES",0.52f,theme_);
+            const auto gate_plan=construction_costs::structure(ResourceKind::StorageGate,resource_models_.mesh(ResourceKind::StorageGate,item.storage_size));
+            game_label(r,{x,p.y+156},"ADD GATE COST  "+compact_bundle(gate_plan.total()),0.42f,theme_,true);
+            std::string upgrades;
+            for(std::size_t slot=0;slot<2;++slot){
+                const auto child=item.storage_extra_indices[slot];if(child>=placed_resources_.size()) continue;
+                const auto& extension=placed_resources_[child];
+                if(!upgrades.empty()) upgrades+=" / ";
+                upgrades+="GATE "+std::to_string(slot+2)+" ";
+                upgrades+=extension.construction.complete()?"READY":std::to_string((int)std::lround(extension.construction.progress()*100))+"%";
+            }
+            game_label(r,{x,p.y+177},upgrades.empty()?"UP TO TWO RESOURCE-BUILT EXTRA GATES":upgrades,0.43f,theme_,true);
 
             for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
                 const auto material=static_cast<MaterialResource>(ri);
                 const int col=ri<4?0:1;
                 const int row=col==0?(int)ri:(int)ri-4;
                 const float ix=x+(col==0?0.0f:235.0f);
-                const float iy=p.y+177.0f+(float)row*22.0f;
+                const float iy=p.y+202.0f+(float)row*22.0f;
                 std::ostringstream line;
                 line<<material_resource_name(material)<<"  "<<stored_resources.amount(material)<<" KG";
                 game_label(r,{ix,iy},line.str(),0.48f,theme_,true);
             }
 
-            game_label(r,{x,p.y+270},pos.str(),0.50f,theme_,true);
-            game_label(r,{x,p.y+292},corridors.str()+" / "+utilities.str(),0.47f,theme_,true);
-            game_label(r,{x,p.y+322},"DEL REMOVE / LMB SELECT OTHER",0.46f,theme_,true);
+            game_label(r,{x,p.y+292},pos.str(),0.46f,theme_,true);
+            game_label(r,{x,p.y+308},corridors.str()+" / "+utilities.str(),0.43f,theme_,true);
+            game_label(r,{x,p.y+330},"DEL REMOVE / LMB SELECT OTHER",0.43f,theme_,true);
+            const bool available=available_storage_gate_face((std::size_t)selected_resource_)>=0;
+            const std::string caption=extras>=2?"MAX TWO EXTRAS":(available?"ADD GATE":"NO FREE FACE");
+            if(ui::button(r,ui_input_,{p.x+p.w-174,p.y+125,160,28},caption,theme_,available)){
+                add_storage_gate((std::size_t)selected_resource_);
+                return;
+            }
             return;
         }
         if(item.kind==ResourceKind::RobotWorkshop){

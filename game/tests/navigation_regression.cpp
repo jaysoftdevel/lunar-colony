@@ -36,8 +36,18 @@ struct GeometryRecorder final:eng::Renderer {
     bool initialize(void*,unsigned long,int,int) override{return true;}
     void resize(int,int) override{} void begin_frame(eng::Color) override{} void end_frame() override{}
     void set_3d(const eng::Mat4&) override{} void set_2d(float) override{}
-    void draw_lines_3d(const std::vector<Vec3>&,eng::Color,float) override{}
-    void draw_triangles_3d(const std::vector<Vec3>& vertices,eng::Color) override{triangles.insert(triangles.end(),vertices.begin(),vertices.end());}
+    std::size_t wire_vertices{0},filled_vertices{0};
+    bool blue{false},yellow{false},green{false};
+    void draw_lines_3d(const std::vector<Vec3>& vertices,eng::Color color,float) override{
+        blue=blue || (color.b>0.8f && color.r<0.3f);
+        yellow=yellow || (color.r>0.9f && color.g>0.45f && color.b<0.4f);
+        green=green || (color.g>0.8f && color.r<0.4f && color.b>0.2f);
+        wire_vertices+=vertices.size();
+        for(std::size_t i=0;i+5<vertices.size();i+=6)
+            if(eng::length(vertices[i+1]-vertices[i+2])<0.00001f && eng::length(vertices[i+3]-vertices[i+4])<0.00001f && eng::length(vertices[i+5]-vertices[i])<0.00001f)
+                triangles.insert(triangles.end(),{vertices[i],vertices[i+1],vertices[i+3]});
+    }
+    void draw_triangles_3d(const std::vector<Vec3>& vertices,eng::Color) override{filled_vertices+=vertices.size();triangles.insert(triangles.end(),vertices.begin(),vertices.end());}
     void draw_rect(eng::Rect,eng::Color) override{} void draw_line(eng::Vec2,eng::Vec2,eng::Color,float) override{}
     void draw_text(eng::Vec2,const std::string&,float,eng::Color) override{}
     int width() const override{return 1600;} int height() const override{return 900;}
@@ -246,6 +256,137 @@ struct NavigationRegression {
         std::cout<<"construction "<<completed()<<"/"<<expected<<" after "<<t<<" sim s; "<<std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<<" wall s; worst frame "<<worst<<" ms\n";
         if(completed()!=expected){std::string save_error;app.save_game_to_name("navigation-regression-stalled",save_error);}
         require(completed()==expected,"construction tasks did not finish");
+    }
+    static void storage_extensions(){
+        eng::Application engine;
+        auto tick=[](GameApp& app){app.update_pressure_doors(1.0f/60);app.update_construction(1.0f/60);};
+        auto verify=[](const GameApp& app){
+            for(std::size_t i=0;i<app.builder_robots_.size();++i){
+                require(app.builder_robots_[i].safety.mode!=SafetyMode::Fault,"gate upgrade rover safety fault "+std::to_string(i));
+                for(std::size_t j=i+1;j<app.builder_robots_.size();++j)
+                    require(distance(app.builder_robots_[i].position,app.builder_robots_[j].position)>1.88f,"gate upgrade rover collision");
+            }
+        };
+        // Both dome blueprints and existing domes accept exactly two upgrades.
+        for(bool completed:{false,true}){
+            GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=2;app.starting_carrier_count_=2;
+            app.reset_builder_robot_and_starter_stash();
+            PlacedResource parent;parent.kind=ResourceKind::StorageDome;parent.storage_loading_face=1;
+            parent.rotation_degrees=37;parent.placement_sequence=1;
+            parent.construction.step=completed?kConstructionSteps:0;
+            parent.resource_plan.total_steps=kConstructionSteps;
+            for(auto& step:parent.resource_plan.steps) step.amount(MaterialResource::Iron)=10;
+            app.placed_resources_={parent};app.next_blueprint_placement_sequence_=2;
+            const auto initial=app.resources_.amounts();
+            app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;
+            const auto panel=app.selection_panel_rect();GeometryRecorder ui;
+            app.ui_input_.mouse_x=(int)(panel.x+panel.w-94);app.ui_input_.mouse_y=(int)(panel.y+139);app.ui_input_.left_pressed=true;
+            app.render_selection_panel(ui);require(app.placed_resources_.size()==2,"first storage upgrade button failed");
+            app.render_selection_panel(ui);require(app.placed_resources_.size()==3,"second storage upgrade button failed");
+            app.render_selection_panel(ui);app.ui_input_={};
+            require(!app.add_storage_gate(0) && app.placed_resources_.size()==3,"more than two storage upgrades accepted");
+            for(std::size_t i=0;i<kMaterialResourceCount;++i)
+                require(app.resources_.amount((MaterialResource)i)==initial.amount((MaterialResource)i),"requesting blueprint charged twice");
+            ResourceBundle needed;
+            if(!completed) needed=parent.resource_plan.total();
+            for(std::size_t i=1;i<3;++i){
+                const auto& child=app.placed_resources_[i];
+                require(child.kind==ResourceKind::StorageGate && child.resource_plan.total().total_amount()>0,"gate upgrade is free or missing");
+                for(std::size_t r=0;r<kMaterialResourceCount;++r) needed.amount((MaterialResource)r)+=child.resource_plan.total().amount((MaterialResource)r);
+                const auto gate=storage_loading::service(app.placed_resources_[0],child.storage_loading_face);
+                require(storage_loading::reserved(app.placed_resources_[0],gate),"planned gate apron not reserved");
+                CorridorBuildAnchor anchor{CorridorEndpointKind::Resource,0,storage_loading::wall(app.placed_resources_[0],child.storage_loading_face)};
+                require(!app.corridor_network_.preview_anchor(anchor,gate,{},app.habitat_models_,app.placed_resources_,app.resource_models_),"corridor stole an upgrade face");
+            }
+            GeometryRecorder blueprint;app.render_resources(blueprint);
+            require(blueprint.blue && blueprint.wire_vertices>0 && blueprint.filled_vertices==0,"gate blueprint is not a wireframe mesh");
+            std::string error;require(app.save_game_to_name("storage-upgrade-blueprint",error),error);
+            const auto saved=std::filesystem::path(app.save_game_directory())/"storage-upgrade-blueprint.gmsave";
+            GameApp restored(engine);require(restored.load_game_from_file(saved.string(),error),error);
+            require(restored.placed_resources_.size()==3 && restored.placed_resources_[0].storage_extra_faces[0]>=0 &&
+                restored.placed_resources_[0].storage_extra_faces[1]>=0,"pending gate upgrades lost on load");
+            std::filesystem::remove(saved);
+            int frame=0;
+            for(;frame<36000 && (!app.placed_resources_[1].construction.complete() || !app.placed_resources_[2].construction.complete());++frame){
+                const bool parent_ready=app.placed_resources_[0].construction.complete();
+                tick(app);verify(app);
+                if(!parent_ready && !app.placed_resources_[0].construction.complete())
+                    require(app.placed_resources_[1].construction.step==0 && app.placed_resources_[2].construction.step==0,"gate built before its parent dome");
+            }
+            if(!app.placed_resources_[2].construction.complete()){
+                for(std::size_t i=0;i<app.placed_resources_.size();++i){const auto& v=app.placed_resources_[i];const auto drop=app.construction_drop_position({ConstructionTargetKind::Resource,i});
+                    std::cerr<<"upgrade "<<i<<" stage="<<(int)v.construction.step<<" buffer="<<v.site_buffer.total_amount()<<" need="<<v.resource_plan.remaining(v.construction.step).total_amount()<<" drop="<<drop.x<<","<<drop.z<<"\n";}
+                for(const auto& r:app.builder_robots_) std::cerr<<"upgrade state p="<<r.position.x<<","<<r.position.z<<" mode="<<(int)r.mode<<" target="<<(int)r.target.kind<<":"<<r.target.index<<" reason="<<block_reason_name(r.safety.block_reason)<<" goal="<<r.safety.goal.x<<","<<r.safety.goal.z<<"\n";
+            }
+            require(app.placed_resources_[1].construction.complete() && app.placed_resources_[2].construction.complete(),"gate upgrades did not finish");
+            for(auto material:{MaterialResource::Iron,MaterialResource::Copper,MaterialResource::Silicon,MaterialResource::Plastic,MaterialResource::Aluminum})
+                require(app.resources_.amount(material)==initial.amount(material)-needed.amount(material),"gate construction material ledger mismatch");
+            require(app.placed_resources_[0].storage_extra_ready[0] && app.placed_resources_[0].storage_extra_ready[1],"completed gates not usable");
+            // Isolate extension rendering from the separately filled cargo boxes.
+            for(auto& item:restored.placed_resources_) item.stored_boxes.clear();
+            restored.placed_resources_[0].construction.step=kConstructionSteps;
+            restored.placed_resources_[1].construction.step=3;
+            restored.synchronize_storage_gates();
+            GeometryRecorder progress;restored.render_resources(progress);
+            require(progress.blue && progress.yellow && progress.filled_vertices==0,"gate upgrade construction mesh colors missing");
+            std::cout<<(completed?"built dome":"dome blueprint")<<": two resource-built upgrades after "<<(float)frame/60<<" s\n";std::cout.flush();
+        }
+        // Inspect the emitted meshes at every storage size and rotated pose.
+        GameApp geometry(engine);geometry.playfield_.rebuild(256);
+        for(int size=0;size<4;++size) for(float rotation:{0.0f,37.0f,90.0f,135.0f,270.0f}){
+            PlacedResource owner;owner.kind=ResourceKind::StorageDome;owner.storage_size=(StorageDomeSize)size;
+            owner.storage_loading_face=1;owner.rotation_degrees=rotation;owner.placement_sequence=1;owner.construction.step=kConstructionSteps;
+            geometry.placed_resources_={owner};geometry.next_blueprint_placement_sequence_=2;
+            require(geometry.add_storage_gate(0) && geometry.add_storage_gate(0),"rotated storage upgrade rejected");
+            for(auto& item:geometry.placed_resources_) item.construction.step=kConstructionSteps;
+            geometry.synchronize_storage_gates();
+            for(std::size_t child=1;child<3;++child){
+                const auto& parent=geometry.placed_resources_[0];const int face=geometry.placed_resources_[child].storage_loading_face;
+                const auto n=storage_loading::normal(parent,face),mouth=storage_loading::mouth(parent,face)+Vec3{0,0.8f,0};
+                const auto back=storage_loading::wall(parent,face)+Vec3{0,0.8f,0};
+                GeometryRecorder closed;geometry.render_resources(closed);
+                require(closed.green && closed.filled_vertices==0 && segment_hits_mesh(mouth-n*0.25f,mouth+n*0.25f,closed.triangles),"extra gate closed mesh is missing");
+                geometry.placed_resources_[child].storage_extension_open=1;
+                GeometryRecorder open;geometry.render_resources(open);
+                require(!segment_hits_mesh(mouth-n*0.25f,mouth+n*0.25f,open.triangles),"extra gate leaves or crew-port furniture obstruct opening");
+                require(segment_hits_mesh(back-n*0.2f,back+n*0.2f,open.triangles),"extra gate has no sealed rear bulkhead");
+            }
+        }
+        // Three carriers can use different completed gates concurrently.
+        GameApp traffic(engine);traffic.playfield_.rebuild(128);traffic.starting_robot_count_=1;traffic.starting_carrier_count_=3;
+        traffic.reset_builder_robot_and_starter_stash();traffic.ground_resource_piles_.clear();
+        PlacedResource owner;owner.kind=ResourceKind::StorageDome;owner.storage_loading_face=1;owner.construction.step=kConstructionSteps;
+        owner.rotation_degrees=37;owner.placement_sequence=1;
+        traffic.placed_resources_={owner};traffic.next_blueprint_placement_sequence_=2;
+        require(traffic.add_storage_gate(0) && traffic.add_storage_gate(0),"traffic upgrades rejected");
+        traffic.placed_resources_[1].construction.step=kConstructionSteps;traffic.placed_resources_[2].construction.step=kConstructionSteps;
+        traffic.synchronize_storage_gates();
+        traffic.builder_robots_[0].position={-30,0,-30};
+        const auto faces=storage_loading::faces(traffic.placed_resources_[0],true);
+        for(std::size_t i=1;i<4;++i){auto& r=traffic.builder_robots_[i];
+            r.position=storage_loading::service(traffic.placed_resources_[0],faces[i-1])+storage_loading::normal(traffic.placed_resources_[0],faces[i-1])*3;
+            r.mode=BuilderRobotMode::DepotTransfer;r.cargo.amount(MaterialResource::Iron)=30;r.starter_exit_completed=true;
+        }
+        ResourceBundle inventory;inventory.amount(MaterialResource::Iron)=90;traffic.resources_.restore(inventory);
+        int parallel=0;
+        for(int frame=0;frame<12000 && traffic.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)<90;++frame){
+            tick(traffic);verify(traffic);int actions=0;
+            for(const auto& r:traffic.builder_robots_) actions+=r.action==BuilderRobotAction::PutDown;
+            parallel=std::max(parallel,actions);
+        }
+        require(traffic.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)==90 && parallel>=2,"independent gate traffic did not operate concurrently");
+        BuilderRobotState bot;bot.role=RobotRole::Carrier;
+        ResourceBundle need;need.amount(MaterialResource::Iron)=10;
+        traffic.placed_resources_[1].construction.step=0;traffic.synchronize_storage_gates();
+        const auto extra_face=traffic.placed_resources_[1].storage_loading_face;
+        bot.position=storage_loading::service(traffic.placed_resources_[0],extra_face);
+        require(!traffic.robot_load_needed_resources(bot,need),"unfinished gate allowed pickup");
+        traffic.placed_resources_[1].construction.step=kConstructionSteps;traffic.synchronize_storage_gates();
+        require(traffic.robot_load_needed_resources(bot,need),"finished extra gate could not withdraw inventory");
+        traffic.builder_robots_.clear();traffic.selection_kind_=GameApp::SelectionKind::Resource;traffic.selected_resource_=0;
+        traffic.delete_selected_world_object();
+        require(traffic.placed_resources_.empty(),"removing a dome orphaned its gate upgrades");
+        std::cout<<"Two-gate limit, construction resources/dependencies, staged meshes, persistence and parallel loading passed\n";
     }
     static void workshops(){
         eng::Application engine;
@@ -587,7 +728,8 @@ struct NavigationRegression {
 
 int main(int argc,char** argv){
     try{
-        if(argc>1 && std::string(argv[1])=="workshops") game::NavigationRegression::workshops();
+        if(argc>1 && std::string(argv[1])=="extensions") game::NavigationRegression::storage_extensions();
+        else if(argc>1 && std::string(argv[1])=="workshops") game::NavigationRegression::workshops();
         else if(argc>1 && std::string(argv[1])=="gates") game::NavigationRegression::gates();
         else if(argc>1 && std::string(argv[1])=="geometry") game::NavigationRegression::geometry();
         else if(argc>2 && std::string(argv[1])=="construction") game::NavigationRegression::construction(argv[2]);

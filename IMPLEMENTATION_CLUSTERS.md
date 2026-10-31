@@ -1,4 +1,4 @@
-# v0.41.7 Implementation Clusters
+# v0.41.8 Implementation Clusters
 
 This file is the context map for future changes. Start from the smallest build target(s) below and load additional clusters only when an interface crosses the requested change. The target names are real CMake OBJECT targets in `game/cmake/GameClusters.cmake`.
 
@@ -84,7 +84,7 @@ The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; i
 
 - `game/world/storage_loading_gate.hpp` is the shared fixed hatch/service/apron geometry contract for logistics, corridor routing, placement, rendering and crew collision. `PlacedResource::storage_loading_face` is persisted by save schema 14.
 - `game/world/pressure_door.hpp` defines seal dimensions, animation and swept body/leaf collision. `game/src/systems/pressure_doors.cpp` (interaction cluster) owns transient openings, cargo shutter animation, legacy gate assignment and Air Lock interlocking.
-- `world_renderer.cpp` draws filled pressure leaves, seals and the cargo transfer module in normal and POV views. Gate access is independent of the crew pressure network.
+- `world_renderer.cpp` draws mesh pressure leaves, seals and cargo transfer modules in normal and POV views. Gate access is independent of the crew pressure network.
 
 ## v0.41.7 outdoor workshop
 
@@ -92,3 +92,10 @@ The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; i
 - `systems/robot_workshop.cpp` updates the automatic gate and caches placement-to-fleet reachability. `builder_robot.cpp` owns home assignment, inbound admission/queueing, idle-return requests and docked condition recovery; safety remains the only pose authority.
 - Placement, corridor routing and walkway routing protect the same rotated approach rectangle. Rendering shows its outline while placing the workshop. Save schema 15 accepts the appended ResourceKind while retaining old schemas.
 - `safety_coordinator.cpp` excludes stationary terminal holds from advisory planner intake, keeping budget slots available for returning robots without changing hold validation or fleet separation.
+
+## v0.41.8 storage extensions
+
+- `systems/storage_extensions.cpp` (interaction cluster) validates and creates at most two paid child gates per storage dome, synchronizes stable parent links and derives all gate faces/readiness. `world/resources/storage_gate.cpp` supplies the native chamber mesh in the resource cluster.
+- `storage_loading_gate.hpp` shares face-specific geometry and all-face reservations across placement, routing, logistics, rendering and crew collision. `builder_robot.cpp` reuses existing resource delivery/build stages with a completed-parent dependency, exterior work bays, per-gate transfer claims and queues.
+- `selection_panel.cpp` exposes ADD GATE for blueprint/completed domes, cost and upgrade progress. `save_game.cpp` schema 16 persists parent placement sequences and validates links. `world_selection.cpp` cascades dome deletion and repairs robot resource targets.
+- `world_renderer.cpp` emits blue/yellow/green meshes for gates and pressure doors, clips obsolete crew-port detail furniture at cargo faces and animates independent shutters. `navigation_storage_extensions` tests the complete feature with the real game objects.

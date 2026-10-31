@@ -47,7 +47,8 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
     }
     for(const auto& placed:placed_resources_){
         if(placed.kind==ResourceKind::RobotWorkshop && overlaps(candidate_box,workshop::approach(placed),clearance)) return false;
-        if(placed.kind==ResourceKind::StorageDome && overlaps(candidate_box,storage_loading::apron(placed),clearance)) return false;
+        if(placed.kind==ResourceKind::StorageDome) for(int face:storage_loading::faces(placed))
+            if(face>=0 && overlaps(candidate_box,storage_loading::apron(placed,face),clearance)) return false;
         const ResourceMesh& other=resource_models_.mesh(placed);
         const auto other_box=footprint(placed.position,placed.rotation_degrees,other.footprint_x,other.footprint_z);
         if(overlaps(candidate_box,other_box,clearance)) return false;
