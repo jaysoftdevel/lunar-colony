@@ -1,10 +1,10 @@
-# v0.40.33 Implementation Clusters
+# v0.41.0 Implementation Clusters
 
 This file is the context map for future changes. Start from the smallest build target(s) below and load additional clusters only when an interface crosses the requested change. The target names are real CMake OBJECT targets in `game/cmake/GameClusters.cmake`.
 
 | Cluster target | Main responsibility | Primary files / directories | Load together with |
 |---|---|---|---|
-| `game_cluster_pathfinding` | Static-geometry advisory route search plus shared motion-contract safety coordinator | `game/include/game/robots/path_planner.hpp`, `game/src/robots/path_planner.cpp`, `game/include/game/robots/safety_coordinator.hpp`, `game/src/robots/safety_coordinator.cpp` | `game_cluster_robots` for task intents/world callbacks |
+| `game_cluster_pathfinding` | Static-geometry advisory route search plus shared motion-contract safety coordinator | `game/include/game/robots/path_planner.hpp`, `game/src/robots/path_planner.cpp`, `game/src/robots/incremental_path_planner.cpp`, `game/include/game/robots/safety_coordinator.hpp`, `game/src/robots/safety_coordinator.cpp` | `game_cluster_robots` for task intents/world callbacks |
 | `game_cluster_robots` | BR-02/CR-01 task policy, logistics, construction work sequencing, safety-world callbacks and fleet intent submission | `game/include/game/systems/builder_robot.hpp`, `game/src/systems/builder_robot.cpp` | pathfinding/safety for authoritative locomotion; construction for resource/step semantics; rendering only for visuals |
 | `game_cluster_construction` | placement/catalog, construction costs/stages, resource ownership and build commands | `game/src/features/`, construction/resource system files | world cluster for mesh semantics; robots only for autonomous delivery/building |
 | `game_cluster_rendering` | world/robot visual output | `game/src/playfield/world_renderer.cpp`, `builder_robot_renderer.cpp` | UI only for overlays; robots only if robot state changes |
@@ -20,14 +20,14 @@ This file is the context map for future changes. Start from the smallest build t
 
 ## Robot/pathfinding/safety boundary
 
-`game_cluster_pathfinding` contains two deliberately separate layers. `path_planner.*` is a static-geometry coarse route finder: it receives floor/point/segment callbacks and may cache a route toward the task goal, but that route is never a movement authorization. `safety_coordinator.*` is the authoritative fleet-motion layer.
+`game_cluster_pathfinding` contains deliberately separate global-routing and motion-authority layers. `path_planner.cpp` retains A*/dogleg fallback routing, while `incremental_path_planner.cpp` provides the persistent D* Lite static-world planner with soft clearance costs. Both only suggest waypoints. `safety_coordinator.*` is the authoritative fleet-motion layer.
 
 High-level robot code submits one destination/work intent per rover. The coordinator then:
 
-1. regenerates short dynamically feasible proposals on a 0.50 s horizon every 0.05 s;
+1. regenerates short dynamically feasible proposals on a 1.00 s horizon every 0.10 s;
 2. builds a 10 ms `MotionContract` for each candidate, including conservative braking branches and terminal stopping holds;
 3. checks continuous robot/environment and robot/robot separation in absolute time;
-4. reserves required passage cells and arbitrates all robots together using passage ownership, wait age and deterministic IDs;
+4. uses cell ownership as an ordering hint and arbitrates exact motion/braking/hold separation using task priority, wait age and deterministic IDs;
 5. atomically commits the common simulation step only after the full fleet sweep is valid; otherwise the old certified brake branch remains authoritative;
 6. resolves persistent blocking with waiting, wait-for-cycle detection, certified pull-out/retreat goals and static-route replanning.
 
@@ -52,4 +52,8 @@ No job routine may directly change a robot pose, insert an avoidance steering im
 
 ## v0.40.43 GPU / CPU runtime cluster
 
-For GPU backend, GLX/OpenGL hardware validation, or renderer diagnostics, start with `engine/src/renderer_gl.cpp`, `engine/src/platform_x11.cpp`, and `engine/include/engine/engine.hpp` (`game_engine`). For CPU worker-count policy or task dispatch, use `engine/src/task_pool.cpp`. Rover multi-core use is limited to proposal/route preparation in `game/src/robots/safety_coordinator.cpp` (`game_cluster_pathfinding`); do not parallelize reservation arbitration or world mutation without preserving the shared safety epoch.
+For GPU backend, GLX/OpenGL hardware validation, or renderer diagnostics, start with `engine/src/renderer_gl.cpp`, `engine/src/platform_x11.cpp`, and `engine/include/engine/engine.hpp` (`game_engine`). For CPU worker-count policy or task dispatch, use `engine/src/task_pool.cpp`. Since v0.40.50 the runtime pool uses all logical CPUs visible to the process. Rover multi-core work includes world-revision route validation, D* repair/full route preparation and local proposal preview in `game/src/robots/safety_coordinator.cpp` (`game_cluster_pathfinding`). Heavy route jobs are dynamically allocated first, with up to one heavy search per CPU lane. Do not parallelize reservation arbitration, pose commit or world/resource mutation without preserving the shared safety epoch.
+
+## v0.41.0 shared access and crowd advice
+
+The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; it retains sole contract authority over actual movement. `game/world/mesh_portals.hpp` supplies exact doorway and circulation cuts. Habitat size normalization, storage port placement, corridor collars and the POV floor resolver share model-declared thresholds. The optional `navigation_regression` target links the same game objects and runs without an X11 window.

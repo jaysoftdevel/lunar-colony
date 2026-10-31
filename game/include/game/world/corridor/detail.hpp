@@ -8,6 +8,8 @@
 #include <utility>
 
 namespace game::corridor_detail {
+CorridorDoor transformed_builtin_door(const PlacedHabitat& habitat,const HabitatMesh& mesh,std::size_t entrance_index);
+bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& habitat,const HabitatMesh& mesh);
 using namespace eng;
 
 constexpr float PI=3.14159265358979323846f;

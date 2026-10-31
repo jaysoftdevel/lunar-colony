@@ -128,6 +128,8 @@ public:
     std::vector<CorridorConnection>& mutable_connections() { return connections_; }
     void restore_connections(std::vector<CorridorConnection> connections){ connections_=std::move(connections); }
     void repair_invalid_topology(const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library);
+    void synchronize_structure_interfaces(const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                                          const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library);
 
 private:
     std::vector<CorridorConnection> connections_{};

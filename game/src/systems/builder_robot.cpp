@@ -214,6 +214,32 @@ float segment_distance_xz(Vec3 p,Vec3 a,Vec3 b){
     return dist_xz(p,{a.x+dx*t,0.0f,a.z+dz*t});
 }
 
+bool segment_intersects_rectangle(Vec3 a,Vec3 b,Vec3 center,float rotation,float hx,float hz){
+    a=world_math::rotate_y(a-center,-rotation);b=world_math::rotate_y(b-center,-rotation);
+    float enter=0.0f,leave=1.0f;
+    auto slab=[&](float start,float end,float half){
+        const float delta=end-start;
+        if(std::abs(delta)<1.0e-7f) return std::abs(start)<=half;
+        float lo=(-half-start)/delta,hi=(half-start)/delta;
+        if(lo>hi) std::swap(lo,hi);
+        enter=std::max(enter,lo);leave=std::min(leave,hi);
+        return enter<=leave;
+    };
+    return slab(a.x,b.x,hx) && slab(a.z,b.z,hz);
+}
+
+float segment_pair_distance(Vec3 a,Vec3 b,Vec3 c,Vec3 d){
+    auto cross=[](Vec3 u,Vec3 v){return u.x*v.z-u.z*v.x;};
+    const Vec3 u=b-a,v=d-c;
+    const float den=cross(u,v);
+    if(std::abs(den)>1.0e-7f){
+        const float t=cross(c-a,v)/den,s=cross(c-a,u)/den;
+        if(t>=0 && t<=1 && s>=0 && s<=1) return 0.0f;
+    }
+    return std::min({segment_distance_xz(a,c,d),segment_distance_xz(b,c,d),
+                     segment_distance_xz(c,a,b),segment_distance_xz(d,a,b)});
+}
+
 bool point_in_triangle_xz(Vec3 p,Vec3 a,Vec3 b,Vec3 c){
     // Use the signed 2-D area directly instead of the dot-product Gram
     // determinant. Perfectly vertical construction triangles collapse to a
@@ -717,7 +743,7 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
         for(const Vec3 local:local_candidates){
             Vec3 candidate=center+world_math::rotate_y(local,rotation);
             if(!service_point_clear(candidate)) continue;
-            candidate.y=first_person_floor_height(candidate);
+            candidate.y=0.0f;
             const float depot_distance=dist_xz(candidate,starter_stash_center_);
             const bool side=(std::abs(local.x)<0.01f || std::abs(local.z)<0.01f);
             const float score=depot_distance-(side?0.18f:0.0f);
@@ -740,7 +766,7 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
         Vec3 fallback=center+world_math::rotate_y(local,rotation);
         fallback.x=std::clamp(fallback.x,-service_half,service_half);
         fallback.z=std::clamp(fallback.z,-service_half,service_half);
-        fallback.y=first_person_floor_height(fallback);
+        fallback.y=0.0f;
         return fallback;
     };
 
@@ -795,7 +821,7 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
                     for(float along_offset:along){
                         Vec3 candidate=center+normal*(side*lateral)+tangent*along_offset;
                         if(!service_point_clear(candidate)) continue;
-                        candidate.y=first_person_floor_height(candidate);
+                        candidate.y=0.0f;
                         // Strongly prefer the depot-facing side; small along
                         // offsets only avoid staged packages/local geometry.
                         const float score=dist_xz(candidate,starter_stash_center_)+add*0.35f+std::abs(along_offset)*0.08f;
@@ -814,7 +840,7 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
                 const float a=(2.0f*PI*(float)i)/(float)directions;
                 Vec3 candidate=center+Vec3{std::cos(a)*radius,0.0f,std::sin(a)*radius};
                 if(!service_point_clear(candidate)) continue;
-                candidate.y=first_person_floor_height(candidate);
+                candidate.y=0.0f;
                 const float score=dist_xz(candidate,starter_stash_center_)+radius*0.12f;
                 if(score<best_score){ best_score=score; best=candidate; found=true; }
             }
@@ -825,7 +851,7 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
         Vec3 fallback=center;
         fallback.x=std::clamp(fallback.x,-service_half,service_half);
         fallback.z=std::clamp(fallback.z,-service_half,service_half);
-        fallback.y=first_person_floor_height(fallback);
+        fallback.y=0.0f;
         return fallback;
     };
 
@@ -853,7 +879,7 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
     Vec3 p=construction_target_position(target);
     p.x=std::clamp(p.x,-service_half,service_half);
     p.z=std::clamp(p.z,-service_half,service_half);
-    p.y=first_person_floor_height(p);
+    p.y=0.0f;
     return p;
 }
 
@@ -866,26 +892,26 @@ Vec3 GameApp::construction_drop_package_position(const ConstructionTargetRef& ta
     const int column=slot%6;
     const int row=(slot/6)%3;
 
-    auto structure_grid=[&](Vec3 center,float rotation,float footprint_x,float footprint_z){
+    auto structure_grid=[&](Vec3 center,float rotation,float footprint_x,float footprint_z,float floor_y){
         // Six compact columns by three rows. Spacing is clamped for unusually
         // small footprints and leaves a generous wall inset on every structure.
         const float sx=std::min(0.54f,std::max(0.30f,(footprint_x-1.40f)/5.0f));
         const float sz=std::min(0.58f,std::max(0.30f,(footprint_z-1.40f)/2.0f));
         const Vec3 local{((float)column-2.5f)*sx,0.0f,((float)row-1.0f)*sz};
         Vec3 p=center+world_math::rotate_y(local,rotation);
-        p.y=first_person_floor_height(p);
+        p.y=center.y+floor_y;
         return p;
     };
 
     if(target.kind==ConstructionTargetKind::Habitat && target.index<placed_habitats_.size()){
         const auto& h=placed_habitats_[target.index];
         const auto& mesh=habitat_models_.mesh(h);
-        return structure_grid(h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+        return structure_grid(h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z,h.construction.complete()?mesh.walkable_floor_y:0.0f);
     }
     if(target.kind==ConstructionTargetKind::Resource && target.index<placed_resources_.size()){
         const auto& item=placed_resources_[target.index];
         const auto& mesh=resource_models_.mesh(item);
-        return structure_grid(item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+        return structure_grid(item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,item.construction.complete()?mesh.walkable_floor_y:0.0f);
     }
 
     // Linear projects have no enclosed footprint, so stage their boxes directly
@@ -918,7 +944,7 @@ Vec3 GameApp::construction_drop_package_position(const ConstructionTargetRef& ta
     }
     const Vec3 lateral{-tangent.z,0.0f,tangent.x};
     Vec3 p=center+tangent*(((float)column-2.5f)*0.34f)+lateral*(((float)row-1.0f)*0.28f);
-    p.y=first_person_floor_height(p);
+    p.y=0.0f;
     return p;
 }
 
@@ -1118,6 +1144,11 @@ ResourceBundle GameApp::construction_site_remaining(const ConstructionTargetRef&
 }
 
 void GameApp::update_builder_robot(float dt){
+    // Exterior rovers drive on the playfield, whose current mesh is planar.
+    // Do not run the crew's pressure-hull/furniture queries in every A* edge,
+    // 100 Hz contract and rollout sample. That also prevents a hull projection
+    // from lifting a rover onto an indoor floor while it passes a corner.
+    const auto rover_floor_height=[](Vec3){ return 0.0f; };
     if(dt<=0.0f || builder_robots_.empty()) return;
 
     // A completed depot-exit latch belongs to one physical load only. Once the
@@ -1166,7 +1197,7 @@ void GameApp::update_builder_robot(float dt){
                     const float a=(float)(visual_slot%8)*(2.0f*PI/8.0f);
                     const float ring=0.85f+0.48f*(float)(visual_slot/8);
                     preferred=base+Vec3{std::sin(a)*ring,0.0f,std::cos(a)*ring};
-                    preferred.y=first_person_floor_height(preferred);
+                    preferred.y=rover_floor_height(preferred);
                 }
                 pile.radius=resource_package_half_width(material,amount);
                 const float safety_radius=pile.radius*1.41421356f+kRobotObstacleMargin;
@@ -1184,7 +1215,7 @@ void GameApp::update_builder_robot(float dt){
                         for(int sample=0;sample<16 && !found;++sample){
                             const float a=(2.0f*PI*(float)sample)/16.0f;
                             Vec3 candidate=preferred+Vec3{std::sin(a)*ring,0.0f,std::cos(a)*ring};
-                            candidate.y=first_person_floor_height(candidate);
+                            candidate.y=rover_floor_height(candidate);
                             if(placement_clear(candidate)){ chosen=candidate; found=true; }
                         }
                         if(found) break;
@@ -1599,7 +1630,7 @@ void GameApp::update_builder_robot(float dt){
                 const std::int64_t package_amount=std::min(remaining,capacity);
                 const float half=resource_package_half_width(material,package_amount);
                 Vec3 package_position=construction_drop_package_position(target,visual_slot);
-                package_position.y=first_person_floor_height(package_position);
+
                 cached_resource_obstacles.push_back({package_position,half*1.41421356f});
                 remaining-=package_amount;
                 ++visual_slot;
@@ -1792,40 +1823,31 @@ void GameApp::update_builder_robot(float dt){
         const float radius=robot_safety_corridor_radius(robot.role);
         const float structure_radius=radius+std::max(0.0f,extra_structure_margin);
         const float half=(float)playfield_.size()*0.5f-radius;
-        const float length=dist_xz(from,to);
-        const int samples=std::max(1,(int)std::ceil(length/0.22f));
-        Vec3 previous=from;
-        previous.y=first_person_floor_height(previous);
-        for(int sample=1;sample<=samples;++sample){
-            const float t=(float)sample/(float)samples;
-            Vec3 p=from+(to-from)*t;
-            p.y=first_person_floor_height(p);
-            if(p.x<-half || p.x>half || p.z<-half || p.z>half) return false;
-            if(std::abs(p.y-previous.y)>0.38f) return false;
-
-            for(const auto& h:placed_habitats_){
-                if(!h.construction.complete()) continue;
-                const auto& mesh=habitat_models_.mesh(h);
-                const Vec3 local=world_math::rotate_y(p-h.position,-h.rotation_degrees);
-                if(std::abs(local.x)<mesh.footprint_x*0.5f+structure_radius &&
-                   std::abs(local.z)<mesh.footprint_z*0.5f+structure_radius) return false;
-            }
-            for(const auto& item:placed_resources_){
-                if(!item.construction.complete()) continue;
-                const auto& mesh=resource_models_.mesh(item);
-                const Vec3 local=world_math::rotate_y(p-item.position,-item.rotation_degrees);
-                if(std::abs(local.x)<mesh.footprint_x*0.5f+structure_radius &&
-                   std::abs(local.z)<mesh.footprint_z*0.5f+structure_radius) return false;
-            }
-            for(const auto& corridor:corridor_network_.connections()){
-                if(!corridor.construction.complete() || corridor.path.size()<2) continue;
-                if(polyline_near_xz(p,corridor.path,geometry::kCorridorHalfWidth+radius+0.18f)) return false;
-            }
-            for(const auto& obstacle:cached_resource_obstacles)
-                if(dist_xz(p,obstacle.position)<robot_resource_clearance_radius(robot.role)+obstacle.radius+kRobotObstacleMargin)
-                    return false;
-            previous=p;
+        if(from.x<-half || from.x>half || from.z<-half || from.z>half ||
+           to.x<-half || to.x>half || to.z<-half || to.z>half) return false;
+        // Exact swept-disc tests against conservative static envelopes. No
+        // sampling interval can miss a thin wall, pallet or grazing corner.
+        for(const auto& h:placed_habitats_){
+            if(!h.construction.complete()) continue;
+            const auto& mesh=habitat_models_.mesh(h);
+            if(segment_intersects_rectangle(from,to,h.position,h.rotation_degrees,
+                mesh.footprint_x*0.5f+structure_radius,mesh.footprint_z*0.5f+structure_radius)) return false;
         }
+        for(const auto& item:placed_resources_){
+            if(!item.construction.complete()) continue;
+            const auto& mesh=resource_models_.mesh(item);
+            if(segment_intersects_rectangle(from,to,item.position,item.rotation_degrees,
+                mesh.footprint_x*0.5f+structure_radius,mesh.footprint_z*0.5f+structure_radius)) return false;
+        }
+        for(const auto& corridor:corridor_network_.connections()){
+            if(!corridor.construction.complete()) continue;
+            const float clearance=geometry::kCorridorHalfWidth+structure_radius+0.18f;
+            for(std::size_t i=1;i<corridor.path.size();++i)
+                if(segment_pair_distance(from,to,corridor.path[i-1],corridor.path[i])<=clearance) return false;
+        }
+        for(const auto& obstacle:cached_resource_obstacles)
+            if(segment_distance_xz(obstacle.position,from,to)<robot_resource_clearance_radius(robot.role)+
+                extra_structure_margin+obstacle.radius+kRobotObstacleMargin) return false;
         return true;
     };
 
@@ -1862,6 +1884,9 @@ void GameApp::update_builder_robot(float dt){
         for(std::size_t i=0;i<builder_robots_.size();++i){
             if(i==robot_index) continue;
             const auto& other=builder_robots_[i];
+            const float required=robot_safety_corridor_radius(robot.role)+robot_safety_corridor_radius(other.role)+
+                2.0f*robots::kSafetyNumericMarginM+0.06f;
+            if(dist_xz(candidate,other.position)<required) return false;
             if(robot_hulls_overlap(candidate,candidate_heading_degrees,robot.role,
                                    other.position,other.heading_degrees,other.role,kRobotHullClearanceM)) return false;
         }
@@ -1890,10 +1915,13 @@ void GameApp::update_builder_robot(float dt){
     };
 
     auto clear_route=[&](BuilderRobotState& robot){
+        if(!robot.safety.yielding_for_traffic){
         robot.safety.cached_route.clear();
+        robots::reset_incremental_path_state(robot.safety.incremental_path);
         robot.safety.route_cursor=0;
         robot.safety.proposals.clear();
         robot.safety.route_replan_required=true;
+        }
         robot.planned_route.clear();
         robot.planned_route_distances.clear();
         robot.route_cursor=0;
@@ -1921,12 +1949,12 @@ void GameApp::update_builder_robot(float dt){
         // closing that short-segment hole.
         const int samples=length>0.0001f?std::max(2,(int)std::ceil(length/0.18f)):1;
         Vec3 previous=from;
-        previous.y=first_person_floor_height(previous);
+        previous.y=rover_floor_height(previous);
         float previous_margin_penetration=completed_structure_margin_penetration(robot,previous,extra_structure_margin);
         for(int sample=1;sample<=samples;++sample){
             const float t=(float)sample/(float)samples;
             Vec3 p=from+(to-from)*t;
-            p.y=first_person_floor_height(p);
+            p.y=rover_floor_height(p);
             if(std::abs(p.y-previous.y)>0.38f) return false;
             if(!robot_position_clear_while_exiting_own_target(robot_index,previous,p)) return false;
             if(!robot_structure_move_allowed_with_margin(robot,previous,p,extra_structure_margin)){
@@ -1984,7 +2012,7 @@ void GameApp::update_builder_robot(float dt){
             const float other_hard_radius=robot_safety_corridor_radius(other.role)+
                 robots::kSafetyNumericMarginM;
             const float required=own_hard_radius+other_hard_radius+
-                robots::kNeighborComfortClearanceM;
+                0.06f;
             const float candidate_distance=dist_xz(candidate,other.position);
             if(candidate_distance>=required) continue;
 
@@ -2000,6 +2028,33 @@ void GameApp::update_builder_robot(float dt){
         return true;
     };
 
+    auto parked_fleet_point_clear=[&](std::size_t robot_index,Vec3 candidate){
+        const auto& self=builder_robots_[robot_index];
+        for(std::size_t other_index=0;other_index<builder_robots_.size();++other_index){
+            if(other_index==robot_index || navigation_requests[other_index].active) continue;
+            const auto& other=builder_robots_[other_index];
+            if(other.safety.temporary_goal_valid || std::abs(other.current_speed_mps)>0.03f) continue;
+            const float required=robot_safety_corridor_radius(self.role)+robot_safety_corridor_radius(other.role)+
+                2.0f*robots::kSafetyNumericMarginM+0.06f;
+            const float d=dist_xz(candidate,other.position);
+            if(d<required && d+0.001f<dist_xz(self.position,other.position)) return false;
+        }
+        return true;
+    };
+    auto parked_fleet_segment_clear=[&](std::size_t robot_index,Vec3 a,Vec3 b){
+        const auto& self=builder_robots_[robot_index];
+        for(std::size_t other_index=0;other_index<builder_robots_.size();++other_index){
+            if(other_index==robot_index || navigation_requests[other_index].active) continue;
+            const auto& other=builder_robots_[other_index];
+            if(other.safety.temporary_goal_valid || std::abs(other.current_speed_mps)>0.03f) continue;
+            const float required=robot_safety_corridor_radius(self.role)+robot_safety_corridor_radius(other.role)+
+                2.0f*robots::kSafetyNumericMarginM+0.06f;
+            const float d=segment_distance_xz(other.position,a,b);
+            if(d<required && d+0.001f<dist_xz(self.position,other.position)) return false;
+        }
+        return true;
+    };
+
     auto route_fleet_segment_clear=[&](std::size_t robot_index,Vec3 from,Vec3 to){
         const float length=dist_xz(from,to);
         const int samples=std::max(1,(int)std::ceil(length/0.55f));
@@ -2011,6 +2066,84 @@ void GameApp::update_builder_robot(float dt){
             if(!route_fleet_point_clear(robot_index,from+(to-from)*t)) return false;
         }
         return true;
+    };
+
+    auto incremental_safety_route=[&](std::size_t robot_index,Vec3 start,Vec3 goal,float stop_radius,
+                                       std::uint64_t world_revision,
+                                       robots::IncrementalPathPlannerState& planner_state,
+                                       std::vector<Vec3>& route){
+        if(robot_index>=builder_robots_.size()) return robots::IncrementalPathResult::NoPath;
+        auto& robot=builder_robots_[robot_index];
+
+        robots::PathPlanRequest request{};
+        request.start=start;
+        request.goal=goal;
+        request.stop_radius=stop_radius;
+        request.cell_size=1.28f;
+        const float map_half=std::max(8.0f,(float)playfield_.size()*0.5f-1.5f);
+        request.corridor_half_width=std::clamp(dist_xz(start,goal)*0.42f+7.0f,
+                                               10.0f,std::min(30.0f,map_half));
+        // A single invocation is intentionally modest. If the initial D* wave
+        // needs more work it returns Pending and continues from the same g/rhs
+        // state on a later rendered frame instead of monopolizing the frame.
+        request.max_expansions=720;
+        request.visibility_skip_limit=10;
+        request.allow_grid_fallback=false;
+
+        auto make_static_callbacks=[&](float hard_margin){
+            robots::PathPlannerCallbacks callbacks{};
+            callbacks.floor_height=[&,hard_margin](Vec3 p){ return rover_floor_height(p); };
+            callbacks.point_clear=[&,hard_margin](Vec3 p){
+                return robot_position_clear(robot_index,p) &&
+                       parked_fleet_point_clear(robot_index,p) &&
+                       robot_structure_move_allowed_with_margin(robot,p,p,hard_margin);
+            };
+            callbacks.segment_clear=[&,hard_margin](Vec3 a,Vec3 b){
+                return safety_segment_clear_with_margin(robot_index,a,b,hard_margin) && parked_fleet_segment_clear(robot_index,a,b);
+            };
+            callbacks.neighbor_clear=callbacks.segment_clear;
+            return callbacks;
+        };
+
+        // Preserve the very cheap common case. A direct/dogleg route that can
+        // maintain the full preferred 1 m halo needs no grid propagation at all.
+        {
+            auto preferred=make_static_callbacks(1.00f);
+            std::vector<Vec3> simple;
+            if(robots::plan_corridor_path(request,preferred,simple)){
+                route=std::move(simple);
+                robot.route_structure_clearance_margin_m=1.0f;
+                return robots::IncrementalPathResult::Success;
+            }
+        }
+
+        // D* itself uses only hard physical occupancy. Clearance is represented
+        // as a soft MeshNav-style cost field: open space is cheap, entering the
+        // 1 m halo gets progressively more expensive, but a genuinely narrow
+        // valid passage remains available. Terrain grade adds a small secondary
+        // penalty so equally short routes prefer flatter ground.
+        auto callbacks=make_static_callbacks(0.0f);
+        callbacks.traversal_cost=[&](Vec3 p){
+            float penalty=0.0f;
+            if(!robot_structure_move_allowed_with_margin(robot,p,p,0.95f)){
+                if(robot_structure_move_allowed_with_margin(robot,p,p,0.55f)) penalty+=1.25f;
+                else if(robot_structure_move_allowed_with_margin(robot,p,p,0.25f)) penalty+=3.25f;
+                else penalty+=7.0f;
+            }
+            const float h=rover_floor_height(p);
+            Vec3 px=p; px.x+=0.72f;
+            Vec3 pz=p; pz.z+=0.72f;
+            const float grade=std::max(std::abs(rover_floor_height(px)-h),
+                                       std::abs(rover_floor_height(pz)-h))/0.72f;
+            penalty+=std::min(2.0f,grade*2.2f);
+            return penalty;
+        };
+
+        route.clear();
+        const auto result=robots::plan_incremental_path(request,world_revision,callbacks,planner_state,route);
+        if(result==robots::IncrementalPathResult::Success)
+            robot.route_structure_clearance_margin_m=0.30f;
+        return result;
     };
 
     auto coarse_safety_route=[&](std::size_t robot_index,Vec3 start,Vec3 goal,float stop_radius,std::vector<Vec3>& route){
@@ -2040,7 +2173,7 @@ void GameApp::update_builder_robot(float dt){
 
         auto try_margin=[&](float margin,bool allow_grid){
             robots::PathPlannerCallbacks callbacks{};
-            callbacks.floor_height=[&](Vec3 p){ return first_person_floor_height(p); };
+            callbacks.floor_height=[&](Vec3 p){ return rover_floor_height(p); };
             callbacks.point_clear=[&](Vec3 p){
                 return robot_position_clear(robot_index,p) &&
                        robot_structure_move_allowed_with_margin(robot,p,p,margin) &&
@@ -2057,16 +2190,7 @@ void GameApp::update_builder_robot(float dt){
             // this advisory coarse grid; every simplified output segment is
             // still validated with segment_clear(), and the 10 ms contract
             // authority remains the final collision gate.
-            callbacks.neighbor_clear=[&](Vec3 a,Vec3 b){
-                Vec3 mid=(a+b)*0.5f;
-                mid.y=first_person_floor_height(mid);
-                return robot_position_clear(robot_index,mid) &&
-                       robot_structure_move_allowed_with_margin(robot,mid,mid,margin) &&
-                       route_fleet_point_clear(robot_index,mid) &&
-                       robot_position_clear(robot_index,b) &&
-                       robot_structure_move_allowed_with_margin(robot,b,b,margin) &&
-                       route_fleet_point_clear(robot_index,b);
-            };
+            callbacks.neighbor_clear=callbacks.segment_clear;
             request.allow_grid_fallback=allow_grid;
             route.clear();
             if(!robots::plan_corridor_path(request,callbacks,route)) return false;
@@ -2110,7 +2234,7 @@ void GameApp::update_builder_robot(float dt){
     auto move_towards=[&](std::size_t robot_index,Vec3 destination,float stop_radius,float speed_scale){
         if(robot_index>=builder_robots_.size()) return false;
         auto& robot=builder_robots_[robot_index];
-        destination.y=first_person_floor_height(destination);
+        destination.y=rover_floor_height(destination);
         const float stop=std::max(0.02f,stop_radius);
         robot.route_destination=destination;
         robot.route_stop_radius=stop;
@@ -2153,7 +2277,7 @@ void GameApp::update_builder_robot(float dt){
             const float edge=robot_resource_clearance_radius(RobotRole::Constructor)+kRobotObstacleMargin+0.12f;
             p.x=std::clamp(p.x,-half+edge,half-edge);
             p.z=std::clamp(p.z,-half+edge,half-edge);
-            p.y=first_person_floor_height(p);
+            p.y=rover_floor_height(p);
             return p;
         };
 
@@ -2199,7 +2323,7 @@ void GameApp::update_builder_robot(float dt){
             const float edge=robot_resource_clearance_radius(RobotRole::Constructor)+kRobotObstacleMargin+0.12f;
             candidate.x=std::clamp(candidate.x,-half+edge,half-edge);
             candidate.z=std::clamp(candidate.z,-half+edge,half-edge);
-            candidate.y=first_person_floor_height(candidate);
+            candidate.y=rover_floor_height(candidate);
             if(candidate_clear(candidate)) return candidate;
         }
         return nominal;
@@ -2245,7 +2369,7 @@ void GameApp::update_builder_robot(float dt){
                     for(float off:offs){
                         const float a=base+off;
                         Vec3 candidate=robot.position+Vec3{std::cos(a),0.0f,std::sin(a)}*radius;
-                        candidate.y=first_person_floor_height(candidate);
+                        candidate.y=rover_floor_height(candidate);
                         if(!robot_position_clear(robot_index,candidate) || !fleet_position_clear(robot_index,candidate)) continue;
                         if(target_future_envelope_contains(target,next_step,candidate,body_radius+kRobotObstacleMargin)) continue;
                         if(target_blocks_at_step(target,next_step,candidate,body_radius+kRobotObstacleMargin)) continue;
@@ -2281,7 +2405,7 @@ void GameApp::update_builder_robot(float dt){
             for(int sample=0;sample<32;++sample){
                 const float a=rotation_degrees*PI/180.0f+(2.0f*PI*(float)sample/32.0f);
                 Vec3 candidate=center+Vec3{std::sin(a)*radius,0.0f,std::cos(a)*radius};
-                candidate.y=first_person_floor_height(candidate);
+                candidate.y=rover_floor_height(candidate);
                 if(!robot_position_clear(robot_index,candidate)) continue;
                 if(!fleet_position_clear(robot_index,candidate)) continue;
                 if(target_future_envelope_contains(target,next_step,candidate,body_radius+kRobotObstacleMargin)) continue;
@@ -2303,7 +2427,7 @@ void GameApp::update_builder_robot(float dt){
             if(len<0.01f) away={1.0f,0.0f,0.0f};
             else away=away*(1.0f/len);
             best=center+away*(base_radius+2.5f);
-            best.y=first_person_floor_height(best);
+            best.y=rover_floor_height(best);
         }
         return best;
     };
@@ -2404,7 +2528,7 @@ void GameApp::update_builder_robot(float dt){
         bool have_candidate=false;
 
         auto validate=[&](Vec3 p){
-            p.y=first_person_floor_height(p);
+            p.y=rover_floor_height(p);
             return !target_blueprint_envelope_contains(target,p,body) &&
                    robot_position_clear(robot_index,p) &&
                    robot_structure_move_allowed(robot,p,p);
@@ -2481,7 +2605,7 @@ void GameApp::update_builder_robot(float dt){
 
         if(!have_candidate){
             candidate=safe_stage_commit_destination(robot_index,target,construction_target_total_steps(target));
-            candidate.y=first_person_floor_height(candidate);
+            candidate.y=rover_floor_height(candidate);
         }
         return candidate;
     };
@@ -2562,7 +2686,7 @@ void GameApp::update_builder_robot(float dt){
                                   std::abs(pile.position.z-starter_stash_center_.z)<kStarterPalletHalfSpanM;
         if(starter_pallet){
             Vec3 candidate=pile.position+Vec3{service_radius,0.0f,0.0f};
-            candidate.y=first_person_floor_height(candidate);
+            candidate.y=rover_floor_height(candidate);
             if(robot_position_clear(robot_index,candidate) &&
                robot_structure_move_allowed(robot,candidate,candidate)){
                 // Multiple carriers may reserve the same material bay. The
@@ -2605,7 +2729,7 @@ void GameApp::update_builder_robot(float dt){
             const int slot=(preferred_slot+delta+24*8)%24;
             const float a=(2.0f*PI*(float)slot)/24.0f;
             Vec3 candidate=pile.position+Vec3{std::sin(a)*service_radius,0.0f,std::cos(a)*service_radius};
-            candidate.y=first_person_floor_height(candidate);
+            candidate.y=rover_floor_height(candidate);
             if(!robot_position_clear(robot_index,candidate)) continue;
             if(!robot_structure_move_allowed(robot,candidate,candidate)) continue;
             if(!fleet_position_clear(robot_index,candidate)) continue;
@@ -2623,6 +2747,8 @@ void GameApp::update_builder_robot(float dt){
             if(i==robot_index) continue;
             const auto& other=builder_robots_[i];
             if(!other.interaction_position_valid || !other.target.valid() || !other.target.same_as(target)) continue;
+            if(dist_xz(candidate,other.interaction_position)<robot_safety_corridor_radius(robot.role)+
+               robot_safety_corridor_radius(other.role)+0.18f) return true;
             float other_heading=other.heading_degrees;
             const Vec3 focus=other.interaction_focus_position;
             if(dist_xz(other.interaction_position,focus)>0.15f)
@@ -2675,7 +2801,7 @@ void GameApp::update_builder_robot(float dt){
                 ring=std::min(tx,tz)+hull.half_length+work_margin;
             }
             Vec3 candidate=center+Vec3{std::sin(a)*ring,0.0f,std::cos(a)*ring};
-            candidate.y=first_person_floor_height(candidate);
+            candidate.y=rover_floor_height(candidate);
             const float face_heading=heading_between(candidate,center,robot.heading_degrees);
             if(!robot_position_clear(robot_index,candidate)) continue;
             if(!robot_structure_move_allowed(robot,candidate,candidate)) continue;
@@ -2799,7 +2925,7 @@ void GameApp::update_builder_robot(float dt){
                             for(std::size_t ai=0;ai<along_extra.size();++ai){
                                 const float ae=along_extra[(ai+along_rotation)%along_extra.size()];
                                 Vec3 candidate=work_center+side*ring+tangent*(worker_along+ae);
-                                candidate.y=first_person_floor_height(candidate);
+                                candidate.y=rover_floor_height(candidate);
                                 const float face_heading=heading_between(candidate,work_center,robot.heading_degrees);
                                 if(!robot_position_clear(robot_index,candidate)) continue;
                                 if(!robot_structure_move_allowed(robot,candidate,candidate)) continue;
@@ -2905,7 +3031,7 @@ void GameApp::update_builder_robot(float dt){
             along=(side_dot>=0.0f?1.0f:-1.0f)*offset;
         }
         Vec3 p=center+outward*ring+tangent*along;
-        p.y=first_person_floor_height(p);
+        p.y=rover_floor_height(p);
         return p;
     };
 
@@ -2913,7 +3039,7 @@ void GameApp::update_builder_robot(float dt){
     auto construction_service_candidate_clear=[&](std::size_t robot_index,Vec3 from,Vec3 candidate){
         if(robot_index>=builder_robots_.size()) return false;
         auto& robot=builder_robots_[robot_index];
-        candidate.y=first_person_floor_height(candidate);
+        candidate.y=rover_floor_height(candidate);
         // Validate the complete chassis at the candidate against terrain/map
         // bounds, erected structures, partial construction, resource piles and
         // the rest of the fleet. Requiring a direct body-safe first leg keeps a
@@ -2949,7 +3075,7 @@ void GameApp::update_builder_robot(float dt){
             for(float off:kAngleOffsets){
                 const float angle=base_angle+off;
                 Vec3 candidate=drop+Vec3{std::cos(angle),0.0f,std::sin(angle)}*radius;
-                candidate.y=first_person_floor_height(candidate);
+                candidate.y=rover_floor_height(candidate);
                 // Queue outside the serviced construction rather than between
                 // the drop apron and the blueprint/structure body.
                 if(dist_xz(candidate,center)<base_distance+0.40f) continue;
@@ -2999,7 +3125,7 @@ void GameApp::update_builder_robot(float dt){
             for(float off:kAngleOffsets){
                 const float angle=base_angle+off;
                 Vec3 candidate=drop+Vec3{std::cos(angle),0.0f,std::sin(angle)}*radius;
-                candidate.y=first_person_floor_height(candidate);
+                candidate.y=rover_floor_height(candidate);
                 // A departure bay must actually increase clearance from the
                 // serviced blueprint. This keeps the outgoing chassis from
                 // being steered back through a just-completed dome/corridor.
@@ -3062,7 +3188,7 @@ void GameApp::update_builder_robot(float dt){
             const int slot=(start+signed_step+slots*8)%slots;
             const float a=structure.rotation_degrees*PI/180.0f+(2.0f*PI*(float)slot)/(float)slots;
             Vec3 candidate=structure.position+Vec3{std::sin(a)*ring,0.0f,std::cos(a)*ring};
-            candidate.y=first_person_floor_height(candidate);
+            candidate.y=rover_floor_height(candidate);
             const float candidate_heading=heading_between(candidate,structure.position,robot.heading_degrees);
             if(!robot_position_clear(robot_index,candidate)) continue;
             if(!robot_structure_move_allowed(robot,candidate,candidate)) continue;
@@ -3084,7 +3210,7 @@ void GameApp::update_builder_robot(float dt){
             return candidate;
         }
         Vec3 fallback=structure.position+world_math::rotate_y({mesh.footprint_x*0.5f+1.35f,0.0f,0.0f},structure.rotation_degrees);
-        fallback.y=first_person_floor_height(fallback);
+        fallback.y=rover_floor_height(fallback);
         return fallback;
     };
 
@@ -3151,12 +3277,12 @@ void GameApp::update_builder_robot(float dt){
     // lanes and gives every pickup a deterministic, hull-safe egress.
     auto starter_depot_entry=[&](Vec3 pallet){
         Vec3 gate{starter_stash_center_.x+1.85f,0.0f,pallet.z};
-        gate.y=first_person_floor_height(gate);
+        gate.y=rover_floor_height(gate);
         return gate;
     };
     auto starter_depot_outer_gate=[&](Vec3 pallet){
         Vec3 gate{starter_stash_center_.x+3.70f,0.0f,pallet.z};
-        gate.y=first_person_floor_height(gate);
+        gate.y=rover_floor_height(gate);
         return gate;
     };
     auto starter_depot_safe_outer_gate=[&](std::size_t robot_index,Vec3 pallet){
@@ -3302,7 +3428,7 @@ void GameApp::update_builder_robot(float dt){
         for(auto& candidate:candidates){
             candidate.x=std::clamp(candidate.x,-half,half);
             candidate.z=std::clamp(candidate.z,-half,half);
-            candidate.y=first_person_floor_height(candidate);
+            candidate.y=rover_floor_height(candidate);
             if(!robot_position_clear(robot_index,candidate)) continue;
             if(!robot_structure_move_allowed(robot,robot.position,candidate)) continue;
             if(!safety_segment_clear(robot_index,robot.position,candidate)) continue;
@@ -3433,21 +3559,71 @@ void GameApp::update_builder_robot(float dt){
         if(robot.cargo.empty()) robot.cargo_committed_to_build=false;
     };
 
-    auto deliver_reserved_cargo=[&](BuilderRobotState& robot,const ConstructionTargetRef& target,bool all_remaining_steps){
+    auto deliver_reserved_cargo=[&](BuilderRobotState& robot,const ConstructionTargetRef& target,bool all_remaining_steps,bool* deferred=nullptr){
+        if(deferred) *deferred=false;
         ResourceBundle delivered{};
         ResourceBundle raw_need=logistics_remaining(target,all_remaining_steps,false,kNoRobotIndex);
         for(std::size_t i=0;i<kMaterialResourceCount;++i){
             const auto material=(MaterialResource)i;
-            const std::int64_t amount=std::min({robot.cargo.amount(material),
-                                                robot.logistics_reservation.amount(material),
-                                                raw_need.amount(material)});
-            if(amount<=0) continue;
-            delivered.amount(material)=amount;
-            robot.cargo.amount(material)-=amount;
-            robot.logistics_reservation.amount(material)-=amount;
-            raw_need.amount(material)-=amount;
+            delivered.amount(material)=std::min({robot.cargo.amount(material),robot.logistics_reservation.amount(material),raw_need.amount(material)});
         }
-        if(auto* shared=site_buffer_for(target)) add_bundle(*shared,delivered);
+        auto* shared=site_buffer_for(target);
+        if(!shared || delivered.empty()) return delivered;
+        ResourceBundle visible=*shared;add_bundle(visible,delivered);
+        const auto owner=construction_site_owner_index(target);
+        if(owner<builder_robots_.size() && builder_robots_[owner].stage_materials_picked){
+            if(const auto* plan=construction_target_plan(target)){
+                const auto picked=plan->next_step_cost(construction_target_step(target));
+                for(std::size_t i=0;i<kMaterialResourceCount;++i){const auto r=(MaterialResource)i;visible.amount(r)=std::max<std::int64_t>(0,visible.amount(r)-picked.amount(r));}
+            }
+        }
+        std::vector<CachedResourceObstacle> proposed;
+        int slot=0;
+        for(std::size_t i=0;i<kMaterialResourceCount && slot<36;++i){
+            const auto material=(MaterialResource)i;
+            auto remaining=visible.amount(material);
+            const auto capacity=std::max<std::int64_t>(1,resource_package_capacity_kg(material));
+            while(remaining>0 && slot<36){
+                const auto amount=std::min(remaining,capacity);
+                const auto point=construction_drop_package_position(target,slot++);
+                const float radius=resource_package_half_width(material,amount)*1.41421356f;
+                for(std::size_t rover_index=0;rover_index<builder_robots_.size();++rover_index){
+                    const auto& rover=builder_robots_[rover_index];
+                    const float hull=robot_resource_clearance_radius(rover.role)+kRobotObstacleMargin;
+                    const bool current_occupied=dist_xz(rover.position,point)<hull+radius;
+                    bool occupied=current_occupied;
+                    const auto& contract=rover.safety.active_contract;
+                    if(contract.valid){
+                        for(const auto& piece:contract.occupancy_tube)
+                            occupied=occupied || segment_distance_xz(point,piece.start,piece.end)<piece.radius+radius+kRobotObstacleMargin;
+                        for(const auto& hold:contract.terminal_holds)
+                            occupied=occupied || dist_xz(hold.position,point)<hold.radius+radius+kRobotObstacleMargin;
+                    }
+                    if(occupied){
+                        if(current_occupied && !navigation_requests[rover_index].active &&
+                           rover.action==BuilderRobotAction::None){
+                            const auto destination=safe_stage_commit_destination(rover_index,target,2);
+                            if(dist_xz(destination,rover.position)>0.20f){
+                                move_towards(rover_index,destination,0.12f,0.80f);
+                                safety_repositioning[rover_index]=true;
+                            }
+                        }
+                        if(deferred) *deferred=true;
+                        return ResourceBundle{};
+                    }
+                }
+                proposed.push_back({point,radius});remaining-=amount;
+            }
+        }
+        // Stage material as one atomic geometry/inventory mutation. A rover
+        // crossing an untouched blueprint must leave before pallets appear.
+        // The same slice's planners immediately see the newly admitted boxes.
+        for(std::size_t i=0;i<kMaterialResourceCount;++i){const auto material=(MaterialResource)i;
+            robot.cargo.amount(material)-=delivered.amount(material);
+            robot.logistics_reservation.amount(material)-=delivered.amount(material);
+        }
+        add_bundle(*shared,delivered);
+        cached_resource_obstacles.insert(cached_resource_obstacles.end(),proposed.begin(),proposed.end());
         if(robot.logistics_reservation.empty() && robot.cargo.empty()) robot.cargo_committed_to_build=false;
         return delivered;
     };
@@ -3929,7 +4105,9 @@ void GameApp::update_builder_robot(float dt){
                     for(std::size_t i=0;i<kMaterialResourceCount;++i){ const auto r=(MaterialResource)i; if(robot.cargo.amount(r)>0){ handled=r; handled_amount=robot.cargo.amount(r); break; } }
                     start_action(robot,BuilderRobotAction::PutDown,kPutDownSeconds,handled,handled_amount,drop_zone);
                 }else if(tick_action(robot,dt)){
-                    deliver_reserved_cargo(robot,robot.target,false);
+                    bool delivery_deferred=false;
+                    deliver_reserved_cargo(robot,robot.target,false,&delivery_deferred);
+                    if(delivery_deferred) continue;
                     clear_action(robot);
                     clear_interaction_station(robot);
                     if(!robot.cargo.empty()) clear_logistics_assignment(robot);
@@ -4541,7 +4719,9 @@ void GameApp::update_builder_robot(float dt){
                         }
                         start_action(carrier,BuilderRobotAction::PutDown,kPutDownSeconds*0.88f,handled,amount,drop);
                     }else if(tick_action(carrier,dt)){
-                        deliver_reserved_cargo(carrier,carrier.target,true);
+                        bool delivery_deferred=false;
+                        deliver_reserved_cargo(carrier,carrier.target,true,&delivery_deferred);
+                        if(delivery_deferred) continue;
                         clear_action(carrier);
                         if(carrier.logistics_reservation.empty()){
                             // Do not become idle on the shared drop point. The
@@ -4671,14 +4851,39 @@ void GameApp::update_builder_robot(float dt){
         mix_epoch(world_epoch,(std::uint64_t)std::llround((double)obstacle_radius*100.0));
     }
 
+    mix_epoch(world_epoch,cached_resource_obstacles.size());
+    for(const auto& obstacle:cached_resource_obstacles){
+        mix_epoch(world_epoch,(std::uint64_t)(std::int64_t)std::llround(obstacle.position.x*100.0f));
+        mix_epoch(world_epoch,(std::uint64_t)(std::int64_t)std::llround(obstacle.position.z*100.0f));
+        mix_epoch(world_epoch,(std::uint64_t)std::llround(obstacle.radius*100.0f));
+    }
+
+    // Parked actors are static map obstacles until a real task or certified
+    // yield makes them mobile. Epoch-tag their exact footprint changes so D*
+    // can repair the route instead of repeatedly publishing a path through an
+    // idle rover when the bounded fallback search cannot find a wide detour.
+    for(std::size_t i=0;i<builder_robots_.size();++i){
+        const auto& rover=builder_robots_[i];
+        if(navigation_requests[i].active || rover.safety.temporary_goal_valid || std::abs(rover.current_speed_mps)>0.03f) continue;
+        mix_epoch(world_epoch,i+1);
+        mix_epoch(world_epoch,(std::uint64_t)(std::int64_t)std::llround(rover.position.x*100.0f));
+        mix_epoch(world_epoch,(std::uint64_t)(std::int64_t)std::llround(rover.position.z*100.0f));
+    }
+
     std::vector<robots::SafetyAgent> safety_agents;
     safety_agents.reserve(builder_robots_.size());
     for(std::size_t i=0;i<builder_robots_.size();++i){
         auto& robot=builder_robots_[i];
+        if(robot.safety.yielding_for_traffic && robot.action==BuilderRobotAction::None){
+            const bool delivery_admitted=robot.mode==BuilderRobotMode::Delivering && robot.interaction_position_valid &&
+                dist_xz(robot.interaction_position,robot.interaction_focus_position)<0.55f;
+            const bool resume_job=robot.target.valid() &&
+                (robot.role==RobotRole::Constructor || delivery_admitted || robot.mode!=BuilderRobotMode::Delivering);
+            if(!robot.safety.temporary_goal_valid && resume_job) robot.safety.yielding_for_traffic=false;
+            else navigation_requests[i].active=false;
+        }
         navigation_requests[i].work_target=!navigation_requests[i].active &&
-            (robot.action!=BuilderRobotAction::None || robot.mode==BuilderRobotMode::Building ||
-             robot.mode==BuilderRobotMode::Fetching || robot.mode==BuilderRobotMode::Delivering ||
-             robot.mode==BuilderRobotMode::DepotTransfer);
+            (robot.action!=BuilderRobotAction::None || robot.mode==BuilderRobotMode::Building);
         // Constructors own the higher traffic priority. This never lets BR-02
         // preempt an already occupied certified passage, but when two fresh
         // movements compete for the same free space the builder is considered
@@ -4707,7 +4912,7 @@ void GameApp::update_builder_robot(float dt){
     }
 
     robots::SafetyWorldCallbacks safety_world{};
-    safety_world.floor_height=[&](Vec3 p){ return first_person_floor_height(p); };
+    safety_world.floor_height=[&](Vec3 p){ return rover_floor_height(p); };
     safety_world.point_clear=[&](std::size_t robot_index,Vec3 p){
         if(robot_index>=builder_robots_.size()) return false;
         const auto& robot=builder_robots_[robot_index];
@@ -4729,6 +4934,15 @@ void GameApp::update_builder_robot(float dt){
     };
     safety_world.segment_clear=[&](std::size_t robot_index,Vec3 a,Vec3 b){
         return safety_segment_clear(robot_index,a,b);
+    };
+    safety_world.stationary_segment_clear=[&](std::size_t robot_index,Vec3 a,Vec3 b){
+        return route_fleet_segment_clear(robot_index,a,b);
+    };
+    safety_world.incremental_route=[&](std::size_t robot_index,Vec3 a,Vec3 b,float stop_radius,
+                                      std::uint64_t revision,
+                                      robots::IncrementalPathPlannerState& state,
+                                      std::vector<Vec3>& route){
+        return incremental_safety_route(robot_index,a,b,stop_radius,revision,state,route);
     };
     safety_world.coarse_route=[&](std::size_t robot_index,Vec3 a,Vec3 b,float stop_radius,std::vector<Vec3>& route){
         return coarse_safety_route(robot_index,a,b,stop_radius,route);

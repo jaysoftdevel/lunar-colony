@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/engine.hpp"
+#include "game/robots/path_planner.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -11,8 +12,13 @@
 namespace game::robots {
 
 inline constexpr float kSafetyDtSeconds = 0.01f;
-inline constexpr float kPlannerReplanSeconds = 0.05f;
-inline constexpr float kPlannerHorizonSeconds = 0.50f;
+// Local steering/path proposals are intentionally refreshed at 10 Hz. The
+// previous 20 Hz planner cadence repeated expensive route/proposal work while
+// the authoritative motion contracts already run at 100 Hz.
+inline constexpr float kPlannerReplanSeconds = 0.10f;
+// Predict twice as far ahead as v0.40.50. This remains advisory planning; the
+// 10 ms contract authority below still certifies every actual movement.
+inline constexpr float kPlannerHorizonSeconds = 1.00f;
 inline constexpr float kSafetyNumericMarginM = 0.025f;
 inline constexpr float kBlockingWaitTimeoutSeconds = 0.85f;
 inline constexpr float kNeighborAwarenessRadiusM = 8.0f;
@@ -102,6 +108,9 @@ struct MotionControl {
     float target_speed_mps{0.0f};
     float target_heading_degrees{0.0f};
     bool reverse{false};
+    // Track the cached geometric corridor during rollout as well as execution.
+    bool follow_route{false};
+    float heading_offset_degrees{0.0f};
 };
 
 struct MotionContract {
@@ -156,6 +165,7 @@ struct SafetyRuntime {
     std::uint64_t goal_revision{0};
 
     std::vector<eng::Vec3> cached_route{};
+    IncrementalPathPlannerState incremental_path{};
     std::size_t route_cursor{0};
     std::uint64_t route_world_epoch{0};
     std::uint64_t route_goal_revision{0};
@@ -191,6 +201,16 @@ struct SafetyRuntime {
     float predicted_robot_clearance_m{std::numeric_limits<float>::infinity()};
 
     bool route_replan_required{true};
+    eng::Vec3 route_origin{};
+    eng::Vec3 avoidance_velocity{};
+    bool avoidance_velocity_valid{false};
+    float avoidance_elapsed{0.0f};
+    float recovery_cooldown{0.0f};
+    float steering_side{0.0f};
+    bool yielding_for_traffic{false};
+    float best_route_remaining{std::numeric_limits<float>::infinity()};
+    float route_progress_elapsed{0.0f};
+    std::uint8_t fault_phase{0};
 };
 
 struct SafetyAgent {
@@ -210,7 +230,13 @@ struct SafetyWorldCallbacks {
     std::function<float(eng::Vec3)> floor_height;
     std::function<bool(std::size_t,eng::Vec3)> point_clear;
     std::function<bool(std::size_t,eng::Vec3,eng::Vec3)> segment_clear;
+    std::function<bool(std::size_t,eng::Vec3,eng::Vec3)> stationary_segment_clear;
     std::function<bool(std::size_t,eng::Vec3,eng::Vec3,float,std::vector<eng::Vec3>&)> coarse_route;
+    // Preferred stable-world route, including epoch-tagged parked actors. It
+    // retains one D* Lite state per rover; moving fleet conflicts remain the
+    // responsibility of reservations/local detours.
+    std::function<IncrementalPathResult(std::size_t,eng::Vec3,eng::Vec3,float,std::uint64_t,
+                                        IncrementalPathPlannerState&,std::vector<eng::Vec3>&)> incremental_route;
 };
 
 struct SafetyTickStats {

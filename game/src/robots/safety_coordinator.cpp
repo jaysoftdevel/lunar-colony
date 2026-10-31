@@ -1,4 +1,6 @@
 #include "game/robots/safety_coordinator.hpp"
+#include "RVOSimulator.h"
+#include "Vector2.h"
 
 #include <algorithm>
 #include <array>
@@ -81,10 +83,66 @@ struct RolloutState {
     float speed{0.0f};
 };
 
+// A moving path corridor, rather than a heading held for the entire preview.
+// Projection makes progress independent of whether the chassis hits a tiny
+// waypoint disc exactly. Visibility checks preserve the obstacle-clear route.
+struct SteeringSample { Vec3 target{}; float remaining{0.0f}; };
+SteeringSample corridor_steering(const SafetyAgent& a,const RolloutState& s,
+                                 const SafetyWorldCallbacks& world){
+    const auto& rt=*a.runtime;
+    const auto& path=rt.cached_route;
+    if(path.empty()) return {rt.temporary_goal_valid?rt.temporary_goal:rt.goal,0.0f};
+    std::size_t i=std::min(rt.route_cursor,path.size()-1);
+    Vec3 start=i?path[i-1]:rt.route_origin;
+    while(i+1<path.size()){
+        const Vec3 edge=path[i]-start;
+        const float len2=dot_xz(edge,edge);
+        const bool passed=len2>0.001f && dot_xz(s.position-path[i],edge)>=0.0f;
+        if(dist_xz(s.position,path[i])>0.16f && !passed) break;
+        if(world.segment_clear && !world.segment_clear(a.id,s.position,path[i+1])) break;
+        if(world.stationary_segment_clear && !world.stationary_segment_clear(a.id,s.position,path[i+1])) break;
+        start=path[i++];
+    }
+    const Vec3 edge=path[i]-start;
+    const float len2=dot_xz(edge,edge);
+    const float t=len2>0.001f?std::clamp(dot_xz(s.position-start,edge)/len2,0.0f,1.0f):1.0f;
+    Vec3 projection=start+edge*t;
+    float ahead=std::clamp(0.55f+std::abs(s.speed)*0.22f,0.55f,2.0f);
+    Vec3 target=path[i];
+    float segment=dist_xz(projection,target);
+    if(segment>ahead) target=projection+(target-projection)*(ahead/segment);
+    else {
+        ahead-=segment;
+        for(std::size_t j=i+1;j<path.size() && ahead>0.0f;++j){
+            const float length=dist_xz(path[j-1],path[j]);
+            const Vec3 candidate=length>ahead?path[j-1]+(path[j]-path[j-1])*(ahead/length):path[j];
+            if(world.segment_clear && !world.segment_clear(a.id,s.position,candidate)) break;
+            if(world.stationary_segment_clear && !world.stationary_segment_clear(a.id,s.position,candidate)) break;
+            target=candidate;
+            ahead-=length;
+        }
+    }
+    float remaining=dist_xz(s.position,path[i]);
+    for(std::size_t j=i+1;j<path.size();++j) remaining+=dist_xz(path[j-1],path[j]);
+    return {target,remaining};
+}
+
 RolloutState step_control(const SafetyAgent& agent,RolloutState state,const MotionControl& control,float dt,const SafetyWorldCallbacks& world){
+    float heading=control.target_heading_degrees;
+    float requested_speed=control.target_speed_mps;
+    if(control.follow_route && agent.runtime && !agent.runtime->cached_route.empty()){
+        const auto steer=corridor_steering(agent,state,world);
+        heading=heading_between(state.position,steer.target,state.heading)+control.heading_offset_degrees;
+        const float error=std::abs(wrap_degrees(heading-state.heading));
+        const float room=std::max(0.0f,steer.remaining-agent.runtime->stop_radius*0.8f);
+        const float stop_cap=std::sqrt(2.0f*agent.braking_mps2*room)*0.8f;
+        const float alignment=error>75.0f?0.0f:std::max(0.10f,std::pow(std::cos(error*PI/180.0f),2.0f));
+        requested_speed=std::min(requested_speed*alignment,stop_cap);
+        if(steer.remaining<=agent.runtime->stop_radius) requested_speed=0.0f;
+    }
     const float turn=std::max(0.0f,agent.turn_rate_degrees_per_second)*dt;
-    state.heading=turn_towards(state.heading,control.target_heading_degrees,turn);
-    const float target=std::clamp(control.target_speed_mps,-agent.max_speed_mps,agent.max_speed_mps);
+    state.heading=turn_towards(state.heading,heading,turn);
+    const float target=std::clamp(requested_speed,-agent.max_speed_mps,agent.max_speed_mps);
     const float rate=(std::abs(target)<std::abs(state.speed) || state.speed*target<0.0f)?agent.braking_mps2:agent.acceleration_mps2;
     state.speed=approach(state.speed,target,std::max(0.0f,rate)*dt);
     const Vec3 forward=forward_from_heading(state.heading);
@@ -93,7 +151,7 @@ RolloutState step_control(const SafetyAgent& agent,RolloutState state,const Moti
     return state;
 }
 
-constexpr float kProposalPreviewDtSeconds=0.10f;
+constexpr float kProposalPreviewDtSeconds=0.05f;
 
 bool preview_static_clear(const SafetyAgent& agent,const MotionControl& control,const SafetyWorldCallbacks& world,std::vector<Vec3>& preview,float& final_heading,float& final_speed){
     preview.clear();
@@ -101,7 +159,8 @@ bool preview_static_clear(const SafetyAgent& agent,const MotionControl& control,
     Vec3 previous=s.position;
     const int steps=(int)std::ceil(kPlannerHorizonSeconds/kProposalPreviewDtSeconds);
     for(int i=0;i<steps;++i){
-        s=step_control(agent,s,control,kProposalPreviewDtSeconds,world);
+        // Match the authoritative integrator instead of taking one coarse turn.
+        for(int sub=0;sub<5;++sub) s=step_control(agent,s,control,kSafetyDtSeconds,world);
         if(world.point_clear && !world.point_clear(agent.id,s.position)) return false;
         if(world.segment_clear && !world.segment_clear(agent.id,previous,s.position)) return false;
         preview.push_back(s.position);
@@ -121,14 +180,11 @@ bool point_clear_of_predicted_robot(const SafetyAgent& self,Vec3 point,float sam
 
     auto clearance_allowed=[&](float clearance){
         min_clearance=std::min(min_clearance,clearance-kNeighborComfortClearanceM);
-        if(clearance>=kNeighborComfortClearanceM) return true;
-        // A loaded/legacy save can already violate the newly introduced
-        // personal zone without violating the hard hull. Do not trap or flicker
-        // the active rover in place: while inside the zone, permit only motion
-        // that maintains or increases separation from the other rover.
-        return escaping_existing_zone &&
-               clearance+kPersonalZoneEscapeEpsilonM>=current_clearance;
+        // Comfort is a local-planning cost. Enforcing it as another hard hull
+        // sealed physically usable gaps beside the starter parking apron.
+        return clearance>=0.0f;
     };
+    (void)escaping_existing_zone;
 
     bool represented=false;
     const auto& contract=other.runtime->active_contract;
@@ -212,15 +268,53 @@ void invalidate_route(SafetyRuntime& rt){
     rt.route_failed=false;
     rt.route_retry_elapsed=0.0f;
     rt.route_failure_count=0;
+    // invalidate_route() is used for a changed logical goal/temporary target.
+    // A world-only revision intentionally does NOT call this function so the
+    // persistent D* Lite g/rhs state survives and can be repaired in place.
+    reset_incremental_path_state(rt.incremental_path);
 }
 
-void advance_route_cursor(const SafetyAgent& a,SafetyRuntime& rt){
-    while(rt.route_cursor<rt.cached_route.size() && dist_xz(a.position,rt.cached_route[rt.route_cursor])<0.42f)
+float route_corner_angle_degrees(const SafetyAgent& a,const SafetyRuntime& rt,std::size_t index){
+    if(index>=rt.cached_route.size() || index+1>=rt.cached_route.size()) return 0.0f;
+    const Vec3 before=index>0?rt.cached_route[index-1]:a.position;
+    const Vec3 corner=rt.cached_route[index];
+    const Vec3 after=rt.cached_route[index+1];
+    Vec3 incoming=corner-before; incoming.y=0.0f;
+    Vec3 outgoing=after-corner; outgoing.y=0.0f;
+    const float in_len=std::sqrt(dot_xz(incoming,incoming));
+    const float out_len=std::sqrt(dot_xz(outgoing,outgoing));
+    if(in_len<0.05f || out_len<0.05f) return 0.0f;
+    const float cosine=std::clamp(dot_xz(incoming,outgoing)/(in_len*out_len),-1.0f,1.0f);
+    return std::acos(cosine)*180.0f/PI;
+}
+
+bool route_has_sharp_corner_at(const SafetyAgent& a,const SafetyRuntime& rt,std::size_t index){
+    return route_corner_angle_degrees(a,rt,index)>=22.0f;
+}
+
+void advance_route_cursor(const SafetyAgent& a,SafetyRuntime& rt,const SafetyWorldCallbacks& world){
+    while(rt.route_cursor<rt.cached_route.size()){
+        // Do not switch to the post-corner waypoint while the chassis is still
+        // approaching the corner. At 6 m/s the old 0.42 m acceptance radius
+        // could start the turn early enough for the swept hull to touch the
+        // structure even though both route segments were individually clear.
+        const float acceptance=route_has_sharp_corner_at(a,rt,rt.route_cursor)?0.20f:0.42f;
+        const Vec3 start=rt.route_cursor?rt.cached_route[rt.route_cursor-1]:rt.route_origin;
+        const Vec3 edge=rt.cached_route[rt.route_cursor]-start;
+        const float len2=dot_xz(edge,edge);
+        bool passed=len2>0.001f && dot_xz(a.position-rt.cached_route[rt.route_cursor],edge)>=0.0f;
+        if(passed && rt.route_cursor+1<rt.cached_route.size()){
+            const auto next=rt.cached_route[rt.route_cursor+1];
+            passed=(!world.segment_clear || world.segment_clear(a.id,a.position,next)) &&
+                (!world.stationary_segment_clear || world.stationary_segment_clear(a.id,a.position,next));
+        }
+        if(dist_xz(a.position,rt.cached_route[rt.route_cursor])>=acceptance && !passed) break;
         ++rt.route_cursor;
+    }
 }
 
 Vec3 route_waypoint(const SafetyAgent& a,SafetyRuntime& rt,const SafetyWorldCallbacks& world){
-    advance_route_cursor(a,rt);
+    advance_route_cursor(a,rt,world);
     if(rt.route_cursor>=rt.cached_route.size()) return current_target(rt);
 
     // A stationary-rover bypass is a fleet-aware A* result. The generic
@@ -233,7 +327,13 @@ Vec3 route_waypoint(const SafetyAgent& a,SafetyRuntime& rt,const SafetyWorldCall
     std::size_t best=rt.route_cursor;
     const std::size_t far=std::min(rt.cached_route.size()-1,rt.route_cursor+5);
     for(std::size_t i=rt.route_cursor;i<=far;++i){
+        // Visibility shortcuts are useful on straight terrain, but may not jump
+        // over a real route corner. The individual straight chord can be hard-
+        // collision-clear while still forcing the rover to begin turning too
+        // early and clip the corner with its swept chassis.
+        if(i>rt.route_cursor && route_has_sharp_corner_at(a,rt,i-1)) break;
         if(world.segment_clear && !world.segment_clear(a.id,a.position,rt.cached_route[i])) break;
+        if(world.stationary_segment_clear && !world.stationary_segment_clear(a.id,a.position,rt.cached_route[i])) break;
         best=i;
     }
     return rt.cached_route[best];
@@ -251,7 +351,7 @@ float route_retry_delay(const SafetyAgent& a,const SafetyRuntime& rt){
 
 bool remaining_route_is_static_clear(const SafetyAgent& a,SafetyRuntime& rt,const SafetyWorldCallbacks& world){
     if(rt.cached_route.empty() || !world.segment_clear) return false;
-    advance_route_cursor(a,rt);
+    advance_route_cursor(a,rt,world);
     if(rt.route_cursor>=rt.cached_route.size())
         return world.segment_clear(a.id,a.position,current_target(rt));
 
@@ -318,12 +418,48 @@ void ensure_route(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCall
     std::vector<Vec3> route;
     const float radius=std::max(0.05f,rt.stop_radius);
     bool ok=false;
-    if(world.coarse_route) ok=world.coarse_route(a.id,a.position,target,radius,route);
+    bool incremental_pending=false;
+    // Normal work/logistics travel uses the persistent static-world D* Lite
+    // planner. Temporary retreat/stationary-detour targets intentionally use
+    // the fleet-aware coarse planner because another rover is the obstacle that
+    // created those targets in the first place.
+    if(!rt.temporary_goal_valid && world.incremental_route){
+        const auto result=world.incremental_route(a.id,a.position,target,radius,world_epoch,
+                                                  rt.incremental_path,route);
+        ok=result==IncrementalPathResult::Success;
+        incremental_pending=result==IncrementalPathResult::Pending;
+    }
+    if(incremental_pending){
+        // The search consumed its bounded expansion slice. Keep the rover in a
+        // certified hold and continue the SAME D* state on a later frame rather
+        // than paying for an immediate full A* fallback and recreating a spike.
+        rt.route_replan_required=true;
+        rt.route_failed=false;
+        rt.proposals.clear();
+        return;
+    }
+    if(!ok && world.coarse_route)
+        ok=world.coarse_route(a.id,a.position,target,radius,route);
     if(!ok && world.segment_clear && world.segment_clear(a.id,a.position,target)){
         route={target};
         ok=true;
     }
+    if(ok && world.stationary_segment_clear && world.coarse_route){
+        Vec3 previous=a.position;
+        bool fleet_clear=true;
+        for(const Vec3 p:route){
+            if(!world.stationary_segment_clear(a.id,previous,p)){fleet_clear=false;break;}
+            previous=p;
+        }
+        if(!fleet_clear){
+            std::vector<Vec3> detour;
+            if(world.coarse_route(a.id,a.position,target,radius,detour)) route=std::move(detour);
+        }
+    }
     rt.cached_route=ok?std::move(route):std::vector<Vec3>{};
+    rt.route_origin=a.position;
+    rt.best_route_remaining=std::numeric_limits<float>::infinity();
+    rt.route_progress_elapsed=0.0f;
     rt.route_cursor=0;
     rt.route_world_epoch=world_epoch;
     rt.route_goal_revision=rt.goal_revision;
@@ -336,6 +472,52 @@ void ensure_route(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCall
     if(!ok){
         rt.block_reason=BlockReason::NoRoute;
         rt.proposals.clear();
+    }
+}
+
+void update_reciprocal_velocities(std::vector<SafetyAgent>& agents,const SafetyWorldCallbacks& world,float dt){
+    bool due=false;
+    for(auto& a:agents){
+        a.runtime->avoidance_elapsed+=dt;
+        due=due || a.runtime->avoidance_elapsed>=kPlannerReplanSeconds;
+    }
+    if(!due) return;
+    RVO::RVOSimulator simulator;
+    simulator.setTimeStep(kPlannerReplanSeconds);
+    for(const auto& a:agents){
+        const auto& rt=*a.runtime;
+        const bool moving=rt.goal_valid || rt.temporary_goal_valid;
+        const Vec3 actual=forward_from_heading(a.heading_degrees)*a.speed_mps;
+        const auto index=simulator.addAgent(RVO::Vector2(a.position.x,a.position.z),
+            kNeighborAwarenessRadiusM+2.0f*a.max_speed_mps,agents.size(),
+            2.0f,2.0f,a.radius_m+kSafetyNumericMarginM+kRobotPersonalSafetyZoneM,
+            moving?a.max_speed_mps:0.0f,RVO::Vector2(actual.x,actual.z));
+        Vec3 preferred{};
+        if(moving){
+            const Vec3 target=rt.cached_route.empty()?current_target(rt):
+                corridor_steering(a,{a.position,a.heading_degrees,a.speed_mps},world).target;
+            const float heading=heading_between(a.position,target,a.heading_degrees);
+            // Everyone keeps right in symmetric encounters. This removes the
+            // arbitrary left/right tie that otherwise repeats on every update.
+            const float bias=rt.nearby_robot_count?5.0f:0.0f;
+            const float room=std::max(0.0f,dist_xz(a.position,current_target(rt))-rt.stop_radius);
+            const float speed=std::min(a.max_speed_mps*rt.speed_scale,std::sqrt(2.0f*a.braking_mps2*room)*0.8f);
+            preferred=forward_from_heading(heading+bias)*speed;
+        }
+        simulator.setAgentPrefVelocity(index,RVO::Vector2(preferred.x,preferred.z));
+    }
+    simulator.doStep();
+    for(std::size_t i=0;i<agents.size();++i){
+        const auto velocity=simulator.getAgentVelocity(i);
+        auto& rt=*agents[i].runtime;
+        rt.avoidance_velocity={velocity.x(),0.0f,velocity.y()};
+        rt.avoidance_velocity_valid=false;
+        for(const auto& other:agents){
+            if(other.id==agents[i].id || (!other.runtime->goal_valid && !other.runtime->temporary_goal_valid)) continue;
+            if(dist_xz(other.position,agents[i].position)<kNeighborAwarenessRadiusM+2.0f*agents[i].max_speed_mps)
+                rt.avoidance_velocity_valid=true;
+        }
+        rt.avoidance_elapsed=0.0f;
     }
 }
 
@@ -357,12 +539,30 @@ void generate_proposals(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWor
     }
 
     const Vec3 waypoint=route_waypoint(a,rt,world);
+    const float remaining_before=corridor_steering(a,{a.position,a.heading_degrees,a.speed_mps},world).remaining;
+    auto path_progress=[&](Vec3 end,float heading,float speed){
+        return remaining_before-corridor_steering(a,{end,heading,speed},world).remaining;
+    };
     const float desired=heading_between(a.position,waypoint,a.heading_degrees);
     const float cruise=std::max(0.08f,a.max_speed_mps*std::clamp(rt.speed_scale,0.15f,1.0f));
     const float target_distance=dist_xz(a.position,current_target(rt));
     const float braking_room=std::max(0.0f,target_distance-std::max(0.03f,rt.stop_radius));
     const float stopping_speed_cap=std::sqrt(std::max(0.0f,2.0f*a.braking_mps2*braking_room))*0.90f;
-    const float planned_cruise=std::min(cruise,stopping_speed_cap);
+    float planned_cruise=std::min(cruise,stopping_speed_cap);
+
+    // Brake before a mandatory structure-corner waypoint instead of arriving at
+    // 6 m/s and discovering that every turning preview intersects the wall.
+    // The exact move remains contract-certified at 100 Hz; this only shapes the
+    // advisory target speed so the rover reaches a turn in a controllable state.
+    if(rt.route_cursor<rt.cached_route.size() &&
+       route_has_sharp_corner_at(a,rt,rt.route_cursor)){
+        const float corner_distance=dist_xz(a.position,rt.cached_route[rt.route_cursor]);
+        const float turn_angle=route_corner_angle_degrees(a,rt,rt.route_cursor);
+        const float room=std::max(0.0f,corner_distance-0.18f);
+        const float brake_cap=std::sqrt(std::max(0.0f,2.0f*a.braking_mps2*room))*0.72f;
+        const float turn_cap=std::clamp(2.20f-(turn_angle-22.0f)*0.012f,0.55f,2.20f);
+        planned_cruise=std::min(planned_cruise,std::max(0.20f,std::min(brake_cap,turn_cap)));
+    }
 
     // A rover may pivot in place. This is essential when conservative safety
     // discs are close: translating while turning can consume the remaining
@@ -379,11 +579,11 @@ void generate_proposals(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWor
         if(preview_static_clear(a,pivot,world,preview,end_heading,end_speed)){
             float fleet_clearance=std::numeric_limits<float>::infinity();
             if(preview_fleet_clear(a,preview,agents,now,fleet_clearance))
-                rt.proposals.push_back({pivot,std::move(preview),0.20f+std::abs(heading_error)*0.002f});
+                rt.proposals.push_back({pivot,std::move(preview),5.0f+std::abs(heading_error)*0.002f});
             rt.predicted_robot_clearance_m=std::min(rt.predicted_robot_clearance_m,fleet_clearance);
         }
     }
-    constexpr std::array<float,9> angle_offsets{{0.0f,-14.0f,14.0f,-34.0f,34.0f,-52.0f,52.0f,-72.0f,72.0f}};
+    constexpr std::array<float,1> angle_offsets{{0.0f}};
     constexpr std::array<float,3> speed_scales{{1.0f,0.58f,0.34f}};
     // Normal travel should be cheap: follow the coarse route with a small set
     // of local corrections. Only a rover that is actually blocked/retreating
@@ -392,8 +592,34 @@ void generate_proposals(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWor
     // the collision authority.
     const bool recovery_search=rt.stationary_detour_active || rt.motion_intent==MotionIntent::Retreat ||
         rt.blocked_elapsed>=0.30f || rt.mode==SafetyMode::Waiting || rt.mode==SafetyMode::Blocked;
-    const std::size_t angle_count=recovery_search?angle_offsets.size():5u;
+    // The route follower owns static turns. Fixed angular fans around its
+    // tangent create circular orbits beside a corner; moving traffic gets its
+    // explicit reciprocal-velocity candidate instead.
+    const std::size_t angle_count=1u;
     const std::size_t speed_count=recovery_search?speed_scales.size():2u;
+
+    if(rt.avoidance_velocity_valid){
+        const float speed=std::sqrt(dot_xz(rt.avoidance_velocity,rt.avoidance_velocity));
+        if(speed>0.06f){
+            MotionControl control{};
+            control.target_speed_mps=std::min(planned_cruise,speed);
+            control.target_heading_degrees=heading_between({},rt.avoidance_velocity,desired);
+            control.heading_offset_degrees=std::clamp(wrap_degrees(control.target_heading_degrees-desired),-75.0f,75.0f);
+            control.follow_route=true;
+            std::vector<Vec3> preview;
+            float end_heading=0.0f,end_speed=0.0f,clearance=0.0f;
+            if(preview_static_clear(a,control,world,preview,end_heading,end_speed) &&
+               preview_fleet_clear(a,preview,agents,now,clearance)){
+                const float progress=path_progress(preview.back(),end_heading,end_speed);
+                // Score actual path progress. A fixed ORCA bonus made a safe
+                // sideways orbit cheaper than reaching a nearby work station.
+                if(progress>0.015f){
+                    const float deviation=std::abs(control.heading_offset_degrees)*0.008f;
+                    rt.proposals.push_back({control,std::move(preview),-progress+deviation});
+                }
+            }
+        }
+    }
 
     for(std::size_t si=0;si<speed_count;++si){
         const float speed_scale=speed_scales[si];
@@ -402,6 +628,8 @@ void generate_proposals(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWor
             MotionControl control{};
             control.target_speed_mps=planned_cruise*speed_scale;
             control.target_heading_degrees=desired+offset;
+            control.follow_route=true;
+            control.heading_offset_degrees=offset;
             std::vector<Vec3> preview;
             float end_heading=0.0f,end_speed=0.0f;
             if(!preview_static_clear(a,control,world,preview,end_heading,end_speed)) continue;
@@ -412,11 +640,13 @@ void generate_proposals(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWor
             }
             rt.predicted_robot_clearance_m=std::min(rt.predicted_robot_clearance_m,fleet_clearance);
             const Vec3 end=preview.empty()?a.position:preview.back();
-            const float progress=dist_xz(a.position,waypoint)-dist_xz(end,waypoint);
+            const float progress=path_progress(end,end_heading,end_speed);
             const float heading_cost=std::abs(wrap_degrees(control.target_heading_degrees-desired))*0.018f;
             const float smoothness=std::abs(wrap_degrees(control.target_heading_degrees-a.heading_degrees))*0.008f;
             const float slow_cost=(1.0f-speed_scale)*0.65f;
-            const float cost=-progress+heading_cost+smoothness+slow_cost;
+            const float switch_cost=rt.steering_side*offset<0.0f?0.45f:0.0f;
+            const float comfort_cost=std::isfinite(fleet_clearance)?std::max(0.0f,-fleet_clearance)*0.4f:0.0f;
+            const float cost=-progress+heading_cost+smoothness+slow_cost+switch_cost+comfort_cost;
             rt.proposals.push_back({control,std::move(preview),cost});
         }
     }
@@ -425,25 +655,24 @@ void generate_proposals(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWor
     // expensive than any safe progress-producing command.
     rt.proposals.push_back({{0.0f,a.heading_degrees,false},{},2.5f});
 
-    // Reverse is only generated after forward progress is genuinely blocked.
-    // Normal travel no longer pays to preview three recovery branches every
-    // planner tick.
-    if(recovery_search){
-        for(float off: {0.0f,-30.0f,30.0f}){
-            MotionControl reverse{};
-            reverse.target_speed_mps=-std::min(std::max(0.12f,planned_cruise)*0.32f,0.85f);
-            reverse.target_heading_degrees=a.heading_degrees+off;
-            reverse.reverse=true;
-            std::vector<Vec3> preview;
-            float end_heading=0.0f,end_speed=0.0f;
-            if(!preview_static_clear(a,reverse,world,preview,end_heading,end_speed)) continue;
-            float fleet_clearance=std::numeric_limits<float>::infinity();
-            if(!preview_fleet_clear(a,preview,agents,now,fleet_clearance)){
-                rt.predicted_robot_clearance_m=std::min(rt.predicted_robot_clearance_m,fleet_clearance);
-                continue;
-            }
-            rt.predicted_robot_clearance_m=std::min(rt.predicted_robot_clearance_m,fleet_clearance);
-            rt.proposals.push_back({reverse,std::move(preview),4.5f+std::abs(off)*0.01f});
+    // A disc-bounded rover can pivot safely in place. Recovery uses a latched
+    // route/pull-out destination; speculative reverse fans caused repeated
+    // forward/backward pulses at blocked service stations.
+
+    bool has_translation=false;
+    for(const auto& proposal:rt.proposals)
+        has_translation=has_translation || proposal.control.target_speed_mps>0.001f;
+    if(!has_translation){
+        const Vec3 delta=waypoint-a.position;
+        const float len2=dot_xz(delta,delta);
+        float nearest=std::numeric_limits<float>::infinity();
+        for(const auto& other:agents){
+            if(other.id==a.id) continue;
+            const float t=len2>0.001f?std::clamp(dot_xz(other.position-a.position,delta)/len2,0.0f,1.0f):0.0f;
+            const float required=a.radius_m+other.radius_m+0.25f;
+            if(dist_xz(a.position+delta*t,other.position)>required) continue;
+            const float d=dist_xz(a.position,other.position);
+            if(d<nearest){nearest=d;rt.blocker_robot_id=other.id;rt.block_reason=BlockReason::RobotReservation;}
         }
     }
 
@@ -563,7 +792,7 @@ void replace_contract(ReservationBoard& board,const MotionContract& c){
     rebuild_passages(board);
 }
 
-bool passages_available(const MotionContract& c,const ReservationBoard& board,std::size_t& blocker){
+[[maybe_unused]] bool passages_available(const MotionContract& c,const ReservationBoard& board,std::size_t& blocker){
     for(auto key:c.passage_keys){
         const auto it=board.passage_owner.find(key);
         if(it!=board.passage_owner.end() && it->second!=c.robot_id){
@@ -581,10 +810,8 @@ bool contract_clear(const MotionContract& c,const SafetyWorldCallbacks& world,co
         reason=BlockReason::StaticGeometry;
         return false;
     }
-    if(!passages_available(c,board,blocker)){
-        reason=BlockReason::PassageReservation;
-        return false;
-    }
+    // Cell tokens are scheduling hints only. Two disjoint swept hulls may share
+    // a coarse cell; the continuous motion/braking/hold tests below decide.
     for(const auto& other:board.contracts){
         if(!other.valid || other.robot_id==c.robot_id) continue;
         if(tubes_overlap(c.occupancy_tube,other.occupancy_tube)){
@@ -732,20 +959,32 @@ Vec3 find_pullout(const SafetyAgent& a,const SafetyWorldCallbacks& world,const s
     else away=away*(1.0f/len);
     const float base=std::atan2(away.z,away.x);
     constexpr std::array<float,11> offsets{{1.57f,-1.57f,1.25f,-1.25f,0.95f,-0.95f,0.62f,-0.62f,0.32f,-0.32f,0.0f}};
-    constexpr std::array<float,5> radii{{1.3f,1.8f,2.4f,3.2f,4.2f}};
+    constexpr std::array<float,8> radii{{1.8f,2.4f,3.2f,4.2f,6.0f,9.0f,12.0f,18.0f}};
     for(float r:radii){
         for(float off:offsets){
             const float ang=base+off;
             Vec3 p=a.position+Vec3{std::cos(ang),0.0f,std::sin(ang)}*r;
             if(world.floor_height) p.y=world.floor_height(p);
             if(world.point_clear && !world.point_clear(a.id,p)) continue;
-            if(world.segment_clear && !world.segment_clear(a.id,a.position,p)) continue;
+            if(blocker<agents.size() && world.point_clear){
+                // A pull-out must have room to pass. Retreating one metre
+                // deeper into the same single-lane throat only repeats the
+                // head-on deadlock at a different coordinate.
+                const Vec3 side{-away.z,0,away.x};
+                const float passing=a.radius_m+agents[blocker].radius_m+0.25f;
+                if(!world.point_clear(a.id,p+side*passing) && !world.point_clear(a.id,p-side*passing)) continue;
+            }
             bool fleet_clear=true;
             for(const auto& other:agents){
                 if(other.id==a.id) continue;
                 if(dist_xz(p,other.position)<=a.radius_m+other.radius_m+0.20f){ fleet_clear=false; break; }
             }
-            if(fleet_clear) return p;
+            if(!fleet_clear) continue;
+            if(world.segment_clear && !world.segment_clear(a.id,a.position,p)){
+                std::vector<Vec3> route;
+                if(!world.coarse_route || !world.coarse_route(a.id,a.position,p,0.12f,route)) continue;
+            }
+            return p;
         }
     }
     return a.position;
@@ -881,7 +1120,7 @@ std::size_t nearest_stationary_blocker_on_goal_line(const SafetyAgent& a,
         if(agents[j].id==a.id || !stationary_for_detour(a.id,j,agents,requests)) continue;
         Vec3 ap=agents[j].position-a.position; ap.y=0.0f;
         const float t=std::clamp(dot_xz(ap,ab)/len2,0.0f,1.0f);
-        if(t<=0.01f || t>=0.995f) continue;
+        if(t<=0.01f) continue;
         const Vec3 closest=a.position+ab*t;
         const float required=a.radius_m+agents[j].radius_m+2.0f*kSafetyNumericMarginM+
                              kNeighborComfortClearanceM+0.55f;
@@ -892,14 +1131,49 @@ std::size_t nearest_stationary_blocker_on_goal_line(const SafetyAgent& a,
 }
 
 void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector<NavigationRequest>& requests,const SafetyWorldCallbacks& world,float dt){
+    auto request_idle_yield=[&](std::size_t blocked,std::size_t blocker){
+        if(blocker>=agents.size() || blocker>=requests.size() || requests[blocker].active || requests[blocker].work_target) return false;
+        auto& a=agents[blocker];auto& idle=*a.runtime;
+        if(idle.temporary_goal_valid) return false;
+        const Vec3 goal=agents[blocked].runtime->goal;
+        const float angle=std::atan2(a.position.z-goal.z,a.position.x-goal.x);
+        for(float radius:{3.0f,4.2f,5.4f}) for(float offset:{0.0f,0.6f,-0.6f,1.2f,-1.2f,1.57f,-1.57f}){
+            Vec3 p=a.position+Vec3{std::cos(angle+offset),0,std::sin(angle+offset)}*radius;
+            if(world.floor_height) p.y=world.floor_height(p);
+            if(dist_xz(p,goal)<a.radius_m+agents[blocked].radius_m+0.5f) continue;
+            if(!world.point_clear(a.id,p) || !world.segment_clear(a.id,a.position,p)) continue;
+            if(!point_respects_fleet_zone(a,p,agents)) continue;
+            idle.temporary_goal=p;idle.temporary_goal_valid=true;idle.yielding_for_traffic=true;
+            idle.motion_intent=MotionIntent::Retreat;idle.stationary_detour_active=false;
+            ++idle.goal_revision;++idle.retreat_count;invalidate_route(idle);
+            idle.mode=SafetyMode::Retreating;idle.blocked_elapsed=0.0f;
+            return true;
+        }
+        return false;
+    };
     // First update progress and blocked timers.
     for(auto& a:agents){
         auto& rt=*a.runtime;
+        if((rt.goal_valid || rt.temporary_goal_valid) && !rt.cached_route.empty()){
+            const float remaining=corridor_steering(a,{a.position,a.heading_degrees,a.speed_mps},world).remaining;
+            if(remaining+0.06f<rt.best_route_remaining){rt.best_route_remaining=remaining;rt.route_progress_elapsed=0.0f;}
+            else rt.route_progress_elapsed+=dt;
+            if(rt.route_progress_elapsed>2.0f){
+                // Moving in circles is not route progress. Reconnect from the
+                // measured pose, rather than resetting the stuck timer merely
+                // because the rover moved a few centimetres in any direction.
+                rt.cached_route.clear();rt.route_cursor=0;rt.proposals.clear();
+                rt.route_replan_required=true;rt.route_progress_elapsed=0.0f;
+                rt.best_route_remaining=std::numeric_limits<float>::infinity();
+                rt.steering_side=0.0f;
+            }
+        }
         const float moved=dist_xz(a.position,rt.last_progress_position);
         if(moved>0.08f){
             rt.last_progress_position=a.position;
             rt.blocked_elapsed=0.0f;
             rt.wait_age=0.0f;
+            rt.last_progress_time=0.0f;
             if(rt.block_reason!=BlockReason::NoRoute) rt.block_reason=BlockReason::None;
             continue;
         }
@@ -910,6 +1184,7 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
             rt.blocked_elapsed=0.0f;
             rt.wait_age=0.0f;
         }
+        rt.recovery_cooldown=std::max(0.0f,rt.recovery_cooldown-dt);
     }
 
     // Detect simple wait-for cycles. This covers the common nose-to-nose and
@@ -987,14 +1262,34 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
     for(std::size_t i=0;i<agents.size();++i){
         auto& rt=*agents[i].runtime;
         if(retreat_assigned.count(i)) continue;
-        if(rt.blocked_elapsed<kBlockingWaitTimeoutSeconds) continue;
+        if(rt.blocked_elapsed<kBlockingWaitTimeoutSeconds || rt.recovery_cooldown>0.0f) continue;
+        rt.recovery_cooldown=1.25f;
         if(i<requests.size() && requests[i].active){
+            if(rt.block_reason==BlockReason::NoRoute || rt.cached_route.empty()){
+                // A parked row can seal the only coarse-grid entrance to a
+                // wider route even when none of its members lies on the direct
+                // goal chord. Give the closest idle blocker a real yield task;
+                // moving and working actors keep their normal reservations.
+                std::vector<std::size_t> idle;
+                for(std::size_t j=0;j<agents.size();++j){
+                    if(j==i || requests[j].active || requests[j].work_target || agents[j].runtime->temporary_goal_valid || agents[j].runtime->yielding_for_traffic) continue;
+                    if(dist_xz(agents[i].position,agents[j].position)<8.0f) idle.push_back(j);
+                }
+                std::sort(idle.begin(),idle.end(),[&](auto a,auto b){return dist_xz(agents[i].position,agents[a].position)<dist_xz(agents[i].position,agents[b].position);});
+                bool yielded=false;
+                for(auto j:idle) if(request_idle_yield(i,j)){yielded=true;break;}
+                if(yielded){rt.route_replan_required=true;rt.proposals.clear();rt.blocked_elapsed=0.0f;continue;}
+            }
             if(rt.stationary_detour_active && rt.temporary_goal_valid){
                 // Keep one deterministic bypass stable across short pauses.
                 // Re-run A* to that SAME waypoint if needed, but do not flip
                 // sides or move the temporary target every wait timeout.
-                rt.route_replan_required=true;
-                rt.proposals.clear();
+                rt.last_progress_time+=rt.blocked_elapsed;
+                if(rt.last_progress_time>=2.5f){
+                    rt.temporary_goal_valid=false;rt.stationary_detour_active=false;
+                    rt.stationary_detour_blocker=kNoSafetyRobot;rt.motion_intent=MotionIntent::Navigate;
+                    ++rt.goal_revision;invalidate_route(rt);rt.last_progress_time=0.0f;
+                }else {rt.route_replan_required=true;rt.proposals.clear();}
                 rt.blocked_elapsed=0.0f;
                 continue;
             }
@@ -1003,6 +1298,29 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
                 blocker=nearest_stationary_blocker_on_goal_line(agents[i],rt,agents,requests);
 
             if(blocker<agents.size() && stationary_for_detour(i,blocker,agents,requests)){
+                if(requests[blocker].active && std::abs(agents[blocker].speed_mps)<0.08f &&
+                   agents[blocker].runtime->motion_intent!=MotionIntent::Retreat){
+                    const auto own_priority=requests[i].task_priority,other_priority=requests[blocker].task_priority;
+                    const std::size_t yielding=own_priority<other_priority?i:
+                        (own_priority>other_priority?blocker:std::max(i,blocker));
+                    auto& give_way=agents[yielding];auto& yield=*give_way.runtime;
+                    if(yield.motion_intent!=MotionIntent::Retreat){
+                        const Vec3 pocket=find_pullout(give_way,world,agents,yielding==i?blocker:i);
+                        if(dist_xz(pocket,give_way.position)>0.5f){
+                            yield.temporary_goal=pocket;yield.temporary_goal_valid=true;
+                            yield.stationary_detour_active=false;yield.motion_intent=MotionIntent::Retreat;
+                            ++yield.goal_revision;++yield.retreat_count;invalidate_route(yield);
+                            yield.mode=SafetyMode::Retreating;yield.blocked_elapsed=0.0f;
+                            retreat_assigned.insert(yielding);
+                            continue;
+                        }
+                    }
+                }
+                const float endpoint_clearance=agents[i].radius_m+agents[blocker].radius_m+0.30f;
+                if(dist_xz(rt.goal,agents[blocker].position)<endpoint_clearance && request_idle_yield(i,blocker)){
+                    rt.route_replan_required=true;rt.proposals.clear();rt.blocked_elapsed=0.0f;
+                    continue;
+                }
                 Vec3 detour{};
                 if(find_stationary_detour(agents[i],blocker,agents,world,rt.goal,
                                           std::max(0.10f,rt.stop_radius),detour)){
@@ -1019,6 +1337,10 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
                     rt.blocker_robot_id=kNoSafetyRobot;
                     rt.blocked_elapsed=0.0f;
                     rt.wait_age=0.0f;
+                    continue;
+                }
+                if(request_idle_yield(i,blocker)){
+                    rt.route_replan_required=true;rt.proposals.clear();rt.blocked_elapsed=0.0f;
                     continue;
                 }
             }
@@ -1039,6 +1361,7 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
         auto& rt=*a.runtime;
         if(rt.temporary_goal_valid && dist_xz(a.position,rt.temporary_goal)<=std::max(0.08f,rt.stop_radius) && std::abs(a.speed_mps)<0.04f){
             rt.temporary_goal_valid=false;
+            if(rt.goal_valid) rt.yielding_for_traffic=false;
             rt.stationary_detour_active=false;
             rt.stationary_detour_blocker=kNoSafetyRobot;
             rt.motion_intent=rt.goal_valid?MotionIntent::Navigate:MotionIntent::Wait;
@@ -1162,14 +1485,13 @@ bool personal_zone_contract_clear(const MotionContract& candidate,const MotionCo
     const float current_clearance=dist_xz(candidate_now,other_now)-
                                   (candidate_radius+other_radius);
     const float minimum_clearance=contracts_minimum_hard_clearance(candidate,other);
-    if(current_clearance>=kNeighborComfortClearanceM)
-        return minimum_clearance+kPersonalZoneEscapeEpsilonM>=kNeighborComfortClearanceM;
+    (void)current_clearance;
 
     // Existing saves may begin inside the personal zone. A new contract may
     // continue only if every normal/braking/terminal branch preserves or opens
     // that separation. This creates a one-way escape from the zone instead of
     // the accept/brake/accept oscillation seen in 0-40-35(1).gmsave.
-    return minimum_clearance+kPersonalZoneEscapeEpsilonM>=current_clearance;
+    return minimum_clearance>=0.0f;
 }
 
 } // namespace
@@ -1185,6 +1507,9 @@ SafetyTickStats safety_tick(float dt,
     if(requests.size()!=agents.size() || !world.point_clear || !world.segment_clear){
         stats.invariant_fault=true;
         return stats;
+    }
+    for(std::size_t i=0;i<agents.size();++i){
+        if(!agents[i].runtime || agents[i].id!=i){stats.invariant_fault=true;return stats;}
     }
 
     // Initialize only from a mutually clear stopped/held state. Existing overlap
@@ -1245,6 +1570,7 @@ SafetyTickStats safety_tick(float dt,
             rt.speed_scale=std::clamp(req.speed_scale,0.10f,1.0f);
             ++rt.goal_revision;
             rt.temporary_goal_valid=false;
+            rt.yielding_for_traffic=false;
             rt.stationary_detour_active=false;
             rt.stationary_detour_blocker=kNoSafetyRobot;
             rt.blocked_elapsed=0.0f;
@@ -1265,11 +1591,15 @@ SafetyTickStats safety_tick(float dt,
     // stationary hold rather than a long unchecked movement.
     float remaining=std::min(dt,1.0f);
     float now=absolute_time;
-    // Full coarse-route searches are the only planner operation that can become
-    // expensive in a dense base. Budget them per rendered safety_tick() call,
-    // not per 10 ms substep, so six blocked rovers cannot all launch A* before
-    // the frame returns to input/camera/render processing.
-    std::size_t remaining_route_search_budget=std::min<std::size_t>(2,std::max<std::size_t>(1,eng::cpu_parallel_lanes()));
+    // Route searches are independent per rover and are the main CPU-heavy part
+    // of dense-base simulation. v0.40.49 capped this to two searches regardless
+    // of host size, leaving most cores idle during fleet replans. Allow one heavy
+    // route job per available CPU lane (up to the fleet size); each individual
+    // D* search is still expansion-bounded/resumable, so this increases parallel
+    // throughput without turning one rover into an unbounded frame-time task.
+    const std::size_t route_search_lane_limit=std::min<std::size_t>(
+        agents.size(),std::max<std::size_t>(1,eng::cpu_parallel_lanes()));
+    std::size_t remaining_route_search_budget=route_search_lane_limit;
     while(remaining>1.0e-6f){
         const float tick=std::min(kSafetyDtSeconds,remaining);
 
@@ -1297,6 +1627,7 @@ SafetyTickStats safety_tick(float dt,
 
             a.runtime->mode=SafetyMode::Fault;
             a.runtime->block_reason=BlockReason::ContractViolation;
+            a.runtime->fault_phase=1;
             prior_contract_violation=true;
         }
         if(prior_contract_violation){
@@ -1305,10 +1636,9 @@ SafetyTickStats safety_tick(float dt,
             break;
         }
 
-        std::vector<std::size_t> planner_jobs;
-        std::vector<std::size_t> full_route_candidates;
-        planner_jobs.reserve(agents.size());
-        full_route_candidates.reserve(agents.size());
+        // Goal/clock bookkeeping remains serialized because it is tiny and it
+        // establishes a stable snapshot for the parallel read-mostly planner
+        // phase below.
         for(std::size_t ai=0;ai<agents.size();++ai){
             auto& a=agents[ai];
             auto& rt=*a.runtime;
@@ -1318,6 +1648,7 @@ SafetyTickStats safety_tick(float dt,
             if(reached_target(a,rt) && std::abs(a.speed_mps)<0.035f){
                 if(rt.temporary_goal_valid){
                     rt.temporary_goal_valid=false;
+                    if(rt.goal_valid) rt.yielding_for_traffic=false;
                     rt.stationary_detour_active=false;
                     rt.stationary_detour_blocker=kNoSafetyRobot;
                     rt.motion_intent=rt.goal_valid?MotionIntent::Navigate:MotionIntent::Wait;
@@ -1330,16 +1661,40 @@ SafetyTickStats safety_tick(float dt,
                     invalidate_route(rt);
                 }
             }
+        }
 
-            // A construction-stage/world revision first performs a cheap check
-            // of this rover's existing simplified route. Unaffected routes are
-            // retained and simply stamped with the new world epoch.
-            refresh_route_world_revision(a,world_epoch,world);
+        // World-revision validation can be surprisingly expensive in a large
+        // colony because every remaining route segment is tested against the
+        // current structure/resource geometry. Each rover owns its route state,
+        // and the world callbacks are read-only in this phase, so validate all
+        // affected routes concurrently instead of serially on the main thread.
+        std::vector<std::size_t> revision_jobs;
+        revision_jobs.reserve(agents.size());
+        for(std::size_t ai=0;ai<agents.size();++ai){
+            const auto& rt=*agents[ai].runtime;
+            if(rt.mode==SafetyMode::Fault) continue;
+            if(!rt.goal_valid && !rt.temporary_goal_valid) continue;
+            if(rt.route_goal_revision!=rt.goal_revision) continue;
+            if(rt.route_world_epoch==world_epoch) continue;
+            revision_jobs.push_back(ai);
+        }
+        eng::TaskPool::shared().parallel_for(revision_jobs.size(),[&](std::size_t job){
+            refresh_route_world_revision(agents[revision_jobs[job]],world_epoch,world);
+        });
 
+        update_reciprocal_velocities(agents,world,tick);
+
+        std::vector<std::size_t> planner_jobs;
+        std::vector<std::size_t> full_route_candidates;
+        planner_jobs.reserve(agents.size());
+        full_route_candidates.reserve(agents.size());
+        for(std::size_t ai=0;ai<agents.size();++ai){
+            auto& rt=*agents[ai].runtime;
+            if(rt.mode==SafetyMode::Fault) continue;
             if(rt.planner_elapsed>=kPlannerReplanSeconds || rt.proposals.empty() || rt.route_replan_required){
                 rt.planner_elapsed=0.0f;
                 planner_jobs.push_back(ai);
-                if(route_search_due(a,world_epoch)) full_route_candidates.push_back(ai);
+                if(route_search_due(agents[ai],world_epoch)) full_route_candidates.push_back(ai);
             }
         }
 
@@ -1360,10 +1715,25 @@ SafetyTickStats safety_tick(float dt,
         for(std::size_t i=0;i<grant_count;++i) route_search_granted[full_route_candidates[i]]=1;
         remaining_route_search_budget-=grant_count;
 
-        // Local proposal preview is read-mostly and independent per rover. The
-        // expensive full-route work is now bounded above; the shared CPU pool
-        // can therefore improve throughput without turning a mass replan into a
-        // long frame-time barrier. Arbitration/world mutation remain serialized.
+        // Put the expensive route-repair jobs at the front of the dynamic work
+        // queue. This lets all helper threads claim heavy work immediately while
+        // the main thread and any spare workers consume cheap local-proposal
+        // refreshes. Completion order does not affect arbitration, which remains
+        // deterministic and serialized below.
+        std::stable_sort(planner_jobs.begin(),planner_jobs.end(),[&](std::size_t lhs,std::size_t rhs){
+            const bool lh=route_search_granted[lhs]!=0;
+            const bool rh=route_search_granted[rhs]!=0;
+            if(lh!=rh) return lh>rh;
+            const auto lp=lhs<requests.size()?requests[lhs].task_priority:0u;
+            const auto rp=rhs<requests.size()?requests[rhs].task_priority:0u;
+            if(lp!=rp) return lp>rp;
+            return agents[lhs].id<agents[rhs].id;
+        });
+
+        // Local proposal preview and persistent D* repair are independent per
+        // rover. Dynamic scheduling across the host-wide pool allocates all
+        // visible CPU lanes to the current fleet workload. Reservation/contract
+        // arbitration and world mutation remain on the game thread.
         eng::TaskPool::shared().parallel_for(planner_jobs.size(),[&](std::size_t job){
             const std::size_t ai=planner_jobs[job];
             generate_proposals(agents[ai],world_epoch,world,agents,now,route_search_granted[ai]!=0);
@@ -1399,6 +1769,7 @@ SafetyTickStats safety_tick(float dt,
         for(std::size_t oi:order){
             auto& a=agents[oi];
             auto& rt=*a.runtime;
+            const std::size_t planning_blocker=rt.blocker_robot_id;
             rt.blocker_robot_id=kNoSafetyRobot;
             if(rt.mode==SafetyMode::Fault) continue;
 
@@ -1426,8 +1797,8 @@ SafetyTickStats safety_tick(float dt,
             }
 
             MotionContract chosen{};
-            BlockReason last_reason=BlockReason::None;
-            std::size_t last_blocker=kNoSafetyRobot;
+            BlockReason last_reason=rt.block_reason;
+            std::size_t last_blocker=planning_blocker;
 
             if(rt.motion_intent!=MotionIntent::Wait){
                 for(const auto& proposal:rt.proposals){
@@ -1463,6 +1834,8 @@ SafetyTickStats safety_tick(float dt,
                 s=step_control(a,s,chosen.permitted_command,tick,world);
                 commands[a.id]={s.position,s.heading,s.speed,true,false};
                 rt.active_contract=chosen;
+                if(std::abs(chosen.permitted_command.heading_offset_degrees)>5.0f)
+                    rt.steering_side=chosen.permitted_command.heading_offset_degrees>0.0f?1.0f:-1.0f;
                 rt.block_reason=BlockReason::None;
                 rt.blocker_robot_id=kNoSafetyRobot;
                 rt.mode=rt.motion_intent==MotionIntent::Retreat?SafetyMode::Retreating:SafetyMode::Moving;
@@ -1493,6 +1866,7 @@ SafetyTickStats safety_tick(float dt,
                     if(!certified){
                         rt.mode=SafetyMode::Fault;
                         rt.block_reason=BlockReason::ContractViolation;
+                        rt.fault_phase=2;
                         stats.invariant_fault=true;
                     }else{
                         rt.block_reason=effective_reason;
@@ -1532,6 +1906,23 @@ SafetyTickStats safety_tick(float dt,
                 }
             }
         }
+        // Replacing one rejected command by a hold changes the swept occupancy
+        // seen by the rest of the fleet. Propagate that hold through dependent
+        // commands until the complete simultaneous commit is clear again.
+        for(std::size_t pass=0;pass<agents.size();++pass){
+            bool changed=false;
+            for(std::size_t i=0;i<agents.size();++i){
+                if(local_fault[i]) actual[i].end=agents[i].position;
+            }
+            for(std::size_t i=0;i<agents.size();++i) for(std::size_t j=i+1;j<agents.size();++j){
+                if(local_fault[i] && local_fault[j]) continue;
+                if(moving_discs_overlap(actual[i],actual[j],now,now+tick)){
+                    if(!local_fault[i]){local_fault[i]=true;changed=true;}
+                    if(!local_fault[j]){local_fault[j]=true;changed=true;}
+                }
+            }
+            if(!changed) break;
+        }
         bool unrecoverable=false;
         for(std::size_t i=0;i<agents.size();++i){
             if(!local_fault[i]) continue;
@@ -1557,6 +1948,7 @@ SafetyTickStats safety_tick(float dt,
                 agents[i].speed_mps=0.0f;
                 agents[i].runtime->mode=SafetyMode::Fault;
                 agents[i].runtime->block_reason=BlockReason::ContractViolation;
+                agents[i].runtime->fault_phase=3;
             }
             break;
         }

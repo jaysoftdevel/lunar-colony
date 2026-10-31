@@ -1,4 +1,5 @@
 #include "game/game_app.hpp"
+#include "game/world/mesh_portals.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
 #include "game/util/mesh_wireframe.hpp"
@@ -88,41 +89,44 @@ void draw_resource_box(Renderer& r,Vec3 base,float half_width,float height,Mater
 }
 
 
-bool point_in_door_aperture(Vec3 p,const CorridorDoor& door){
-    Vec3 n=door.normal; n.y=0.0f; n=normalize(n);
-    if(length(n)<0.001f) n={1,0,0};
-    const Vec3 side{-n.z,0,n.x};
-    const float base_y=std::max(0.03f,door.wall_position.y-1.18f);
-    const Vec3 rel=p-door.wall_position;
-    const float plane=std::abs(dot(rel,n));
-    const float lateral=std::abs(dot(rel,side));
-    return plane<0.72f && lateral<1.12f && p.y>base_y-0.08f && p.y<base_y+2.68f;
-}
-
-std::vector<Vec3> carve_door_apertures(const std::vector<Vec3>& triangles,const std::vector<CorridorDoor>& doors){
-    if(doors.empty() || triangles.size()<3) return triangles;
-    std::vector<Vec3> out;
-    out.reserve(triangles.size());
-    for(std::size_t i=0;i+2<triangles.size();i+=3){
-        const Vec3 a=triangles[i],b=triangles[i+1],c=triangles[i+2];
-        const Vec3 centroid=(a+b+c)*(1.0f/3.0f);
-        bool remove=false;
-        for(const auto& door:doors){
-            if(point_in_door_aperture(a,door) || point_in_door_aperture(b,door) ||
-               point_in_door_aperture(c,door) || point_in_door_aperture(centroid,door)){
-                remove=true; break;
-            }
-        }
-        if(!remove){ out.push_back(a); out.push_back(b); out.push_back(c); }
+const std::vector<Vec3>& portal_layer(const std::vector<Vec3>& triangles,Vec3 position,float rotation,
+                                       const std::vector<CorridorDoor>* doors,bool lines=false,bool foundation=false){
+    if(!doors || doors->empty()) return triangles;
+    struct Cache {
+        const Vec3* source{};std::size_t size{};bool lines{};
+        std::vector<mesh_portals::Aperture> openings;
+        std::vector<Vec3> triangles;
+    };
+    static std::vector<Cache> cache;
+    std::vector<mesh_portals::Aperture> openings;
+    for(const auto& door:*doors){
+        const Vec3 center=rotate_y(door.wall_position-position,-rotation);
+        openings.push_back({center,rotate_y(door.normal,-rotation),0.90f,
+            geometry::kDoorClearWidth*0.5f,foundation?geometry::kCorridorDeckY-position.y-0.15f:door.position.y-position.y+0.015f,
+            door.position.y-position.y+geometry::kDoorClearHeight});
     }
-    return out;
+    for(const auto& entry:cache){
+        if(entry.source!=triangles.data() || entry.size!=triangles.size() || entry.lines!=lines || entry.openings.size()!=openings.size()) continue;
+        bool same=true;
+        for(std::size_t i=0;i<openings.size();++i){
+            const auto& a=openings[i];const auto& b=entry.openings[i];
+            same=same && length(a.center-b.center)<0.0001f && length(a.normal-b.normal)<0.0001f &&
+                std::abs(a.bottom-b.bottom)<0.0001f && std::abs(a.top-b.top)<0.0001f;
+        }
+        if(same) return entry.triangles;
+    }
+    if(cache.size()>256) cache.clear();
+    Cache entry{triangles.data(),triangles.size(),lines,openings,triangles};
+    for(const auto& opening:openings) entry.triangles=lines?mesh_portals::subtract_lines(entry.triangles,opening):mesh_portals::subtract(entry.triangles,opening);
+    cache.push_back(std::move(entry));
+    return cache.back().triangles;
 }
 
 void draw_sliding_door(Renderer& r,const CorridorDoor& door,float open_fraction){
     Vec3 n=door.normal; n.y=0.0f; n=normalize(n);
     if(length(n)<0.001f) n={1,0,0};
     const Vec3 side{-n.z,0,n.x};
-    const float base_y=std::max(0.04f,door.wall_position.y-1.18f);
+    const float base_y=door.position.y;
     const float panel_h=2.48f;
     const float panel_half=0.52f;
     const float slide=0.84f*std::clamp(open_fraction,0.0f,1.0f);
@@ -143,12 +147,12 @@ void draw_sliding_door(Renderer& r,const CorridorDoor& door,float open_fraction)
 
 void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
     if(preview){
-        const auto shell=transformed_vertices(mesh.shell,position,rotation_degrees);
-        const auto foundation=transformed_vertices(mesh.foundation,position,rotation_degrees);
+        const auto shell=transformed_vertices(portal_layer(mesh.shell,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+        const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
         const auto interior=transformed_vertices(mesh.interior,position,rotation_degrees);
-        const auto details=transformed_vertices(mesh.details,position,rotation_degrees);
-        const auto glazing=transformed_vertices(mesh.glazing,position,rotation_degrees);
-        const auto edges=transformed_vertices(mesh.edges,position,rotation_degrees);
+        const auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+        const auto glazing=transformed_vertices(portal_layer(mesh.glazing,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+        const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
         const Color line=valid?Color{0.34f,1.00f,0.72f,0.96f}:Color{1.00f,0.38f,0.30f,0.96f};
         const Color faint=valid?Color{0.18f,0.78f,0.56f,0.78f}:Color{0.92f,0.25f,0.20f,0.78f};
         mesh_wireframe::draw_layer(r,foundation,faint,1.25f);
@@ -187,7 +191,7 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
         mesh_wireframe::draw_layer(r,transformed_vertices(mesh.interior,position,rotation_degrees),blueprint,1.25f*boost);
         mesh_wireframe::draw_layer(r,transformed_vertices(mesh.details,position,rotation_degrees),blueprint,1.30f*boost);
         mesh_wireframe::draw_layer(r,transformed_vertices(mesh.glazing,position,rotation_degrees),{0.10f,0.48f,1.00f,0.40f},1.20f*boost);
-        const auto ghost_edges=transformed_vertices(mesh.edges,position,rotation_degrees);
+        const auto ghost_edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
         if(!ghost_edges.empty()) r.draw_lines_3d(ghost_edges,{0.12f,0.50f,1.00f,0.62f},1.65f*boost);
 
         mesh_wireframe::draw_layer(r,foundation,installed_dim,1.95f*boost);
@@ -204,17 +208,12 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
         return;
     }
 
-    auto shell=transformed_vertices(mesh.shell,position,rotation_degrees);
-    const auto foundation=transformed_vertices(mesh.foundation,position,rotation_degrees);
-    const auto interior=transformed_vertices(mesh.interior,position,rotation_degrees);
-    auto details=transformed_vertices(mesh.details,position,rotation_degrees);
-    auto glazing=transformed_vertices(mesh.glazing,position,rotation_degrees);
-    const auto edges=transformed_vertices(mesh.edges,position,rotation_degrees);
-    if(fpv_doors){
-        shell=carve_door_apertures(shell,*fpv_doors);
-        details=carve_door_apertures(details,*fpv_doors);
-        glazing=carve_door_apertures(glazing,*fpv_doors);
-    }
+    auto shell=transformed_vertices(portal_layer(mesh.shell,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+    const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
+    const auto interior=transformed_vertices(portal_layer(mesh.interior,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+    auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+    auto glazing=transformed_vertices(portal_layer(mesh.glazing,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+    const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
     const Color shell_color{0.24f,0.96f,0.42f,1.0f};
     const Color foundation_color{0.20f,0.84f,0.36f,1.0f};
     const Color interior_color{0.34f,1.00f,0.50f,0.98f};
@@ -240,10 +239,10 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
 
 void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
     if(preview){
-        const auto body=transformed_vertices(mesh.body,position,rotation_degrees);
-        const auto foundation=transformed_vertices(mesh.foundation,position,rotation_degrees);
-        const auto details=transformed_vertices(mesh.details,position,rotation_degrees);
-        const auto edges=transformed_vertices(mesh.edges,position,rotation_degrees);
+        const auto body=transformed_vertices(portal_layer(mesh.body,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+        const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
+        const auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+        const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
         const Color line=valid?Color{0.34f,1.00f,0.72f,0.96f}:Color{1.00f,0.38f,0.30f,0.96f};
         const Color faint=valid?Color{0.18f,0.78f,0.56f,0.78f}:Color{0.92f,0.25f,0.20f,0.78f};
         mesh_wireframe::draw_layer(r,foundation,faint,1.20f);
@@ -266,7 +265,7 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
         mesh_wireframe::draw_layer(r,transformed_vertices(mesh.foundation,position,rotation_degrees),blueprint,1.35f*boost);
         mesh_wireframe::draw_layer(r,transformed_vertices(mesh.body,position,rotation_degrees),blueprint,1.55f*boost);
         mesh_wireframe::draw_layer(r,transformed_vertices(mesh.details,position,rotation_degrees),blueprint,1.30f*boost);
-        const auto ghost_edges=transformed_vertices(mesh.edges,position,rotation_degrees);
+        const auto ghost_edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
         if(!ghost_edges.empty()) r.draw_lines_3d(ghost_edges,{0.12f,0.50f,1.00f,0.62f},1.65f*boost);
 
         mesh_wireframe::draw_layer(r,foundation,installed_dim,1.95f*boost);
@@ -281,14 +280,10 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
         return;
     }
 
-    auto body=transformed_vertices(mesh.body,position,rotation_degrees);
-    const auto foundation=transformed_vertices(mesh.foundation,position,rotation_degrees);
-    auto details=transformed_vertices(mesh.details,position,rotation_degrees);
-    const auto edges=transformed_vertices(mesh.edges,position,rotation_degrees);
-    if(fpv_doors){
-        body=carve_door_apertures(body,*fpv_doors);
-        details=carve_door_apertures(details,*fpv_doors);
-    }
+    auto body=transformed_vertices(portal_layer(mesh.body,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+    const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
+    auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+    const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
     const float boost=selected?1.45f:1.0f;
     mesh_wireframe::draw_layer(r,foundation,{0.20f,0.84f,0.36f,1.0f},2.40f*boost);
     mesh_wireframe::draw_layer(r,body,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
@@ -316,7 +311,7 @@ void GameApp::render_resources(Renderer& r){
         const auto& mesh=resource_models_.mesh(instance);
         std::vector<CorridorDoor> fpv_doors;
         const std::vector<CorridorDoor>* fpv_ptr=nullptr;
-        if(first_person_mode_==FirstPersonMode::Active && instance.kind==ResourceKind::StorageDome && instance.construction.complete()){
+        if(instance.kind==ResourceKind::StorageDome && instance.construction.complete()){
             fpv_doors=storage_dome_doors(i);
             fpv_ptr=&fpv_doors;
         }
@@ -458,7 +453,7 @@ void GameApp::render_habitats(Renderer& r){
         const bool selected=selection_kind_==SelectionKind::Habitat && selected_habitat_==(int)i;
         std::vector<CorridorDoor> fpv_doors;
         const std::vector<CorridorDoor>* fpv_ptr=nullptr;
-        if(first_person_mode_==FirstPersonMode::Active && instance.construction.complete()){
+        if(instance.construction.complete()){
             fpv_doors=habitat_doors(i);
             fpv_ptr=&fpv_doors;
         }
@@ -469,7 +464,7 @@ void GameApp::render_habitats(Renderer& r){
         // for an authored hatch that is currently the surface side of a
         // completed pressure network.  Ordinary structures never expose unused
         // entrances directly to the lunar surface.
-        if(instance.construction.step>=9) for(size_t entrance_index=0;entrance_index<mesh.entrance_access.size();++entrance_index){
+        if(instance.construction.complete()) for(size_t entrance_index=0;entrance_index<mesh.entrance_access.size();++entrance_index){
             if(!habitat_exterior_access_enabled(i,entrance_index)) continue;
             const auto& access=mesh.entrance_access[entrance_index];
             if(entrance_access_hits_corridor(access,instance.position,instance.rotation_degrees,corridor_network_)) continue;

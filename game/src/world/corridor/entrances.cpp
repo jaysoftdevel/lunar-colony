@@ -107,7 +107,7 @@ bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& habitat,cons
     std::vector<Vec3> world;
     world.reserve(profile.size());
     for(const Vec2 q:profile){
-        const Vec3 origin=local_normal*radius+local_tangent*(center_t+q.x)+Vec3{0,q.y,0};
+        const Vec3 origin=local_normal*radius+local_tangent*(center_t+q.x)+Vec3{0,q.y+mesh.walkable_floor_y-geometry::kCorridorDeckY,0};
         const Vec3 direction=local_normal*-1.0f;
         float best_t=std::numeric_limits<float>::max();
         Vec3 surface_normal{};
@@ -121,7 +121,7 @@ bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& habitat,cons
         }
         // Faceted/open sections can miss a ray exactly along a triangle seam;
         // fall back to the horizontal slice solver at the same profile vertex.
-        auto local=local_hull_wall_point(mesh,local_normal,center_t+q.x,q.y);
+        auto local=local_hull_wall_point(mesh,local_normal,center_t+q.x,q.y+mesh.walkable_floor_y-geometry::kCorridorDeckY);
         if(!local) return false;
         world.push_back(habitat.position+rotate_y(*local,habitat.rotation_degrees));
     }
@@ -134,7 +134,7 @@ CorridorDoor transformed_builtin_door(const PlacedHabitat& habitat,const Habitat
     if(entrance_index<mesh.entrances.size()) local=mesh.entrances[entrance_index];
     CorridorDoor d;
     d.wall_position=habitat.position+rotate_y(local.local_position,habitat.rotation_degrees);
-    d.wall_position.y=habitat.position.y+geometry::kEntranceSliceY;
+    d.wall_position.y=habitat.position.y+mesh.walkable_floor_y;
     // X/Z identify the physical hatch plane; Y carries the authoritative
     // walking threshold from the habitat module so docking stairs terminate on
     // the real interior deck instead of on the generic hull slice.
@@ -470,7 +470,10 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     // Reuse a built-in hatch only when the cursor explicitly targets it. This
     // keeps established entrances convenient while making all other hull points
     // freely adjustable like supply-channel ports.
-    constexpr float BUILTIN_SNAP_RADIUS=ENTRANCE_MIN_SPACING;
+    // Structure connections always terminate at an authored crew entrance.
+    // The cursor selects the closest hatch rather than creating a door through
+    // arbitrary machinery, glazing or an inaccessible side of a foundation.
+    constexpr float BUILTIN_SNAP_RADIUS=std::numeric_limits<float>::max();
     bool found_builtin=false;
     float best_cursor_distance=BUILTIN_SNAP_RADIUS;
     CorridorDoor d{};
@@ -539,12 +542,8 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     // Stopping just before the target pressure shell lets the corridor junction
     // adapter own the final seam, so even very close doors merge without any
     // coincident tube geometry.
-    float dock_run=DOCK_RUN;
-    const Vec3 rel=flatten(other-d.position);
-    const float forward=dot(rel,flat_normal(d.normal));
-    const float lateral=std::abs(dot(rel,perp_xz(d.normal)));
-    if(forward>0.0f && lateral<CORRIDOR_HALF_WIDTH*1.65f && forward<DOCK_RUN+CORRIDOR_HALF_WIDTH*2.2f)
-        dock_run=std::clamp(forward-CORRIDOR_HALF_WIDTH-0.10f,0.08f,DOCK_RUN);
+    const float minimum_run=std::max(DOCK_RUN,(d.position.y-geometry::kCorridorDeckY)/0.60f+0.30f);
+    float dock_run=minimum_run;
     out.position=d.position+d.normal*dock_run;
     out.position.y=0;
     return out;
@@ -558,7 +557,7 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
     const auto& placed=resources[anchor.index];
     if(placed.kind!=ResourceKind::StorageDome) return std::nullopt;
     const auto& mesh=library.mesh(placed);
-    const float wall_radius=std::min(mesh.footprint_x,mesh.footprint_z)*0.40f;
+    const float wall_radius=std::min(mesh.footprint_x,mesh.footprint_z)*(5.35f/13.0f);
     const Vec3 local_normals[4]={{0,0,-1},{1,0,0},{0,0,1},{-1,0,0}};
     float best=std::numeric_limits<float>::max();
     Vec3 normal{0,0,-1},wall{};
@@ -591,15 +590,10 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
     out.door.generated=false;
     out.door.entrance_index=-1;
     out.door.normal=normal;
-    out.door.wall_position=wall+Vec3{0,geometry::kEntranceSliceY,0};
-    out.door.position=wall+Vec3{0,geometry::kStorageFloorY,0};
+    out.door.wall_position=wall+Vec3{0,mesh.walkable_floor_y,0};
+    out.door.position=out.door.wall_position;
     out.tangent=normal;
-    float dock_run=DOCK_RUN;
-    const Vec3 rel=flatten(other-wall);
-    const float forward=dot(rel,normal);
-    const float lateral=std::abs(dot(rel,perp_xz(normal)));
-    if(forward>0.0f && lateral<CORRIDOR_HALF_WIDTH*1.65f && forward<DOCK_RUN+CORRIDOR_HALF_WIDTH*2.2f)
-        dock_run=std::clamp(forward-CORRIDOR_HALF_WIDTH-0.10f,0.08f,DOCK_RUN);
+    const float dock_run=std::max(DOCK_RUN,(out.door.position.y-geometry::kCorridorDeckY)/0.60f+0.30f);
     out.position=wall+normal*dock_run;
     out.position.y=0.0f;
     return out;

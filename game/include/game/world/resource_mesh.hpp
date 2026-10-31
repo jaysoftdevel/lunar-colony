@@ -102,6 +102,7 @@ struct ResourceMesh {
     float footprint_x{1.0f};
     float footprint_z{1.0f};
     float height{1.0f};
+    float walkable_floor_y{0.20f};
 };
 
 struct StoredResourceBox {

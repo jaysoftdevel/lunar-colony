@@ -1,3 +1,18 @@
+0.40.51 - corner-safe D* smoothing and longer look-ahead
+- D* line-of-sight smoothing now preserves soft structure-clearance cost classes; it may not shortcut a safe route back through a higher-cost corner halo.
+- Sharp route corners are mandatory waypoints with a 0.20 m acceptance radius; visibility following cannot skip across them.
+- Rover speed is capped/braked on approach to sharp route corners so the swept chassis can complete the turn instead of repeatedly rejecting forward proposals.
+- Motion prediction horizon doubled from 0.50 s to 1.00 s.
+- Planner/proposal refresh reduced from 20 Hz to 10 Hz; the authoritative motion-contract tick remains 100 Hz.
+
+0.40.50 - host-wide multithreaded CPU allocation
+- Runtime TaskPool now uses all logical CPUs visible to the process by default (main lane + N-1 persistent helpers); GAME_CPU_LANES can cap it.
+- Removed the two-heavy-route-search ceiling; concurrent route repair/search scales up to the available CPU lanes and fleet size.
+- World-revision route validation is parallelized per rover before planning.
+- Heavy planner jobs are prioritized into the dynamic work queue before cheap proposal refreshes.
+- Deterministic reservation arbitration, pose commit and game-world/resource mutation remain serialized.
+- Clean builds now default to all visible logical CPUs; GAME_BUILD_JOBS can cap build parallelism.
+
 0.40.29
 - Added persistent, type/size-aware unique names for every placed habitat and resource-structure blueprint; names remain unchanged after construction and across save/load.
 - Expanded selected-robot telemetry with contextual task/action, named target, navigation/traffic state, blocker details, construction progress, cargo/reservation and worksite material state.
@@ -232,4 +247,11 @@ v0.40.9
 - Construction/world revisions validate each rover's existing simplified route first; unrelated routes are retained instead of forcing a fleet-wide A* rebuild.
 - Full coarse-route searches are budgeted across rendered frames and prioritized by task priority/blocking age, preventing simultaneous multi-robot replans from creating large input/render stalls.
 - Repeated no-route searches use deterministic exponential retry backoff, and ground-resource inventory changes no longer invalidate navigation unless the obstacle geometry actually changes.
+
+0.40.49 - incremental D* Lite navigation and clearance cost field
+- Normal global rover routes now retain per-robot D* Lite g/rhs state and repair changed static geometry incrementally instead of rebuilding the entire route search.
+- D* propagation is bounded and resumable across rendered frames; a budget-limited search holds safely and continues later rather than triggering an immediate expensive A* retry.
+- Global static routing excludes other robots. Robot-vs-robot conflicts remain under local prediction, passage reservations, stationary detours, waiting and certified retreat.
+- Structures, corridors and ground resources use a soft graded clearance/inflation cost so open space is preferred while narrow physically valid passages remain available. Terrain grade is a secondary route cost.
+- A* remains as the fleet-aware/recovery fallback and the existing 10 ms motion-contract collision authority is unchanged.
 

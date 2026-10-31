@@ -1,3 +1,9 @@
+# Current navigation/access behavior (v0.41.0)
+
+`BASELINE_CONTEXT.md` describes the current runtime. Global D* Lite and fleet-aware A* routes feed a projection-based moving corridor follower; RVO2 supplies reciprocal velocity advice. The common 100 Hz coordinator certifies acceleration-limited swept motion, brakes and terminal holds. Personal comfort space is a preference and coarse cell ownership is an ordering hint. Blocked robots use certified detours and passing pockets; a real task may request a parked idle robot to yield. No speculative reversing or pose nudges are used.
+
+Model-declared walking thresholds own entrance frames, post-scale access steps, continuous sleeve ramps and POV floors. New habitat corridors use authored entrances. Exact cached mesh cuts preserve the surrounding pressure wall and crew circulation aisles. The historical notes below describe earlier implementations and are not the current contract.
+
 # Architecture
 
 ## Engine layer

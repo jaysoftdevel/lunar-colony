@@ -104,7 +104,7 @@ bool movement_crosses_portal(Vec3 from,Vec3 to,Vec3 center,Vec3 normal,float hal
     const Vec3 hit=from+(to-from)*t;
     const Vec3 rel=hit-center;
     const float lateral=std::abs(dot(Vec3{rel.x,0.0f,rel.z},side));
-    const float usable=std::max(0.16f,half_width-body_radius*0.55f);
+    const float usable=std::max(0.0f,half_width-body_radius);
     return lateral<=usable;
 }
 
@@ -126,7 +126,7 @@ bool point_in_portal_clearance(Vec3 p,Vec3 center,Vec3 normal,float half_width,f
     const Vec3 rel=p-center;
     const float longitudinal=std::abs(dot(Vec3{rel.x,0.0f,rel.z},normal));
     const float lateral=std::abs(dot(Vec3{rel.x,0.0f,rel.z},side));
-    const float usable=std::max(0.16f,half_width-body_radius*0.45f);
+    const float usable=std::max(0.0f,half_width-body_radius);
     return longitudinal<=body_radius+0.62f && lateral<=usable;
 }
 
@@ -254,38 +254,6 @@ std::optional<float> walkable_surface_height_at(const std::vector<Vec3>& triangl
     return best;
 }
 
-float dominant_floor_height(const std::vector<Vec3>& a,const std::vector<Vec3>& b,float fallback){
-    struct Level { float y{}; float area{}; };
-    std::vector<Level> levels;
-    const auto collect=[&](const std::vector<Vec3>& triangles){
-        for(std::size_t i=0;i+2<triangles.size();i+=3){
-            const Vec3 p0=triangles[i],p1=triangles[i+1],p2=triangles[i+2];
-            const float spread=std::max({p0.y,p1.y,p2.y})-std::min({p0.y,p1.y,p2.y});
-            if(spread>0.035f) continue;
-            const float y=(p0.y+p1.y+p2.y)/3.0f;
-            if(y<0.075f || y>1.65f) continue;
-            const float area=triangle_area_xz(p0,p1,p2);
-            if(area<0.10f) continue;
-            const float bucket=std::round(y*50.0f)/50.0f;
-            auto it=std::find_if(levels.begin(),levels.end(),[&](const Level& l){ return std::abs(l.y-bucket)<0.005f; });
-            if(it==levels.end()) levels.push_back({bucket,area}); else it->area+=area;
-        }
-    };
-    collect(a); collect(b);
-    if(levels.empty()) return fallback;
-    const float best_area=std::max_element(levels.begin(),levels.end(),[](const Level& x,const Level& y){ return x.area<y.area; })->area;
-    // Top faces and bottom faces of a floor slab have the same footprint.  When
-    // their areas are effectively tied, use the higher level so FPV stands on
-    // the visible deck rather than inside the slab.
-    float selected=fallback;
-    bool found=false;
-    for(const auto& l:levels){
-        if(l.area<best_area*0.92f) continue;
-        if(!found || l.y>selected){ selected=l.y; found=true; }
-    }
-    return found?selected:fallback;
-}
-
 float habitat_basement_height(const HabitatMesh& mesh){
     // Habitat modules declare the real internal deck explicitly. Rendered
     // furniture/foundation triangles are no longer used to guess POV height.
@@ -293,8 +261,7 @@ float habitat_basement_height(const HabitatMesh& mesh){
 }
 
 float storage_basement_height(const ResourceMesh& mesh){
-    static const std::vector<Vec3> none;
-    return dominant_floor_height(mesh.foundation,none,geometry::kStorageFloorY);
+    return mesh.walkable_floor_y;
 }
 
 float ray_hit_distance(Vec3 ray_origin,Vec3 ray_dir,Vec3 center,float radius,float max_distance){
@@ -417,7 +384,7 @@ std::vector<CorridorDoor> GameApp::habitat_doors(std::size_t habitat_index) cons
             const auto& e=mesh.entrances[i];
             CorridorDoor d;
             d.wall_position=h.position+rotate_y(e.local_position,h.rotation_degrees);
-            d.wall_position.y=h.position.y+geometry::kEntranceSliceY;
+            d.wall_position.y=h.position.y+mesh.walkable_floor_y;
             d.position=d.wall_position;
             d.position.y=h.position.y+mesh.walkable_floor_y;
             d.normal=normalize(rotate_y(e.local_normal,h.rotation_degrees));
@@ -560,7 +527,7 @@ float GameApp::first_person_floor_height(Vec3 p) const {
 
     float best_corridor=std::numeric_limits<float>::max();
     float corridor_floor=0.0f;
-    const CorridorConnection* floor_connection=nullptr;
+
     for(const auto& c:corridor_network_.connections()){
         if(!c.construction.complete() || c.path.size()<2) continue;
         for(std::size_t i=0;i+1<c.path.size();++i){
@@ -571,7 +538,7 @@ float GameApp::first_person_floor_height(Vec3 p) const {
             if(d<best_corridor && d<=corridor_center_limit){
                 best_corridor=d;
                 corridor_floor=q.y+corridor_detail::corridor_module().access_profile().walkable_floor_y;
-                floor_connection=&c;
+
             }
         }
 
@@ -580,27 +547,21 @@ float GameApp::first_person_floor_height(Vec3 p) const {
         // floor resolver so FPV can traverse every completed docking adapter.
         for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
             if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
-                const Vec3 q=closest_point_segment_xz(p,ep->position,ep->door.wall_position);
+                float ramp_t=0.0f;
+                const Vec3 q=closest_point_segment_xz(p,ep->position,ep->door.wall_position,&ramp_t);
                 const float d=dist_xz_local(p,q);
                 const float sleeve_limit=std::max(0.20f,geometry::kDockSleeveHalfWidth-first_person_.body_radius());
                 if(d<best_corridor && d<=sleeve_limit){
                     best_corridor=d;
-                    corridor_floor=ep->position.y+corridor_detail::corridor_module().access_profile().walkable_floor_y;
-                    floor_connection=&c;
+                    const float outside=ep->position.y+geometry::kCorridorDeckY;
+                    corridor_floor=outside+(ep->door.position.y-outside)*ramp_t;
+
                 }
                 continue;
             }
         }
     }
     if(best_corridor<std::numeric_limits<float>::max()){
-        // Generated docking steps (when present) live in corridor detail mesh.
-        // Sample their horizontal tread faces so vertical movement follows the
-        // physical geometry instead of snapping from one flat floor to another.
-        if(floor_connection){
-            if(auto y=walkable_surface_height_at(floor_connection->mesh.details,p,
-                                                 corridor_floor-0.08f,corridor_floor+1.20f))
-                return *y;
-        }
         return corridor_floor;
     }
 

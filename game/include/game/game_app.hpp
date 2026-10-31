@@ -35,6 +35,7 @@ public:
     void update(float dt,const eng::InputState& input) override;
     void render(eng::Renderer& r) override;
 private:
+    friend struct NavigationRegression;
     enum class Screen { MainMenu, NewGame, SaveGame, LoadGame, Settings, Credits, Playfield };
     enum class HabitatViewMode { Default, Full };
     enum class GameSpeed { Normal = 0, Quick, Fast, Pause };

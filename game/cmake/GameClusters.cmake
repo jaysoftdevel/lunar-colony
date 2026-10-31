@@ -69,9 +69,11 @@ configure_game_cluster(game_cluster_robots)
 
 add_library(game_cluster_pathfinding OBJECT
     src/robots/path_planner.cpp
+    src/robots/incremental_path_planner.cpp
     src/robots/safety_coordinator.cpp
 )
 configure_game_cluster(game_cluster_pathfinding)
+target_link_libraries(game_cluster_pathfinding PRIVATE rvo2)
 
 add_library(game_cluster_simulation OBJECT
     src/systems/colony_status.cpp

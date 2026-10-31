@@ -1,6 +1,8 @@
 #include "game/world/habitat_mesh.hpp"
 #include "game/world/habitats/habitat_module.hpp"
 #include "game/world/geometry_standards.hpp"
+#include "game/world/habitat_builder.hpp"
+#include "game/world/mesh_portals.hpp"
 #include <cmath>
 
 namespace game {
@@ -26,22 +28,64 @@ void append_oriented_box(HabitatMesh& mesh,eng::Vec3 center,eng::Vec3 forward,fl
     for(const auto& e:edges){ mesh.edges.push_back(v[e[0]]); mesh.edges.push_back(v[e[1]]); }
 }
 
-void standardize_crew_interfaces(HabitatMesh& mesh){
+void standardize_crew_interfaces(HabitatMesh& mesh,bool exterior_access){
     // Keep each building's authored macro shape, but normalize every crew hatch
     // to the same human-scale interface. This also makes future structures
     // automatically compatible with corridor/walkway geometry.
     const float bar=0.12f;
     const float half_clear=geometry::kDoorClearWidth*0.5f;
-    const float base_y=geometry::kHabitatFloorY;
+    const float base_y=mesh.walkable_floor_y;
+    mesh.entrance_access.clear();
     for(auto& entrance:mesh.entrances){
-        entrance.local_position.y=geometry::kEntranceSliceY;
+        entrance.local_position.y=base_y;
         eng::Vec3 n=entrance.local_normal; n.y=0.0f; n=eng::normalize(n);
         if(eng::length(n)<0.001f) n={1,0,0};
         const eng::Vec3 side{-n.z,0,n.x};
         const eng::Vec3 base{entrance.local_position.x,base_y,entrance.local_position.z};
+        const eng::Vec3 center{0,base_y,0};
+        const float run=eng::length(base-center);
+        const eng::Vec3 inward=run>0.01f?eng::normalize(center-base):n*-1.0f;
+        const mesh_portals::Aperture aisle{(base+center)*0.5f,inward,run*0.5f+0.02f,
+            geometry::kDoorClearWidth*0.5f,base_y+0.025f,base_y+geometry::kDoorClearHeight};
+        mesh.interior=mesh_portals::subtract(mesh.interior,aisle);
+        mesh.details=mesh_portals::subtract(mesh.details,aisle);
+        mesh.edges=mesh_portals::subtract_lines(mesh.edges,aisle);
+        HabitatMesh deck;
+        append_oriented_box(deck,(base+center)*0.5f-eng::Vec3{0,0.045f,0},inward,
+                            run*0.5f,geometry::kDoorClearWidth*0.5f,0.045f);
+        mesh.interior.insert(mesh.interior.end(),deck.details.begin(),deck.details.end());
         append_oriented_box(mesh,base-side*(half_clear+bar)+eng::Vec3{0,geometry::kDoorClearHeight*0.5f,0},n,0.10f,bar,geometry::kDoorClearHeight*0.5f);
         append_oriented_box(mesh,base+side*(half_clear+bar)+eng::Vec3{0,geometry::kDoorClearHeight*0.5f,0},n,0.10f,bar,geometry::kDoorClearHeight*0.5f);
         append_oriented_box(mesh,base+eng::Vec3{0,geometry::kDoorClearHeight+bar,0},n,0.10f,half_clear+bar*2.0f,bar);
+
+        // Rebuild access AFTER size scaling, in the door's local basis. Step
+        // width, rise and handrail offsets therefore remain human-sized and
+        // the top landing ends exactly at the actual interior deck.
+        habitats::Builder b;
+        const int steps=std::max(1,(int)std::ceil(base_y/0.16f));
+        const float tread=0.32f,rise=base_y/(float)steps;
+        for(int i=0;i<steps;++i){
+            const float top=base_y-rise*(float)i;
+            const eng::Vec3 center=base+n*(tread*((float)i+0.5f));
+            HabitatMesh part;
+            append_oriented_box(part,{center.x,top-0.05f,center.z},n,tread*0.5f,0.88f,0.05f);
+            b.mesh.details.insert(b.mesh.details.end(),part.details.begin(),part.details.end());
+            b.mesh.edges.insert(b.mesh.edges.end(),part.edges.begin(),part.edges.end());
+        }
+        for(float sign:{-1.0f,1.0f}){
+            const auto near=base+side*(sign*0.98f)+eng::Vec3{0,0.90f,0};
+            const auto far=base+n*(tread*(float)steps)+side*(sign*0.98f)+eng::Vec3{0,0.90f-base_y,0};
+            b.cylinder_between(b.mesh.details,near,far,0.045f,6,true,true);
+        }
+        mesh.entrance_access.push_back({std::move(b.mesh.details),std::move(b.mesh.edges)});
+    }
+    if(exterior_access){
+        // The navigation/placement footprint must include visible access
+        // geometry, not end at the pressure hull while steps project beyond it.
+        for(const auto& access:mesh.entrance_access) for(auto p:access.details){
+            mesh.footprint_x=std::max(mesh.footprint_x,2.0f*std::abs(p.x));
+            mesh.footprint_z=std::max(mesh.footprint_z,2.0f*std::abs(p.z));
+        }
     }
 }
 
@@ -89,7 +133,6 @@ HabitatModelLibrary::HabitatModelLibrary(){
     for(std::size_t i=0;i<(std::size_t)HabitatKind::Count;++i){
         const HabitatKind kind=(HabitatKind)i;
         HabitatMesh standard=base_mesh(kind);
-        standardize_crew_interfaces(standard);
         meshes_[i][(std::size_t)HabitatSizeTier::Standard]=standard;
         // SMALL is a horizontal-only variant for every habitat. Keep the full
         // authored height, floor Y and door clear height so colonists can walk
@@ -105,6 +148,7 @@ HabitatModelLibrary::HabitatModelLibrary(){
             meshes_[i][(std::size_t)HabitatSizeTier::Mid]=standard;
             meshes_[i][(std::size_t)HabitatSizeTier::Big]=standard;
         }
+        for(auto& variant:meshes_[i]) standardize_crew_interfaces(variant,kind==HabitatKind::AirLock);
     }
 }
 

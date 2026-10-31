@@ -77,7 +77,7 @@ void append_door_frame(CorridorMesh& mesh,Vec3 center,Vec3 normal,float half_wid
     normal=flat_normal(normal);
     const Vec3 side=perp_xz(normal);
     const float bar=0.15f;
-    const Vec3 base{center.x,0,center.z};
+    const Vec3 base=center;
     append_oriented_box(mesh.details,base-side*(half_width-bar)+Vec3{0,height*0.5f,0},normal,0.12f,bar,height*0.5f);
     append_oriented_box(mesh.details,base+side*(half_width-bar)+Vec3{0,height*0.5f,0},normal,0.12f,bar,height*0.5f);
     append_oriented_box(mesh.details,base+Vec3{0,height-bar,0},normal,0.12f,half_width,bar);
@@ -90,7 +90,7 @@ void append_pressure_seal(CorridorMesh& mesh,Vec3 center,Vec3 normal,float half_
     const Vec3 side=perp_xz(normal);
     const float bar=0.070f;
     const float depth=0.045f;
-    const Vec3 base{center.x,0.055f,center.z};
+    const Vec3 base=center+Vec3{0,0.055f,0};
     // A narrow continuous gasket/flange sits inside the structural door frame.
     // It is deliberately separate geometry so no visual gap survives between
     // the pressure sleeve and a habitat/resource hull.
@@ -104,7 +104,7 @@ void append_generated_entrance(CorridorMesh& mesh,const CorridorDoor& door){
     if(!door.generated) return;
     const Vec3 n=flat_normal(door.normal);
     const Vec3 side=perp_xz(n);
-    const Vec3 door_base{door.position.x,0.0f,door.position.z};
+    const Vec3 door_base=door.position-Vec3{0,geometry::kCorridorDeckY,0};
     const auto profile=doorway_cross_section(GENERATED_ENTRANCE_HALF_WIDTH,GENERATED_ENTRANCE_HEIGHT);
 
     // The inner ring follows the actual habitat pressure-envelope vertices.
@@ -121,41 +121,29 @@ void append_generated_entrance(CorridorMesh& mesh,const CorridorDoor& door){
             edge(mesh.edges,door.wall_profile[i],door.wall_profile[j]);
         }
     }else{
-        const Vec3 wall_base{door.wall_position.x,0.0f,door.wall_position.z};
+        const Vec3 wall_base=door.wall_position-Vec3{0,geometry::kCorridorDeckY,0};
         append_profile_transition(mesh,wall_base,door_base,n,profile,profile);
     }
     append_door_frame(mesh,door.wall_position,n,geometry::kDoorFrameHalfWidth,geometry::kDoorFrameHeight);
     append_door_frame(mesh,door.position,n,geometry::kDoorFrameHalfWidth,geometry::kDoorFrameHeight);
 }
 
-// Habitat doors sit higher than the corridor walkway on the current habitat
-// models. Add shallow internal steps only when there is enough height to
-// justify them. The stair run lives entirely inside the pressure docking sleeve.
+// Continuous deck ramp: geometry and the shared crew surface query use the
+// exact same endpoints. No oversized final riser or unsampled stair gap.
 void append_entrance_stairs(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
     if(endpoint.kind!=CorridorEndpointKind::Habitat && endpoint.kind!=CorridorEndpointKind::Resource) return;
-    const CorridorDoor& door=endpoint.door;
-    const Vec3 n=flat_normal(door.normal);
-    // door.position.y is the structure module's authoritative interior deck.
-    // wall_position.y remains the generic pressure-hull slice used for carving.
-    const float threshold_y=std::max(WALKWAY_Y,door.position.y);
-    const float corridor_walkway_y=endpoint.position.y+WALKWAY_Y;
-    const float rise=threshold_y-corridor_walkway_y;
-    if(rise<0.16f) return;
-
-    const float available=std::max(0.70f,distance_xz(door.position,endpoint.position)-0.12f);
-    const float run=std::min(1.22f,available);
-    const int steps=std::clamp((int)std::ceil(rise/0.17f),2,6);
-    const float tread=run/(float)steps;
-    const float step_rise=rise/(float)steps;
-    for(int i=0;i<steps;++i){
-        const float along=tread*((float)i+0.5f);
-        const float top=threshold_y-step_rise*(float)i;
-        const Vec3 door_base{door.position.x,0.0f,door.position.z};
-        const Vec3 center=door_base+n*along+Vec3{0,top-0.045f,0};
-        append_oriented_box(mesh.details,center,n,tread*0.52f,WALKWAY_HALF_WIDTH*0.90f,0.045f);
-        edge(mesh.edges,center-perp_xz(n)*(WALKWAY_HALF_WIDTH*0.90f)+n*(tread*0.48f)+Vec3{0,0.05f,0},
-                        center+perp_xz(n)*(WALKWAY_HALF_WIDTH*0.90f)+n*(tread*0.48f)+Vec3{0,0.05f,0});
-    }
+    const auto& door=endpoint.door;
+    const Vec3 n=flat_normal(door.normal),side=perp_xz(n);
+    Vec3 inner=door.wall_position; inner.y=door.position.y;
+    Vec3 outer=endpoint.position; outer.y+=WALKWAY_Y;
+    const Vec3 a=inner-side*WALKWAY_HALF_WIDTH,b=inner+side*WALKWAY_HALF_WIDTH;
+    const Vec3 c=outer+side*WALKWAY_HALF_WIDTH,d=outer-side*WALKWAY_HALF_WIDTH;
+    tri(mesh.details,a,c,b); tri(mesh.details,a,d,c);
+    edge(mesh.edges,a,d); edge(mesh.edges,b,c);
+    // Carry the threshold deck through the carved foundation/hull thickness.
+    const Vec3 inside=inner-n*1.0f;
+    const Vec3 e=inside-side*WALKWAY_HALF_WIDTH,f=inside+side*WALKWAY_HALF_WIDTH;
+    tri(mesh.details,e,b,f);tri(mesh.details,e,a,b);
 }
 
 void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
@@ -168,7 +156,7 @@ void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
     // the outer vestibule door; for built-in entrances it is the structure's
     // declared hatch plane. The adapter then morphs once, without overlap, into
     // the exact D-profile used by the corridor shell at endpoint.position.
-    const Vec3 door_base{door.position.x,0.0f,door.position.z};
+    const Vec3 door_base=door.position-Vec3{0,geometry::kCorridorDeckY,0};
     const auto door_profile=doorway_cross_section(DOCK_SLEEVE_HALF_WIDTH,DOCK_SLEEVE_HEIGHT);
     const auto corridor_profile=corridor_cross_section();
     append_profile_transition(mesh,door_base,endpoint.position,n,door_profile,corridor_profile);
@@ -179,7 +167,7 @@ void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
     // and mechanically consolidates that surface-to-sleeve seam.
     append_pressure_seal(mesh,door.wall_position,n,geometry::kDoorClearWidth*0.62f,geometry::kDoorClearHeight*1.02f);
     const Vec3 side=perp_xz(n);
-    const Vec3 threshold=door_base+Vec3{0,0.105f,0};
+    const Vec3 threshold=door.position-Vec3{0,0.045f,0};
     append_oriented_box(mesh.details,threshold,n,0.18f,geometry::kDoorClearWidth*0.52f,0.055f);
     edge(mesh.edges,threshold-side*(geometry::kDoorClearWidth*0.52f)+Vec3{0,0.06f,0},
                     threshold+side*(geometry::kDoorClearWidth*0.52f)+Vec3{0,0.06f,0});

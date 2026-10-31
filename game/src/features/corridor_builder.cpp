@@ -37,7 +37,7 @@ ConstructionResourcePlan corridor_plan(const CorridorConnection& c){
 
 std::vector<Vec3> doorway_outline(Vec3 center,Vec3 normal,float half_width,float height){
     const Vec3 side=side_of(normal)*half_width;
-    const Vec3 base{center.x,0.06f,center.z};
+    const Vec3 base=center+Vec3{0,0.015f,0};
     const Vec3 top{0,height,0};
     const Vec3 p0=base-side,p1=base+side,p2=p1+top,p3=p0+top;
     std::vector<Vec3> out;
@@ -117,8 +117,8 @@ void render_endpoint_highlight(Renderer& r,const CorridorEndpoint& ep,Color colo
         lines.insert(lines.end(),outer.begin(),outer.end());
 
         const Vec3 s=side_of(n)*1.34f;
-        const Vec3 wb{ep.door.wall_position.x,0.06f,ep.door.wall_position.z};
-        const Vec3 ob{ep.door.position.x,0.06f,ep.door.position.z};
+        const Vec3 wb=ep.door.wall_position+Vec3{0,0.015f,0};
+        const Vec3 ob=ep.door.position+Vec3{0,0.015f,0};
         line(lines,wb-s,ob-s); line(lines,wb+s,ob+s);
         line(lines,wb-s+Vec3{0,2.92f,0},ob-s+Vec3{0,2.92f,0});
         line(lines,wb+s+Vec3{0,2.92f,0},ob+s+Vec3{0,2.92f,0});

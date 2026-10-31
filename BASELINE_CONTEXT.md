@@ -1,29 +1,33 @@
-# game v0.40.48 baseline context
+# game v0.41.0 baseline context
 
-Use this file as the compact starting context in a new chat.
+- Standalone C++20 Linux/X11 game, separate `engine/` and `game/` trees.
+- Root `VERSION` is the release source. Build with `./build.sh`; `./run.sh` runs `build/bin/game`.
+- All visible CPU lanes remain available through the persistent task pool. `GAME_CPU_LANES` is an optional diagnostic cap. Per-rover planning runs concurrently; arbitration, pose commit and resource/world mutation remain deterministic on the game thread.
 
-- Standalone C++20 Linux/X11 game with separate `engine/` and `game/` trees.
-- Version source: root `VERSION`; current release is `0.40.48`.
-- v0.40.48 pathfinding: coarse A* has bounded longitudinal escape space so routes may backtrack around structures; world revisions retain still-clear cached routes; full fleet replans are capped per rendered safety tick and failed searches use staggered backoff. v0.40.47 logistics/build/collision behavior remains the baseline.
+## Robot movement
 
-- v0.40.33 adds a New Game debug-start toggle that imports the bundled 64x64 construction blueprint layout from `0-40-32-debug-start.gmsave`, keeps the newly configured robot fleet/starter stash, resets all imported construction progress/material buffers to blueprint state, and starts paused.
-- Build: `./build.sh`; run: `./run.sh`.
-- Build implementation is split into CMake context targets; see `IMPLEMENTATION_CLUSTERS.md` and `game/cmake/GameClusters.cmake`.
-- Robot task/logistics policy remains in `game_cluster_robots` (`builder_robot.*`), but it no longer changes robot poses directly.
-- v0.40.32 adds explicit local fleet awareness to every rover. Active navigation proposals predict nearby robots over the 0.5 s local horizon and coarse route replans treat current rover positions as temporary obstacles. Idle/working robots are never moved merely to clear traffic; only robots with active navigation requests may be assigned collision-recovery retreats.
-- v0.40.31 fixes the first gameplay integration of the contract coordinator: all safety-envelope checks use the same inflated radius, short tail ticks get contracts with the actual lease duration, certified brake branches can be followed across piece boundaries, and local proposals include safe pivot-in-place plus braking-distance speed caps.
-- Starter rover bays are widened for the conservative safety discs. Saves whose entire fleet is still in the untouched v0.40.30 starter apron are migrated to the wider parking layout on load. Retreats prefer lateral pull-outs and receive arbitration priority only between actively navigating rovers; idle and working rovers remain stationary traffic obstacles.
-- `game/robots/safety_coordinator.*` is the single fleet-movement authority: 10 ms safety ticks, 0.50 s local proposal horizon, 0.05 s replan interval, time-indexed motion/braking contracts, terminal holds, passage reservations and shared atomic arbitration.
-- `game_cluster_pathfinding` is static-geometry advisory routing only. Its coarse A*/Theta*-style route can suggest waypoints but never authorizes movement or handles robot-vs-robot collision avoidance.
-- Rejected motion follows the robot's previously certified braking branch. Idle/stopped robots retain terminal reservations. Existing unsafe overlap is a safety fault, not repaired by teleport/nudge.
-- Persistent blocking first waits, then uses wait-for/deadlock analysis and certified retreat/pull-out behavior. An idle blocker can be asked to yield. No safe escape means `BLOCKED`.
-- Construction-stage geometry is committed only after current robot positions and active normal/braking/terminal contracts are clear. Autonomous resource-pallet creation is likewise deferred away from active reservations.
-- Construction logistics use one drop area per site. Carriers place delivered resources there; builders physically collect the current stage bundle before assembly.
-- Robot default movement speed multiplier is 200%.
-- Construction rendering is mesh-only: blue blueprint, yellow installed/in-progress geometry, bold green completed geometry. Unselected construction blueprints show only their progress bar; selected blueprints expose details.
-- Structures/blueprints carry persistent type/size-aware instance names.
-- Update packaging convention: `game-update-vX.Y.Z.zip` -> one top-level `game-update-vX.Y.Z/` containing only `apply.sh` + `update.patch`; `apply.sh` does not build.
+- `safety_coordinator.*` is the only pose authority. Job routines submit goals and work holds.
+- Global routing uses bounded persistent D* Lite with clearance costs and epoch-tagged parked-robot footprints, plus fleet-aware A*/dogleg recovery routes. Moving actors remain local traffic. The returned clearance callbacks capture margin values by value.
+- Local rollouts and execution follow a moving geometric corridor with projection, visibility-limited lookahead, arrival braking and acceleration/turn limits. A preview follows turns over the full 1 s horizon instead of holding one heading for that second.
+- Local proposals refresh at 10 Hz; authoritative motion/braking/terminal contracts remain at 100 Hz. Path progress, rather than distance to a corner alone, scores candidates and detects circling.
+- Vendored RVO2 (Apache-2.0) provides reciprocal velocity advice. See `third_party/rvo2/UPSTREAM.md` and `LICENSE`. It never commits poses or bypasses contracts. No online dependency fetch occurs at build time.
+- Physical hull discs plus numeric margin are mandatory. Additional personal space is a steering preference, so a physically passable narrow gap remains usable. Coarse cell tokens are scheduling hints, not another spatial exclusion grid.
+- Completed static geometry uses exact swept tests against inflated rotated footprints, corridor capsules and resource discs. Construction geometry still uses scene-admission and next-stage evacuation gates. Delivered resource boxes are admitted atomically against current hulls and all active motion/braking/terminal reservations before inventory changes.
+- No speculative reverse fan or positional nudges. A blocked rover waits, pivots safely, obtains a stable detour, or retreats to a passing pocket. A parked idle robot may receive a certified yield task when it blocks a real destination or seals the only route; it holds the new bay until another job needs it. Active work holds remain protected. Untasked robots do not wander.
+- The existing FIFO shipping/material accounting and staged construction policy remain in `builder_robot.cpp`. Service and queue positions use the same disc clearance as locomotion.
+- Exterior rover queries use the planar playfield height. They do not run indoor crew/pressure-volume queries on every planner edge or safety sample.
 
-For robot-motion changes, load `game_cluster_robots` + `game_cluster_pathfinding`; treat the safety coordinator contract as authoritative and do not reintroduce direct robot movement or ad-hoc collision recovery.
+## Structures and crew access
 
-v0.40.43: hardware OpenGL is mandatory at runtime (`glXIsDirect` plus renderer-string software fallback rejection). The debug frame shows the GPU renderer. Robot path/proposal preparation uses `eng::TaskPool` with about 50% of visible logical CPUs; authoritative safety arbitration and world mutation remain serial. Engine files: `engine/src/renderer_gl.cpp`, `engine/src/task_pool.cpp`, `engine/include/engine/engine.hpp`.
+- Each habitat module declares its real `walkable_floor_y`; storage meshes declare theirs as well. Entrance anchors, frames, stairs, corridor collars and crew floor queries use that exact threshold.
+- Human-scale frames and exterior access steps are rebuilt after horizontal size scaling. Steps end at the threshold and are oriented in the entrance's own basis. Air-lock access renders at actual construction completion.
+- New structure corridors snap to authored entrances. Additional branches reuse the existing sealed trunk. Legacy generated hatches remain installed physical entrances; loaded collars and floors are synchronized with current models.
+- Dock sleeves contain a continuous ramp and an interior threshold deck. Storage ports sit on the outer pressure wall. Interior circulation aisles retain crew head/shoulder clearance across size tiers.
+- `mesh_portals.hpp` exactly clips triangles and lines around a doorway. The renderer caches local clipped layers, preserving wall material around the aperture and cutting an approach through tall foundations. Connected door openings are visible in both normal and POV views.
+- Only the connected Air Lock permits exterior access; open corridor ends remain sealed. Outdoor machinery remains solid, while habitats, storage and the pressure corridor network are crew traversable.
+
+## Verification and packaging
+
+- Optional headless regressions: configure with `-DGAME_BUILD_NAVIGATION_TESTS=ON`, then use CTest. They cover swept fleet separation, smooth open travel, obstacle corners, changed scenes, occupied service points, opposing traffic, single-lane yielding, rotations/size tiers, storage ports, interior headroom and construction logistics.
+- Update archive: `game-update-vX.Y.Z.zip` containing one `game-update-vX.Y.Z/` directory with only `apply.sh` and `update.patch`. Apply does not build. Clean builds preserve existing executable-adjacent savegames, including on build failure.
+- v0.40.47 remains the historical logistics/build baseline. For current locomotion and access behavior, this document supersedes older version notes in `ARCHITECTURE.md`.

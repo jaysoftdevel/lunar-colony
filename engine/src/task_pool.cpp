@@ -30,11 +30,13 @@ struct TaskPool::Impl {
             if(affinity_cpus>0) hw=(unsigned)affinity_cpus;
         }
 #endif
-        // Runtime simulation is allowed to occupy at most half of the visible
-        // logical CPUs. One lane is the game thread itself; the rest are
-        // persistent helpers, so route preparation can scale without spawning
-        // transient threads every planner tick.
-        lanes=std::max<std::size_t>(1,(std::size_t)hw/2u);
+        // Use every logical CPU that the host/launcher makes available to this
+        // process. One lane is the game thread itself; every remaining lane is
+        // backed by one persistent helper. The old ~50% cap kept the runtime
+        // artificially CPU-bound on dense multi-rover saves even though the
+        // expensive navigation jobs are independent and already synchronized
+        // before authoritative world mutation.
+        lanes=std::max<std::size_t>(1,(std::size_t)hw);
         if(const char* env=std::getenv("GAME_CPU_LANES")){
             char* end=nullptr;
             const long requested=std::strtol(env,&end,10);

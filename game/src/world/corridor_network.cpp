@@ -514,6 +514,35 @@ bool CorridorNetwork::connect_corridors(std::size_t corridor_a,std::size_t corri
     return true;
 }
 
+void CorridorNetwork::synchronize_structure_interfaces(const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
+                                                       const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
+    for(auto& c:connections_) for(CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
+        if(ep->kind==CorridorEndpointKind::Habitat && ep->index<habitats.size()){
+            const auto& h=habitats[ep->index];const auto& mesh=library.mesh(h);
+            if(!ep->door.generated && ep->door.entrance_index>=0 && (std::size_t)ep->door.entrance_index<mesh.entrances.size())
+                ep->door=transformed_builtin_door(h,mesh,(std::size_t)ep->door.entrance_index);
+            else {
+                ep->door.position.y=h.position.y+mesh.walkable_floor_y;
+                ep->door.wall_position.y=ep->door.position.y;
+                // Legacy generated entrances remain installed physical hatches.
+                // Refresh their conformal skin at the corrected deck height.
+                attach_surface_profile(ep->door,h,mesh);
+            }
+        }else if(ep->kind==CorridorEndpointKind::Resource && ep->index<resources.size()){
+            const auto& resource=resources[ep->index];const auto& mesh=resource_library.mesh(resource);
+            Vec3 wall=resource.position+ep->door.normal*(mesh.footprint_x*(5.35f/13.0f));
+            wall.y=resource.position.y+mesh.walkable_floor_y;
+            Vec3 shift=wall-ep->door.position;shift.y=0;
+            ep->door.position=wall;ep->door.wall_position=wall;ep->position=ep->position+shift;
+            if(!c.path.empty()){
+                if(ep==&c.endpoint_a) c.path.front()=ep->position;
+                else c.path.back()=ep->position;
+            }
+        }
+    }
+    rebuild_all_meshes(connections_);
+}
+
 void CorridorNetwork::repair_invalid_topology(const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library){
     bool invalid=false;
     for(const auto& c:connections_){

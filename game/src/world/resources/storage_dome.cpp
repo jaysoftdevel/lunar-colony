@@ -1,6 +1,7 @@
 #include "game/world/resource_builder.hpp"
 #include "game/world/resources/resource_generators.hpp"
 #include "game/world/geometry_standards.hpp"
+#include "game/world/mesh_portals.hpp"
 
 namespace game::resources {
 ResourceMesh make_storage_dome(StorageDomeSize size){
@@ -10,6 +11,7 @@ ResourceMesh make_storage_dome(StorageDomeSize size){
     const float s=diameter/13.0f;
     const float sy=height/7.0f;
     b.mesh.footprint_x=diameter; b.mesh.footprint_z=diameter; b.mesh.height=height;
+    b.mesh.walkable_floor_y=0.68f*sy;
 
     // Reinforced circular foundation and low warehouse dome.
     b.cylinder_y(b.mesh.foundation,{0,0.34f*sy,0},0.68f*sy,5.75f*s,32,true);
@@ -23,18 +25,18 @@ ResourceMesh make_storage_dome(StorageDomeSize size){
         const Vec3 crown{0.65f*s*std::cos(a),5.70f*sy,0.65f*s*std::sin(a)};
         b.cylinder_between(b.mesh.details,foot,crown,0.075f*s,6,true,true);
     }
-    const float wall=5.15f*s;
+    const float wall=5.35f*s;
     for(int side=0;side<4;++side){
         const float a=PI*0.5f*(float)side;
         const Vec3 n{std::sin(a),0.0f,-std::cos(a)};
         const float frame_h=geometry::kDoorFrameHeight;
         const float frame_w=geometry::kDoorClearWidth+0.70f;
         const float frame_d=0.55f;
-        const Vec3 c=n*wall+Vec3{0,geometry::kStorageFloorY+frame_h*0.5f,0};
+        const Vec3 c=n*wall+Vec3{0,b.mesh.walkable_floor_y+frame_h*0.5f,0};
         // Docking ports stay human-sized on every dome tier. Increasing storage
         // capacity enlarges the warehouse, not the person-sized doors.
         b.box(b.mesh.details,c,{(side%2==0?frame_w:frame_d),frame_h,(side%2==0?frame_d:frame_w)});
-        const Vec3 inner=n*(wall+0.30f)+Vec3{0,geometry::kStorageFloorY+geometry::kDoorClearHeight*0.5f,0};
+        const Vec3 inner=n*(wall+0.30f)+Vec3{0,b.mesh.walkable_floor_y+geometry::kDoorClearHeight*0.5f,0};
         b.box(b.mesh.details,inner,{(side%2==0?geometry::kDoorClearWidth:0.24f),geometry::kDoorClearHeight,(side%2==0?0.24f:geometry::kDoorClearWidth)});
     }
 
@@ -51,6 +53,16 @@ ResourceMesh make_storage_dome(StorageDomeSize size){
     }
     b.box(b.mesh.details,{3.85f*s,1.30f*sy,-3.15f*s},{1.25f*s,1.55f*sy,0.75f*s});
     b.box(b.mesh.details,{-3.85f*s,1.30f*sy,-3.15f*s},{1.25f*s,1.55f*sy,0.75f*s});
+    // Reserve four fixed-width circulation aisles through the pallet layout.
+    // They stay human-sized even on the smallest warehouse variant.
+    for(int side=0;side<4;++side){
+        const float a=PI*0.5f*(float)side;
+        const Vec3 n{std::sin(a),0,-std::cos(a)};
+        const Vec3 door=n*wall;
+        b.mesh.details=mesh_portals::subtract(b.mesh.details,{door*0.5f,n,wall*0.5f-0.35f,
+            geometry::kDoorClearWidth*0.5f,b.mesh.walkable_floor_y+0.02f,
+            b.mesh.walkable_floor_y+geometry::kDoorClearHeight});
+    }
     return std::move(b.mesh);
 }
 }
