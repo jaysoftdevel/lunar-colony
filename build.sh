@@ -1,50 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_TYPE="${1:-Release}"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
 
-# Savegames live beside the executable. Preserve them outside the clean build
-# tree and restore them even if configuration or compilation fails.
-SAVE_BACKUP=""
-restore_saves(){
-    local build_status=$?
-    if [[ -n "$SAVE_BACKUP" ]]; then
-        mkdir -p "$ROOT/build/bin"
-        if cp -a "$SAVE_BACKUP/savegames" "$ROOT/build/bin/"; then
-            rm -rf "$SAVE_BACKUP"
-        else
-            echo "Could not restore savegames; preserved copy: $SAVE_BACKUP/savegames" >&2
-            return 1
-        fi
-    fi
-    return "$build_status"
-}
-if [[ -d "$ROOT/build/bin/savegames" ]]; then
-    SAVE_BACKUP="$(mktemp -d "$ROOT/.savegames-preserve.XXXXXX")"
-    cp -a "$ROOT/build/bin/savegames" "$SAVE_BACKUP/savegames"
-    trap restore_saves EXIT
-fi
+CONFIG="Release"
+TESTS="${GAME_BUILD_TESTS:-OFF}"
+CLEAN=0
+for arg in "$@"; do
+    case "$arg" in
+        Debug|debug|Release|release|RelWithDebInfo|relwithdebinfo|reldeb|MinSizeRel|minsizerel|minsize) CONFIG="$(normalize_config "$arg")" ;;
+        --tests) TESTS=ON ;;
+        --clean) CLEAN=1 ;;
+        *) echo "Usage: ./build.sh [Debug|Release|RelWithDebInfo|MinSizeRel] [--tests] [--clean]" >&2; exit 2 ;;
+    esac
+done
 
-# Always build from a clean local build tree. No binary is copied into the source workspace.
-rm -rf "$ROOT/build"
-cmake -S "$ROOT" -B "$ROOT/build" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+require_tool cmake
+if (( CLEAN )); then rm -rf "$GAME_BUILD_DIR"; fi
 
-# Default build parallelism uses every logical CPU visible to the process, the
-# same policy as the runtime worker pool. GAME_BUILD_JOBS may explicitly cap it.
-if [[ -n "${GAME_BUILD_JOBS:-}" ]]; then
-    JOBS="$GAME_BUILD_JOBS"
-else
-    CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
-    JOBS="$CPUS"
-    (( JOBS < 1 )) && JOBS=1
-fi
-cmake --build "$ROOT/build" --parallel "$JOBS"
+cmake -S "$GAME_ROOT" -B "$GAME_BUILD_DIR" \
+    -DCMAKE_BUILD_TYPE="$CONFIG" \
+    -DGAME_BUILD_NAVIGATION_TESTS="$TESTS"
+cmake --build "$GAME_BUILD_DIR" --parallel "$(cpu_jobs)"
 
 echo
-GAME_BINARY="$ROOT/build/bin/game"
-BINARY_BYTES="$(stat -c %s "$GAME_BINARY")"
-BINARY_KB="$(( (BINARY_BYTES + 1023) / 1024 ))"
-
-echo "Local build complete: $GAME_BINARY"
-echo "Game binary size: ${BINARY_KB} KB (${BINARY_BYTES} bytes)"
-echo "Run with: $GAME_BINARY"
+echo "Linux build complete: $GAME_BIN"
+echo "Backend: X11 + OpenGL"
+echo "Run: ./run.sh"

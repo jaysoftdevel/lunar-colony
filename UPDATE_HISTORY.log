@@ -261,3 +261,5 @@ v0.40.9
 0.41.7: Buildable outdoor four-bay robot workshop, automatic ramp gate, stable idle parking/task dispatch, docked condition recovery, protected reachable approach, and planner intake for stationary holds.
 
 0.41.8: Up to two resource-built storage gate upgrades on planned/completed domes, protected loading aprons, independent cargo stations, persistent parent links, cascade removal, and blue/yellow/green meshes for all pressure doors and loading gates.
+
+0.42.0: Unified Linux/Windows source workspace; Win32 + Direct3D 12/DXGI backend; matched shell/batch development scripts; isolated platform build trees; cross-platform executable paths and CPU topology; preserves v0.41.8 gameplay/save baseline.

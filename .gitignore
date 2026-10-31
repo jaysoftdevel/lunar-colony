@@ -1,1 +1,8 @@
 build/
+/build/
+/build-linux/
+/build-windows/
+/.savegames-preserve.*/
+*.user
+*.suo
+.vs/

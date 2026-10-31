@@ -1,7 +1,7 @@
-# game v0.41.8 baseline context
+# game v0.42.0 baseline context
 
-- Standalone C++20 Linux/X11 game, separate `engine/` and `game/` trees.
-- Root `VERSION` is the release source. Build with `./build.sh`; `./run.sh` runs `build/bin/game`.
+- Standalone C++20 cross-platform game with separate `engine/` and `game/` trees. Linux uses X11/OpenGL; Windows uses Win32/Direct3D 12.
+- Root `VERSION` is the release source. Linux builds to `build/linux/bin/game`; Windows builds to `build/windows/bin/game.exe`. The paired `build.*`, `run.*`, `test.*`, and `dev.*` scripts expose matching workflows.
 - All visible CPU lanes remain available through the persistent task pool. `GAME_CPU_LANES` is an optional diagnostic cap. Per-rover planning runs concurrently; arbitration, pose commit and resource/world mutation remain deterministic on the game thread.
 - Render presents with swap interval 0 by default (VSync off) so the GPU can run at full host throughput; `GAME_VSYNC=1` re-enables synchronized present.
 - The runtime loop is uncapped by default (no forced 1 ms idle sleep). Optional `GAME_FRAME_LIMIT_FPS=<n>` applies an explicit limiter when profiling or thermally constrained.

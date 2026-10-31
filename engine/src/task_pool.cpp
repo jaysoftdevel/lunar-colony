@@ -8,6 +8,10 @@
 #include <thread>
 #ifdef __linux__
 #include <sched.h>
+#elif defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 #endif
 
 namespace eng {
@@ -29,6 +33,12 @@ struct TaskPool::Impl {
             const int affinity_cpus=CPU_COUNT(&allowed);
             if(affinity_cpus>0) hw=(unsigned)affinity_cpus;
         }
+#elif defined(_WIN32)
+        // Windows 11 can expose multiple processor groups on very large hosts.
+        // Count all active logical processors instead of assuming one 64-CPU
+        // group. The Windows scheduler can distribute these unpinned workers.
+        const DWORD active=GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+        if(active>0) hw=(unsigned)active;
 #endif
         // Use every logical CPU that the host/launcher makes available to this
         // process. One lane is the game thread itself; every remaining lane is

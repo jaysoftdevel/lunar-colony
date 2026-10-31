@@ -22,7 +22,11 @@ void GameApp::render_credits(Renderer& r){
     ui::panel(r,p,theme_);
     const float x=p.x+PANEL_PADDING;
     ui::label(r,{x,p.y+28},"GAME PROTOTYPE",1.28f,theme_);
+#ifdef _WIN32
+    ui::label(r,{x,p.y+76},"NATIVE C++20 / WIN32 / DIRECT3D 12",0.92f,theme_,true);
+#else
     ui::label(r,{x,p.y+76},"NATIVE C++20 / X11 / OPENGL",0.92f,theme_,true);
+#endif
     ui::label(r,{x,p.y+108},"ENGINE AND GAME IMPLEMENTATION ARE SEPARATE",0.78f,theme_,true);
     if(ui::button(r,ui_input_,{x,p.y+p.h-PANEL_PADDING-40,150,40},"BACK",theme_)) screen_=Screen::MainMenu;
 }

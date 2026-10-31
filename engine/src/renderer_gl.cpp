@@ -101,7 +101,7 @@ class GLRenderer final: public Renderer {
         gl_.glEnableVertexAttribArray(0); gl_.glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),nullptr); gl_.glLineWidth(width); gl_.glDrawArrays(prim,0,(GLsizei)(floats/3));
     }
 public:
-    bool initialize(void* native_display,unsigned long native_window,int width,int height) override {
+    bool initialize(void* native_display,std::uintptr_t native_window,int width,int height) override {
         d_=(Display*)native_display; w_=(Window)native_window; width_=width;height_=height; if(!gl_.init()) return false;
         XWindowAttributes wa{}; if(!XGetWindowAttributes(d_,w_,&wa)) return false;
         XVisualInfo templ{}; templ.visualid=XVisualIDFromVisual(wa.visual); int count=0;

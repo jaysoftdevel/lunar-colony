@@ -12,6 +12,11 @@
 #include <limits>
 #include <system_error>
 #include <unordered_map>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace game {
 namespace {
@@ -21,6 +26,20 @@ constexpr std::uint32_t kSaveSchema=16;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
+
+fs::path executable_path(){
+#ifdef _WIN32
+    std::wstring buffer(32768,L'\0');
+    const DWORD length=GetModuleFileNameW(nullptr,buffer.data(),(DWORD)buffer.size());
+    if(length==0 || length>=buffer.size()) return {};
+    buffer.resize(length);
+    return fs::path(buffer);
+#else
+    std::error_code ec;
+    const fs::path path=fs::read_symlink("/proc/self/exe",ec);
+    return ec?fs::path{}:path;
+#endif
+}
 
 bool valid_storage_gate_links(const std::vector<PlacedResource>& items){
     std::unordered_map<std::uint64_t,std::size_t> owners;
@@ -400,11 +419,10 @@ void write_object_vector(Writer& w,const std::vector<T>& values,WriteFn&& fn){
 
 std::string GameApp::save_game_directory() const {
     // Keep savegames with the installed game instead of placing them in the
-    // user's global data directory.  /proc/self/exe gives us a stable path
-    // even when the game is launched from a different working directory.
-    std::error_code ec;
-    const fs::path executable=fs::read_symlink("/proc/self/exe",ec);
-    if(!ec && !executable.empty())
+    // user's global data directory. The platform-specific executable lookup
+    // gives us a stable path even when launched from another working folder.
+    const fs::path executable=executable_path();
+    if(!executable.empty())
         return (executable.parent_path()/"savegames").string();
     return (fs::current_path()/"savegames").string();
 }
@@ -523,9 +541,8 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
 
 
 std::string GameApp::debug_blueprint_template_path() const {
-    std::error_code ec;
-    const fs::path executable=fs::read_symlink("/proc/self/exe",ec);
-    if(!ec && !executable.empty())
+    const fs::path executable=executable_path();
+    if(!executable.empty())
         return (executable.parent_path()/"debug"/"0-40-32-debug-start.gmsave").string();
     return (fs::current_path()/"debug"/"0-40-32-debug-start.gmsave").string();
 }

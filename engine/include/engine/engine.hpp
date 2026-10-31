@@ -2,6 +2,7 @@
 #include "engine/math.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <future>
@@ -42,7 +43,11 @@ struct InputState {
 class Renderer {
 public:
     virtual ~Renderer() = default;
-    virtual bool initialize(void* native_display, unsigned long native_window, int width, int height) = 0;
+    // native_display is platform specific (X11 Display* on Linux, unused on
+    // Win32). native_window is an integer-sized native window handle so this
+    // remains safe on 64-bit Windows where HWND is pointer-sized but unsigned
+    // long is only 32 bits.
+    virtual bool initialize(void* native_display, std::uintptr_t native_window, int width, int height) = 0;
     virtual void resize(int width,int height)=0;
     virtual void begin_frame(Color clear)=0;
     virtual void end_frame()=0;

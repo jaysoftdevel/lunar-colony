@@ -4,7 +4,11 @@ add_executable(game src/main.cpp)
 target_include_directories(game PRIVATE include)
 target_link_libraries(game PRIVATE game_engine Threads::Threads rvo2)
 target_compile_definitions(game PRIVATE GAME_VERSION="${GAME_VERSION_FULL}")
-target_compile_options(game PRIVATE -Wall -Wextra -Wpedantic)
+if(MSVC)
+    target_compile_options(game PRIVATE /W4 /permissive- /EHsc)
+else()
+    target_compile_options(game PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 
 foreach(cluster IN LISTS GAME_CLUSTER_TARGETS)
     target_sources(game PRIVATE $<TARGET_OBJECTS:${cluster}>)
@@ -30,11 +34,19 @@ if(GAME_BUILD_NAVIGATION_TESTS)
 endif()
 
 set_target_properties(game PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+if(CMAKE_CONFIGURATION_TYPES)
+    foreach(config Debug Release RelWithDebInfo MinSizeRel)
+        string(TOUPPER "${config}" config_upper)
+        set_target_properties(game PROPERTIES "RUNTIME_OUTPUT_DIRECTORY_${config_upper}" "${CMAKE_BINARY_DIR}/bin")
+    endforeach()
+endif()
 
 # Debug-only new-game construction template. Keep it next to the executable so
 # the runtime can locate it regardless of the current working directory.
 set(DEBUG_BLUEPRINT_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/debug-templates/0-40-32-debug-start.gmsave")
-file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/bin/debug")
-configure_file("${DEBUG_BLUEPRINT_TEMPLATE}"
-               "${CMAKE_BINARY_DIR}/bin/debug/0-40-32-debug-start.gmsave"
-               COPYONLY)
+add_custom_command(TARGET game POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:game>/debug"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${DEBUG_BLUEPRINT_TEMPLATE}"
+            "$<TARGET_FILE_DIR:game>/debug/0-40-32-debug-start.gmsave"
+    VERBATIM)

@@ -1,0 +1,30 @@
+REQUIRED TO BUILD (Windows 11 x64)
+==================================
+
+1. Visual Studio 2022 or newer
+   - Workload: Desktop development with C++
+   - MSVC v143 or newer
+
+2. Windows 11 SDK 10.0.26100 or newer
+   - Headers/libs used: Win32, D3D12, DXGI 1.6, D3DCompiler
+
+3. CMake
+   - Project minimum: 3.20
+   - 3.25+ recommended for the included CMakePresets.json
+
+4. Current GPU driver with Direct3D 12 support
+
+Bundled in this source archive:
+- RVO2 under third_party/rvo2
+
+Windows/system link libraries (no separate download):
+- d3d12.lib
+- dxgi.lib
+- d3dcompiler.lib
+- user32.lib
+- gdi32.lib
+- shell32.lib
+
+Optional:
+- PIX for Windows (GPU debugging/profiling)
+- DirectX 12 Agility SDK (not required by the current renderer)

@@ -1,8 +1,26 @@
+# Game 0.42.0 — Linux + Windows shared source
+
+This is a single cross-platform game source tree. Linux uses X11/OpenGL and Windows 11 uses Win32/Direct3D 12; gameplay and simulation code are shared.
+
+## Quick start
+
+Linux: `./dev.sh build Release` then `./dev.sh run`
+
+Windows: `dev.bat build Release` then `dev.bat run`
+
+See `CROSS-PLATFORM-DEVELOPMENT.md` and `DEPENDENCIES.md` for the mirrored development workflow and prerequisites.
+
+---
+
 # Game workspace
 
 **Baseline release: 0.30.0** — rendering, pressure-network topology, crew scale, movement and buildable geometry are frozen here as the gameplay-development baseline.
 
 Native C++20 prototype with a strict split between the reusable engine (`engine/`) and game implementation (`game/`).
+
+## Windows 11 / Direct3D 12 port
+
+This source tree now has a native Windows backend in addition to the original Linux backend. Windows uses Win32 + Direct3D 12/DXGI and probes hardware feature levels up to 12_2; Linux keeps X11 + OpenGL/GLX. Gameplay and save-game code are shared. See `README-WINDOWS.md` for Windows dependencies, build commands, compatibility notes and the exact list of Linux implementation details replaced on Windows.
 
 ## Local Linux build
 
@@ -11,12 +29,12 @@ Required tools/libraries: a C++20 compiler, CMake, X11 development headers and a
 Debian/Ubuntu example:
 
 ```bash
-sudo apt install build-essential cmake libx11-dev libgl1-mesa-dev
-./build.sh
-./build/bin/game
+./install-deps.sh
+./build.sh Release
+./run.sh
 ```
 
-`build.sh` always deletes the previous `build/` directory first and produces the executable only under `build/bin/`. At completion it prints the final game binary size in KB and bytes. No prebuilt executable is stored in the project workspace.
+Linux builds are incremental under `build/linux/`. Use `./build.sh Release --clean` or `./dev.sh rebuild Release` for a clean rebuild. Windows uses the independent `build/windows/` tree, so both native configurations can be developed from the same checkout without CMake-cache collisions. No prebuilt executable is stored in the project workspace.
 
 ## Current controls
 
@@ -39,6 +57,15 @@ Crew-accessible habitats and corridors share a common structural access contract
 - Exterior walkways are non-pressurised and can meet the colony pressure system only at a connected Air Lock.
 - Supply channels include structural supports, electrical/data routing and water-service hardware.
 - World construction geometry is mesh-only in the current development phase: blue target mesh, yellow installed mesh and substantially bolder green mesh at completion. No structure textures or filled surfaces are emitted yet.
+
+## v0.42.0 cross-platform Windows 11 / Linux workspace
+
+- Unified Linux and Windows development in one source tree while retaining the complete v0.41.8 gameplay baseline.
+- Linux uses X11 + OpenGL/GLX; Windows 11 uses Win32 + Raw Input + Direct3D 12/DXGI.
+- Added matched `.sh` and `.bat` configure/build/run/test/clean/dev workflows with isolated `build/linux` and `build/windows` trees.
+- Added Windows path/runtime compatibility for executable-relative saves/debug data and Windows CPU topology detection.
+- Added cross-platform CMake presets, dependency documentation, platform matrix, and Windows build/status documentation.
+- Save schema and gameplay behavior remain compatible with the v0.41.8 baseline.
 
 ## v0.41.8 paid storage gate extensions and mesh doors
 

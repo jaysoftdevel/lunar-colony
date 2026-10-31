@@ -12,7 +12,7 @@ Model-declared walking thresholds own entrance frames, post-scale access steps, 
 # Architecture
 
 ## Engine layer
-`engine/` owns Linux/X11 windowing, raw input, GPU rendering, math primitives and immediate UI drawing. Game code uses only the public interfaces in `engine/include/engine`.
+`engine/` owns the native platform/rendering layer, math primitives and immediate UI drawing. CMake selects Linux/X11 + OpenGL (`platform_x11.cpp`, `renderer_gl.cpp`) or Windows/Win32 + Direct3D 12 (`platform_win32.cpp`, `renderer_d3d12.cpp`). Game code uses only the public interfaces in `engine/include/engine`, so gameplay remains shared.
 
 ## Game layer
 `game/` owns gameplay, simulation, world geometry and interaction. `GameApp` routes the high-level screen/state flow while focused systems implement placement, construction, networks, POV traversal and rendering state.
@@ -174,3 +174,12 @@ Blocking recovery uses wait age and a wait-for graph. Cycles cause one lower-pri
 Rendering remains single-context OpenGL on the main/render thread. The context is accepted only when GLX reports direct rendering and the OpenGL renderer string is not a known software rasterizer. Vertex data is uploaded through OpenGL buffer objects and rasterization is therefore delegated to the validated GPU driver. The active renderer/vendor/version are runtime properties of `eng::Renderer`.
 
 `eng::TaskPool` is a persistent bounded worker pool. Its total planning lanes default to `max(1, visible_logical_cpus / 2)`, counting the calling game thread as one lane. Robot route generation and short-horizon proposal preparation are independent read-mostly jobs and may execute in parallel. Contract arbitration, passage ownership, final continuous collision checks, authoritative pose commits, construction stage commits, resource mutation and save-state mutation remain ordered on the game thread.
+
+## Platform backends (0.42.0 cross-platform workspace)
+
+The engine platform/renderer boundary is now selected by CMake:
+
+- Linux: `platform_x11.cpp` + `renderer_gl.cpp` (X11/GLX/OpenGL).
+- Windows 11: `platform_win32.cpp` + `renderer_d3d12.cpp` (Win32/DXGI/Direct3D 12).
+
+The `eng::Renderer` abstraction, input state, task pool and all game implementation clusters remain shared. Native window handles use `std::uintptr_t` so both X11 integer handles and 64-bit Win32 `HWND` values pass through the renderer boundary safely.

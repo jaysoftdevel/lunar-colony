@@ -1,0 +1,46 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/linux",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "linux-release",
+      "inherits": "linux-base",
+      "displayName": "Linux x64 - X11/OpenGL - Release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "GAME_BUILD_NAVIGATION_TESTS": "ON" }
+    },
+    {
+      "name": "linux-debug",
+      "inherits": "linux-base",
+      "displayName": "Linux x64 - X11/OpenGL - Debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "GAME_BUILD_NAVIGATION_TESTS": "ON" }
+    },
+    {
+      "name": "windows-x64",
+      "displayName": "Windows x64 - Win32/Direct3D 12",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows",
+      "cacheVariables": { "GAME_BUILD_NAVIGATION_TESTS": "ON" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "linux-release", "configurePreset": "linux-release" },
+    { "name": "linux-debug", "configurePreset": "linux-debug" },
+    { "name": "windows-release", "configurePreset": "windows-x64", "configuration": "Release" },
+    { "name": "windows-debug", "configurePreset": "windows-x64", "configuration": "Debug" }
+  ],
+  "testPresets": [
+    { "name": "linux-release", "configurePreset": "linux-release", "output": { "outputOnFailure": true } },
+    { "name": "linux-debug", "configurePreset": "linux-debug", "output": { "outputOnFailure": true } },
+    { "name": "windows-release", "configurePreset": "windows-x64", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "windows-debug", "configurePreset": "windows-x64", "configuration": "Debug", "output": { "outputOnFailure": true } }
+  ]
+}

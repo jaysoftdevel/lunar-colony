@@ -1,4 +1,4 @@
-# v0.41.8 Implementation Clusters
+# v0.42.0 Implementation Clusters
 
 This file is the context map for future changes. Start from the smallest build target(s) below and load additional clusters only when an interface crosses the requested change. The target names are real CMake OBJECT targets in `game/cmake/GameClusters.cmake`.
 

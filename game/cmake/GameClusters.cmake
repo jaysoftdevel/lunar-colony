@@ -8,7 +8,11 @@ function(configure_game_cluster target)
     target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(${target} PRIVATE game_engine)
     target_compile_definitions(${target} PRIVATE GAME_VERSION="${GAME_VERSION_FULL}")
-    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
 endfunction()
 
 add_library(game_cluster_app OBJECT
