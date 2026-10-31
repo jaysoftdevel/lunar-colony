@@ -1,9 +1,11 @@
-# game v0.40.33 baseline context
+# game v0.40.48 baseline context
 
 Use this file as the compact starting context in a new chat.
 
 - Standalone C++20 Linux/X11 game with separate `engine/` and `game/` trees.
-- Version source: root `VERSION`; current release is `0.40.33`.
+- Version source: root `VERSION`; current release is `0.40.48`.
+- v0.40.48 pathfinding: coarse A* has bounded longitudinal escape space so routes may backtrack around structures; world revisions retain still-clear cached routes; full fleet replans are capped per rendered safety tick and failed searches use staggered backoff. v0.40.47 logistics/build/collision behavior remains the baseline.
+
 - v0.40.33 adds a New Game debug-start toggle that imports the bundled 64x64 construction blueprint layout from `0-40-32-debug-start.gmsave`, keeps the newly configured robot fleet/starter stash, resets all imported construction progress/material buffers to blueprint state, and starts paused.
 - Build: `./build.sh`; run: `./run.sh`.
 - Build implementation is split into CMake context targets; see `IMPLEMENTATION_CLUSTERS.md` and `game/cmake/GameClusters.cmake`.

@@ -211,6 +211,7 @@ void invalidate_route(SafetyRuntime& rt){
     rt.route_replan_required=true;
     rt.route_failed=false;
     rt.route_retry_elapsed=0.0f;
+    rt.route_failure_count=0;
 }
 
 void advance_route_cursor(const SafetyAgent& a,SafetyRuntime& rt){
@@ -238,27 +239,81 @@ Vec3 route_waypoint(const SafetyAgent& a,SafetyRuntime& rt,const SafetyWorldCall
     return rt.cached_route[best];
 }
 
-void ensure_route(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCallbacks& world){
+float route_retry_delay(const SafetyAgent& a,const SafetyRuntime& rt){
+    // Repeated failures in an unchanged scene are almost always the same
+    // impossible search. Back off exponentially and add a deterministic rover
+    // offset so a blocked fleet does not wake up and launch A* in lock-step.
+    const unsigned failures=std::min<unsigned>(rt.route_failure_count,4u);
+    const float exponential=0.45f*(float)(1u<<failures);
+    const float stagger=0.09f*(float)(a.id%5u);
+    return std::min(2.40f,exponential)+stagger;
+}
+
+bool remaining_route_is_static_clear(const SafetyAgent& a,SafetyRuntime& rt,const SafetyWorldCallbacks& world){
+    if(rt.cached_route.empty() || !world.segment_clear) return false;
+    advance_route_cursor(a,rt);
+    if(rt.route_cursor>=rt.cached_route.size())
+        return world.segment_clear(a.id,a.position,current_target(rt));
+
+    // A world revision no longer invalidates every rover route blindly. Check
+    // the small simplified polyline that remains for this rover. If the new
+    // structure/corridor is unrelated, the route remains valid and no A* work
+    // is required. Dynamic rover-vs-rover safety is intentionally excluded from
+    // this test and remains owned by proposal prediction/reservation contracts.
+    Vec3 previous=a.position;
+    for(std::size_t i=rt.route_cursor;i<rt.cached_route.size();++i){
+        if(!world.segment_clear(a.id,previous,rt.cached_route[i])) return false;
+        previous=rt.cached_route[i];
+    }
+    const Vec3 target=current_target(rt);
+    if(dist_xz(previous,target)>0.04f && !world.segment_clear(a.id,previous,target)) return false;
+    return true;
+}
+
+void refresh_route_world_revision(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCallbacks& world){
+    auto& rt=*a.runtime;
+    if(!rt.goal_valid && !rt.temporary_goal_valid) return;
+    if(rt.route_goal_revision!=rt.goal_revision) return; // goal change already requires a full route
+    if(rt.route_world_epoch==world_epoch) return;
+
+    if(!rt.route_replan_required && !rt.cached_route.empty() && remaining_route_is_static_clear(a,rt,world)){
+        rt.route_world_epoch=world_epoch;
+        return;
+    }
+
+    // Only the rover whose actual remaining route intersects the changed world
+    // loses its cached route. This prevents one construction stage elsewhere in
+    // the colony from synchronously replanning the entire fleet.
+    rt.cached_route.clear();
+    rt.route_cursor=0;
+    rt.proposals.clear();
+    rt.route_replan_required=true;
+    rt.route_failed=false;
+    rt.route_retry_elapsed=0.0f;
+    rt.route_failure_count=0;
+}
+
+bool route_search_due(const SafetyAgent& a,std::uint64_t world_epoch){
+    const auto& rt=*a.runtime;
+    if(!rt.goal_valid && !rt.temporary_goal_valid) return false;
+    const bool revision_changed=rt.route_goal_revision!=rt.goal_revision || rt.route_world_epoch!=world_epoch;
+    const bool stale=rt.route_replan_required || rt.cached_route.empty() || revision_changed;
+    if(!stale) return false;
+    if(rt.route_failed && !rt.route_replan_required && !revision_changed &&
+       rt.route_retry_elapsed<route_retry_delay(a,rt)) return false;
+    return true;
+}
+
+void ensure_route(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCallbacks& world,bool allow_route_search){
     auto& rt=*a.runtime;
     if(!rt.goal_valid && !rt.temporary_goal_valid) return;
     const Vec3 target=current_target(rt);
     const bool world_or_goal_changed=rt.route_goal_revision!=rt.goal_revision || rt.route_world_epoch!=world_epoch;
-    // If the last full route search failed, keep the safe stop and retry only
-    // periodically. A blocked rover previously launched up to four 18k-cell A*
-    // searches every 50 ms, which could saturate one CPU core and collapse FPS.
     if(rt.route_failed && !rt.route_replan_required && !world_or_goal_changed &&
-       rt.route_retry_elapsed<0.55f) return;
+       rt.route_retry_elapsed<route_retry_delay(a,rt)) return;
     const bool stale=rt.route_replan_required || rt.cached_route.empty() || world_or_goal_changed;
-    // Do not rebuild the complete coarse route merely because the rover's
-    // current pose no longer has direct line-of-sight to its next cached
-    // waypoint. During normal steering/braking a rover can drift a few
-    // centimetres off the geometric polyline; v0.40.43 then relaunched A* every
-    // planner tick (roughly 20 times/second) even though the world and goal had
-    // not changed. The short-horizon preview and 10 ms motion contract already
-    // reject an unsafe local segment. If progress actually stops, the blocking
-    // logic explicitly requests a replan/detour. Keep the stable route until
-    // one of those real invalidation events occurs.
     if(!stale) return;
+    if(!allow_route_search) return;
 
     std::vector<Vec3> route;
     const float radius=std::max(0.05f,rt.stop_radius);
@@ -275,6 +330,8 @@ void ensure_route(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCall
     rt.route_replan_required=false;
     rt.route_failed=!ok;
     rt.route_retry_elapsed=0.0f;
+    if(ok) rt.route_failure_count=0;
+    else rt.route_failure_count=(std::uint8_t)std::min<unsigned>(255u,(unsigned)rt.route_failure_count+1u);
     ++rt.local_replans;
     if(!ok){
         rt.block_reason=BlockReason::NoRoute;
@@ -282,7 +339,7 @@ void ensure_route(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCall
     }
 }
 
-void generate_proposals(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCallbacks& world,const std::vector<SafetyAgent>& agents,float now){
+void generate_proposals(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCallbacks& world,const std::vector<SafetyAgent>& agents,float now,bool allow_route_search){
     auto& rt=*a.runtime;
     rt.proposals.clear();
     if(rt.motion_intent==MotionIntent::Wait || (!rt.goal_valid && !rt.temporary_goal_valid)){
@@ -290,8 +347,11 @@ void generate_proposals(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWor
         return;
     }
 
-    ensure_route(a,world_epoch,world);
-    if(rt.cached_route.empty()){
+    ensure_route(a,world_epoch,world,allow_route_search);
+    if((rt.route_replan_required && !allow_route_search) || rt.cached_route.empty()){
+        // Replan work is deliberately budgeted across rendered frames. A rover
+        // awaiting its turn remains stopped under its existing terminal hold;
+        // safety is never traded for pathfinding throughput.
         rt.proposals.push_back({{0.0f,a.heading_degrees,false},{},10000.0f});
         return;
     }
@@ -1205,6 +1265,11 @@ SafetyTickStats safety_tick(float dt,
     // stationary hold rather than a long unchecked movement.
     float remaining=std::min(dt,1.0f);
     float now=absolute_time;
+    // Full coarse-route searches are the only planner operation that can become
+    // expensive in a dense base. Budget them per rendered safety_tick() call,
+    // not per 10 ms substep, so six blocked rovers cannot all launch A* before
+    // the frame returns to input/camera/render processing.
+    std::size_t remaining_route_search_budget=std::min<std::size_t>(2,std::max<std::size_t>(1,eng::cpu_parallel_lanes()));
     while(remaining>1.0e-6f){
         const float tick=std::min(kSafetyDtSeconds,remaining);
 
@@ -1241,7 +1306,9 @@ SafetyTickStats safety_tick(float dt,
         }
 
         std::vector<std::size_t> planner_jobs;
+        std::vector<std::size_t> full_route_candidates;
         planner_jobs.reserve(agents.size());
+        full_route_candidates.reserve(agents.size());
         for(std::size_t ai=0;ai<agents.size();++ai){
             auto& a=agents[ai];
             auto& rt=*a.runtime;
@@ -1263,21 +1330,43 @@ SafetyTickStats safety_tick(float dt,
                     invalidate_route(rt);
                 }
             }
+
+            // A construction-stage/world revision first performs a cheap check
+            // of this rover's existing simplified route. Unaffected routes are
+            // retained and simply stamped with the new world epoch.
+            refresh_route_world_revision(a,world_epoch,world);
+
             if(rt.planner_elapsed>=kPlannerReplanSeconds || rt.proposals.empty() || rt.route_replan_required){
                 rt.planner_elapsed=0.0f;
                 planner_jobs.push_back(ai);
+                if(route_search_due(a,world_epoch)) full_route_candidates.push_back(ai);
             }
         }
 
-        // Route search and local proposal preview are read-mostly and independent
-        // per rover. Run them on the shared bounded CPU pool (50% of logical
-        // CPUs, including the calling lane) while keeping the reservation board,
-        // contract arbitration, pose commit and scene mutations single-threaded.
-        // This spreads the expensive path work across cores without allowing two
-        // threads to authorize movement independently.
+        // Grant the limited full-search slots to the most important/most blocked
+        // navigation requests first. All other planner jobs may still refresh
+        // their cheap local steering proposals in parallel.
+        std::stable_sort(full_route_candidates.begin(),full_route_candidates.end(),[&](std::size_t lhs,std::size_t rhs){
+            const auto lp=lhs<requests.size()?requests[lhs].task_priority:0u;
+            const auto rp=rhs<requests.size()?requests[rhs].task_priority:0u;
+            if(lp!=rp) return lp>rp;
+            const float lw=agents[lhs].runtime->blocked_elapsed+agents[lhs].runtime->wait_age;
+            const float rw=agents[rhs].runtime->blocked_elapsed+agents[rhs].runtime->wait_age;
+            if(std::abs(lw-rw)>1.0e-4f) return lw>rw;
+            return agents[lhs].id<agents[rhs].id;
+        });
+        std::vector<std::uint8_t> route_search_granted(agents.size(),0);
+        const std::size_t grant_count=std::min(remaining_route_search_budget,full_route_candidates.size());
+        for(std::size_t i=0;i<grant_count;++i) route_search_granted[full_route_candidates[i]]=1;
+        remaining_route_search_budget-=grant_count;
+
+        // Local proposal preview is read-mostly and independent per rover. The
+        // expensive full-route work is now bounded above; the shared CPU pool
+        // can therefore improve throughput without turning a mass replan into a
+        // long frame-time barrier. Arbitration/world mutation remain serialized.
         eng::TaskPool::shared().parallel_for(planner_jobs.size(),[&](std::size_t job){
             const std::size_t ai=planner_jobs[job];
-            generate_proposals(agents[ai],world_epoch,world,agents,now);
+            generate_proposals(agents[ai],world_epoch,world,agents,now,route_search_granted[ai]!=0);
         });
 
         ReservationBoard board{};

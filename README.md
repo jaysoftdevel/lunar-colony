@@ -214,3 +214,9 @@ Carrier robots service one global construction queue in blueprint placement orde
 - Parking-return navigation has lower traffic priority than CR-01 logistics, so a waiting builder cannot block material delivery.
 - Builders immediately leave the parking return and take a construction target as soon as a dependency-ready, staged construction stage becomes available.
 - Parking bays avoid unfinished blueprint envelopes when possible; if the original spawn bay was built over, a deterministic nearby stash-side fallback is selected.
+### v0.40.48 - Structure detours and bounded multi-robot replanning
+
+Robot coarse routing can now leave the direct start-to-goal strip in both directions. The A* search rectangle receives a bounded longitudinal escape band in addition to its lateral detour width, so a rover blocked by a completed structure can first move away from the obstacle, pass around the structure, and then continue toward its destination. The wide coarse fallback is expanded for large structures while the existing fine physical-clearance search remains the narrow-passage fallback.
+
+World changes no longer discard every active rover route. Each rover first validates the small remaining simplified polyline against the new static geometry; routes that are still clear are retained and simply adopt the new world revision. Only actually intersected routes request a full replan. Full coarse-route searches are limited per rendered safety tick and prioritized, so a fleet cannot launch every expensive A* search in one frame. Repeated impossible searches back off and are staggered per rover. Ground-resource quantity changes only affect the navigation revision when the package obstacle radius changes. The shared 10 ms collision-contract authority, resource shipping order, build processing and robot collision-avoidance rules are unchanged.
+

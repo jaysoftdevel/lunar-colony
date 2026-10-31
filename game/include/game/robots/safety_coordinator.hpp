@@ -166,6 +166,9 @@ struct SafetyRuntime {
     // of frame-rate collapse in dense construction saves.
     bool route_failed{false};
     float route_retry_elapsed{0.0f};
+    // Consecutive failed full-route searches. Used only for transient retry
+    // backoff; it is deliberately not persisted in savegames.
+    std::uint8_t route_failure_count{0};
 
     MotionContract active_contract{};
     float blocked_elapsed{0.0f};

@@ -226,3 +226,10 @@ v0.40.9
 - Each blueprint is fully supplied for its entire remaining construction plan before carriers advance to the next one.
 - Placement order is persisted across habitat, resource-structure, corridor, supply-channel, and walkway blueprints (save schema 13).
 0.40.47 - BR-02 idle parking: constructors release construction bays while waiting for carrier materials and return to their dedicated stash-side parking bay when no executable construction task exists.
+0.40.48 - structure-detour routing and bounded fleet replanning
+- Coarse A* now has a longitudinal escape band, so a rover can back away from a blocking structure before routing around it instead of being trapped inside the old start-to-goal search strip.
+- Wide fallback routing reaches farther around large structures while retaining a fine physical-clearance fallback for narrow passages.
+- Construction/world revisions validate each rover's existing simplified route first; unrelated routes are retained instead of forcing a fleet-wide A* rebuild.
+- Full coarse-route searches are budgeted across rendered frames and prioritized by task priority/blocking age, preventing simultaneous multi-robot replans from creating large input/render stalls.
+- Repeated no-route searches use deterministic exponential retry backoff, and ground-resource inventory changes no longer invalidate navigation unless the obstacle geometry actually changes.
+

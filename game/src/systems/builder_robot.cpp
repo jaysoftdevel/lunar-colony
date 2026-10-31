@@ -2033,7 +2033,7 @@ void GameApp::update_builder_robot(float dt){
         const float map_half=std::max(8.0f,(float)playfield_.size()*0.5f-2.0f);
         const float cheap_half_width=std::clamp(dist_xz(start,goal)*0.42f+4.0f,5.0f,std::min(20.0f,map_half));
         const float normal_half_width=std::clamp(dist_xz(start,goal)*0.30f+2.8f,4.5f,std::min(12.0f,map_half));
-        const float wide_half_width=std::clamp(dist_xz(start,goal)*0.42f+4.0f,8.0f,std::min(24.0f,map_half));
+        const float wide_half_width=std::clamp(dist_xz(start,goal)*0.50f+5.0f,9.0f,std::min(30.0f,map_half));
         request.corridor_half_width=cheap_half_width;
         request.max_expansions=1200;
         request.visibility_skip_limit=8;
@@ -2088,9 +2088,9 @@ void GameApp::update_builder_robot(float dt){
         // resolves those cases quickly while retaining a modest 0.30 m comfort
         // buffer.
         request.corridor_half_width=wide_half_width;
-        request.cell_size=1.85f;
-        request.max_expansions=700;
-        request.visibility_skip_limit=5;
+        request.cell_size=1.70f;
+        request.max_expansions=1600;
+        request.visibility_skip_limit=6;
         if(try_margin(0.30f,true)) return true;
 
         // Narrow passages that the coarse grid cannot represent get one final
@@ -4663,7 +4663,12 @@ void GameApp::update_builder_robot(float dt){
     for(const auto& pile:ground_resource_piles_){
         mix_epoch(world_epoch,(std::uint64_t)std::llround((double)pile.position.x*4.0));
         mix_epoch(world_epoch,(std::uint64_t)std::llround((double)pile.position.z*4.0));
-        mix_epoch(world_epoch,(std::uint64_t)std::max<std::int64_t>(0,pile.amount));
+        // Navigation revisions track obstacle GEOMETRY, not inventory content.
+        // v0.40.47 hashed every kilogram, so each carrier pickup changed the
+        // world epoch and forced unrelated rovers to revisit their routes. The
+        // pile radius already captures the only navigation-relevant size change.
+        const float obstacle_radius=std::max(pile.radius,resource_package_half_width(pile.resource,pile.amount));
+        mix_epoch(world_epoch,(std::uint64_t)std::llround((double)obstacle_radius*100.0));
     }
 
     std::vector<robots::SafetyAgent> safety_agents;

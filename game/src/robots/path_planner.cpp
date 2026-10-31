@@ -83,12 +83,12 @@ bool plan_corridor_path(const PathPlanRequest& request,
         }
     };
 
-    const float max_side=std::clamp(request.corridor_half_width,2.0f,20.0f);
+    const float max_side=std::clamp(request.corridor_half_width,2.0f,32.0f);
     // Try a few wider doglegs before paying for A*. This handles long but
     // geometrically simple barriers (for example a corridor spanning between
     // two structures) with a handful of segment tests instead of thousands of
     // grid-cell checks.
-    constexpr std::array<float,8> offsets{{1.6f,2.6f,3.8f,5.4f,7.2f,10.0f,14.0f,18.0f}};
+    constexpr std::array<float,10> offsets{{1.6f,2.6f,3.8f,5.4f,7.2f,10.0f,14.0f,18.0f,22.0f,28.0f}};
     constexpr std::array<std::array<float,2>,3> spans{{
         std::array<float,2>{{0.18f,0.72f}},
         std::array<float,2>{{0.28f,0.72f}},
@@ -118,8 +118,13 @@ bool plan_corridor_path(const PathPlanRequest& request,
     if(!request.allow_grid_fallback) return false;
 
     const float cell=std::max(0.45f,request.cell_size);
-    const float along_margin=1.45f;
     const float side_extent=std::max(2.2f,request.corridor_half_width);
+    // A path around a large structure is not always monotonic along the direct
+    // start->goal axis. The old fixed 1.45 m end margin made a perfectly valid
+    // detour impossible whenever the rover had to back away from the obstacle
+    // first (or pass slightly beyond the goal and return). Give the A* rectangle
+    // a bounded longitudinal escape band derived from its lateral width.
+    const float along_margin=std::clamp(side_extent*0.55f,2.2f,14.0f);
     const float u_min=-along_margin;
     const float u_max=direct_length+along_margin;
     const int nu=std::max(3,(int)std::ceil((u_max-u_min)/cell)+1);
