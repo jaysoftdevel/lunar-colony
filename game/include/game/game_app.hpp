@@ -60,6 +60,8 @@ private:
     float ui_scale_=1.5f;
     bool debug_frame_enabled_=true;
     bool game_session_active_=false;
+    bool debug_start_template_enabled_=false;
+    std::string new_game_status_message_{};
     int ui_scale_index_=2;
     std::vector<eng::DisplayMode> display_modes_{};
     int display_mode_index_=-1;
@@ -70,12 +72,9 @@ private:
     ColonyStatus status_{};
     ResourceManagement resources_{};
     std::vector<BuilderRobotState> builder_robots_{};
-    // Synchronous pathfinding is bounded once per rendered update. All 90 Hz
-    // catch-up substeps share this budget so a slow frame cannot recursively
-    // create more expensive path searches.
-    int robot_constructor_route_plans_budget_{0};
-    int robot_carrier_route_plans_budget_{0};
-    int robot_full_route_plans_budget_{0};
+    // Monotonic simulation time used by the shared robot safety coordinator.
+    // It is transient and restarts when a game/session is loaded.
+    float robot_safety_time_seconds_{0.0f};
     eng::Vec3 starter_stash_center_{};
     std::array<double,kMaterialResourceCount> production_fraction_{};
     double life_support_fraction_seconds_{0.0};
@@ -85,6 +84,8 @@ private:
     std::vector<PlacedHabitat> placed_habitats_{};
     std::vector<PlacedResource> placed_resources_{};
     std::vector<GroundResourcePile> ground_resource_piles_{};
+    // Monotonic placement order shared by structures and network blueprints.
+    std::uint64_t next_blueprint_placement_sequence_{1};
     std::optional<GroundResourcePile> first_person_carried_resource_{};
     int first_person_hover_ground_resource_=-1;
     int first_person_hover_storage_resource_=-1;
@@ -225,6 +226,8 @@ private:
     void refresh_save_games();
     bool save_game_to_name(const std::string& name,std::string& error);
     bool load_game_from_file(const std::string& path,std::string& error);
+    bool load_debug_blueprint_template_from_file(const std::string& path,std::string& error);
+    std::string debug_blueprint_template_path() const;
     float ui_width(const eng::Renderer& r) const { return (float)r.width()/ui_scale_; }
     float ui_height(const eng::Renderer& r) const { return (float)r.height()/ui_scale_; }
     eng::Rect centered_button(eng::Renderer& r,float y,float w=360,float h=52) const;

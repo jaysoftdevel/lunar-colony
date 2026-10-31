@@ -13,6 +13,7 @@ std::int64_t ResourceBundle::amount(MaterialResource resource) const {
         case MaterialResource::Water: return water;
         case MaterialResource::Food: return food;
         case MaterialResource::Medical: return medical;
+        case MaterialResource::Aluminum: return aluminum;
         case MaterialResource::Count: break;
     }
     return 0;
@@ -27,6 +28,7 @@ std::int64_t& ResourceBundle::amount(MaterialResource resource){
         case MaterialResource::Water: return water;
         case MaterialResource::Food: return food;
         case MaterialResource::Medical: return medical;
+        case MaterialResource::Aluminum: return aluminum;
         case MaterialResource::Count: break;
     }
     return iron;
@@ -122,6 +124,7 @@ const char* material_resource_name(MaterialResource resource){
         case MaterialResource::Water: return "Water";
         case MaterialResource::Food: return "Food";
         case MaterialResource::Medical: return "Medical Supplies";
+        case MaterialResource::Aluminum: return "Aluminum";
         case MaterialResource::Count: break;
     }
     return "Resource";
@@ -136,6 +139,7 @@ const char* material_resource_symbol(MaterialResource resource){
         case MaterialResource::Water: return "H2O";
         case MaterialResource::Food: return "Fd";
         case MaterialResource::Medical: return "Med";
+        case MaterialResource::Aluminum: return "Al";
         case MaterialResource::Count: break;
     }
     return "?";
@@ -153,6 +157,7 @@ std::int64_t resource_package_capacity_kg(MaterialResource resource){
         case MaterialResource::Water: return 200;
         case MaterialResource::Food: return 120;
         case MaterialResource::Medical: return 80;
+        case MaterialResource::Aluminum: return 200;
         case MaterialResource::Count: break;
     }
     return 150;
@@ -168,6 +173,7 @@ float package_nominal_half_width(MaterialResource resource){
         case MaterialResource::Water: return 0.18f;
         case MaterialResource::Food: return 0.23f;
         case MaterialResource::Medical: return 0.21f;
+        case MaterialResource::Aluminum: return 0.16f;
         case MaterialResource::Count: break;
     }
     return 0.20f;
@@ -181,6 +187,7 @@ float package_nominal_height(MaterialResource resource){
         case MaterialResource::Water: return 0.36f;
         case MaterialResource::Food: return 0.32f;
         case MaterialResource::Medical: return 0.28f;
+        case MaterialResource::Aluminum: return 0.22f;
         case MaterialResource::Count: break;
     }
     return 0.28f;

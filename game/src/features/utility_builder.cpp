@@ -163,6 +163,7 @@ void GameApp::render_utility_placement(Renderer& r){
     if(!hover) return;
     if(preview && affordable && utility_network_.build_connection(selected->utility_kind,*utility_build_start_,*hover,
                                                      placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
+        utility_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
         selected_utility_=(int)utility_network_.connections().size()-1;
         selected_habitat_=-1;
         selected_corridor_=-1;

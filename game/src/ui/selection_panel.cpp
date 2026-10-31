@@ -19,14 +19,14 @@ namespace {
 std::string next_material_cost(const ConstructionResourcePlan& plan,std::uint8_t completed_steps){
     const ResourceBundle& c=plan.next_step_cost(completed_steps);
     std::ostringstream out;
-    out<<"NEXT  FE "<<c.iron<<"  CU "<<c.copper<<"  SI "<<c.silicon<<"  P "<<c.plastic;
+    out<<"NEXT  FE "<<c.iron<<"  AL "<<c.aluminum<<"  CU "<<c.copper<<"  SI "<<c.silicon<<"  P "<<c.plastic;
     return out.str();
 }
 
 std::string total_material_cost(const ConstructionResourcePlan& plan){
     const ResourceBundle c=plan.total();
     std::ostringstream out;
-    out<<"TOTAL  FE "<<c.iron<<"  CU "<<c.copper<<"  SI "<<c.silicon<<"  P "<<c.plastic;
+    out<<"TOTAL  FE "<<c.iron<<"  AL "<<c.aluminum<<"  CU "<<c.copper<<"  SI "<<c.silicon<<"  P "<<c.plastic;
     return out.str();
 }
 
@@ -205,6 +205,9 @@ void GameApp::render_selection_panel(Renderer& r){
         switch(robot.mode){
             case BuilderRobotMode::Idle:
                 if(robot.post_delivery_hold || robot.drop_exit_pending) task<<"TASK  CLEARING CONSTRUCTION DROP ZONE";
+                else if(robot.role==RobotRole::Constructor && robot.route_active && !robot.target.valid())
+                    task<<"TASK  RETURNING TO RESOURCE STASH PARKING";
+                else if(robot.role==RobotRole::Constructor) task<<"TASK  PARKED / WAITING FOR CONSTRUCTION MATERIALS";
                 else task<<"TASK  WAITING FOR ASSIGNMENT";
                 break;
             case BuilderRobotMode::AwaitingMaterials:
@@ -233,28 +236,20 @@ void GameApp::render_selection_panel(Renderer& r){
                 break;
         }
 
-        const float remaining_m=robot.route_active?std::max(0.0f,robot.route_total_length_m-robot.route_progress_m):0.0f;
-        if(robot.traffic_escape_active){
-            navigation<<"NAVIGATION  COLLISION FALLBACK / PULL-ASIDE";
-        }else if(robot.route_waiting_for_clearance){
-            navigation<<"NAVIGATION  YIELDING";
-            if(robot.traffic_blocker_index<builder_robots_.size()) navigation<<" TO "<<robot_identity(robot.traffic_blocker_index);
-            if(robot.route_wait_elapsed>0.01f) navigation<<" / "<<std::fixed<<std::setprecision(1)<<robot.route_wait_elapsed<<" S";
-        }else if(robot.traffic_detour_active){
-            navigation<<"NAVIGATION  TRAFFIC DETOUR";
-            if(robot.traffic_detour_avoid_index<builder_robots_.size()) navigation<<" AROUND "<<robot_identity(robot.traffic_detour_avoid_index);
-        }else if(robot.route_force_full_replan){
-            navigation<<"NAVIGATION  LOCAL FALLBACK REQUEST";
-        }else if(robot.route_active){
-            navigation<<"NAVIGATION  0.5S ROLLING / "<<std::fixed<<std::setprecision(1)<<remaining_m<<" M HORIZON";
-        }else if(robot.action!=BuilderRobotAction::None){
-            navigation<<"NAVIGATION  STOPPED AT WORK POSITION";
-        }else{
-            navigation<<"NAVIGATION  STATIONARY";
+        navigation<<"NAVIGATION  "<<robots::safety_mode_name(robot.safety.mode);
+        if(robot.safety.motion_intent==robots::MotionIntent::Retreat) navigation<<" / RETREAT";
+        if(robot.safety.blocker_robot_id<builder_robots_.size()) navigation<<" / BLOCKED BY "<<robot_identity(robot.safety.blocker_robot_id);
+        if(robot.safety.block_reason!=robots::BlockReason::None) navigation<<" / "<<robots::block_reason_name(robot.safety.block_reason);
+        if(robot.safety.nearby_robot_count>0){
+            navigation<<" / NEAR "<<robot.safety.nearby_robot_count;
+            if(robot.safety.nearest_robot_id<builder_robots_.size())
+                navigation<<" ("<<robot_identity(robot.safety.nearest_robot_id)<<" "
+                          <<std::fixed<<std::setprecision(1)<<robot.safety.nearest_robot_distance_m<<"M)";
         }
+        if(robot.safety.active_contract.valid) navigation<<" / CONTRACT ACTIVE";
 
         motion<<"MOTION  "<<std::fixed<<std::setprecision(2)<<robot.current_speed_mps<<" / "<<robot.move_speed_mps<<" M/S";
-        if(robot.route_active && robot.route_speed_scale<0.995f) motion<<" / GOV "<<(int)std::lround(std::clamp(robot.route_speed_scale,0.0f,1.0f)*100.0f)<<"%";
+        if(robot.route_active && robot.route_speed_scale<0.995f) motion<<" / REQUEST "<<(int)std::lround(std::clamp(robot.route_speed_scale,0.0f,1.0f)*100.0f)<<"%";
 
         if(robot.target.valid()){
             target<<"TARGET  "<<target_name;
@@ -280,9 +275,11 @@ void GameApp::render_selection_panel(Renderer& r){
             team<<"TEAM  SITE COORDINATOR";
         else team<<"TEAM  INDEPENDENT";
 
-        recovery<<"RECOVERY  BLOCKED "<<std::fixed<<std::setprecision(1)<<robot.blocked_elapsed<<" S"
-                <<" / ATTEMPTS "<<(int)robot.recovery_attempts
-                <<" / LOCAL RECOVERIES "<<robot.route_full_replan_count;
+        recovery<<"SAFETY  WAIT "<<std::fixed<<std::setprecision(1)<<robot.safety.wait_age<<" S"
+                <<" / ACCEPT "<<robot.safety.accepted_contracts
+                <<" / BRAKE "<<robot.safety.brake_fallbacks
+                <<" / REJECT "<<robot.safety.rejected_contracts
+                <<" / RETREAT "<<robot.safety.retreat_count;
 
         const int condition_pct=(int)std::lround(std::clamp(robot.condition,0.0f,1.0f)*100.0f);
         const char* condition_grade=condition_pct>=90?"NOMINAL":(condition_pct>=70?"SERVICE DUE":"DEGRADED");

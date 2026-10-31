@@ -81,6 +81,7 @@ void GameApp::render_habitat_placement(Renderer& r){
             if(existing.kind==placed.kind && existing.size==size) serial=std::max(serial,existing.instance_serial+1);
         }
         placed.instance_serial=serial;
+        placed.placement_sequence=next_blueprint_placement_sequence_++;
         placed.position=snapped;
         placed.rotation_degrees=placement_rotation_degrees_;
         placed.size=size;

@@ -68,6 +68,7 @@ enum class CorridorConnectionKind {
 
 struct CorridorConnection {
     CorridorConnectionKind kind{CorridorConnectionKind::Automatic};
+    std::uint64_t placement_sequence{0};
     CorridorEndpoint endpoint_a{};
     CorridorEndpoint endpoint_b{};
     std::vector<eng::Vec3> path{};

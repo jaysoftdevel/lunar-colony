@@ -132,6 +132,7 @@ void GameApp::render_resource_placement(Renderer& r){
             if(same_size) serial=std::max(serial,existing.instance_serial+1);
         }
         placed.instance_serial=serial;
+        placed.placement_sequence=next_blueprint_placement_sequence_++;
         placed.position=snapped;
         placed.rotation_degrees=rotation;
         placed.storage_size=storage_size;

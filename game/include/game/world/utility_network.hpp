@@ -45,6 +45,7 @@ struct UtilityMesh {
 
 struct UtilityConnection {
     UtilityKind kind{UtilityKind::SupplyChannel};
+    std::uint64_t placement_sequence{0};
     UtilityEndpoint endpoint_a{};
     UtilityEndpoint endpoint_b{};
     std::vector<eng::Vec3> path{};

@@ -75,6 +75,7 @@ Color resource_color(MaterialResource resource){
         case MaterialResource::Water: return {0.22f,0.58f,0.86f,1.0f};
         case MaterialResource::Food: return {0.48f,0.72f,0.28f,1.0f};
         case MaterialResource::Medical: return {0.88f,0.42f,0.48f,1.0f};
+        case MaterialResource::Aluminum: return {0.72f,0.78f,0.84f,1.0f};
         case MaterialResource::Count: break;
     }
     return {0.62f,0.62f,0.62f,1.0f};

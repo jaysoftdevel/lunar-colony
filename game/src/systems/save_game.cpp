@@ -16,7 +16,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=10;
+constexpr std::uint32_t kSaveSchema=13;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -36,6 +36,10 @@ struct Writer {
 struct Reader {
     std::ifstream in;
     bool valid{true};
+    // Schema 11 adds Aluminum as the eighth persisted material. Older saves
+    // have seven ResourceBundle fields; keeping the count on the reader lets
+    // every nested bundle/plan/robot loader remain backward-compatible.
+    std::size_t material_resource_count{7};
     explicit Reader(const fs::path& path):in(path,std::ios::binary){ valid=in.good(); }
     template<class T> T pod(){ T value{}; if(!valid || !in.read(reinterpret_cast<char*>(&value),sizeof(T))) valid=false; return value; }
     bool boolean(){ return pod<std::uint8_t>()!=0; }
@@ -68,7 +72,8 @@ void write_bundle(Writer& w,const ResourceBundle& b){
 }
 ResourceBundle read_bundle(Reader& r){
     ResourceBundle b{};
-    for(std::size_t i=0;i<kMaterialResourceCount;++i) b.amount((MaterialResource)i)=r.pod<std::int64_t>();
+    const std::size_t count=std::min(r.material_resource_count,kMaterialResourceCount);
+    for(std::size_t i=0;i<count;++i) b.amount((MaterialResource)i)=r.pod<std::int64_t>();
     return b;
 }
 
@@ -206,11 +211,13 @@ CorridorMesh read_corridor_mesh(Reader& r){ CorridorMesh m{}; m.shell=read_vec3s
 void write_corridor(Writer& w,const CorridorConnection& c){
     w.pod((std::uint8_t)c.kind); write_corridor_endpoint(w,c.endpoint_a); write_corridor_endpoint(w,c.endpoint_b); write_vec3s(w,c.path);
     write_corridor_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan); write_bundle(w,c.site_buffer);
+    w.pod(c.placement_sequence);
 }
-CorridorConnection read_corridor(Reader& r,bool with_site_buffer){
+CorridorConnection read_corridor(Reader& r,bool with_site_buffer,bool with_placement_sequence=false){
     CorridorConnection c{}; c.kind=(CorridorConnectionKind)r.pod<std::uint8_t>(); c.endpoint_a=read_corridor_endpoint(r); c.endpoint_b=read_corridor_endpoint(r);
     c.path=read_vec3s(r); c.mesh=read_corridor_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
     if(with_site_buffer) c.site_buffer=read_bundle(r);
+    if(with_placement_sequence) c.placement_sequence=r.pod<std::uint64_t>();
     return c;
 }
 
@@ -221,11 +228,13 @@ UtilityMesh read_utility_mesh(Reader& r){ UtilityMesh m{}; m.shell=read_vec3s(r)
 void write_utility(Writer& w,const UtilityConnection& c){
     w.pod((std::uint8_t)c.kind); write_utility_endpoint(w,c.endpoint_a); write_utility_endpoint(w,c.endpoint_b); write_vec3s(w,c.path); write_vec3s(w,c.junctions);
     write_utility_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan); write_bundle(w,c.site_buffer);
+    w.pod(c.placement_sequence);
 }
-UtilityConnection read_utility(Reader& r,bool with_site_buffer){
+UtilityConnection read_utility(Reader& r,bool with_site_buffer,bool with_placement_sequence=false){
     UtilityConnection c{}; c.kind=(UtilityKind)r.pod<std::uint8_t>(); c.endpoint_a=read_utility_endpoint(r); c.endpoint_b=read_utility_endpoint(r);
     c.path=read_vec3s(r); c.junctions=read_vec3s(r); c.mesh=read_utility_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
     if(with_site_buffer) c.site_buffer=read_bundle(r);
+    if(with_placement_sequence) c.placement_sequence=r.pod<std::uint64_t>();
     return c;
 }
 
@@ -252,15 +261,18 @@ void write_walkway(Writer& w,const WalkwayConnection& c){
     w.pod((std::uint64_t)c.supply_bridges.size()); for(const auto& b:c.supply_bridges) write_walkway_bridge(w,b);
     write_walkway_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan); write_bundle(w,c.site_buffer);
     w.boolean(c.carries_power); w.boolean(c.carries_water); w.boolean(c.pressurized);
+    w.pod(c.placement_sequence);
 }
-WalkwayConnection read_walkway(Reader& r,bool with_site_buffer){
+WalkwayConnection read_walkway(Reader& r,bool with_site_buffer,bool with_placement_sequence=false){
     WalkwayConnection c{}; c.endpoint_a=read_walkway_endpoint(r); c.endpoint_b=read_walkway_endpoint(r); c.path=read_vec3s(r);
     auto n=r.pod<std::uint64_t>(); if(n>kMaxObjects) r.valid=false; c.junctions.reserve((std::size_t)std::min(n,kMaxObjects)); for(std::uint64_t i=0;i<n&&r.valid;++i)c.junctions.push_back(read_walkway_junction(r));
     n=r.pod<std::uint64_t>(); if(n>kMaxObjects) r.valid=false; c.corridor_crossings.reserve((std::size_t)std::min(n,kMaxObjects)); for(std::uint64_t i=0;i<n&&r.valid;++i)c.corridor_crossings.push_back(read_walkway_crossing(r));
     n=r.pod<std::uint64_t>(); if(n>kMaxObjects) r.valid=false; c.supply_bridges.reserve((std::size_t)std::min(n,kMaxObjects)); for(std::uint64_t i=0;i<n&&r.valid;++i)c.supply_bridges.push_back(read_walkway_bridge(r));
     c.mesh=read_walkway_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
     if(with_site_buffer) c.site_buffer=read_bundle(r);
-    c.carries_power=r.boolean(); c.carries_water=r.boolean(); c.pressurized=r.boolean(); return c;
+    c.carries_power=r.boolean(); c.carries_water=r.boolean(); c.pressurized=r.boolean();
+    if(with_placement_sequence) c.placement_sequence=r.pod<std::uint64_t>();
+    return c;
 }
 
 std::string trimmed_name(std::string value){
@@ -443,6 +455,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         out.pod((std::uint8_t)h.kind); write_vec3(out,h.position); out.pod(h.rotation_degrees); out.pod((std::uint8_t)h.size);
         write_construction(out,h.construction); write_plan(out,h.resource_plan); write_bundle(out,h.site_buffer);
         out.pod(h.instance_serial);
+        out.pod(h.placement_sequence);
     });
     write_object_vector(w,placed_resources_,[](Writer& out,const PlacedResource& item){
         out.pod((std::uint8_t)item.kind); write_vec3(out,item.position); out.pod(item.rotation_degrees); write_construction(out,item.construction); write_plan(out,item.resource_plan); write_bundle(out,item.site_buffer);
@@ -451,6 +464,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         out.pod((std::uint64_t)item.stored_boxes.size());
         for(const auto& box:item.stored_boxes){ out.pod((std::uint8_t)box.resource); out.pod(box.amount); out.pod(box.condition); }
         out.pod(item.instance_serial);
+        out.pod(item.placement_sequence);
     });
     write_object_vector(w,ground_resource_piles_,[](Writer& out,const GroundResourcePile& pile){
         out.pod((std::uint8_t)pile.resource); out.pod(pile.amount); write_vec3(out,pile.position); out.pod(pile.radius); out.pod(pile.condition);
@@ -460,6 +474,9 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,utility_network_.connections(),write_utility);
     write_object_vector(w,walkway_network_.connections(),write_walkway);
 
+    // Save schema 13: persistent global blueprint placement order for FIFO carrier logistics.
+    // Save schema 12: v0.40.40 eight-pallet starter depots are migrated to hull-safe boundary clearance.
+    // Save schema 11: Aluminum is persisted as the eighth resource in bundles and production state.
     // Save schema 10: persistent type/size-aware serial identities for habitat and resource structures.
     // Save schema 9: supply-channel geometry is restored to a flat, visible, rover-crossable ground profile.
     // Save schema 8: supply-channel geometry was buried below the rover plane.
@@ -486,12 +503,197 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     return true;
 }
 
+
+std::string GameApp::debug_blueprint_template_path() const {
+    std::error_code ec;
+    const fs::path executable=fs::read_symlink("/proc/self/exe",ec);
+    if(!ec && !executable.empty())
+        return (executable.parent_path()/"debug"/"0-40-32-debug-start.gmsave").string();
+    return (fs::current_path()/"debug"/"0-40-32-debug-start.gmsave").string();
+}
+
+bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,std::string& error){
+    Reader r{fs::path(path)};
+    std::array<char,8> magic{};
+    if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Template file is missing or invalid."; return false; }
+    const auto source_schema=r.pod<std::uint32_t>();
+    if(source_schema<6 || source_schema>kSaveSchema){ error="Unsupported debug-template format."; return false; }
+    r.material_resource_count=source_schema>=11?kMaterialResourceCount:7;
+    const std::string source_version=r.string(64);
+    const std::string template_name=r.string(128);
+    (void)source_version;
+    (void)template_name;
+    if(!r.valid){ error="Debug-template header is damaged."; return false; }
+
+    const int saved_playfield=(int)r.pod<std::int32_t>();
+    (void)r.pod<std::int32_t>(); // display width
+    (void)r.pod<std::int32_t>(); // display height
+    (void)r.boolean();           // fullscreen
+    (void)r.pod<std::int32_t>(); // UI scale
+    (void)r.boolean();           // debug frame
+    (void)r.pod<std::uint8_t>(); // habitat view
+    (void)r.pod<std::uint8_t>(); // catalog category
+    (void)r.pod<float>();        // placement rotation
+    (void)r.pod<std::uint8_t>(); // habitat size
+    (void)r.pod<std::uint8_t>(); // storage size
+    if(source_schema>=7) (void)r.pod<std::uint8_t>(); // resource size
+    if(source_schema>=4) (void)r.pod<std::uint8_t>(); // game speed
+
+    // Camera, colony state and colony resource inventory are deliberately
+    // consumed but not imported. The debug option is still a NEW GAME.
+    for(int i=0;i<6;++i) (void)r.pod<float>();
+    (void)r.pod<std::int32_t>();
+    (void)r.pod<float>();
+    for(int i=0;i<6;++i) (void)r.pod<std::int32_t>();
+    (void)read_bundle(r);
+
+    if(!r.valid || saved_playfield!=64 || playfield_.size()!=64){
+        error="Template requires a 64 X 64 playfield.";
+        return false;
+    }
+
+    std::vector<PlacedHabitat> habitats;
+    if(!read_object_vector(r,habitats,[&](Reader& in){
+        PlacedHabitat h{};
+        h.kind=(HabitatKind)in.pod<std::uint8_t>();
+        h.position=read_vec3(in);
+        h.rotation_degrees=in.pod<float>();
+        h.size=(HabitatSizeTier)in.pod<std::uint8_t>();
+        h.construction=read_construction(in);
+        h.resource_plan=read_plan(in);
+        if(source_schema>=6) h.site_buffer=read_bundle(in);
+        if(source_schema>=10) h.instance_serial=in.pod<std::uint32_t>();
+        if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
+        return h;
+    })){ error="Template habitat data is damaged."; return false; }
+
+    std::vector<PlacedResource> structures;
+    if(!read_object_vector(r,structures,[&](Reader& in){
+        PlacedResource item{};
+        item.kind=(ResourceKind)in.pod<std::uint8_t>();
+        item.position=read_vec3(in);
+        item.rotation_degrees=in.pod<float>();
+        item.construction=read_construction(in);
+        item.resource_plan=read_plan(in);
+        if(source_schema>=6) item.site_buffer=read_bundle(in);
+        item.storage_size=(StorageDomeSize)in.pod<std::uint8_t>();
+        item.size=source_schema>=7?(ResourceSizeTier)in.pod<std::uint8_t>():ResourceSizeTier::Standard;
+        const auto box_count=in.pod<std::uint64_t>();
+        if(box_count>kMaxObjects) in.valid=false;
+        item.stored_boxes.reserve((std::size_t)std::min(box_count,kMaxObjects));
+        for(std::uint64_t i=0;i<box_count && in.valid;++i){
+            StoredResourceBox box{};
+            box.resource=(MaterialResource)in.pod<std::uint8_t>();
+            box.amount=in.pod<std::int64_t>();
+            box.condition=in.pod<float>();
+            item.stored_boxes.push_back(box);
+        }
+        if(source_schema>=10) item.instance_serial=in.pod<std::uint32_t>();
+        if(source_schema>=13) item.placement_sequence=in.pod<std::uint64_t>();
+        sync_stored_resource_totals(item);
+        return item;
+    })){ error="Template structure data is damaged."; return false; }
+
+    std::vector<GroundResourcePile> ignored_piles;
+    if(!read_object_vector(r,ignored_piles,[&](Reader& in){
+        GroundResourcePile pile{};
+        pile.resource=(MaterialResource)in.pod<std::uint8_t>();
+        pile.amount=in.pod<std::int64_t>();
+        pile.position=read_vec3(in);
+        pile.radius=in.pod<float>();
+        pile.condition=in.pod<float>();
+        return pile;
+    })){ error="Template resource-pile data is damaged."; return false; }
+
+    std::vector<CorridorConnection> corridors;
+    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13); })){
+        error="Template corridor data is damaged."; return false;
+    }
+    std::vector<UtilityConnection> utilities;
+    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13); })){
+        error="Template utility data is damaged."; return false;
+    }
+    std::vector<WalkwayConnection> walkways;
+    if(!read_object_vector(r,walkways,[&](Reader& in){ return read_walkway(in,source_schema>=6,source_schema>=13); })){
+        error="Template walkway data is damaged."; return false;
+    }
+    if(!r.valid){ error="Debug-template construction data is damaged."; return false; }
+
+    // Schema 13 is the first format with a cross-kind placement sequence.
+    // Older templates cannot reconstruct their historical interleaving because
+    // the legacy file grouped objects by kind, so assign one deterministic FIFO
+    // sequence in that serialized order. New placements remain exact thereafter.
+    if(source_schema<13){
+        std::uint64_t seq=1;
+        for(auto& h:habitats) h.placement_sequence=seq++;
+        for(auto& item:structures) item.placement_sequence=seq++;
+        for(auto& c:corridors) c.placement_sequence=seq++;
+        for(auto& c:utilities) c.placement_sequence=seq++;
+        for(auto& c:walkways) c.placement_sequence=seq++;
+    }
+
+    // Import only the construction layout. Every imported object starts as a
+    // fresh blueprint regardless of the source save's build progress or
+    // delivered materials. Robots, inventory, ground piles, camera and clock
+    // remain those of the newly-created game.
+    for(auto& h:habitats){
+        h.construction.step=0;
+        h.construction.step_elapsed=0.0f;
+        h.site_buffer={};
+    }
+    for(auto& item:structures){
+        item.construction.step=0;
+        item.construction.step_elapsed=0.0f;
+        item.site_buffer={};
+        item.stored_boxes.clear();
+        sync_stored_resource_totals(item);
+    }
+    for(auto& c:corridors){
+        c.construction.step=0;
+        c.construction.step_elapsed=0.0f;
+        c.site_buffer={};
+    }
+    for(auto& c:utilities){
+        c.construction.step=0;
+        c.construction.step_elapsed=0.0f;
+        c.site_buffer={};
+    }
+    for(auto& c:walkways){
+        c.construction.step=0;
+        c.construction.step_elapsed=0.0f;
+        c.site_buffer={};
+    }
+
+    placed_habitats_=std::move(habitats);
+    placed_resources_=std::move(structures);
+    corridor_network_.restore_connections(std::move(corridors));
+    corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
+    corridor_network_.repair_invalid_topology(placed_habitats_,habitat_models_);
+    utility_network_.restore_connections(std::move(utilities));
+    utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
+    walkway_network_.restore_connections(std::move(walkways));
+
+    next_blueprint_placement_sequence_=1;
+    auto advance_sequence=[&](std::uint64_t sequence){
+        next_blueprint_placement_sequence_=std::max(next_blueprint_placement_sequence_,sequence+1);
+    };
+    for(const auto& h:placed_habitats_) advance_sequence(h.placement_sequence);
+    for(const auto& item:placed_resources_) advance_sequence(item.placement_sequence);
+    for(const auto& c:corridor_network_.connections()) advance_sequence(c.placement_sequence);
+    for(const auto& c:utility_network_.connections()) advance_sequence(c.placement_sequence);
+    for(const auto& c:walkway_network_.connections()) advance_sequence(c.placement_sequence);
+
+    error.clear();
+    return true;
+}
+
 bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     Reader r{fs::path(path)};
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Invalid savegame file."; return false; }
     const auto source_schema=r.pod<std::uint32_t>();
     if(source_schema<kMinSaveSchema || source_schema>kSaveSchema){ error="Unsupported savegame format."; return false; }
+    r.material_resource_count=source_schema>=11?kMaterialResourceCount:7;
     const std::string source_version=r.string(64);
     const std::string save_name=r.string(128);
     (void)source_version;
@@ -524,6 +726,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         PlacedHabitat h{}; h.kind=(HabitatKind)in.pod<std::uint8_t>(); h.position=read_vec3(in); h.rotation_degrees=in.pod<float>(); h.size=(HabitatSizeTier)in.pod<std::uint8_t>();
         h.construction=read_construction(in); h.resource_plan=read_plan(in); if(source_schema>=6) h.site_buffer=read_bundle(in);
         if(source_schema>=10) h.instance_serial=in.pod<std::uint32_t>();
+        if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
         return h;
     })){ error="Savegame habitat data is damaged."; return false; }
 
@@ -536,6 +739,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         item.stored_boxes.reserve((std::size_t)std::min(n,kMaxObjects));
         for(std::uint64_t i=0;i<n&&in.valid;++i){ StoredResourceBox box{}; box.resource=(MaterialResource)in.pod<std::uint8_t>(); box.amount=in.pod<std::int64_t>(); box.condition=in.pod<float>(); item.stored_boxes.push_back(box); }
         if(source_schema>=10) item.instance_serial=in.pod<std::uint32_t>();
+        if(source_schema>=13) item.placement_sequence=in.pod<std::uint64_t>();
         sync_stored_resource_totals(item); return item;
     })){ error="Savegame structure data is damaged."; return false; }
 
@@ -576,11 +780,23 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     })){ error="Savegame resource-box data is damaged."; return false; }
 
     std::vector<CorridorConnection> corridors;
-    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6); })){ error="Savegame corridor data is damaged."; return false; }
+    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13); })){ error="Savegame corridor data is damaged."; return false; }
     std::vector<UtilityConnection> utilities;
-    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6); })){ error="Savegame supply-channel data is damaged."; return false; }
+    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13); })){ error="Savegame supply-channel data is damaged."; return false; }
     std::vector<WalkwayConnection> walkways;
-    if(!read_object_vector(r,walkways,[&](Reader& in){ return read_walkway(in,source_schema>=6); })){ error="Savegame walkway data is damaged."; return false; }
+    if(!read_object_vector(r,walkways,[&](Reader& in){ return read_walkway(in,source_schema>=6,source_schema>=13); })){ error="Savegame walkway data is damaged."; return false; }
+
+    // Legacy saves have no cross-kind placement history. Their old on-disk
+    // layout grouped blueprints by kind, so migrate them deterministically in
+    // that order. Schema 13+ preserves the exact player placement sequence.
+    if(source_schema<13){
+        std::uint64_t seq=1;
+        for(auto& h:habitats) h.placement_sequence=seq++;
+        for(auto& item:structures) item.placement_sequence=seq++;
+        for(auto& c:corridors) c.placement_sequence=seq++;
+        for(auto& c:utilities) c.placement_sequence=seq++;
+        for(auto& c:walkways) c.placement_sequence=seq++;
+    }
 
     // v0.40.10 shortens the physical construction sequence. Compact old plans
     // while preserving the exact consumed-vs-remaining material totals at the
@@ -623,7 +839,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         saved_robots.reserve(robot_count);
         for(std::uint8_t i=0;i<robot_count && r.valid;++i) saved_robots.push_back(read_builder_robot_v5(r));
         saved_stash=read_vec3(r);
-        for(double& value:saved_production) value=r.pod<double>();
+        for(std::size_t i=0;i<r.material_resource_count && i<saved_production.size();++i) saved_production[i]=r.pod<double>();
         saved_life_fraction=r.pod<double>();
     }else if(source_schema>=4){
         const auto robot_count=r.pod<std::uint8_t>();
@@ -631,7 +847,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         saved_robots.reserve(robot_count);
         for(std::uint8_t i=0;i<robot_count && r.valid;++i) saved_robots.push_back(read_builder_robot_v4(r));
         saved_stash=read_vec3(r);
-        for(double& value:saved_production) value=r.pod<double>();
+        for(std::size_t i=0;i<r.material_resource_count && i<saved_production.size();++i) saved_production[i]=r.pod<double>();
         saved_life_fraction=r.pod<double>();
     }else if(source_schema>=3){
         const auto robot_count=r.pod<std::uint8_t>();
@@ -639,13 +855,13 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         saved_robots.reserve(robot_count);
         for(std::uint8_t i=0;i<robot_count && r.valid;++i) saved_robots.push_back(read_builder_robot_legacy(r));
         saved_stash=read_vec3(r);
-        for(double& value:saved_production) value=r.pod<double>();
+        for(std::size_t i=0;i<r.material_resource_count && i<saved_production.size();++i) saved_production[i]=r.pod<double>();
         saved_life_fraction=r.pod<double>();
     }else if(source_schema>=2){
         // v0.31.0 schema 2 stored exactly one BR-02 without a count field.
         saved_robots.push_back(read_builder_robot_legacy(r));
         saved_stash=read_vec3(r);
-        for(double& value:saved_production) value=r.pod<double>();
+        for(std::size_t i=0;i<r.material_resource_count && i<saved_production.size();++i) saved_production[i]=r.pod<double>();
         saved_life_fraction=r.pod<double>();
     }
     if(!r.valid){ error="Savegame ended unexpectedly."; return false; }
@@ -699,6 +915,16 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     walkway_network_.restore_connections(std::move(walkways));
 
+    next_blueprint_placement_sequence_=1;
+    auto advance_sequence=[&](std::uint64_t sequence){
+        next_blueprint_placement_sequence_=std::max(next_blueprint_placement_sequence_,sequence+1);
+    };
+    for(const auto& h:placed_habitats_) advance_sequence(h.placement_sequence);
+    for(const auto& item:placed_resources_) advance_sequence(item.placement_sequence);
+    for(const auto& c:corridor_network_.connections()) advance_sequence(c.placement_sequence);
+    for(const auto& c:utility_network_.connections()) advance_sequence(c.placement_sequence);
+    for(const auto& c:walkway_network_.connections()) advance_sequence(c.placement_sequence);
+
     if(source_schema>=2){
         builder_robots_=std::move(saved_robots);
         if(builder_robots_.empty()) builder_robots_.push_back(BuilderRobotState{});
@@ -719,7 +945,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
             // remain usable with the logistics system.
             BuilderRobotState carrier{}; carrier.role=RobotRole::Carrier;
             carrier.position={starter_stash_center_.x+6.35f,0.0f,starter_stash_center_.z};
-            carrier.heading_degrees=90.0f; carrier.move_speed_mps=kCarrierRobotTransitSpeedMps; carrier.payload_capacity_kg=1800;
+            carrier.heading_degrees=90.0f; carrier.move_speed_mps=kCarrierRobotTransitSpeedMps; carrier.payload_capacity_kg=3600;
             builder_robots_.push_back(carrier);
             starting_carrier_count_=1;
         }
@@ -734,15 +960,69 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         builder_robots_[0].heading_degrees=90.0f;
         builder_robots_[1].role=RobotRole::Carrier;
         builder_robots_[1].position={starter_stash_center_.x+6.35f,0.0f,starter_stash_center_.z};
-        builder_robots_[1].heading_degrees=90.0f; builder_robots_[1].move_speed_mps=kCarrierRobotTransitSpeedMps; builder_robots_[1].payload_capacity_kg=1800;
+        builder_robots_[1].heading_degrees=90.0f; builder_robots_[1].move_speed_mps=kCarrierRobotTransitSpeedMps; builder_robots_[1].payload_capacity_kg=3600;
         production_fraction_.fill(0.0);
         life_support_fraction_seconds_=0.0;
     }
 
+    // Safety contracts/routes are transient. A loaded fleet is re-initialized
+    // from stationary holds and must pass the shared non-overlap/static checks.
+    robot_safety_time_seconds_=0.0f;
+    for(auto& robot:builder_robots_) robot.safety={};
+
+    // v0.40.30 used 2.20 m parking-bay spacing. That was physically clear
+    // for the rendered rover boxes but leaves almost no clearance between the
+    // conservative rotation-independent safety discs introduced by the new
+    // coordinator. If the complete fleet is still sitting in that untouched
+    // legacy apron, migrate the bays once on load to the wider layout. We do
+    // not move a partially deployed fleet or arbitrary player-positioned rover.
+    {
+        const float half=(float)playfield_.size()*0.5f;
+        auto legacy_spawn=[&](int ordinal){
+            eng::Vec3 p{};
+            if(half>=12.0f){
+                const eng::Vec3 center=starter_stash_center_+eng::Vec3{4.60f,0.0f,11.60f};
+                const int column=ordinal%3,row=ordinal/3;
+                p={center.x+((float)column-1.0f)*2.20f,0.0f,center.z+((float)row-1.5f)*2.20f};
+            }else{
+                const eng::Vec3 center=starter_stash_center_+eng::Vec3{7.00f,0.0f,0.0f};
+                const int column=ordinal%2,row=ordinal/2;
+                p={center.x+((float)column-0.5f)*2.30f,0.0f,center.z+((float)row-2.5f)*2.05f};
+            }
+            p.x=std::clamp(p.x,-half+1.05f,half-1.05f);
+            p.z=std::clamp(p.z,-half+1.05f,half-1.05f);
+            return p;
+        };
+        auto safe_spawn=[&](int ordinal){
+            eng::Vec3 p{};
+            if(half>=12.0f){
+                const eng::Vec3 center=starter_stash_center_+eng::Vec3{4.60f,0.0f,11.60f};
+                const int column=ordinal%3,row=ordinal/3;
+                p={center.x+((float)column-1.0f)*3.00f,0.0f,center.z+((float)row-1.5f)*3.00f};
+            }else{
+                const eng::Vec3 center=starter_stash_center_+eng::Vec3{7.00f,0.0f,0.0f};
+                const int column=ordinal%2,row=ordinal/2;
+                p={center.x+((float)column-0.5f)*2.40f,0.0f,center.z+((float)row-2.5f)*2.40f};
+            }
+            p.x=std::clamp(p.x,-half+1.05f,half-1.05f);
+            p.z=std::clamp(p.z,-half+1.05f,half-1.05f);
+            return p;
+        };
+        bool untouched=!builder_robots_.empty();
+        for(std::size_t i=0;i<builder_robots_.size() && untouched;++i)
+            { const auto legacy=legacy_spawn((int)i); const float dx=builder_robots_[i].position.x-legacy.x; const float dz=builder_robots_[i].position.z-legacy.z; untouched=std::sqrt(dx*dx+dz*dz)<0.12f; }
+        if(untouched){
+            for(std::size_t i=0;i<builder_robots_.size();++i) builder_robots_[i].position=safe_spawn((int)i);
+        }
+    }
+
     // Transit speed is a role characteristic rather than persistent tuning.
-    // Normalize older saves so CR-01 is consistently 10% faster than BR-02.
+    // Normalize older saves to the current role travel-speed defaults.
     for(auto& robot:builder_robots_){
         robot.move_speed_mps=robot.role==RobotRole::Carrier?kCarrierRobotTransitSpeedMps:kBuilderRobotTransitSpeedMps;
+        // Payload is a role characteristic just like transit speed. v0.40.40
+        // doubles both rover payloads and normalizes existing savegames.
+        robot.payload_capacity_kg=robot.role==RobotRole::Carrier?3600:2400;
         robot.condition=std::clamp(robot.condition,0.0f,1.0f);
         robot.visual_position=robot.position;
         robot.visual_heading_degrees=robot.heading_degrees;
@@ -757,6 +1037,101 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
             if(robot.condition<=0.0f) robot.condition=1.0f;
         }
     }
+    // Schema 11 introduces Aluminum. Older colonies have no persisted Al
+    // stock, so grant one recalculated starter aluminum reserve and materialize
+    // it as a pallet near the starter depot. This keeps existing saves capable
+    // of constructing the newly rebalanced lunar recipes without rewriting
+    // their already-delivered/consumed legacy construction plans.
+    if(source_schema<11){
+        const std::int64_t bootstrap_aluminum=starter_resource_reserve().aluminum;
+        if(bootstrap_aluminum>0){
+            ResourceBundle add{};
+            add.aluminum=bootstrap_aluminum;
+            resources_.add(add);
+            bool already_present=false;
+            for(const auto& pile:ground_resource_piles_)
+                if(pile.resource==MaterialResource::Aluminum && pile.amount>0){ already_present=true; break; }
+            if(!already_present){
+                GroundResourcePile pile{};
+                pile.resource=MaterialResource::Aluminum;
+                pile.amount=bootstrap_aluminum;
+                pile.radius=0.36f;
+                pile.condition=1.0f;
+                const float half=(float)playfield_.size()*0.5f;
+                const eng::Vec3 preferred{starter_stash_center_.x-2.15f,0.0f,starter_stash_center_.z+8.20f};
+                pile.position={std::clamp(preferred.x,-half+0.50f,half-0.50f),0.0f,
+                               std::clamp(preferred.z,-half+0.50f,half-0.50f)};
+                // If the long row would hit the boundary or another pallet, use
+                // a second depot column rather than overlapping the old seven.
+                auto occupied=[&](eng::Vec3 p){
+                    for(const auto& existing:ground_resource_piles_){
+                        const float dx=existing.position.x-p.x,dz=existing.position.z-p.z;
+                        if(dx*dx+dz*dz<1.10f*1.10f) return true;
+                    }
+                    return false;
+                };
+                if(occupied(pile.position)){
+                    const eng::Vec3 alt{starter_stash_center_.x+0.15f,0.0f,starter_stash_center_.z};
+                    pile.position={std::clamp(alt.x,-half+0.50f,half-0.50f),0.0f,
+                                   std::clamp(alt.z,-half+0.50f,half-0.50f)};
+                }
+                ground_resource_piles_.push_back(pile);
+            }
+        }
+    }
+
+    // v0.40.40 expanded the starter depot from seven to eight pallets without
+    // increasing the depot's south-boundary inset. On a 64x64 field the Iron
+    // row therefore ended at z=-31.675, inside the rover centre clearance from
+    // the map edge. CR-01 could reserve Iron but no full-hull route to its
+    // pickup lane existed. Migrate only the exact schema-11 eight-pallet depot
+    // signature one metre north; player-moved/produced piles remain untouched.
+    if(source_schema==11){
+        const float half=(float)playfield_.size()*0.5f;
+        constexpr float old_inset_z=7.50f;
+        constexpr float new_inset_z=8.50f;
+        constexpr float pallet_spacing=2.05f;
+        const float old_center_z=-half+old_inset_z;
+        const float new_center_z=-half+new_inset_z;
+        const float center_index=((float)kMaterialResourceCount-1.0f)*0.5f;
+        std::size_t aligned=0;
+        if(std::abs(starter_stash_center_.z-old_center_z)<0.35f){
+            for(const auto& pile:ground_resource_piles_){
+                const std::size_t mi=(std::size_t)pile.resource;
+                if(mi>=kMaterialResourceCount) continue;
+                const float expected_z=old_center_z+((float)mi-center_index)*pallet_spacing;
+                if(std::abs(pile.position.x-(starter_stash_center_.x-2.15f))<0.35f &&
+                   std::abs(pile.position.z-expected_z)<0.35f) ++aligned;
+            }
+        }
+        if(aligned>=6){
+            const float dz=new_center_z-starter_stash_center_.z;
+            for(auto& pile:ground_resource_piles_){
+                const std::size_t mi=(std::size_t)pile.resource;
+                if(mi>=kMaterialResourceCount) continue;
+                const float expected_z=old_center_z+((float)mi-center_index)*pallet_spacing;
+                if(std::abs(pile.position.x-(starter_stash_center_.x-2.15f))<0.35f &&
+                   std::abs(pile.position.z-expected_z)<0.35f)
+                    pile.position.z+=dz;
+            }
+            starter_stash_center_.z=new_center_z;
+            // Any persisted pickup station was computed against the old row.
+            // Let active carriers choose a fresh east-side service bay/gate on
+            // their next gameplay update instead of chasing the stale target.
+            for(auto& robot:builder_robots_){
+                if(robot.role!=RobotRole::Carrier) continue;
+                robot.interaction_position_valid=false;
+                robot.pickup_lane_claimed=false;
+                robot.pickup_queue_age=0.0f;
+                robot.safety.cached_route.clear();
+                robot.safety.route_cursor=0;
+                robot.safety.route_replan_required=true;
+                robot.safety.route_failed=false;
+                robot.safety.route_retry_elapsed=0.0f;
+            }
+        }
+    }
+
     // v0.31.8/0.31.9 accidentally placed the starter pallet row at an
     // absolute world Z coordinate. Migrate only piles that still match that
     // legacy depot signature so continued games regain a stash aligned to the
@@ -821,5 +1196,6 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     error.clear();
     return true;
 }
+
 
 } // namespace game

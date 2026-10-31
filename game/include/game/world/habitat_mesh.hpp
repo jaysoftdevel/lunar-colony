@@ -89,6 +89,8 @@ struct PlacedHabitat {
     // Stable serial within this exact habitat type/size. It is assigned when
     // the blueprint is placed and remains unchanged after construction.
     std::uint32_t instance_serial{0};
+    // Global FIFO blueprint order across every construction kind.
+    std::uint64_t placement_sequence{0};
     eng::Vec3 position{};
     float rotation_degrees{0.0f};
     HabitatSizeTier size{HabitatSizeTier::Standard};

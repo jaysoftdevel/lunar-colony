@@ -195,6 +195,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     // build mode, utility channels and automatic habitat corridor previews.
     if(input_.left_pressed && affordable &&
        corridor_network_.connect_corridors((std::size_t)corridor_link_source_,(std::size_t)target,placed_habitats_,habitat_models_)){
+        corridor_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
         selected_corridor_=(int)corridor_network_.connections().size()-1;
         selected_habitat_=-1;
         selected_resource_=-1;
@@ -318,6 +319,7 @@ void GameApp::render_corridor_placement(Renderer& r){
 
     const bool affordable=preview && can_start_construction(corridor_plan(*preview));
     if(preview && affordable && corridor_network_.build_corridor(*corridor_build_start_,hover,placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
+        corridor_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
         selected_corridor_=(int)corridor_network_.connections().size()-1;
         selected_habitat_=-1;
         selection_kind_=SelectionKind::Corridor;

@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 #include <queue>
 #include <thread>
@@ -25,7 +26,7 @@ bool plan_corridor_path(const PathPlanRequest& request,
                         const PathPlannerCallbacks& callbacks,
                         std::vector<Vec3>& geometric){
     geometric.clear();
-    if(!callbacks.floor_height || !callbacks.point_clear || !callbacks.segment_clear || !callbacks.traffic_cost)
+    if(!callbacks.floor_height || !callbacks.point_clear || !callbacks.segment_clear)
         return false;
 
     Vec3 start=request.start;
@@ -49,7 +50,74 @@ bool plan_corridor_path(const PathPlanRequest& request,
 
     const Vec3 forward{delta.x/direct_length,0.0f,delta.z/direct_length};
     const Vec3 lateral{-forward.z,0.0f,forward.x};
-    const float cell=std::max(0.25f,request.cell_size);
+
+    // Most rover travel in the colony is geometrically simple. Do not launch a
+    // grid search for an open straight line or for a single building/parked
+    // rover that can be passed with one stable dogleg. These candidates are
+    // still validated by the caller's complete point/segment callbacks; this
+    // stage only removes unnecessary A* work.
+    if(callbacks.segment_clear(start,goal)){
+        geometric.push_back(goal);
+        return true;
+    }
+
+    std::vector<Vec3> best_simple;
+    float best_simple_length=std::numeric_limits<float>::infinity();
+    auto try_simple=[&](std::initializer_list<Vec3> points){
+        std::vector<Vec3> route(points.begin(),points.end());
+        if(route.empty()) return;
+        Vec3 previous=start;
+        float length=0.0f;
+        for(auto& p:route){
+            p.y=callbacks.floor_height(p);
+            if(!callbacks.point_clear(p) || !callbacks.segment_clear(previous,p)) return;
+            length+=dist_xz(previous,p);
+            previous=p;
+        }
+        if(!callbacks.segment_clear(previous,goal)) return;
+        length+=dist_xz(previous,goal);
+        route.push_back(goal);
+        if(length<best_simple_length){
+            best_simple_length=length;
+            best_simple=std::move(route);
+        }
+    };
+
+    const float max_side=std::clamp(request.corridor_half_width,2.0f,20.0f);
+    // Try a few wider doglegs before paying for A*. This handles long but
+    // geometrically simple barriers (for example a corridor spanning between
+    // two structures) with a handful of segment tests instead of thousands of
+    // grid-cell checks.
+    constexpr std::array<float,8> offsets{{1.6f,2.6f,3.8f,5.4f,7.2f,10.0f,14.0f,18.0f}};
+    constexpr std::array<std::array<float,2>,3> spans{{
+        std::array<float,2>{{0.18f,0.72f}},
+        std::array<float,2>{{0.28f,0.72f}},
+        std::array<float,2>{{0.28f,0.82f}}
+    }};
+    for(float raw_offset:offsets){
+        const float offset=std::min(raw_offset,max_side);
+        if(offset<0.75f) continue;
+        for(float side:{-1.0f,1.0f}){
+            const Vec3 mid=start+forward*(direct_length*0.50f)+lateral*(offset*side);
+            try_simple({mid});
+            for(const auto& span:spans){
+                const Vec3 a=start+forward*(direct_length*span[0])+lateral*(offset*side);
+                const Vec3 b=start+forward*(direct_length*span[1])+lateral*(offset*side);
+                try_simple({a,b});
+            }
+        }
+        // The first successful narrow bypass is normally preferable to a much
+        // wider one. Keep searching only one additional band for a shorter
+        // path, then stop; this bounds work in dense scenes.
+        if(!best_simple.empty() && raw_offset>=2.6f) break;
+    }
+    if(!best_simple.empty()){
+        geometric=std::move(best_simple);
+        return true;
+    }
+    if(!request.allow_grid_fallback) return false;
+
+    const float cell=std::max(0.45f,request.cell_size);
     const float along_margin=1.45f;
     const float side_extent=std::max(2.2f,request.corridor_half_width);
     const float u_min=-along_margin;
@@ -59,8 +127,7 @@ bool plan_corridor_path(const PathPlanRequest& request,
     const int total=nu*nv;
     auto index=[&](int u,int v){ return v*nu+u; };
     // Terrain height is one of the more expensive callbacks in a wide search.
-    // A* used to query the same grid point repeatedly from occupancy, traffic,
-    // expansion and simplification. Cache each grid coordinate on first use.
+    // A* used to query the same grid point repeatedly from occupancy, expansion and simplification. Cache each grid coordinate on first use.
     std::vector<Vec3> point_cache((std::size_t)total);
     std::vector<std::uint8_t> point_ready((std::size_t)total,0);
     auto point=[&](int u,int v){
@@ -80,14 +147,10 @@ bool plan_corridor_path(const PathPlanRequest& request,
     const int start_index=index(su,sv);
 
     std::vector<std::int8_t> walkable((std::size_t)total,-1);
-    std::vector<float> traffic_cache((std::size_t)total,-1.0f);
-
-    // Occupancy is evaluated lazily by A*. Eagerly precomputing every cell in
-    // a broad corridor made one failed logistics route consume 100-250 ms on
-    // the render thread, which caused visible FPS and mouse/view stalls. Most
-    // successful routes touch only a fraction of the candidate grid, so lazy
-    // caching keeps the common case bounded without changing path semantics.
-    (void)request.worker_count;
+    // Occupancy is evaluated lazily by A*. The caller may include current
+    // fleet positions as temporary local obstacles for route choice; dynamic
+    // time-indexed arbitration and continuous collision certification still
+    // belong exclusively to the safety coordinator.
     auto cell_clear=[&](int u,int v){
         const int idx=index(u,v);
         if(idx==start_index) return true;
@@ -97,24 +160,7 @@ bool plan_corridor_path(const PathPlanRequest& request,
         cached=ok?1:0;
         return ok;
     };
-    auto traffic_cost=[&](int u,int v){
-        const int idx=index(u,v);
-        float& cached=traffic_cache[(std::size_t)idx];
-        if(cached>=0.0f) return cached;
-        const Vec3 p=point(u,v);
-        cached=std::max(0.0f,callbacks.traffic_cost(p));
-        if(std::abs(request.alternating_side_preference)>0.001f){
-            const float signed_side=-side_extent+(float)v*cell;
-            cached+=std::max(0.0f,signed_side*request.alternating_side_preference)*0.035f;
-        }
-        return cached;
-    };
-
     std::vector<float> g((std::size_t)total,std::numeric_limits<float>::infinity());
-    // Geometric distance is tracked separately from weighted A* cost so the
-    // dynamic collision callback receives a stable ETA even when traffic costs
-    // deliberately bias the selected lane.
-    std::vector<float> travelled((std::size_t)total,std::numeric_limits<float>::infinity());
     std::vector<int> parent((std::size_t)total,-1);
     std::vector<std::uint8_t> closed((std::size_t)total,0);
     struct OpenNode {
@@ -124,7 +170,6 @@ bool plan_corridor_path(const PathPlanRequest& request,
     };
     std::priority_queue<OpenNode> open;
     g[(std::size_t)start_index]=0.0f;
-    travelled[(std::size_t)start_index]=0.0f;
     open.push({direct_length,start_index});
 
     constexpr std::array<int,8> du{{1,-1,0,0,1,1,-1,-1}};
@@ -144,16 +189,9 @@ bool plan_corridor_path(const PathPlanRequest& request,
         const int cu=cur%nu;
         const int cv=cur/nu;
         const Vec3 cp=(cur==start_index)?start:point(cu,cv);
-        const float nominal_speed=std::max(0.10f,request.nominal_speed_mps);
-        const float current_travel=std::isfinite(travelled[(std::size_t)cur])?travelled[(std::size_t)cur]:0.0f;
         if(dist_xz(cp,goal)<=goal_tolerance && callbacks.segment_clear(cp,goal)){
-            const float goal_step=dist_xz(cp,goal);
-            const float t0=current_travel/nominal_speed;
-            const float t1=(current_travel+goal_step)/nominal_speed;
-            if(!callbacks.dynamic_segment_clear || callbacks.dynamic_segment_clear(cp,goal,t0,t1)){
-                goal_index=cur;
-                break;
-            }
+            goal_index=cur;
+            break;
         }
 
         for(std::size_t n=0;n<du.size();++n){
@@ -169,16 +207,9 @@ bool plan_corridor_path(const PathPlanRequest& request,
                 if(!callbacks.neighbor_clear(cp,np)) continue;
             }else if(!callbacks.segment_clear(cp,np)) continue;
             const float step=dist_xz(cp,np);
-            const float next_travel=current_travel+step;
-            if(callbacks.dynamic_segment_clear){
-                const float t0=current_travel/nominal_speed;
-                const float t1=next_travel/nominal_speed;
-                if(!callbacks.dynamic_segment_clear(cp,np,t0,t1)) continue;
-            }
-            const float ng=g[(std::size_t)cur]+step+traffic_cost(u,v)*request.traffic_weight;
+            const float ng=g[(std::size_t)cur]+step;
             if(ng>=g[(std::size_t)ni]) continue;
             g[(std::size_t)ni]=ng;
-            travelled[(std::size_t)ni]=next_travel;
             parent[(std::size_t)ni]=cur;
             open.push({ng+dist_xz(np,goal),ni});
         }
@@ -202,8 +233,6 @@ bool plan_corridor_path(const PathPlanRequest& request,
     // the lookahead bounded so a large map cannot turn one replan into O(N^2)
     // segment validation.
     Vec3 anchor=start;
-    float simplified_travel=0.0f;
-    const float nominal_speed=std::max(0.10f,request.nominal_speed_mps);
     std::size_t i=0;
     const std::size_t max_skip=std::max<std::size_t>(1,request.visibility_skip_limit);
     while(i<raw.size()){
@@ -211,16 +240,11 @@ bool plan_corridor_path(const PathPlanRequest& request,
         std::size_t best=i;
         for(std::size_t candidate=farthest+1;candidate>i;--candidate){
             const std::size_t j=candidate-1;
-            const float edge=dist_xz(anchor,raw[j]);
-            const float t0=simplified_travel/nominal_speed;
-            const float t1=(simplified_travel+edge)/nominal_speed;
-            if(callbacks.segment_clear(anchor,raw[j]) &&
-               (!callbacks.dynamic_segment_clear || callbacks.dynamic_segment_clear(anchor,raw[j],t0,t1))){
+            if(callbacks.segment_clear(anchor,raw[j])){
                 best=j;
                 break;
             }
         }
-        simplified_travel+=dist_xz(anchor,raw[best]);
         geometric.push_back(raw[best]);
         anchor=raw[best];
         i=best+1;

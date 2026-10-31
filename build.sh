@@ -7,14 +7,15 @@ BUILD_TYPE="${1:-Release}"
 rm -rf "$ROOT/build"
 cmake -S "$ROOT" -B "$ROOT/build" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 
-# The project is intentionally split into many small translation units. Limiting
-# default parallelism avoids excessive compiler memory use on typical developer
-# machines while GAME_BUILD_JOBS can still override it explicitly.
+# Default build parallelism follows the runtime policy: use about half of the
+# visible logical CPUs, leaving the other half available for the desktop and
+# other tools. GAME_BUILD_JOBS can still override this explicitly.
 if [[ -n "${GAME_BUILD_JOBS:-}" ]]; then
     JOBS="$GAME_BUILD_JOBS"
 else
     CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
-    (( CPUS > 4 )) && JOBS=4 || JOBS="$CPUS"
+    JOBS="$(( CPUS / 2 ))"
+    (( JOBS < 1 )) && JOBS=1
 fi
 cmake --build "$ROOT/build" --parallel "$JOBS"
 

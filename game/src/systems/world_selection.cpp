@@ -82,6 +82,7 @@ float recovered_resource_condition(MaterialResource material){
         case MaterialResource::Water: return 0.99f;
         case MaterialResource::Food: return 0.93f;
         case MaterialResource::Medical: return 0.98f;
+        case MaterialResource::Aluminum: return 0.96f;
         case MaterialResource::Count: break;
     }
     return 1.0f;

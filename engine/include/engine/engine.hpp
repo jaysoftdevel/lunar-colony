@@ -1,9 +1,14 @@
 #pragma once
 #include "engine/math.hpp"
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace eng {
@@ -50,7 +55,55 @@ public:
     virtual void draw_text(Vec2 p, const std::string& text, float scale, Color color)=0;
     virtual int width() const=0;
     virtual int height() const=0;
+    virtual bool hardware_accelerated() const=0;
+    virtual std::string gpu_vendor() const=0;
+    virtual std::string gpu_renderer() const=0;
+    virtual std::string gpu_version() const=0;
 };
+
+class TaskPool {
+public:
+    TaskPool();
+    ~TaskPool();
+    TaskPool(const TaskPool&)=delete;
+    TaskPool& operator=(const TaskPool&)=delete;
+
+    static TaskPool& shared();
+    std::size_t parallel_lanes() const;
+    std::size_t background_workers() const;
+    std::future<void> submit(std::function<void()> task);
+
+    template<class Fn>
+    void parallel_for(std::size_t count, Fn&& fn){
+        if(count==0) return;
+        const std::size_t lanes=std::max<std::size_t>(1,parallel_lanes());
+        if(lanes<=1 || count==1){
+            for(std::size_t i=0;i<count;++i) fn(i);
+            return;
+        }
+        auto next=std::make_shared<std::atomic<std::size_t>>(0);
+        auto shared_fn=std::make_shared<std::decay_t<Fn>>(std::forward<Fn>(fn));
+        auto worker=[next,shared_fn,count](){
+            for(;;){
+                const std::size_t i=next->fetch_add(1,std::memory_order_relaxed);
+                if(i>=count) break;
+                (*shared_fn)(i);
+            }
+        };
+        const std::size_t helpers=std::min<std::size_t>(background_workers(),count-1);
+        std::vector<std::future<void>> futures;
+        futures.reserve(helpers);
+        for(std::size_t i=0;i<helpers;++i) futures.push_back(submit(worker));
+        worker();
+        for(auto& f:futures) f.get();
+    }
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+std::size_t cpu_parallel_lanes();
 
 class GameDelegate {
 public:

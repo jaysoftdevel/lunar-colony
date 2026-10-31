@@ -116,3 +116,101 @@ Construction logistics now use one explicit material drop area per construction 
 The source tree is now built through explicit implementation/context clusters rather than one monolithic game target. Start future maintenance from `IMPLEMENTATION_CLUSTERS.md`; it maps common requests to the minimum CMake target and source set to inspect. `BASELINE_CONTEXT.md` is the compact handoff for starting a new chat from this release.
 
 Robot geometry path search is isolated in `game_cluster_pathfinding`. Normal movement uses bounded corridor searches; if a rover cannot resolve or make useful route progress for 2.0 seconds, its local route state is discarded and the next attempt becomes a full-width world-geometry route search. Temporary rover positions are not hard A* obstacles during that recovery search, while the continuous traffic layer and hull checks still prevent physical robot intersections.
+
+
+## v0.40.33 debug blueprint start
+
+The New Game screen includes a `DEBUG START TEMPLATE` toggle. Enabling it locks the playfield to 64x64, imports the bundled construction layout from the supplied 0.40.32 debug save as fresh blueprints, keeps the selected new-game robot counts and starter resource stash, and opens the playfield paused.
+
+## v0.40.32 local fleet awareness and active-only traffic motion
+
+Every rover now refreshes a local nearby-robot map each safety tick. Active 0.5-second motion proposals are pre-checked against nearby robots' certified motion/braking envelopes before contract arbitration, and coarse route replans include current robot positions as temporary obstacles so an active rover can choose a route around parked traffic. The shared time-indexed contract board remains the final collision authority. Idle and working robots never receive collision-avoidance pull-out commands; only robots that currently have an active navigation request may retreat to resolve an active-active deadlock.
+
+## v0.40.31 contract-gameplay integration fixes
+
+The first contract-certified release exposed overly tight starter parking and inconsistent numerical envelope inflation. Safety radii are now identical across initialization, contract arbitration, terminal holds and the final shared-epoch sweep, so a state accepted as initially safe cannot immediately fail only because a later phase counted the same margin again. Partial safety ticks build contracts for their real lease duration, and certified braking can continue across adjacent branch pieces instead of faulting at a 10 ms boundary.
+
+Robot gameplay now plans for the new authority instead of assuming free steering. Local proposals can pivot in place before translating, target speed is capped by remaining braking distance, deadlock retreat favors a lateral pull-out and retreat commands receive arbitration priority without pre-empting occupied passage reservations. New games use wider starter bays; an untouched v0.40.30 starter fleet is migrated to those bays on load. High-level pickup, delivery and build actions still wait for the rover to physically stop before work time advances.
+
+## v0.40.30 contract-certified robot motion
+
+The former robot traffic resolver, rolling collision-avoidance sampler, direct-drive escape logic and post-move overlap repair are no longer movement authorities. High-level construction/logistics code only submits goals. `game_cluster_robots` collects those requests and one shared safety coordinator commits all robot motion at a common simulation epoch.
+
+Each rover keeps a conservative time-indexed motion contract containing its short command lease, every authorized braking branch, terminal stopping holds and reserved passage cells. Local 0.50 s proposals are regenerated every 0.05 s, but a proposal is only advisory until continuous swept-disc checks certify it against static geometry and the complete active contracts of the other robots. Rejected movement follows the previously certified braking branch; it never invents an unchecked emergency steering command. Idle and stopped robots remain reserved obstacles.
+
+Blocked robots first wait. Persistent wait-for cycles are resolved by certified retreat goals to real free pull-out points; an idle blocker can receive the same yield request. If no safe retreat or detour exists, the robot remains blocked rather than being teleported or nudged through another object. Construction-stage mesh growth and autonomous resource-pallet spawning are gated against active motion/braking/terminal reservations so new geometry cannot materialize inside a certified stopping region.
+
+## v0.40.34 compact rover safety corridor and traversable untouched blueprints
+
+BR-02 and CR-01 now share the same 4.84 m/s default travel pace, including constructor travel between construction work positions. Robot navigation no longer adds the former broad comfort halo: the safety corridor targets roughly 1.5x rover chassis width while retaining the full circumscribed physical hull and numerical collision margin as the hard lower bound.
+
+Blueprints with zero construction progress are non-solid for rover navigation. Constructors may claim a supplied blueprint while traffic crosses it; only when a constructor is actually ready to start the first physical build action does the pre-build safety gate evacuate the footprint. Once visible construction progress begins, the erected geometry becomes a normal rover obstacle and future construction stages remain guarded by the scene-admission safety checks.
+
+## v0.40.35 builder construction motion and adaptive structure clearance
+
+BR-02 no longer cancels its own navigation request while travelling to a construction work bay. Constructors assigned to an untouched blueprint may cross that blueprint on the way to the exterior work bay, while other robots are cleared before geometry appears. The pass-through state ends as soon as visible construction starts: traffic reserves the planned footprint immediately, while hard collision geometry advances only on safety-approved committed construction stages. Rover route planning now prefers about 1.0 m of extra clearance around completed habitat/resource structures and progressively relaxes that preference only when the enlarged halo would close the available passage; physical hull collision remains mandatory at every fallback level. The comfort halo is deliberately not part of hard contract certification, so a rover already standing in a legitimate service bay is never faulted merely because a nearby structure completes.
+
+## v0.40.36 robot personal safety zones
+
+Every rover now owns an additional 0.30 m robot-to-robot personal safety zone outside its hard physical safety envelope. Local 0.50 s previews, coarse fleet-aware route search and shared motion-contract arbitration all respect the combined zones of both robots, so traffic yields before reaching the near-contact state instead of repeatedly accepting and braking tiny movements.
+
+Existing saves that already contain physically clear robots inside the new personal-zone spacing are handled as an escape case rather than being faulted or frozen. An active rover may only maintain or increase separation until it leaves the zone; idle and working robots remain stationary. This specifically prevents the accept/brake flicker reproduced by `0-40-35(1).gmsave`, whose two rovers are only about 2.07 m center-to-center.
+
+## v0.40.37 stationary-rover detour routing
+
+An active rover that remains blocked by a stationary fleet member no longer invalidates and retries the same approach indefinitely. After the normal short wait, the safety coordinator identifies a stationary blocker, searches deterministic left/right bypass waypoints outside both rovers' personal safety zones, verifies that the waypoint is reachable through the existing fleet-aware coarse planner, and temporarily routes the active rover around the blocker. The parked/working rover remains fixed. Once the bypass waypoint is reached, the temporary detour is cleared and the original construction/logistics goal resumes automatically. The same recovery applies to every rover role and also detects stationary blockers that caused a coarse `NO ROUTE` result before a robot contract could name them directly.
+
+## v0.40.38 independent rover tasks and builder-first arbitration
+
+The fleet safety coordinator now keeps BR-02 construction and CR-01 logistics independent during traffic arbitration. Occupied certified passages remain non-preemptible, but when fresh builder/carrier movement requests compete for the same free space, the constructor is considered first. In an active-active deadlock, the lower-priority carrier yields before the builder; logistics reservations and construction ownership are retained while either rover waits, detours or replans.
+
+Short certified motion/braking segments now receive an interior static-clearance sample instead of an endpoint-only test. This fixes the `0-40-37.gmsave` failure where a roughly five-centimetre carrier braking segment was accepted because its far endpoint was clear even though the partial substep crossed conservative obstacle clearance. The final guard can also contain a recoverable integration rejection to the offending rover at its last valid position instead of marking unrelated fleet members as `SAFETY FAULT`; that rover then replans while the other robots continue their own tasks.
+
+## v0.40.39 robot safety stability and performance
+
+BR-02 and CR-01 now use a 6.00 m/s default transit speed. The safety coordinator keeps stationary IDLE/WORK holds persistent instead of rebuilding and following braking tubes every 10 ms, and failed full coarse-route searches are rate-limited rather than repeating up to four 18k-cell A* attempts every 50 ms while the blocking geometry is unchanged. Certified straight-line braking trajectories use larger time pieces with analytic chord-error inflation, substantially reducing pairwise tube work without reducing the conservative occupied envelope.
+
+Constructor work holds no longer fault merely because the conservative envelope of the BR-02's own partially revealed target grows around a prevalidated exterior service position. Initial-geometry validation is only an initialization check; stopped stale-contract states are locally re-established as stationary holds when their current physical position is still clear, while real moving contract violations remain faults.
+
+## v0.40.40 lunar construction economy and aluminum
+
+Construction recipes are rebalanced for the lunar-base economy. Every newly generated habitat, resource structure, corridor, supply channel and walkway recipe now uses exactly 50% of the previous total construction mass (nearest kilogram). The reduced structural budget is split between iron and the new Aluminum (`Al`) resource: lightweight pressure shells, habitat frames, solar arrays and antenna structures are aluminum-heavy, while drilling machinery, industrial plants and landing pads remain more iron-heavy. Copper remains the power/data conductor, silicon the electronics/control feedstock and plastic the pressure-seal/insulation/interior polymer feedstock.
+
+Aluminum is fully integrated into starter inventory, pallets, storage, hauling, recovery, construction UI, savegames and the resource-production economy. A powered ore-processing chain produces aluminum alongside iron, copper and silicon. Save schema 11 persists the eighth resource while remaining backward-compatible with older seven-resource saves; older colonies receive one recalculated starter aluminum pallet so future v0.40.40 construction remains possible. Existing in-progress legacy construction plans are not rewritten mid-build.
+
+BR-02 payload capacity is doubled from 1200 kg to 2400 kg and CR-01 from 1800 kg to 3600 kg. Loaded fleets are normalized to those role capacities.
+## v0.40.41 gameplay-aware robot traffic and eight-resource depot routing
+
+Robot routing now distinguishes stable traffic obstacles from genuinely moving fleet traffic. Idle, working, blocked and waiting rovers remain static coarse-route obstacles; a higher-priority BR-02 that is only creeping around its construction work bay is also treated as a stable obstacle by a lower-priority CR-01. Actively moving rovers are no longer baked into coarse A* as permanent walls and remain governed by the 0.50 s prediction and shared safety-contract arbitration instead. A stopped active rover with no accepted motion collapses to one persistent stationary hold rather than regenerating zero-distance braking contracts every safety tick.
+
+Stationary-rover detours are now latched until completion or invalidation. Fleet-aware A* bypass waypoints are followed directly instead of being line-of-sight-shortcut through the stationary rover's personal safety zone, eliminating the low-speed forward/brake flicker reproduced by `0-40-40.gmsave`. Lower-priority carriers can therefore pass a working or near-stationary builder without moving the builder or losing their logistics job.
+
+v0.40.40 expanded the starter depot from seven to eight resources without enlarging its boundary inset. The outer Iron/Aluminum pallet lanes could therefore be physically pickup-valid but full-hull route-invalid on a 64x64 field. New games place the eight-pallet row one metre farther from the south boundary, and schema-11 saves that still match the exact v0.40.40 starter-row signature are migrated one metre north. Persisted carrier pickup stations are invalidated so they are recalculated against the migrated row; player-moved and production-created resource piles are not relocated.
+
+## v0.40.42 full-catalog starter manifest and lightweight rover routing
+
+New games now ship a starter manifest sized from one largest available instance of every habitat/resource structure kind rather than mixing STANDARD habitats with SMALL outdoor structures. Scalable habitat families are budgeted at BIG, non-storage outdoor structures at STANDARD and Storage Dome at HUGE. The manifest also includes one additional full-size Solar Panel and Ore Driller, 240 m of corridor stock, 280 m of supply-channel stock, 160 m of walkway stock and a 30% construction-material contingency. The resulting starter reserve is approximately 168 t of construction materials plus 22 t water, 6 t food and 1.2 t medical supplies, so the complete current build catalog can be exercised from a fresh colony before local extraction is mandatory.
+
+Robot route generation is now staged for predictable frame time. A direct certified line is tried first, followed by bounded one/two-bend doglegs around simple obstacles; only genuinely obstructed routes fall back to a coarse A* search. Clearance probing performs cheap geometry-only passes at 1.00/0.65/0.30/0.00 m structure margins and at most two bounded grid searches (0.30 m and physical-hull-only), using a 1.05 m route grid and 4,200-node expansion cap instead of repeated 18,000-node searches. Normal 0.50 s local motion uses a compact steering set and 0.10 s preview samples; the wide steering/reverse recovery fan is generated only after a rover is actually blocked. The 10 ms shared motion-contract authority and hard collision envelopes remain unchanged.
+
+## v0.40.43 hardware GPU enforcement and bounded multi-core planning
+
+The Linux renderer now requires a direct hardware-backed GLX/OpenGL context. Startup queries `GL_VENDOR`, `GL_RENDERER`, `GL_VERSION` and `glXIsDirect()` after the context is made current. Known Mesa software rasterizers such as llvmpipe/softpipe/swrast are rejected instead of silently running the complete 3D renderer on the CPU. The debug frame reports the active GPU renderer so hardware acceleration is visible in-game.
+
+CPU-heavy rover route/proposal preparation now uses a persistent engine task pool sized to about 50% of the logical CPUs visible to the process. Per-rover short-horizon route/proposal preparation is parallel; shared reservation arbitration, safety-contract acceptance, pose commits and world/construction mutations remain serialized and deterministic. `GAME_CPU_LANES` may explicitly cap the lane count for diagnostics. The default build parallelism follows the same half-CPU policy.
+
+## v0.40.45 save-profiled construction/logistics performance
+The `0-40-43.gmsave` regression exposed two independent frame-time costs. Robot navigation was discarding a valid coarse route after small steering deviations and relaunching A* during ordinary travel, while the OpenGL bitmap font submitted one GPU buffer update/draw per lit 5x7 font pixel. v0.40.45 keeps validated coarse routes until the goal/world changes or blocking recovery explicitly requests a new route, uses a wide low-resolution fallback before a fine narrow A* search for long structure/corridor barriers, reuses the dynamic OpenGL VBO, and batches each text label into one triangle submission.
+
+BR-02 construction is now next-stage-fed instead of waiting for the complete remaining project inventory. CR-01 logistics is blueprint-owned and stages the next construction stage for habitats/resource structures, corridors, supply channels and walkways even when construction dependencies are not yet ready. Site choice favors the least-supplied next stage so one corridor cannot monopolize the carrier while other placed blueprints remain empty.
+
+### v0.40.46 FIFO construction logistics
+Carrier robots service one global construction queue in blueprint placement order. The fleet stages the complete remaining bill of materials at the oldest unfinished blueprint before moving to the next. This applies consistently to structures, corridors, supply channels, and walkways; build dependencies still gate BR-02 construction, not CR-01 delivery. Save schema 13 persists the cross-kind placement sequence for new saves.
+
+### v0.40.47 - Builder idle parking / site release
+
+- BR-02 constructors with no executable construction stage release their target, work station, route and action state instead of remaining beside the blueprint.
+- Waiting/no-task builders return to their dedicated parking bay beside the starter resource stash.
+- Parking-return navigation has lower traffic priority than CR-01 logistics, so a waiting builder cannot block material delivery.
+- Builders immediately leave the parking return and take a construction target as soon as a dependency-ready, staged construction stage becomes available.
+- Parking bays avoid unfinished blueprint envelopes when possible; if the original spawn bay was built over, a deterministic nearby stash-side fallback is selected.

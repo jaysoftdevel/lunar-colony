@@ -34,6 +34,9 @@ ConstructionResourcePlan distribute(std::uint8_t steps,const ResourceBundle& tot
     split_material(total.copper,copper,n,MaterialResource::Copper,plan);
     split_material(total.silicon,silicon,n,MaterialResource::Silicon,plan);
     split_material(total.plastic,plastic,n,MaterialResource::Plastic,plan);
+    // Aluminum is a structural material in the lunar balance and follows the
+    // same early-stage frame/shell distribution as iron.
+    split_material(total.aluminum,iron,n,MaterialResource::Aluminum,plan);
     return plan;
 }
 
@@ -43,6 +46,24 @@ ResourceBundle scaled(ResourceBundle base,double iron,double copper,double silic
     base.silicon=kg((double)base.silicon*silicon);
     base.plastic=kg((double)base.plastic*plastic);
     return base;
+}
+
+ResourceBundle lunar_half_mass(ResourceBundle raw,double aluminum_share_of_structure){
+    // v0.40.40 economy rule: every construction recipe has exactly half the
+    // previous total construction mass (nearest kg). Copper/electronics/seals
+    // retain their relative demand at 50%; aluminum substitutes a configurable
+    // share of the remaining structural iron budget.
+    const std::int64_t old_total=raw.iron+raw.copper+raw.silicon+raw.plastic;
+    const std::int64_t target=kg((double)old_total*0.5);
+    ResourceBundle out{};
+    out.copper=kg((double)raw.copper*0.5);
+    out.silicon=kg((double)raw.silicon*0.5);
+    out.plastic=kg((double)raw.plastic*0.5);
+    const std::int64_t structural=std::max<std::int64_t>(0,target-out.copper-out.silicon-out.plastic);
+    const double al_share=std::clamp(aluminum_share_of_structure,0.0,1.0);
+    out.aluminum=std::clamp<std::int64_t>(kg((double)structural*al_share),0,structural);
+    out.iron=structural-out.aluminum;
+    return out;
 }
 
 constexpr int habitat_iron[10]   ={18,18,14,12,10,8,6,5,5,4};
@@ -86,19 +107,21 @@ ConstructionResourcePlan habitat(HabitatKind kind,HabitatSizeTier,const HabitatM
         kg(envelope*1.85)
     };
 
+    double aluminum_share=0.45;
     switch(kind){
-        case HabitatKind::AirLock: total=scaled(total,1.00,1.00,1.00,1.00); break;
-        case HabitatKind::OxygenGeneratorDome: total=scaled(total,0.90,1.35,1.30,1.45); break;
-        case HabitatKind::CantineDome: total=scaled(total,0.92,1.05,0.90,1.35); break;
-        case HabitatKind::BioDome: total=scaled(total,0.85,1.25,1.20,1.60); break;
-        case HabitatKind::CrewQuarters: total=scaled(total,0.92,1.05,1.00,1.45); break;
-        case HabitatKind::ProcessingFacility: total=scaled(total,1.45,1.35,1.20,1.00); break;
-        case HabitatKind::Factory: total=scaled(total,1.60,1.45,1.40,1.00); break;
-        case HabitatKind::Manufactory: total=scaled(total,1.75,1.55,1.55,1.05); break;
-        case HabitatKind::SickBay: total=scaled(total,1.00,1.20,1.55,1.45); break;
-        case HabitatKind::Laboratory: total=scaled(total,1.05,1.30,1.80,1.30); break;
+        case HabitatKind::AirLock: total=scaled(total,1.00,1.00,1.00,1.00); aluminum_share=0.35; break;
+        case HabitatKind::OxygenGeneratorDome: total=scaled(total,0.90,1.35,1.30,1.45); aluminum_share=0.48; break;
+        case HabitatKind::CantineDome: total=scaled(total,0.92,1.05,0.90,1.35); aluminum_share=0.52; break;
+        case HabitatKind::BioDome: total=scaled(total,0.85,1.25,1.20,1.60); aluminum_share=0.58; break;
+        case HabitatKind::CrewQuarters: total=scaled(total,0.92,1.05,1.00,1.45); aluminum_share=0.55; break;
+        case HabitatKind::ProcessingFacility: total=scaled(total,1.45,1.35,1.20,1.00); aluminum_share=0.30; break;
+        case HabitatKind::Factory: total=scaled(total,1.60,1.45,1.40,1.00); aluminum_share=0.25; break;
+        case HabitatKind::Manufactory: total=scaled(total,1.75,1.55,1.55,1.05); aluminum_share=0.22; break;
+        case HabitatKind::SickBay: total=scaled(total,1.00,1.20,1.55,1.45); aluminum_share=0.50; break;
+        case HabitatKind::Laboratory: total=scaled(total,1.05,1.30,1.80,1.30); aluminum_share=0.48; break;
         case HabitatKind::Count: break;
     }
+    total=lunar_half_mass(total,aluminum_share);
     return distribute(kConstructionSteps,total,habitat_iron,habitat_copper,habitat_silicon,habitat_plastic);
 }
 
@@ -112,19 +135,21 @@ ConstructionResourcePlan structure(ResourceKind kind,const ResourceMesh& mesh){
         kg(area*0.70+(double)mesh.height*2.0)
     };
 
+    double aluminum_share=0.40;
     switch(kind){
-        case ResourceKind::SolarPanel: total=scaled(total,0.70,1.65,2.60,1.10); break;
-        case ResourceKind::WaterDriller: total=scaled(total,1.45,1.20,1.15,0.95); break;
-        case ResourceKind::PowerStorage: total=scaled(total,1.10,2.10,1.80,1.25); break;
-        case ResourceKind::WaterStorage: total=scaled(total,1.20,0.70,0.55,1.10); break;
-        case ResourceKind::OreDriller: total=scaled(total,1.80,1.45,1.20,0.90); break;
-        case ResourceKind::WaterPurifier: total=scaled(total,1.15,1.35,1.55,1.50); break;
-        case ResourceKind::Antenna: total=scaled(total,0.85,1.55,2.20,0.85); break;
+        case ResourceKind::SolarPanel: total=scaled(total,0.70,1.65,2.60,1.10); aluminum_share=0.68; break;
+        case ResourceKind::WaterDriller: total=scaled(total,1.45,1.20,1.15,0.95); aluminum_share=0.24; break;
+        case ResourceKind::PowerStorage: total=scaled(total,1.10,2.10,1.80,1.25); aluminum_share=0.42; break;
+        case ResourceKind::WaterStorage: total=scaled(total,1.20,0.70,0.55,1.10); aluminum_share=0.58; break;
+        case ResourceKind::OreDriller: total=scaled(total,1.80,1.45,1.20,0.90); aluminum_share=0.20; break;
+        case ResourceKind::WaterPurifier: total=scaled(total,1.15,1.35,1.55,1.50); aluminum_share=0.45; break;
+        case ResourceKind::Antenna: total=scaled(total,0.85,1.55,2.20,0.85); aluminum_share=0.72; break;
         case ResourceKind::LandingPad:
             total.iron=kg(area*36.0+volume_proxy*0.10);
             total.copper=kg(area*0.18);
             total.silicon=kg(area*0.08);
             total.plastic=kg(area*0.24);
+            aluminum_share=0.15;
             break;
         case ResourceKind::StorageDome:
             // Large reinforced shell, cargo door/handling rails, inventory electronics and liners.
@@ -132,9 +157,11 @@ ConstructionResourcePlan structure(ResourceKind kind,const ResourceMesh& mesh){
             total.copper=kg(area*0.85+(double)mesh.height*5.0);
             total.silicon=kg(area*0.32+(double)mesh.height*2.8);
             total.plastic=kg(area*1.15+(double)mesh.height*4.2);
+            aluminum_share=0.52;
             break;
         case ResourceKind::Count: break;
     }
+    total=lunar_half_mass(total,aluminum_share);
     return distribute(kConstructionSteps,total,structure_iron,structure_copper,structure_silicon,structure_plastic);
 }
 
@@ -179,6 +206,7 @@ ConstructionResourcePlan corridor_from_metrics(double length_m,double quarter_tu
         kg(m*0.8  + terminal_collars*0.5  + quarter_turns*0.5  + (double)network_junctions*1.0),
         kg(m*19.0 + terminal_collars*6.5  + quarter_turns*7.0  + (double)network_junctions*10.0)
     };
+    total=lunar_half_mass(total,0.45);
     return distribute(kCorridorConstructionSteps,total,corridor_iron,corridor_copper,corridor_silicon,corridor_plastic);
 }
 
@@ -195,6 +223,7 @@ ConstructionResourcePlan supply_from_metrics(double length_m,double quarter_turn
         kg(m*0.55+ terminals*0.4 + quarter_turns*0.25+ (double)junctions*1.8),
         kg(m*3.6 + terminals*1.5 + quarter_turns*1.4 + (double)junctions*3.5)
     };
+    total=lunar_half_mass(total,0.25);
     return distribute(kSupplyConstructionSteps,total,supply_iron,supply_copper,supply_silicon,supply_plastic);
 }
 } // namespace
@@ -220,7 +249,8 @@ ConstructionResourcePlan supply_channel(const std::vector<eng::Vec3>& path,std::
 ConstructionResourcePlan walkway(float length_m){
     const double m=std::max(0.5,(double)length_m);
     // 1.90 m wide open deck with beams/grating; no railing mass is included.
-    const ResourceBundle total{kg(m*44.0+28.0),kg(m*1.4+5.0),kg(m*0.22+2.0),kg(m*1.8+5.0)};
+    ResourceBundle total{kg(m*44.0+28.0),kg(m*1.4+5.0),kg(m*0.22+2.0),kg(m*1.8+5.0)};
+    total=lunar_half_mass(total,0.35);
     return distribute(kWalkwayConstructionSteps,total,walkway_iron,walkway_copper,walkway_silicon,walkway_plastic);
 }
 

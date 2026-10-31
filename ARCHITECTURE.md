@@ -132,3 +132,34 @@ The build is now partitioned into explicit implementation clusters in `game/cmak
 Robot path search is separated from robot task policy. `game_cluster_pathfinding` owns generic corridor-grid A*/Theta*-style route geometry in `game/robots/path_planner.*`. `game_cluster_robots` supplies floor, occupancy, segment and traffic-cost callbacks and remains authoritative for task scheduling, continuous motion, hull collision exclusion, logistics and construction work.
 
 Path recovery has two levels. Routine replans stay in bounded 4.5/9/18 m corridors. A per-robot route-resolution watchdog accumulates whenever no useful movement/path resolution is achieved; publishing another local route does not clear it. At 2.0 seconds the next attempt becomes a full-width world-geometry search and temporary rover positions are removed from hard A* occupancy. Continuous prediction and hard hull checks still prevent physical robot overlap during execution. Any meaningful physical progress resets the watchdog and returns the robot to the cheap local planner.
+
+
+## v0.40.33 debug-start blueprint template
+
+Debug New Game startup is implemented as a construction-only import rather than a normal save load. The bundled schema-10 save is parsed through the save serializer, but only habitats, resource structures, corridors, utility channels, and walkways are adopted. Their construction progress and delivered-site buffers are reset to zero; robots, colony inventory state, camera, clock, and saved simulation speed are ignored. The regular new-game fleet/starter depot remains authoritative, and debug startup forces Pause.
+
+## v0.40.32 fleet-aware active-only navigation
+
+The safety coordinator maintains local fleet awareness for every robot and exposes nearest/nearby rover telemetry. The local planner rejects 0.5-second candidate trajectories that enter the predicted safety envelopes of nearby robots, using their currently certified motion, braking branches and terminal holds. Coarse route replans also treat current fleet positions as temporary geometry, while final authority remains the atomic time-indexed contract board. Traffic recovery may move only a robot with an active navigation request; idle and working robots retain stationary holds and are never displaced solely to make room for another rover.
+
+## v0.40.31 coordinator/gameplay integration
+
+The safety coordinator uses one consistent conservative disc envelope at every phase. Contract tubes and terminal holds already include the numerical margin; overlap tests do not add that margin a second time. The initialization test uses the same two inflated per-robot radii as the runtime contract board and final shared-epoch sweep. Command contracts receive the actual safety substep lease (including the short remainder of a 90 Hz gameplay slice), keeping the certified trajectory synchronized with the pose that is actually committed.
+
+A rejected command follows the existing certified brake trajectory across adjacent branch pieces and into its terminal hold. Local planning also emits orientation-only pivot commands, applies a braking-distance target-speed cap near the final goal, prioritizes an assigned retreat during arbitration, and searches lateral pull-out pockets before falling back to a straight-away retreat. Starter parking spacing is sized for the rotation-independent disc rather than only the rendered rectangle; untouched legacy 0.40.30 starter aprons are migrated during load.
+
+## v0.40.30 shared safety-contract coordinator
+
+`game/robots/safety_coordinator.*` is now the sole authority for BR-02/CR-01 pose changes. Task policy in `builder_robot.cpp` submits navigation/work intents; it does not accelerate, brake, steer, teleport, separate or nudge robots. All fleet intents are arbitrated together before positions are committed.
+
+The safety layer runs at a 10 ms simulation cadence. The local planner produces dynamically feasible 0.50 s proposals at 50 ms intervals using a static-world coarse route only as a waypoint hint. Every accepted 10 ms command is wrapped in a conservative `MotionContract` containing normal motion, interval-inflated braking branches for any trigger time within the lease, time-indexed terminal holds and coarse passage reservations. Contracts are checked continuously in common absolute time using moving-disc closest approach. Candidate motion is rejected if it intersects static geometry, another robot's motion/braking tube, or any terminal hold.
+
+If no new command can be certified, the rover follows the braking branch already contained in its previous active contract. The previous reservation survives until a new contract atomically replaces it or the rover reaches its reserved terminal hold. A state that falls outside its active contract is a safety fault; there is no positional recovery teleport.
+
+Blocking recovery uses wait age and a wait-for graph. Cycles cause one lower-priority rover to receive a temporary pull-out goal; an idle blocking rover can also be asked to yield. Retreat/reverse/detour movement goes through the same proposal and contract certification as ordinary navigation. Construction-stage geometry and autonomous ground-resource creation are admitted only when they do not intersect active robot contracts.
+
+## v0.40.43 graphics and CPU execution model
+
+Rendering remains single-context OpenGL on the main/render thread. The context is accepted only when GLX reports direct rendering and the OpenGL renderer string is not a known software rasterizer. Vertex data is uploaded through OpenGL buffer objects and rasterization is therefore delegated to the validated GPU driver. The active renderer/vendor/version are runtime properties of `eng::Renderer`.
+
+`eng::TaskPool` is a persistent bounded worker pool. Its total planning lanes default to `max(1, visible_logical_cpus / 2)`, counting the calling game thread as one lane. Robot route generation and short-horizon proposal preparation are independent read-mostly jobs and may execute in parallel. Contract arbitration, passage ownership, final continuous collision checks, authoritative pose commits, construction stage commits, resource mutation and save-state mutation remain ordered on the game thread.

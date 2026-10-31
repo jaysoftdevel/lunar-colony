@@ -159,6 +159,7 @@ void GameApp::render_walkway_placement(Renderer& r){
     if(!input_.left_pressed || !preview || !affordable) return;
     if(walkway_network_.build_connection(*walkway_build_start_,*hover,corridor_network_,utility_network_,
                                          placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
+        walkway_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
         selected_walkway_=(int)walkway_network_.connections().size()-1;
         selected_habitat_=selected_corridor_=selected_resource_=selected_utility_=-1;
         selection_kind_=SelectionKind::Walkway;

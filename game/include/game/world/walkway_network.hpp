@@ -62,6 +62,7 @@ struct WalkwayMesh {
 
 struct WalkwayConnection {
     WalkwayEndpoint endpoint_a{};
+    std::uint64_t placement_sequence{0};
     WalkwayEndpoint endpoint_b{};
     std::vector<eng::Vec3> path{};
     std::vector<WalkwayJunction> junctions{};

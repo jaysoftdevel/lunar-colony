@@ -203,3 +203,26 @@ v0.40.9
 0.40.24: dedicated stationary robot spawn apron; smallest-size placement defaults; flat visible rover-crossable supply channels with schema-9 migration.
 
 0.40.24 -> 0.40.25 : rewrote rover navigation so static A*/Theta* pathfinding no longer treats temporary fleet traffic as world geometry. Added pair-stable right-of-way with explicit WAIT/PASS state, full-hull collision guarding, breadcrumb backout through one-rover-wide sections, first-available passing-pocket selection, and a single-rover detour fallback only after cooperative yielding fails. Tightened the static navigation grid to preserve narrow valid passages, moved the stationary spawn apron beside the starter resource stash, and exposed WAIT/PASS/DETOUR in robot route status.
+
+0.40.31 -> 0.40.32 : added per-rover local fleet awareness and 0.5-second prediction against nearby robots' certified motion/braking envelopes; coarse replans treat current rover positions as temporary obstacles; idle/working robots are never moved for collision avoidance, and only actively navigating robots may receive deadlock retreat goals.
+0.40.32 -> 0.40.33 : added New Game DEBUG START TEMPLATE option; imports the supplied 64x64 construction layout as fresh blueprints only, preserves the newly configured fleet/starter stash, and starts paused.
+0.40.42 -> 0.40.43 : require direct hardware GLX/OpenGL and reject software rasterizers; expose GPU renderer in the debug frame; add a persistent half-CPU worker pool and parallelize independent rover route/proposal preparation while keeping safety arbitration/world commits serialized; default builds use half of visible logical CPUs.
+
+0.40.44
+- Fixed BR-02 long-detour routing around structure-connected corridor barriers by widening the bounded fallback search and adding wider cheap doglegs.
+- Construction is stage-fed: BR-02 starts once the next stage is delivered; CR-01 stages materials for every blueprint independently of build dependency order.
+- Corridor, supply-channel and walkway blueprints can receive CR-01 deliveries before their endpoints are build-ready.
+- Optimized OpenGL dynamic VBO uploads and bitmap text batching to remove thousands of tiny per-frame GPU submissions.
+- Stable coarse routes are now retained while a rover is making progress; full replans happen only after real world/goal changes or blocking recovery instead of every small steering deviation.
+- Carrier site selection now seeds the least-supplied next stage across structures, corridors, supply channels and walkways before repeatedly topping up one convenient target.
+
+0.40.45
+- Fixed CR-01 pickup transaction restart on dependency-blocked network blueprints.
+- Construction dependencies now gate BR-02 work only; CR-01 may keep staging materials for all blueprints.
+- Staged corridor/supply/walkway resources are preserved while endpoint dependencies are incomplete.
+
+## v0.40.46
+- CR-01 carrier logistics now follows one global FIFO blueprint queue in exact placement order.
+- Each blueprint is fully supplied for its entire remaining construction plan before carriers advance to the next one.
+- Placement order is persisted across habitat, resource-structure, corridor, supply-channel, and walkway blueprints (save schema 13).
+0.40.47 - BR-02 idle parking: constructors release construction bays while waiting for carrier materials and return to their dedicated stash-side parking bay when no executable construction task exists.

@@ -13,11 +13,20 @@ enum class MaterialResource : std::uint8_t {
     Water,
     Food,
     Medical,
+    Aluminum,
     Count
 };
 
 inline constexpr std::size_t kMaterialResourceCount = static_cast<std::size_t>(MaterialResource::Count);
 inline constexpr std::size_t kMaxConstructionResourceSteps = 10;
+
+inline constexpr std::array<MaterialResource,5> kConstructionMaterialResources{{
+    MaterialResource::Iron,
+    MaterialResource::Copper,
+    MaterialResource::Silicon,
+    MaterialResource::Plastic,
+    MaterialResource::Aluminum
+}};
 
 struct ResourceBundle {
     std::int64_t iron{0};
@@ -27,6 +36,7 @@ struct ResourceBundle {
     std::int64_t water{0};
     std::int64_t food{0};
     std::int64_t medical{0};
+    std::int64_t aluminum{0};
 
     std::int64_t amount(MaterialResource resource) const;
     std::int64_t& amount(MaterialResource resource);

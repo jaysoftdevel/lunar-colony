@@ -1,6 +1,7 @@
 #pragma once
 #include "engine/engine.hpp"
 #include "game/systems/resource_management.hpp"
+#include "game/robots/safety_coordinator.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -43,8 +44,11 @@ enum class BuilderRobotAction : std::uint8_t {
 inline constexpr float kBuilderRobotBodyRadiusM = 0.48f;
 inline constexpr float kCarrierRobotBodyRadiusM = 0.44f;
 inline constexpr float kRobotMovementSpeedMultiplier = 2.00f;
-inline constexpr float kBuilderRobotTransitSpeedMps = 2.20f*kRobotMovementSpeedMultiplier;
-inline constexpr float kCarrierRobotTransitSpeedMps = kBuilderRobotTransitSpeedMps*1.10f;
+// Both rover roles use one gameplay travel pace.  The constructor previously
+// inherited the slower 2.20 m/s base while CR-01 used a 10% boost; with the
+// global 200% movement multiplier that made BR-02 visibly lag behind logistics.
+inline constexpr float kBuilderRobotTransitSpeedMps = 6.00f;
+inline constexpr float kCarrierRobotTransitSpeedMps = 6.00f;
 // Physical construction-drop package layout. Keeping these dimensions shared
 // between rendering and navigation makes the visible material stacks real
 // obstacles instead of decoration that a rover can drive through.
@@ -118,56 +122,44 @@ struct BuilderRobotState {
     // for save compatibility: after loading, the robot accelerates smoothly
     // from rest instead of teleporting or resuming a stale steering impulse.
     float current_speed_mps{0.0f};
+    // Authoritative locomotion state. Since v0.40.30 every pose change is
+    // produced by the shared safety coordinator from a certified motion
+    // contract. Job logic may request a destination but cannot move a robot.
+    robots::SafetyRuntime safety{};
     float blocked_elapsed{0.0f};
     float build_orbit_phase{0.0f};
     bool build_side_corner_reached{false};
-    // Rolling-horizon side preference. When a 0.5 s local plan has to skirt an
-    // obstacle, the chosen side is retained briefly so consecutive replans do not
-    // alternate left/right at the same wall or rover conflict. Transient on load.
+    // Legacy navigation telemetry fields retained for debug rendering and save/update
+    // source compatibility. They are mirrors of safety/cached proposal state only;
+    // none of them authorizes motion or performs collision avoidance.
     float avoidance_offset_degrees{0.0f};
 
-    // Render-only smoothing state. Navigation/collision always use position and
-    // heading_degrees; the visible chassis follows those authoritative values
-    // with critically damped interpolation so route replans never produce a
-    // one-frame positional/heading snap. These fields are transient on load.
     eng::Vec3 visual_position{};
     float visual_heading_degrees{0.0f};
     eng::Vec3 visual_velocity{};
     bool visual_initialized{false};
 
-    // Navigation is receding-horizon: planned_route contains only the motion the
-    // rover may execute during the next ~0.5 seconds, never the complete trip to
-    // route_destination. At the end of each horizon the rover plans again from its
-    // measured pose. Structures/resources and predicted robot hulls are checked
-    // before publication; execution-time hull checks remain the final safety layer.
-    // Routes are transient after save/load.
     std::vector<eng::Vec3> planned_route{};
     std::vector<float> planned_route_distances{};
     std::size_t route_cursor{0};
     eng::Vec3 route_destination{};
     float route_stop_radius{0.0f};
     float route_replan_cooldown{0.0f};
-    // Transient widening tier for event-driven path search. A failed search
-    // widens on a later planning opportunity instead of running several A* jobs
-    // back-to-back in one simulation slice.
     std::uint8_t route_search_tier{0};
     float route_speed_scale{1.0f};
     float route_progress_m{0.0f};
     float route_total_length_m{0.0f};
     float route_cruise_speed_mps{0.0f};
+    // Preferred extra edge-to-hull clearance around completed habitat/resource
+    // structures for the active route. The planner starts at 1 m and relaxes
+    // it only when that halo would close the only usable passage. Hard physical
+    // hull collision remains enforced independently.
+    float route_structure_clearance_margin_m{1.0f};
     float route_priority_age{0.0f};
-
-    // Kept as transient compatibility storage for older update/save code.  In the
-    // continuous navigator route_segment_origin is the route's immutable start
-    // pose; the elapsed-slot fields are no longer used as movement clocks.
     float route_segment_elapsed{0.0f};
     eng::Vec3 route_segment_origin{};
     bool route_segment_origin_valid{false};
     bool route_active{false};
-    // Fleet traffic is deliberately separate from static route planning. A rover
-    // may wait on its published route for a higher-priority rover, back into a
-    // nearby passing pocket when a one-lane section is occupied, and only then
-    // request a static detour. None of these transient fields are persisted.
     bool route_waiting_for_clearance{false};
     float route_wait_elapsed{0.0f};
     std::size_t traffic_blocker_index{kNoRobotIndex};
@@ -176,27 +168,10 @@ struct BuilderRobotState {
     bool traffic_detour_active{false};
     std::size_t traffic_detour_avoid_index{kNoRobotIndex};
     float traffic_clear_elapsed{0.0f};
-    // Short non-persisted breadcrumb trail of positions the rover actually
-    // traversed. During a one-lane encounter the yielding rover reverses along
-    // these proven-clear points instead of guessing a side-step that may hit a
-    // wall. The trail is bounded and rebuilt naturally after load/spawn.
     std::vector<eng::Vec3> traffic_motion_history{};
-
-    // Local-resolution watchdog. Static local-plan failures are intentionally
-    // separate from traffic waiting so a harmless one-lane yield never triggers
-    // repeated recovery work. If the rolling 0.5 s planner makes no useful
-    // progress, the integration layer schedules one urgent local fallback/escape
-    // attempt; it never asks for a full-destination route.
     float route_resolution_elapsed{0.0f};
     bool route_force_full_replan{false};
     std::uint16_t route_full_replan_count{0};
-
-    // Deterministic fleet-deadlock escape. If the local recovery watchdog
-    // detects a nose-to-nose traffic lock, only the lower-priority rover is
-    // assigned a short hull-safe pull-aside waypoint. The original task/goal is
-    // untouched; after reaching this transient waypoint the robot replans its
-    // normal route. This avoids random reverse/spin steering while guaranteeing
-    // that two mutually blocking chassis can create planning space.
     eng::Vec3 traffic_escape_position{};
     bool traffic_escape_active{false};
 
@@ -288,7 +263,7 @@ struct BuilderRobotState {
     // Constructors prioritize assembly; CR-01 carriers trade arm reach for a
     // larger logistics deck and slightly higher transit speed.
     float move_speed_mps{kBuilderRobotTransitSpeedMps};
-    std::int64_t payload_capacity_kg{1200};
+    std::int64_t payload_capacity_kg{2400};
 };
 
 inline const char* builder_robot_mode_name(BuilderRobotMode mode){

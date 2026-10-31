@@ -55,6 +55,15 @@ void draw_resource_icon(Renderer& r,MaterialResource resource,Rect box,Color c){
             r.draw_line({x+12,y+10},{x+20,y+10},c,1.2f);
             r.draw_line({x+5,y+18},{x+14,y+18},c,1.2f);
             break;
+        case MaterialResource::Aluminum:
+            r.draw_rect({x+4,y+7,w-8,h-12},{c.r,c.g,c.b,0.12f});
+            r.draw_line({x+4,y+7},{x+w-4,y+7},c,1.5f);
+            r.draw_line({x+4,y+h-5},{x+w-4,y+h-5},c,1.5f);
+            r.draw_line({x+4,y+7},{x+8,y+3},c,1.3f);
+            r.draw_line({x+w-4,y+7},{x+w-8,y+3},c,1.3f);
+            r.draw_line({x+8,y+3},{x+w-8,y+3},c,1.3f);
+            r.draw_line({cx,y+7},{cx,y+h-5},c,1.0f);
+            break;
         case MaterialResource::Water:
             // Droplet.
             r.draw_line({cx,cy-11},{cx-8,cy+2},c,1.7f);
@@ -118,7 +127,7 @@ void GameApp::render_status_bar(Renderer& r){
     water<<"WATER "<<status_.water_current()<<"/"<<status_.water_capacity();
     crew<<"CREW "<<status_.crew_current()<<"/"<<status_.crew_capacity();
 
-    // Keep enough room for seven inventory resources while retaining colony status.
+    // Keep enough room for all inventory resources while retaining colony status.
     const float day_w=logical_w*0.20f;
     const float power_w=logical_w*0.10f;
     const float water_w=logical_w*0.09f;

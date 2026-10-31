@@ -443,7 +443,11 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
     Bool detectable=False;
     XkbSetDetectableAutoRepeat(p.display,True,&detectable);
     p.renderer=create_gl_renderer();
-    if(!p.renderer->initialize(p.display,p.window,p.width,p.height)){ std::cerr<<"OpenGL renderer initialization failed.\n"; return 3; }
+    if(!p.renderer->initialize(p.display,p.window,p.width,p.height)){
+        std::cerr<<"OpenGL hardware renderer initialization failed. A direct GPU-backed GLX context is required.\n";
+        return 3;
+    }
+    std::cout<<"CPU simulation lanes: "<<cpu_parallel_lanes()<<" (bounded to ~50% of logical CPUs)\n";
     if(config.fullscreen) p.send_fullscreen(true);
     game->on_start();
     auto prev=std::chrono::steady_clock::now();

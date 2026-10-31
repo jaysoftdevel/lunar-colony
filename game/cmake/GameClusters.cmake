@@ -69,6 +69,7 @@ configure_game_cluster(game_cluster_robots)
 
 add_library(game_cluster_pathfinding OBJECT
     src/robots/path_planner.cpp
+    src/robots/safety_coordinator.cpp
 )
 configure_game_cluster(game_cluster_pathfinding)
 
