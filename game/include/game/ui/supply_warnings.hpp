@@ -13,6 +13,7 @@ inline std::vector<std::string> supply_warning_lines(const SupplyState& supply,f
     if(supply.warnings&NoStorage)add(kind==ResourceKind::SolarPanel?"NO CONNECTED BATTERY":kind==ResourceKind::WaterDriller?"NO CONNECTED WATER TANK":"NO CONNECTED STORAGE");
     if(supply.warnings&NoFood)add("LOW FOOD");
     if(supply.warnings&NoMedical)add("LOW MEDICAL");
+    if(supply.warnings&NoHydrogen)add("NO CONNECTED H2");
     if(text.empty())return {};
     return eng::ui::wrap_text("WARNING: "+text,width,font_scale);
 }

@@ -31,6 +31,7 @@ ResourceModelLibrary::ResourceModelLibrary(){
     meshes_[(size_t)ResourceKind::Antenna]=resources::refine_future_resource(resources::make_antenna(),ResourceKind::Antenna);
     meshes_[(size_t)ResourceKind::LandingPad]=resources::refine_future_resource(resources::make_landing_pad(),ResourceKind::LandingPad);
     meshes_[(size_t)ResourceKind::RobotWorkshop]=resources::make_robot_workshop();
+    meshes_[(size_t)ResourceKind::HydrogenGenerator]=resources::refine_future_resource(resources::make_hydrogen_generator(),ResourceKind::HydrogenGenerator);
     storage_domes_[(size_t)StorageDomeSize::Small]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Small),ResourceKind::StorageDome);
     storage_domes_[(size_t)StorageDomeSize::Mid]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Mid),ResourceKind::StorageDome);
     storage_domes_[(size_t)StorageDomeSize::Big]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Big),ResourceKind::StorageDome);

@@ -111,6 +111,50 @@ void draw_resource_box(Renderer& r,Vec3 base,float half_width,float height,Mater
 }
 
 
+Vec3 rotate_from_to(Vec3 v,Vec3 from,Vec3 to){
+    from=normalize(from);to=normalize(to);
+    const float c=std::clamp(from.x*to.x+from.y*to.y+from.z*to.z,-1.0f,1.0f);
+    Vec3 axis=cross(from,to);
+    float sn=length(axis);
+    if(sn<1.0e-5f){
+        if(c>0.0f)return v;
+        axis=normalize(std::abs(from.x)<0.8f?cross(from,{1,0,0}):cross(from,{0,1,0}));
+        return axis*(2.0f*(axis.x*v.x+axis.y*v.y+axis.z*v.z))-v;
+    }
+    axis=axis*(1.0f/sn);
+    const float d=axis.x*v.x+axis.y*v.y+axis.z*v.z;
+    return v*c+cross(axis,v)*sn+axis*(d*(1.0f-c));
+}
+
+std::vector<Vec3> tracked_solar_vertices(const std::vector<Vec3>& src,Vec3 position,float base_rotation,Vec3 sun_direction){
+    constexpr float pitch=24.0f*3.14159265358979323846f/180.0f;
+    const Vec3 authored_normal{0,std::cos(pitch),-std::sin(pitch)};
+    const Vec3 target_world=sun_direction.y>0.0f?normalize(sun_direction):rotate_y(authored_normal,base_rotation);
+    const Vec3 target_local=rotate_y(target_world,-base_rotation);
+    const Vec3 pivot{0,3.38f,0};
+    std::vector<Vec3> local;local.reserve(src.size());
+    for(Vec3 v:src){
+        // The pedestal and inverter remain fixed. Everything above the azimuth
+        // bearing follows the two-axis collector head, including cell-grid lines.
+        if(v.y>3.12f)v=pivot+rotate_from_to(v-pivot,authored_normal,target_local);
+        local.push_back(v);
+    }
+    return transformed_vertices(local,position,base_rotation);
+}
+
+void draw_tracked_solar(Renderer& r,const ResourceMesh& mesh,const PlacedResource& instance,Vec3 sun_direction,bool selected,Color accent){
+    const float boost=selected?1.45f:1.0f;
+    const auto foundation=transformed_vertices(mesh.foundation,instance.position,instance.rotation_degrees);
+    const auto body=tracked_solar_vertices(mesh.body,instance.position,instance.rotation_degrees,sun_direction);
+    const auto details=tracked_solar_vertices(mesh.details,instance.position,instance.rotation_degrees,sun_direction);
+    const auto edges=tracked_solar_vertices(mesh.edges,instance.position,instance.rotation_degrees,sun_direction);
+    mesh_wireframe::draw_layer(r,foundation,{0.20f,0.84f,0.36f,1.0f},2.40f*boost);
+    mesh_wireframe::draw_layer(r,body,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
+    mesh_wireframe::draw_layer(r,details,{0.22f,0.92f,0.40f,0.99f},2.35f*boost);
+    r.draw_lines_3d(edges,selected?accent:Color{0.18f,1.00f,0.38f,1.0f},selected?3.65f:2.90f);
+}
+
+
 const std::vector<Vec3>& portal_layer(const std::vector<Vec3>& triangles,Vec3 position,float rotation,
                                        const std::vector<CorridorDoor>* doors,bool lines=false,bool foundation=false){
     if(!doors || doors->empty()) return triangles;
@@ -446,7 +490,10 @@ void GameApp::render_resources(Renderer& r){
             fpv_doors=storage_dome_doors(i);
             fpv_ptr=&fpv_doors;
         }
-        render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
+        if(instance.kind==ResourceKind::SolarPanel && instance.construction.complete())
+            draw_tracked_solar(r,mesh,instance,status_.sun_direction(),selected,theme_.accent);
+        else
+            render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
         if(instance.kind==ResourceKind::RobotWorkshop) render_workshop_gate(r,instance,!instance.construction.complete());
         if(instance.kind==ResourceKind::StorageGate && instance.storage_parent_index<placed_resources_.size()){

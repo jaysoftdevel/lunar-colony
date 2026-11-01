@@ -54,6 +54,7 @@ add_library(game_cluster_ui OBJECT
     src/ui/selection_panel.cpp
     src/ui/construction_status_frames.cpp
     src/ui/debug_crew_paths.cpp
+    src/ui/progress_tree.cpp
 )
 configure_game_cluster(game_cluster_ui)
 
@@ -85,6 +86,7 @@ target_link_libraries(game_cluster_pathfinding PRIVATE rvo2)
 
 add_library(game_cluster_simulation OBJECT
     src/systems/colony_status.cpp
+    src/systems/game_progress.cpp
     src/systems/supply_simulation.cpp
     src/systems/save_game.cpp
 )
@@ -125,6 +127,7 @@ configure_game_cluster(game_cluster_habitats)
 
 add_library(game_cluster_resources OBJECT
     src/world/resources/solar_panel.cpp
+    src/world/resources/hydrogen_generator.cpp
     src/world/resources/water_driller.cpp
     src/world/resources/power_storage.cpp
     src/world/resources/water_storage.cpp

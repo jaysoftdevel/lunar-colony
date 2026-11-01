@@ -223,6 +223,9 @@ void GameApp::render_construction_status_frames(Renderer& r){
         else occupied.push_back({PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,560,130});
         if(debug_frame_enabled_)occupied.push_back({logical_w-360-PLAYFIELD_MARGIN,logical_h-BUILD_BAR_H-198-PLAYFIELD_MARGIN,360,198});
     }
+    // Normal gameplay reserves the right-edge progression checklist so floating
+    // construction frames never cover objectives or the crew-readiness milestone.
+    if(!debug_frame_enabled_)occupied.push_back(progress_tree_panel_rect());
     for(auto& frame:visible){
         const auto needed_lines=frame.selected?resource_lines("NEEDED",frame.needed,"NONE"):std::vector<std::string>{};
         const auto shipped_lines=frame.selected?resource_lines("SHIPPED",frame.shipped,"NONE"):std::vector<std::string>{};

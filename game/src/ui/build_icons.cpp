@@ -254,6 +254,18 @@ void GameApp::render_build_icon(Renderer& renderer,BuildIcon icon,Rect q,Color c
             r.draw_line({cx-5,cy+15},{cx-9,cy+24},c,2);
             r.draw_line({cx+5,cy+15},{cx+9,cy+24},c,2);
             break;
+        case BuildIcon::HydrogenGenerator:
+            r.draw_rect({x+6,y+13,19,26},{c.r,c.g,c.b,0.10f});
+            r.draw_rect({x+27,y+17,16,22},{c.r,c.g,c.b,0.08f});
+            for(int i=0;i<4;++i){
+                const float yy=y+18.0f+i*5.0f;
+                r.draw_line({x+9,yy},{x+22,yy},c,1.3f);
+            }
+            r.draw_line({x+25,cy},{x+31,cy},c,2.0f);
+            r.draw_line({x+31,cy},{x+35,cy-6},c,2.0f);
+            r.draw_line({x+31,cy},{x+35,cy+6},c,2.0f);
+            r.draw_line({x+7,y+h-7},{x+w-7,y+h-7},c,2.0f);
+            break;
         case BuildIcon::StorageDome:
             // Low geodesic storage dome with a central cargo door.
             r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);

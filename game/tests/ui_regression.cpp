@@ -80,13 +80,15 @@ struct UiRegression {
             if(scene==13 || scene==14){
                 auto& h=app.placed_habitats_[0];h.kind=scene==13?HabitatKind::OxygenGeneratorDome:HabitatKind::CrewQuarters;h.construction.step=kConstructionSteps;
                 h.supply.volume_m3=150;h.supply.oxygen_kg=150*kOxygenKgPerM3*0.75;h.supply.power_fraction=1;h.supply.water_to_fill_litres=150*kOxygenKgPerM3*0.25*kWaterPerOxygen;
-                h.supply.air_change_percentage_points_per_day=scene==13?0.125:-0.125;h.supply.oxygen_net_kg_per_day=scene==13?0.5:-0.5;h.supply.oxygen_produced_kg_per_day=9;h.supply.water_processed_litres_per_day=10.125;
+                h.supply.air_change_percentage_points_per_day=scene==13?0.125:-0.125;h.supply.oxygen_net_kg_per_day=scene==13?0.5:-0.5;h.supply.oxygen_produced_kg_per_day=9;h.supply.water_processed_litres_per_day=10.125;h.supply.hydrogen_produced_kg_per_day=1.125;h.supply.hydrogen_kg=2.25;
                 app.selection_kind_=GameApp::SelectionKind::Habitat;app.selected_habitat_=0;app.game_speed_=GameApp::GameSpeed::Normal;
             }
             if(scene==15){CorridorConnection corridor;corridor.path={{-8,0,0},{8,0,0}};corridor.construction.step=corridor.construction.total_steps;corridor.supply.volume_m3=64;corridor.supply.oxygen_kg=64*kOxygenKgPerM3*0.5;
                 app.corridor_network_.restore_connections({corridor});app.selection_kind_=GameApp::SelectionKind::Corridor;app.selected_corridor_=0;}
             if(scene==16 || scene==17){auto& item=app.placed_resources_[0];item.kind=scene==16?ResourceKind::StorageDome:ResourceKind::RobotWorkshop;
                 item.supply.warnings=scene==16?(NoPower|LowAir):NoPower;app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;}
+            if(scene==18){auto& item=app.placed_resources_[0];item.kind=ResourceKind::HydrogenGenerator;item.construction.step=kConstructionSteps;item.supply.hydrogen_power_kw=2.75;item.supply.hydrogen_consumed_kg_per_day=3.60;
+                app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;app.game_speed_=GameApp::GameSpeed::Normal;}
             if(scene==12){app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({-12,0,-12},45);}
         }
     }
@@ -165,13 +167,30 @@ struct UiRegression {
         }
         std::cout<<cases<<" status-bar cases: battery capacity/charge, combined indoor air, disconnected rooms, excluded blueprints/outdoor machinery, empty/full/clamped values and resolution scaling passed\n";
     }
+    static void progress_tree(){
+        eng::Application engine;int cases=0;
+        constexpr std::array<eng::Vec2,5> sizes{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}};
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:sizes){
+            GameApp app(engine);setup(app,7,zoom);app.debug_frame_enabled_=false;Recorder r;r.resize((int)size.x,(int)size.y);app.render(r);r.check_bounds("progress tree");
+            bool title=false,stage=false,milestone=false;for(const auto& d:r.draws)if(d.type=='T'){title|=d.text.find("COLONY PROGRESS")!=std::string::npos;stage|=d.text.find("STAGE 1")!=std::string::npos;milestone|=d.text.find("READY FOR HUMAN CREW")!=std::string::npos;}
+            require(title&&stage&&milestone,"normal gameplay progression checklist is missing");
+            const auto panel=app.progress_tree_panel_rect();const float logical_h=size.y/app.ui_scale_;
+            require(panel.y>=layout::STATUS_BAR_H+32.0f,"progress panel overlaps status tooltip area");
+            require(panel.y+panel.h<=logical_h-layout::BUILD_BAR_H-4.0f,"progress panel overlaps build catalog");
+            ++cases;
+        }
+        GameApp debug(engine);setup(debug,7,2);debug.debug_frame_enabled_=true;Recorder r;r.resize(1920,1080);debug.render(r);for(const auto& d:r.draws)require(d.type!='T' || d.text.find("COLONY PROGRESS")==std::string::npos,"progress tree visible in debugging mode");
+        std::cout<<cases<<" progression checklist resolution/border cases plus debug-mode suppression passed\n";
+    }
+
     static void run(const std::string& output){
         order_controls();
         airlock_status();
         status_bars(output);
+        progress_tree();
         eng::Application engine;
         constexpr std::array<eng::Vec2,5> sizes{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}};
-        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(int scene=0;scene<18;++scene){
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(int scene=0;scene<19;++scene){
             Recorder reference;
             for(std::size_t n=0;n<sizes.size();++n){
                 GameApp app(engine);setup(app,scene,zoom);Recorder r;r.resize((int)sizes[n].x,(int)sizes[n].y);app.render(r);
@@ -179,7 +198,8 @@ struct UiRegression {
                 r.check_bounds(label);
                 const auto has_text=[&](const std::string& part){for(const auto& d:r.draws)if(d.type=='T' && d.text.find(part)!=std::string::npos)return true;return false;};
                 if(scene==8 || scene==9 || (scene>=13 && scene<=15))require(has_text("BREATHABLE AIR") && has_text("AIR CHANGE"),"indoor details omit the air percentage/change rate");
-                if(scene==13)require(has_text("75.0%") && has_text("+0.125") && has_text("9.000 KG/DAY / WATER 10.125 L/DAY") && has_text("CONVERTING WATER TO OXYGEN"),"generator details do not show measured intake/output");
+                if(scene==13)require(has_text("75.0%") && has_text("+0.125") && has_text("O2 OUTPUT 9.000 KG/D / WATER 10.125 L/D") && has_text("H2 OUTPUT 1.125 KG/D / BUFFER 2.250") && has_text("ELECTROLYSIS: O2 + H2"),"oxygen-generator details do not show measured oxygen/water/hydrogen output");
+                if(scene==18)require(has_text("FUEL CELL 2.75 / 3.00 KW") && has_text("H2 USE 3.600 KG/D") && has_text("COMPLETED SUPPLY-CHANNEL NETWORK"),"hydrogen-generator details omit fuel-cell dispatch/transport telemetry");
                 if(scene==9)require(has_text("WARNING:") && has_text("AIR BELOW 95%"),"storage warning icon reason missing");
                 if(scene==16 || scene==17)require(has_text("WARNING:") && has_text("INSUFFICIENT POWER"),"storage/workshop early return hides warning reasons");
                 if(scene==12)require(has_text("SPACE JUMP"),"POV help omits Space jump");
@@ -188,13 +208,13 @@ struct UiRegression {
                 if(!output.empty() && ((zoom==2 && (n==0 || n==4)) || (zoom==4 && n==0)))r.write(std::filesystem::path(output)/("ui-"+std::to_string(scene)+"-"+std::to_string(r.w)+"-zoom"+std::to_string(zoom)+".json"));
             }
         }
-        const std::array<std::string,7> reasons{{"INSUFFICIENT POWER","NO TANK WATER","AIR BELOW 95%","RESERVE BELOW 10%","NO CONNECTED","LOW FOOD","LOW MEDICAL"}};
+        const std::array<std::string,8> reasons{{"INSUFFICIENT POWER","NO TANK WATER","AIR BELOW 95%","RESERVE BELOW 10%","NO CONNECTED","LOW FOOD","LOW MEDICAL","NO CONNECTED H2"}};
         int structure_cases=0;
         for(int domain=0;domain<2;++domain)for(int kind=0;kind<(domain==0?(int)HabitatKind::Count:(int)ResourceKind::Count);++kind)for(int warning_state=0;warning_state<2;++warning_state){
             GameApp app(engine);setup(app,7,4);SupplyState* supply=nullptr;
             if(domain==0){auto& h=app.placed_habitats_[0];h.kind=(HabitatKind)kind;h.construction.step=kConstructionSteps;supply=&h.supply;app.selection_kind_=GameApp::SelectionKind::Habitat;app.selected_habitat_=0;}
             else {auto& item=app.placed_resources_[0];item.kind=(ResourceKind)kind;item.construction.step=kConstructionSteps;supply=&item.supply;app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;}
-            supply->warnings=warning_state?127:0;
+            supply->warnings=warning_state?255:0;
             Recorder detail;detail.resize(1280,720);app.render(detail);detail.check_bounds("all structure warnings");
             const auto panel=app.selection_panel_rect();require(panel.y+panel.h<=720/app.ui_scale_-layout::BUILD_BAR_H+0.01f,"warning details overlap build bar");
             std::string shown;for(const auto& d:detail.draws)if(d.type=='T' && d.v[0]>=panel.x && d.v[0]<panel.x+panel.w && d.v[1]>=panel.y+75 && d.v[1]<panel.y+110){shown+=d.text;shown+=' ';require(d.v[0]+d.v[2]<=panel.x+panel.w-10,"warning text escapes frame");}
@@ -222,7 +242,7 @@ struct UiRegression {
         const auto stroke=eng::ui::line_quad({0,0},{40,0},2);require(std::abs(stroke[1]-stroke[7]-2)<1e-6f,"logical stroke thickness changed");
         const auto metric=eng::ui::text_extent("WW\nW",2);require(metric.x==24 && metric.y==30,"multiline font metrics differ from glyph grid");
         for(char ch:std::string("[]_!?#|"))require(eng::ui::kBitmapFont.count(ch)==1,"UI punctuation glyph missing");
-        std::cout<<"450 resolution/zoom/screen cases and "+std::to_string(structure_cases)+" structure warning cases, HD-to-4K proportions, hitboxes, frame-boundary zoom, aspect ratios, button text and shared font/stroke metrics passed\n";
+        std::cout<<"475 resolution/zoom/screen cases and "+std::to_string(structure_cases)+" structure warning cases, HD-to-4K proportions, hitboxes, frame-boundary zoom, aspect ratios, button text and shared font/stroke metrics passed\n";
     }
 };
 }

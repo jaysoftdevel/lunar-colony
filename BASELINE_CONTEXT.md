@@ -34,7 +34,7 @@
 ## Verification and packaging
 
 - Optional headless regressions: configure with `-DGAME_BUILD_NAVIGATION_TESTS=ON`, then use CTest. They cover swept fleet separation, smooth open travel, obstacle corners, changed scenes, occupied service points, opposing traffic, single-lane yielding, rotations/size tiers, storage ports, interior headroom and construction logistics.
-- Update archive: `game-update-vX.Y.Z.zip` containing one `game-update-vX.Y.Z/` directory with only `apply.sh` and `update.patch`. Apply does not build. Clean builds preserve existing executable-adjacent savegames, including on build failure.
+- Update archive: `game-update-vX.Y.Z.zip` containing one `game-update-vX.Y.Z/` directory with `update.patch`, `apply.sh`, `apply.bat` and `update-summary.txt`. Installers print the full changed-file summary and do not build. Clean builds preserve existing executable-adjacent savegames, including on build failure.
 - v0.40.47 remains the historical logistics/build baseline. For current locomotion and access behavior, this document supersedes older version notes in `ARCHITECTURE.md`.
 
 ## v0.41.6 storage handling and pressure doors
@@ -63,3 +63,17 @@
 - Gate builders work outside the parent hull. Gate mesh chambers, animated leaves and pressure doors follow blue/yellow/green construction rendering without opaque structure surfaces. Unused crew-port furniture is clipped only at cargo faces; hull and rear transfer seals remain intact.
 - Schema 16 persists child-parent links, validates the two-gate/unique-face limit and restores unfinished upgrades. Deleting a dome cascades to its gates and remaps active construction targets. Schemas 1-15 remain readable.
 - `navigation_storage_extensions` covers real selection-button clicks, both parent build states, exact material accounting, dependency order, all size/rotation gate meshes, sealed rear bulkheads, reserved faces, persistence, parallel transfers and cascading removal.
+## v0.43.15 hydrogen energy and tracked solar generation
+
+- `ResourceKind::HydrogenGenerator` is an outdoor utility structure. Oxygen Generators retain electrolysis hydrogen in a local size-scaled buffer; only a completed Supply Channel component can make that inventory available to a fuel-cell generator. Hydrogen is never a global resource pool.
+- Fuel-cell dispatch is load-following. Solar generation is used first, hydrogen generation covers remaining component demand and available battery charge input, then batteries discharge for any residual deficit. A fuel cell does not burn H2 when no load or battery can accept its output.
+- The hydrogen energy model uses 33.3 kWh/kg LHV and 55% net electrical conversion, yielding 18.315 kWh/kg. Standard Hydrogen Generator peak output is 3.0 kW; SMALL scales to 50%. Oxygen Generator H2 production is 0.125 kg per kg O2 with a 4.5 kg standard local buffer.
+- `solar_tracking.hpp` owns the nonvisualized stellar pose used by both simulation and rendering. The default reference is equinox/30 degrees north on the existing 24-hour game clock. `SolarPose` exposes direction, future render position, azimuth, elevation, daylight state and available irradiance.
+- Completed Solar Panel collector heads rotate toward the simulated star on two axes; the pedestal/inverter remains fixed. No visible sun/star object is rendered in v0.43.15.
+- Save schema 20 appends persistent hydrogen inventory to every `SupplyState`; schemas 1-19 remain readable with H2 initialized to zero. Progression stages and the v0.40.47 logistics/collision baseline are not changed by this update.
+
+## v0.43.16 narrow-passage route fallback
+
+- Rover structure clearance has two distinct layers: the hard circumscribed chassis envelope is never reduced, while the preferred extra structure halo is discretionary. Normal travel keeps the 1.00 m comfort halo; recovery may reduce only that extra halo to physical-only clearance.
+- A wide 0.80 m precision grid with physical-only clearance runs only after the normal direct/dogleg, wide/coarse and fine/local attempts all fail. This keeps ordinary construction/service routing on the established fast tiers.
+- This specifically fixes layouts where a rover must pass through a narrow but valid gap before making a wide detour. Do not replace this with a globally smaller robot radius; fleet and structure collision certification remains based on the full visible rover hull.

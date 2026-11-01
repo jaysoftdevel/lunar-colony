@@ -10,7 +10,7 @@ This file is the context map for future changes. Start from the smallest build t
 | `game_cluster_rendering` | world/robot visual output | `game/src/playfield/world_renderer.cpp`, `builder_robot_renderer.cpp` | UI only for overlays; robots only if robot state changes |
 | `game_cluster_ui` | HUD, build bar, status/debug/selection panels | `game/src/ui/` | app/interaction if input behavior changes |
 | `game_cluster_interaction` | playfield input, selection, camera and first-person control | playfield view + gameplay/world-selection/camera/FP systems | UI for controls; world for collision/access rules |
-| `game_cluster_simulation` | colony status and save/load persistence | `colony_status.cpp`, `save_game.cpp` | affected state-owning cluster only |
+| `game_cluster_simulation` | colony status, utility/life-support simulation, progression and save/load persistence | `colony_status.cpp`, `supply_simulation.cpp`, `game_progress.cpp`, `save_game.cpp` | affected state-owning cluster only |
 | `game_cluster_world_core` | playfield, common mesh data, construction reveal sequence | core files under `game/src/world/` | habitat/resource/network cluster as needed |
 | `game_cluster_habitats` | habitat outer/inner implementations | `game/src/world/habitats/` | world core; construction when placement/build rules change |
 | `game_cluster_resources` | outdoor/resource structure implementations | `game/src/world/resources/` | world core; construction when placement/build rules change |
@@ -99,3 +99,15 @@ The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; i
 - `storage_loading_gate.hpp` shares face-specific geometry and all-face reservations across placement, routing, logistics, rendering and crew collision. `builder_robot.cpp` reuses existing resource delivery/build stages with a completed-parent dependency, exterior work bays, per-gate transfer claims and queues.
 - `selection_panel.cpp` exposes ADD GATE for blueprint/completed domes, cost and upgrade progress. `save_game.cpp` schema 16 persists parent placement sequences and validates links. `world_selection.cpp` cascades dome deletion and repairs robot resource targets.
 - `world_renderer.cpp` emits blue/yellow/green meshes for gates and pressure doors, clips obsolete crew-port detail furniture at cargo faces and animates independent shutters. `navigation_storage_extensions` tests the complete feature with the real game objects.
+## v0.43.15 hydrogen / stellar-energy ownership
+
+- `game_cluster_simulation`: `game/include/game/systems/solar_tracking.hpp`, `supply_simulation.cpp`, `colony_status.*` and `save_game.cpp` own the star pose, H2 mass/energy accounting, component-local dispatch and schema-20 persistence.
+- `game_cluster_resources`: `world/resources/hydrogen_generator.cpp`, `resource_mesh.cpp` and `resource_builder.hpp` own the outdoor fuel-cell mesh and resource refinements.
+- `game_cluster_rendering`: `world_renderer.cpp` transforms only the completed Solar Panel collector head toward `ColonyStatus::sun_direction()`; it intentionally does not render the star.
+- `game_cluster_ui`: build icon/selection details and `supply_warnings.hpp` expose H2 production, buffer, fuel-cell output/consumption and missing-H2 state without changing the status-bar layout.
+- `game_cluster_construction`: build catalog and construction costs register the new resource kind. Hydrogen Generator is independent of the Stage 1-3 progress tree unless a later stage explicitly adds it.
+
+## v0.43.16 precision-passage navigation
+
+- `game/src/systems/builder_robot.cpp`: adaptive route-tier selection. Preferred 1.00 m structure halo -> physical-only direct probe -> wide/coarse 0.30 m -> fine/local physical-only -> wide/fine 0.80 m physical-only final fallback.
+- `game/tests/navigation_regression.cpp`: `clearance-save <path>` regression mode validates that the supplied blocked-builder save publishes a route and escapes without a safety fault or replan thrash.

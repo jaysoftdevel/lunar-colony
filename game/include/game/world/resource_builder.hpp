@@ -195,6 +195,12 @@ inline ResourceMesh refine_future_resource(ResourceMesh source,ResourceKind kind
                 b.cylinder_y(b.mesh.details,{c.x,1.62f,c.z},0.22f,0.14f,8,true);
             }
             break;
+        case ResourceKind::HydrogenGenerator:
+            // Hydrogen-rated plumbing, stack isolation and external service instrumentation.
+            b.cylinder_x(b.mesh.details,{0,1.02f,-hz*0.42f},hx*1.35f,0.060f,8,true);
+            b.cylinder_x(b.mesh.details,{0,1.24f,-hz*0.35f},hx*1.35f,0.040f,8,true);
+            b.box(b.mesh.details,{hx*0.26f,0.84f,hz*0.34f},{0.72f,0.62f,0.40f});
+            break;
         case ResourceKind::RobotWorkshop: break;
         case ResourceKind::StorageGate: break;
         case ResourceKind::Count: break;

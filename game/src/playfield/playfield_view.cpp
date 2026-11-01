@@ -36,6 +36,7 @@ void GameApp::render_playfield(Renderer& r){
         render_construction_status_frames(r);
     render_supply_indicators(r);
         render_status_bar(r);
+        render_progress_tree(r);
         render_first_person_hud(r);
         return;
     }
@@ -52,6 +53,7 @@ void GameApp::render_playfield(Renderer& r){
     render_construction_status_frames(r);
     render_supply_indicators(r);
     render_status_bar(r);
+    render_progress_tree(r);
     render_build_bar(r);
     render_selection_marquee(r);
     if(debug_frame_enabled_) render_debug_frame(r);

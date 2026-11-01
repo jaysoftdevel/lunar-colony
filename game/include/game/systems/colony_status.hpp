@@ -1,4 +1,5 @@
 #pragma once
+#include "game/systems/solar_tracking.hpp"
 
 namespace game {
 struct ColonyStatusState {
@@ -8,8 +9,8 @@ struct ColonyStatusState {
     int power_capacity{100};
     int water_current{840};
     int water_capacity{1000};
-    int crew_current{6};
-    int crew_capacity{8};
+    int crew_current{0};
+    int crew_capacity{0};
 };
 
 class ColonyStatus {
@@ -18,7 +19,9 @@ public:
     void update(float dt);
     int day() const { return day_; }
     float hour() const { return hour_; }
-    bool is_daylight() const { return hour_>=6.0f && hour_<18.0f; }
+    solar_tracking::SolarPose sun_pose() const { return solar_tracking::pose(hour_); }
+    eng::Vec3 sun_direction() const { return sun_pose().direction; }
+    bool is_daylight() const { return sun_pose().above_horizon; }
     int power_current() const { return power_current_; }
     int power_capacity() const { return power_capacity_; }
     int water_current() const { return water_current_; }
@@ -35,7 +38,7 @@ private:
     int power_capacity_=100;
     int water_current_=840;
     int water_capacity_=1000;
-    int crew_current_=6;
-    int crew_capacity_=8;
+    int crew_current_=0;
+    int crew_capacity_=0;
 };
 }

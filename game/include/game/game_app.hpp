@@ -4,6 +4,7 @@
 #include "game/systems/camera_controller.hpp"
 #include "game/systems/first_person_controller.hpp"
 #include "game/systems/colony_status.hpp"
+#include "game/systems/game_progress.hpp"
 #include "game/systems/resource_management.hpp"
 #include "game/systems/builder_robot.hpp"
 #include "game/world/playfield.hpp"
@@ -115,6 +116,7 @@ private:
     std::vector<airlock::Cycle> airlock_cycles_{}; // transient, seals reset safely on load
     std::vector<float> storage_gate_open_{};
     UtilityNetwork utility_network_{};
+    UtilityServiceSnapshot last_supply_services_{}; // derived live topology for progression/UI
     WalkwayNetwork walkway_network_{};
     float placement_rotation_degrees_=0.0f;
     HabitatSizeTier placement_habitat_size_{HabitatSizeTier::Small};
@@ -159,6 +161,7 @@ private:
     void render_credits(eng::Renderer& r);
     void render_playfield(eng::Renderer& r);
     void render_status_bar(eng::Renderer& r);
+    void render_progress_tree(eng::Renderer& r);
     void render_build_bar(eng::Renderer& r);
     void render_view_selector(eng::Renderer& r,float y,float logical_w);
     void render_debug_frame(eng::Renderer& r);
@@ -219,6 +222,9 @@ private:
     void update_builder_robot(float dt);
     float game_speed_multiplier() const;
     void update_resource_economy(float dt);
+    GameProgressSnapshot game_progress_snapshot() const;
+    int crew_quarters_capacity() const;
+    eng::Rect progress_tree_panel_rect() const;
     UtilityServiceSnapshot update_supply_simulation(float dt);
     void render_supply_indicators(eng::Renderer& r);
     void render_gate_areas(eng::Renderer& r) const;

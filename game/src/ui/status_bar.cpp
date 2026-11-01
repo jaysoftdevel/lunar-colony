@@ -180,12 +180,15 @@ void GameApp::render_status_bar(Renderer& r){
     bar(day_w+power_w,air_w,air_fraction,air_fraction<0.95?Color{1,0.38f,0.30f,1}:Color{0.25f,0.86f,0.98f,1});
     const double water_fraction=water_capacity>0?water_stored/water_capacity:0;
     bar(day_w+power_w+air_w,water_w,water_fraction,water_fraction<0.10?Color{1,0.38f,0.30f,1}:Color{0.25f,0.65f,1,1});
-    const auto rate=[&](float x,float width,double value,const char* unit){
-        std::ostringstream text;if(game_speed_==GameSpeed::Pause)text<<"RATE PAUSED";
-        else text<<"RATE "<<std::showpos<<std::fixed<<std::setprecision(1)<<(std::abs(value)<0.05?0:value)<<" "<<unit;
+    const auto rate=[&](float x,float width,double net,double load,const char* unit,const char* load_label){
+        std::ostringstream text;
+        if(game_speed_==GameSpeed::Pause)text<<"RATE PAUSED";
+        else text<<"RATE "<<std::showpos<<std::fixed<<std::setprecision(1)<<(std::abs(net)<0.05?0:net)<<" "<<unit
+                 <<std::noshowpos<<" / "<<load_label<<" "<<std::setprecision(1)<<std::max(0.0,load);
         game_label_fitted(r,{x+7,21,width-14,10},text.str(),0.43f,theme_,true);
     };
-    rate(day_w,power_w,battery_net_kw_,"KW");rate(day_w+power_w+air_w,water_w,water_net_litres_per_day_,"L/D");
+    rate(day_w,power_w,battery_net_kw_,supply_power_load_kw_,"KW","LOAD");
+    rate(day_w+power_w+air_w,water_w,water_net_litres_per_day_,supply_water_load_litres_per_day_,"L/D","USE");
 
 
     const float mouse_x=(float)ui_input_.mouse_x;

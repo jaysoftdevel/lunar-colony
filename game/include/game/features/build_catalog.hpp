@@ -33,7 +33,8 @@ enum class BuildIcon {
     StorageDome,
     SupplyChannel,
     Walkway,
-    RobotWorkshop
+    RobotWorkshop,
+    HydrogenGenerator
 };
 
 enum class BuildCategory {

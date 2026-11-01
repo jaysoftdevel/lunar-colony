@@ -22,6 +22,7 @@ enum class ResourceKind {
     StorageDome,
     RobotWorkshop,
     StorageGate,
+    HydrogenGenerator,
     Count
 };
 

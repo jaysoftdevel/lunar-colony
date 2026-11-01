@@ -332,6 +332,32 @@ struct NavigationRegression {
         require(delivered,"saved carrier did not deliver its original cargo within 900 s");require(app.construction_target_complete(original),"original saved delivery task never completed after continued trips");require(max_travel>10,"saved carrier never left the blocked location");
         std::cout<<"Saved carrier delivery resumed; original target progressed, first delivery s="<<first_delivery<<" final step="<<(int)app.construction_target_step(original)<<" total ms="<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-began).count()<<" worst tick ms="<<worst<<"\n";
     }
+    static void clearance_save(const std::string& path){
+        eng::Application engine;GameApp app(engine);std::string error;
+        require(app.load_game_from_file(path,error),error);
+        require(!app.builder_robots_.empty(),"clearance fixture needs a builder");
+        const Vec3 start=app.builder_robots_[0].position;
+        float max_travel=0.0f;
+        bool route_published=false;
+        std::uint32_t max_replans=0;
+        for(int frame=0;frame<60*30;++frame){
+            app.update_pressure_doors(1.0f/60.0f);
+            app.update_construction(1.0f/60.0f);
+            const auto& robot=app.builder_robots_[0];
+            require(robot.safety.mode!=SafetyMode::Fault,
+                    std::string("clearance save entered safety fault: ")+block_reason_name(robot.safety.block_reason));
+            max_travel=std::max(max_travel,distance(start,robot.position));
+            route_published=route_published || !robot.safety.cached_route.empty() || robot.route_active;
+            max_replans=std::max(max_replans,robot.safety.local_replans);
+            if(max_travel>8.0f) break;
+        }
+        require(route_published,"builder never published a route from the narrow pocket");
+        require(max_travel>8.0f,"builder remained blocked in the narrow pocket");
+        require(max_replans<12,"precision fallback thrashed instead of escaping");
+        std::cout<<"Saved narrow-passage builder escaped "<<max_travel
+                 <<" m with full hard hull clearance; replans="<<max_replans<<"\n";
+    }
+
     static void inspect(const std::string& path){
         eng::Application engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
@@ -797,6 +823,8 @@ struct NavigationRegression {
         const auto& gen=app.placed_habitats_[0].supply;
         require(gen.oxygen_produced_kg_per_day>8.99 && gen.oxygen_produced_kg_per_day<=9.00001,"generator does not report actual oxygen output");
         require(std::abs(gen.water_processed_litres_per_day-gen.oxygen_produced_kg_per_day*kWaterPerOxygen)<1e-9,"water processing and oxygen rate disagree");
+        require(std::abs(gen.hydrogen_produced_kg_per_day-gen.oxygen_produced_kg_per_day*kHydrogenPerOxygen)<1e-9,"electrolysis hydrogen/oxygen mass ratio is not 1:8");
+        require(gen.hydrogen_kg>0 && gen.hydrogen_kg<=kOxygenGeneratorHydrogenBufferKg,"oxygen generator did not retain hydrogen by-product in its local buffer");
         require(app.placed_habitats_[1].supply.oxygen_kg==0 && app.placed_resources_[3].supply.oxygen_kg==0,"generator instantaneously filled downstream interiors");
         app.update_supply_simulation(60);
         require(std::abs((20-app.placed_resources_[1].supply.water_litres)-mass()*kWaterPerOxygen)<1e-7,"water-to-oxygen network mass balance failed");
@@ -811,7 +839,7 @@ struct NavigationRegression {
         app.placed_resources_[1].supply.water_litres=100;clock.hour=0;app.status_.restore(clock);const double before_unpowered=app.placed_resources_[1].supply.water_litres;app.update_supply_simulation(1);
         require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && (gen.warnings&NoPower) && app.placed_resources_[1].supply.water_litres==before_unpowered,"unpowered generator processed water");
         clock.hour=12;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=s.volume_m3*kOxygenKgPerM3;});app.update_supply_simulation(1);
-        require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && app.placed_resources_[1].supply.water_litres==100,"full interiors overproduced oxygen or wasted water");
+        require(gen.oxygen_produced_kg_per_day>0 && gen.oxygen_produced_kg_per_day<9 && gen.water_processed_litres_per_day>0 && app.placed_resources_[1].supply.water_litres<100,"nominal full-pressure leakage was not replenished by life support");
         clock.hour=0;clock.crew_current=6;app.status_.restore(clock);app.update_supply_simulation(1);
         require(app.placed_habitats_[2].supply.air_change_percentage_points_per_day<0,"depleting isolated interior did not report falling air");
         clock.hour=12;clock.crew_current=0;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=0;});app.placed_resources_[1].supply.water_litres=0.01;app.update_supply_simulation(10);
@@ -819,6 +847,76 @@ struct NavigationRegression {
         const double saved_mass=mass();app.update_supply_simulation(0);
         require(mass()==saved_mass && gen.oxygen_produced_kg_per_day==0 && gen.oxygen_net_kg_per_day==0,"zero-time refresh consumed water or retained a stale rate");
         std::cout<<"Water electrolysis, measured output/intake and air-change rates, room/storage distribution, depletion, isolation and input/capacity limits passed\n";
+    }
+
+    static void hydrogen_solar(){
+        constexpr float eps=0.015f;
+        const auto morning=solar_tracking::pose(6.25f),noon=solar_tracking::pose(12.0f),evening=solar_tracking::pose(17.75f),night=solar_tracking::pose(20.0f);
+        require(morning.above_horizon && morning.direction.x>0.95f && morning.elevation_degrees>0,"star does not rise in the east above the horizon");
+        require(noon.above_horizon && noon.direction.z<-0.45f && noon.elevation_degrees>59.0f && noon.elevation_degrees<61.0f,"noon star is not on the southern 60-degree reference arc");
+        require(std::abs(eng::length(noon.position)-solar_tracking::kStarReferenceDistanceMetres)<0.05f,"nonvisualized star has no stable future render position");
+        require(evening.above_horizon && evening.direction.x<-0.95f,"star does not cross toward the western horizon");
+        require(!night.above_horizon && night.irradiance_fraction==0,"night star still produces photovoltaic irradiance");
+        require(noon.irradiance_fraction>0.99f && morning.irradiance_fraction>0.99f,"two-axis tracking failed to retain near-normal incidence away from the horizon ramp");
+
+        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(160);app.status_.reset();
+        auto clock=app.status_.state();clock.hour=0;clock.crew_current=0;app.status_.restore(clock);
+        auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
+        auto habitat=[](HabitatKind kind,Vec3 p){PlacedHabitat h;h.kind=kind;h.position=p;h.construction.step=kConstructionSteps;return h;};
+        app.placed_habitats_={habitat(HabitatKind::OxygenGeneratorDome,{-10,0,0})};
+        app.placed_habitats_[0].supply.hydrogen_kg=1.0;
+        app.placed_resources_={resource(ResourceKind::HydrogenGenerator,{10,0,0}),resource(ResourceKind::PowerStorage,{25,0,0})};
+        UtilityConnection h2;h2.endpoint_a.kind=UtilityEndpointKind::Habitat;h2.endpoint_a.index=0;h2.endpoint_b.kind=UtilityEndpointKind::Resource;h2.endpoint_b.index=0;h2.path={{-10,0,0},{10,0,0}};h2.construction.step=h2.construction.total_steps;
+        UtilityConnection battery;battery.endpoint_a.kind=battery.endpoint_b.kind=UtilityEndpointKind::Resource;battery.endpoint_a.index=0;battery.endpoint_b.index=1;battery.path={{10,0,0},{25,0,0}};battery.construction.step=battery.construction.total_steps;
+        app.utility_network_.restore_connections({h2,battery});
+        const double h2_before=app.placed_habitats_[0].supply.hydrogen_kg;
+        app.update_supply_simulation(10.0f); // one simulated hour
+        const auto& cell=app.placed_resources_[0].supply;
+        require(cell.hydrogen_power_kw>2.99 && cell.hydrogen_power_kw<=kHydrogenGeneratorPeakKw+eps,"hydrogen generator did not dispatch at its rated useful-output limit");
+        require(app.placed_resources_[1].supply.energy_kwh>0,"hydrogen generator surplus did not charge its connected battery");
+        require(app.placed_habitats_[0].supply.hydrogen_kg<h2_before,"fuel cell produced electricity without consuming connected hydrogen");
+        require(std::abs(cell.hydrogen_consumed_kg_per_day*kHydrogenElectricalKwhPerKg/24.0-cell.hydrogen_power_kw)<0.01,"fuel-cell hydrogen-to-electricity energy balance is inconsistent");
+
+        // A disconnected generator must neither teleport hydrogen nor create power.
+        const double stored=app.placed_resources_[1].supply.energy_kwh,remaining=app.placed_habitats_[0].supply.hydrogen_kg;
+        app.utility_network_.restore_connections({battery});app.update_supply_simulation(10.0f);
+        require((app.placed_resources_[0].supply.warnings&NoHydrogen)!=0,"disconnected hydrogen generator has no missing-fuel warning");
+        require(app.placed_habitats_[0].supply.hydrogen_kg==remaining,"disconnected fuel cell teleported hydrogen from the oxygen generator");
+        require(app.placed_resources_[1].supply.energy_kwh<=stored+1e-9,"disconnected hydrogen generator created stored energy");
+
+        // Completed solar collectors physically change collector-head orientation with the nonvisualized star.
+        GameApp solar(engine);solar.playfield_.rebuild(160);solar.placed_resources_={resource(ResourceKind::SolarPanel,{0,0,0})};
+        auto solar_clock=solar.status_.state();solar_clock.hour=8;solar.status_.restore(solar_clock);GeometryRecorder east_view;solar.render_resources(east_view);
+        solar_clock.hour=12;solar.status_.restore(solar_clock);GeometryRecorder noon_view;solar.render_resources(noon_view);
+        require(east_view.triangles.size()==noon_view.triangles.size() && !east_view.triangles.empty(),"tracked solar renderer emitted inconsistent geometry");
+        float max_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)max_shift=std::max(max_shift,eng::length(east_view.triangles[i]-noon_view.triangles[i]));
+        require(max_shift>0.25f,"solar collector head did not follow the star across the playfield");
+        std::cout<<"Hydrogen electrolysis/fuel-cell energy cycle, network isolation, realistic star arc and two-axis solar tracking passed\n";
+    }
+
+    static void progression(){
+        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);app.debug_frame_enabled_=false;app.status_.reset();
+        require(app.status_.crew_current()==0 && app.status_.crew_capacity()==0,"fresh colony already contains human crew");
+        auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
+        auto habitat=[](HabitatKind kind,HabitatSizeTier size,Vec3 p){PlacedHabitat h;h.kind=kind;h.size=size;h.position=p;h.construction.step=kConstructionSteps;return h;};
+        app.placed_resources_={resource(ResourceKind::SolarPanel,{-30,0,-20}),resource(ResourceKind::PowerStorage,{-15,0,-20}),resource(ResourceKind::WaterDriller,{0,0,-20}),resource(ResourceKind::WaterStorage,{15,0,-20})};
+        const auto pipe_rr=[&](std::size_t a,std::size_t b){UtilityConnection u;u.endpoint_a.kind=u.endpoint_b.kind=UtilityEndpointKind::Resource;u.endpoint_a.index=a;u.endpoint_b.index=b;u.path={app.placed_resources_[a].position,app.placed_resources_[b].position};u.construction.step=u.construction.total_steps;app.utility_network_.mutable_connections().push_back(u);};
+        pipe_rr(0,1);pipe_rr(1,2);pipe_rr(2,3);app.update_supply_simulation(0);
+        auto p1=app.game_progress_snapshot();require(p1.stages.size()==3 && p1.stages[0].complete && p1.active_stage==2 && !p1.ready_for_human_crew,"Stage 1 resource/network progression did not complete");
+        app.placed_habitats_={habitat(HabitatKind::AirLock,HabitatSizeTier::Small,{15,0,0}),habitat(HabitatKind::OxygenGeneratorDome,HabitatSizeTier::Small,{15,0,15})};
+        UtilityConnection into;into.endpoint_a.kind=UtilityEndpointKind::Resource;into.endpoint_a.index=3;into.endpoint_b.kind=UtilityEndpointKind::Habitat;into.endpoint_b.index=0;into.path={{15,0,-20},{15,0,0}};into.construction.step=into.construction.total_steps;app.utility_network_.mutable_connections().push_back(into);
+        UtilityConnection life;life.endpoint_a.kind=life.endpoint_b.kind=UtilityEndpointKind::Habitat;life.endpoint_a.index=0;life.endpoint_b.index=1;life.path={{15,0,0},{15,0,15}};life.construction.step=life.construction.total_steps;app.utility_network_.mutable_connections().push_back(life);app.update_supply_simulation(0);
+        auto p2=app.game_progress_snapshot();require(p2.stages[1].complete && p2.active_stage==3,"Stage 2 air-lock/oxygen/network progression did not complete");
+        app.placed_habitats_.push_back(habitat(HabitatKind::CantineDome,HabitatSizeTier::Small,{0,0,15}));
+        app.placed_habitats_.push_back(habitat(HabitatKind::CrewQuarters,HabitatSizeTier::Mid,{-15,0,15}));
+        app.placed_resources_.push_back(resource(ResourceKind::LandingPad,{-30,0,15}));
+        UtilityConnection food;food.endpoint_a.kind=food.endpoint_b.kind=UtilityEndpointKind::Habitat;food.endpoint_a.index=1;food.endpoint_b.index=2;food.path={{15,0,15},{0,0,15}};food.construction.step=food.construction.total_steps;app.utility_network_.mutable_connections().push_back(food);
+        UtilityConnection dorm;dorm.endpoint_a.kind=dorm.endpoint_b.kind=UtilityEndpointKind::Habitat;dorm.endpoint_a.index=2;dorm.endpoint_b.index=3;dorm.path={{0,0,15},{-15,0,15}};dorm.construction.step=dorm.construction.total_steps;app.utility_network_.mutable_connections().push_back(dorm);
+        app.update_supply_simulation(0);require(app.status_.crew_capacity()==6,"crew capacity is not derived from completed dorm size");
+        auto p3=app.game_progress_snapshot();require(!p3.ready_for_human_crew,"vacuum interiors prematurely completed crew-readiness milestone");
+        for(auto& h:app.placed_habitats_)h.supply.oxygen_kg=h.supply.volume_m3*kOxygenKgPerM3;
+        auto ready=app.game_progress_snapshot();require(ready.stages[2].complete && ready.ready_for_human_crew,"pressurized Stage 3 did not trigger Ready for human crew");
+        std::cout<<"Three-stage data-driven colony progression, physical utility components, six-person dorm capacity and crew-readiness milestone passed\n";
     }
 
     static void debug_orders(){
@@ -996,10 +1094,11 @@ struct NavigationRegression {
         CorridorConnection corridor;corridor.endpoint_a.kind=corridor.endpoint_b.kind=CorridorEndpointKind::Resource;corridor.endpoint_a.index=3;corridor.endpoint_b.index=4;corridor.placement_sequence=7;corridor.path={{-20,0,0},{20,0,0}};app.corridor_network_.mutable_connections().push_back(corridor);require(app.construction_ready_connection({ConstructionTargetKind::Corridor,0}),"ready corridor not prioritized");
         // A queued dependency must not deadlock the first item.
         app.construction_priority_={6,4};app.placed_resources_[3].construction.step=0;require(app.construction_dispatch_rank({ConstructionTargetKind::Resource,3})==1,"queued prerequisite of FIFO head was blocked");
-        // Schema 18 stored newest-first; schema 19 restores original insertion order.
-        app.construction_priority_={3,1};std::string error;require(app.save_game_to_name("queue-legacy-regression",error),error);app.refresh_save_games();std::string path;for(const auto& entry:app.save_games_)if(entry.name=="queue-legacy-regression")path=entry.path;
-        {std::fstream file(path,std::ios::binary|std::ios::in|std::ios::out);std::uint32_t old_schema=18;file.seekp(8);file.write((char*)&old_schema,sizeof(old_schema));}
-        GameApp loaded(engine);require(loaded.load_game_from_file(path,error),error);require(loaded.construction_priority_==std::vector<std::uint64_t>({1,3}),"old newest-first queue not migrated to FIFO");
+        // Current-schema roundtrip must retain FIFO insertion order. Schema-18
+        // reversal remains handled by the loader; do not fake an old schema by
+        // changing only the file header now that schema 20 has a larger SupplyState.
+        app.construction_priority_={3,1};std::string error;require(app.save_game_to_name("queue-current-regression",error),error);app.refresh_save_games();std::string path;for(const auto& entry:app.save_games_)if(entry.name=="queue-current-regression")path=entry.path;
+        GameApp loaded(engine);require(loaded.load_game_from_file(path,error),error);require(loaded.construction_priority_==std::vector<std::uint64_t>({3,1}),"FIFO priority order changed across current save/load");
         GameApp flow(engine);auto clock=flow.status_.state();clock.hour=12;clock.crew_current=0;flow.status_.restore(clock);
         for(auto kind:{ResourceKind::SolarPanel,ResourceKind::PowerStorage,ResourceKind::WaterDriller,ResourceKind::WaterStorage}){PlacedResource r;r.kind=kind;r.construction.step=kConstructionSteps;r.position={(float)flow.placed_resources_.size()*10,0,0};flow.placed_resources_.push_back(r);}
         for(std::size_t i=1;i<4;++i){UtilityConnection u;u.endpoint_a.kind=u.endpoint_b.kind=UtilityEndpointKind::Resource;u.endpoint_a.index=i-1;u.endpoint_b.index=i;u.path={flow.placed_resources_[i-1].position,flow.placed_resources_[i].position};u.construction.step=u.construction.total_steps;flow.utility_network_.mutable_connections().push_back(u);}
@@ -1009,7 +1108,7 @@ struct NavigationRegression {
         clock.hour=12;clock.crew_current=6;flow.status_.restore(clock);flow.placed_resources_[2].construction.step=0;flow.placed_resources_[3].supply.water_litres=100;flow.update_supply_simulation(1);
         require(std::abs(flow.water_net_litres_per_day_+34.125)<1e-6 && std::abs(flow.supply_water_load_litres_per_day_-34.125)<1e-6,"tank consumption/electrolysis rate wrong");
         const auto water=flow.placed_resources_[3].supply.water_litres;flow.update_supply_simulation(0);require(flow.battery_net_kw_==0 && flow.water_net_litres_per_day_==0 && flow.placed_resources_[3].supply.water_litres==water,"paused telemetry consumed resources or kept stale rate");
-        std::cout<<"FIFO until completion/removal, ready corridor/pipe precedence, prerequisite escape, schema migration and measured charge/fill/drain/load rates passed\n";
+        std::cout<<"FIFO until completion/removal, ready corridor/pipe precedence, prerequisite escape, save roundtrip and measured charge/fill/drain/load rates passed\n";
     }
     static void supply_network(){
         // Pass uploads must retain draw order, style and nonoverlapping ranges.
@@ -1089,12 +1188,12 @@ struct NavigationRegression {
         require(app.placed_habitats_[1].supply.oxygen_kg>0,"air never reached downstream room");
         require(app.placed_habitats_[1].supply.warnings&LowAir,"low-air indoor consumer has no warning");
         for(const auto& h:app.placed_habitats_)require(h.supply.breathability()>=0 && h.supply.breathability()<=100,"air percentage outside bounds");
-        const double saved_air=app.placed_habitats_[1].supply.oxygen_kg,saved_energy=app.placed_resources_[1].supply.energy_kwh,saved_water=app.placed_resources_[3].supply.water_litres;
+        const double saved_air=app.placed_habitats_[1].supply.oxygen_kg,saved_hydrogen=app.placed_habitats_[0].supply.hydrogen_kg,saved_energy=app.placed_resources_[1].supply.energy_kwh,saved_water=app.placed_resources_[3].supply.water_litres;
         std::string error;require(app.save_game_to_name("supply-regression",error),"save failed: "+error);app.refresh_save_games();
         std::string path;for(const auto& e:app.save_games_)if(e.name=="supply-regression")path=e.path;
         require(!path.empty(),"saved supply state not listed");GameApp restored(engine);require(restored.load_game_from_file(path,error),"load failed: "+error);
         require(restored.placed_habitats_[1].supply.breathability()>0,"loaded interior did not display saved air without an unpause tick");
-        require(restored.placed_habitats_[1].supply.oxygen_kg==saved_air && restored.placed_resources_[1].supply.energy_kwh==saved_energy && restored.placed_resources_[3].supply.water_litres==saved_water,"saved inventories changed on load");
+        require(restored.placed_habitats_[1].supply.oxygen_kg==saved_air && restored.placed_habitats_[0].supply.hydrogen_kg==saved_hydrogen && restored.placed_resources_[1].supply.energy_kwh==saved_energy && restored.placed_resources_[3].supply.water_litres==saved_water,"saved inventories changed on load");
         GameApp gate(engine);gate.playfield_.rebuild(192);gate.builder_robots_.resize(1);gate.builder_robots_[0].position={-80,0,80};PlacedResource dome=resource(ResourceKind::StorageDome,{0,0,0});dome.placement_sequence=1;gate.placed_resources_={dome};gate.next_blueprint_placement_sequence_=2;
         require(gate.add_storage_gate_at(0,53.25f),"free-angle gate rejected");
         const auto& owner=gate.placed_resources_[0];const auto n=storage_loading::normal(owner);
@@ -1474,6 +1573,8 @@ int main(int argc,char** argv){
         }
         else if(argc>1 && std::string(argv[1])=="interaction") game::NavigationRegression::interaction();
         else if(argc>1 && std::string(argv[1])=="oxygen") game::NavigationRegression::oxygen();
+        else if(argc>1 && std::string(argv[1])=="progression") game::NavigationRegression::progression();
+        else if(argc>1 && std::string(argv[1])=="hydrogen-solar") game::NavigationRegression::hydrogen_solar();
         else if(argc>1 && std::string(argv[1])=="debug-orders") game::NavigationRegression::debug_orders();
         else if(argc>1 && std::string(argv[1])=="priority") game::NavigationRegression::build_priority();
         else if(argc>1 && std::string(argv[1])=="airlock-cycle") game::NavigationRegression::airlock_cycle();
@@ -1488,6 +1589,7 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="geometry") game::NavigationRegression::geometry();
         else if(argc>2 && std::string(argv[1])=="fault-construction") game::NavigationRegression::construction(argv[2],true,true);
         else if(argc>2 && std::string(argv[1])=="construction") game::NavigationRegression::construction(argv[2]);
+        else if(argc>2 && std::string(argv[1])=="clearance-save") game::NavigationRegression::clearance_save(argv[2]);
         else if(argc>2 && std::string(argv[1])=="inspect") game::NavigationRegression::inspect(argv[2]);
         else if(argc>2 && std::string(argv[1])=="late") game::NavigationRegression::construction(argv[2],true);
         else {

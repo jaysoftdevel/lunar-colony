@@ -39,6 +39,7 @@ BuildCatalog::BuildCatalog(){
         resource("solar_panel","Solar Panel","Resource / Power Generation",BuildIcon::SolarPanel,BuildCategory::Structures,ResourceKind::SolarPanel),
         resource("water_driller","Water Driller","Resource / Extraction",BuildIcon::WaterDriller,BuildCategory::Structures,ResourceKind::WaterDriller),
         resource("power_storage","Power Storage","Resource / Energy Storage",BuildIcon::PowerStorage,BuildCategory::Structures,ResourceKind::PowerStorage),
+        resource("hydrogen_generator","Hydrogen Generator","Resource / H2 Fuel Cell / Power Generation",BuildIcon::HydrogenGenerator,BuildCategory::Structures,ResourceKind::HydrogenGenerator),
         resource("water_storage","Water Storage","Resource / Water Storage",BuildIcon::WaterStorage,BuildCategory::Structures,ResourceKind::WaterStorage),
         resource("ore_driller","Ore Driller","Resource / Ore Extraction",BuildIcon::OreDriller,BuildCategory::Structures,ResourceKind::OreDriller),
         utility(),

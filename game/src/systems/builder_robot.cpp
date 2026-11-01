@@ -2841,13 +2841,25 @@ void GameApp::update_builder_robot(float dt){
         request.visibility_skip_limit=6;
         if(try_margin(0.30f,true)) return true;
 
-        // Narrow passages that the coarse grid cannot represent get one final
-        // fine physical-clearance search. This is a fallback, not the common
-        // path, so two busy builders do not repeatedly pay for it.
+        // Narrow passages that the coarse grid cannot represent get a fine
+        // physical-clearance search in the normal local corridor first.
         request.corridor_half_width=normal_half_width;
         request.cell_size=1.05f;
         request.max_expansions=1200;
         request.visibility_skip_limit=8;
+        if(try_margin(0.00f,true)) return true;
+
+        // Final precision-passage fallback: combine the WIDE detour envelope
+        // with a sub-metre grid and the physical-only clearance profile. This
+        // matters when a rover must first squeeze through a real narrow gap and
+        // only then make a large detour around a connected group of structures.
+        // v0.43.15 had the two ingredients in separate attempts (wide/coarse,
+        // fine/narrow), so both attempts could report NO SAFE ROUTE even though
+        // a full-hull-safe route existed.
+        request.corridor_half_width=wide_half_width;
+        request.cell_size=0.80f;
+        request.max_expansions=6500;
+        request.visibility_skip_limit=12;
         if(try_margin(0.00f,true)) return true;
 
         record_margin(0.0f);

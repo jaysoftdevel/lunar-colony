@@ -402,11 +402,14 @@ void GameApp::render_selection_panel(Renderer& r){
         std::ostringstream fill;fill<<"WATER TO FILL "<<std::fixed<<std::setprecision(1)<<h.supply.water_to_fill_litres<<" L / NETWORK "<<h.supply.network_water_to_fill_litres<<" L";
         game_label(r,{x,p.y+256},fill.str(),0.43f,theme_,true);
         if(h.kind==HabitatKind::OxygenGeneratorDome){
-            std::ostringstream process;process<<"O2 OUTPUT "<<std::fixed<<std::setprecision(3)<<(paused?0.0:h.supply.oxygen_produced_kg_per_day)<<" KG/DAY / WATER "<<(paused?0.0:h.supply.water_processed_litres_per_day)<<" L/DAY";
+            std::ostringstream process;process<<"O2 OUTPUT "<<std::fixed<<std::setprecision(3)<<(paused?0.0:h.supply.oxygen_produced_kg_per_day)<<" KG/D / WATER "<<(paused?0.0:h.supply.water_processed_litres_per_day)<<" L/D";
             game_label(r,{x,p.y+278},process.str(),0.43f,theme_);
-            const char* state=!h.construction.complete()?"NOT BUILT":paused?"PAUSED":h.supply.power_fraction<=0?"WAITING FOR POWER":(h.supply.warnings&NoWater)?"WAITING FOR TANK WATER":h.supply.oxygen_produced_kg_per_day>1e-8?"CONVERTING WATER TO OXYGEN":h.supply.network_water_to_fill_litres<1e-6?"NETWORK AIR TARGET REACHED":"DISTRIBUTING OXYGEN";
-            game_label(r,{x,p.y+300},state,0.44f,theme_,true);
-            game_label(r,{x,p.y+320},"RATES PER GAME DAY / DEL REMOVE",0.40f,theme_,true);
+            std::ostringstream hydrogen;hydrogen<<"H2 OUTPUT "<<std::fixed<<std::setprecision(3)<<(paused?0.0:h.supply.hydrogen_produced_kg_per_day)<<" KG/D / BUFFER "<<h.supply.hydrogen_kg<<" / "<<(kOxygenGeneratorHydrogenBufferKg*(h.size==HabitatSizeTier::Small?0.5:h.size==HabitatSizeTier::Mid?1.5:h.size==HabitatSizeTier::Big?2.0:1.0))<<" KG";
+            game_label(r,{x,p.y+298},hydrogen.str(),0.42f,theme_);
+            const char* state=!h.construction.complete()?"NOT BUILT":paused?"PAUSED":h.supply.power_fraction<=0?"WAITING FOR POWER":(h.supply.warnings&NoWater)?"WAITING FOR TANK WATER":h.supply.oxygen_produced_kg_per_day>1e-8?"ELECTROLYSIS: O2 + H2":"AIR TARGET REACHED / ELECTROLYZER IDLE";
+            game_label(r,{x,p.y+318},state,0.44f,theme_,true);
+            if(h.supply.hydrogen_vented_kg_per_day>1e-8){std::ostringstream vent;vent<<"H2 BUFFER FULL / VENTING "<<std::fixed<<std::setprecision(3)<<(paused?0.0:h.supply.hydrogen_vented_kg_per_day)<<" KG/D";game_label(r,{x,p.y+338},vent.str(),0.40f,theme_,true);}
+            else game_label(r,{x,p.y+338},"RATES PER GAME DAY / DEL REMOVE",0.40f,theme_,true);
         }else if(h.kind==HabitatKind::AirLock){
             const auto index=(std::size_t)selected_habitat_;const airlock::Cycle idle{};
             const auto& cycle=index<airlock_cycles_.size()?airlock_cycles_[index]:idle;
@@ -438,9 +441,16 @@ void GameApp::render_selection_panel(Renderer& r){
         if(item.kind==ResourceKind::SolarPanel || item.kind==ResourceKind::WaterDriller){
             const double factor=item.size==ResourceSizeTier::Small?0.5:1.0;
             std::ostringstream rate;rate<<std::fixed<<std::setprecision(1);
-            if(item.kind==ResourceKind::SolarPanel){const double sun=std::max(0.0,std::sin((status_.hour()-6.0)*3.141592653589793/12.0));rate<<"SOLAR "<<kSolarPeakKw*factor*sun<<" / "<<kSolarPeakKw*factor<<" KW PEAK";}
-            else rate<<"PUMP "<<500*factor*item.supply.power_fraction<<" L/D / "<<4*factor<<" KW";
-            game_label(r,{x,p.y+208},rate.str(),0.48f,theme_);
+            if(item.kind==ResourceKind::SolarPanel){
+                const auto sun=status_.sun_pose();
+                rate<<"SOLAR "<<kSolarPeakKw*factor*sun.irradiance_fraction<<" / "<<kSolarPeakKw*factor<<" KW PEAK";
+                game_label(r,{x,p.y+208},rate.str(),0.48f,theme_);
+                std::ostringstream track;track<<"TRACKING SUN  AZ "<<std::setprecision(0)<<sun.azimuth_degrees<<" DEG / EL "<<sun.elevation_degrees<<" DEG";
+                game_label(r,{x,p.y+228},track.str(),0.42f,theme_,true);
+            }else{
+                rate<<"PUMP "<<500*factor*item.supply.power_fraction<<" L/D / "<<4*factor<<" KW";
+                game_label(r,{x,p.y+208},rate.str(),0.48f,theme_);
+            }
         }
         if(item.kind==ResourceKind::PowerStorage || item.kind==ResourceKind::WaterStorage){
             const double factor=item.size==ResourceSizeTier::Small?0.5:1.0;
@@ -501,6 +511,22 @@ void GameApp::render_selection_panel(Renderer& r){
                 walkway_build_start_.reset();
                 return;
             }
+            return;
+        }
+        if(item.kind==ResourceKind::HydrogenGenerator){
+            const double factor=item.size==ResourceSizeTier::Small?0.5:1.0;
+            const bool paused=game_speed_==GameSpeed::Pause;
+            game_label(r,{x,p.y+88},used_material_cost(item.resource_plan,item.construction.step),0.44f,theme_,true);
+            game_label(r,{x,p.y+112},pos.str(),0.58f,theme_,true);
+            game_label(r,{x,p.y+136},rot.str(),0.58f,theme_,true);
+            game_label(r,{x,p.y+160},utilities.str(),0.58f,theme_,true);
+            std::ostringstream power;power<<std::fixed<<std::setprecision(2)<<"FUEL CELL "<<(paused?0.0:item.supply.hydrogen_power_kw)<<" / "<<kHydrogenGeneratorPeakKw*factor<<" KW";
+            std::ostringstream fuel;fuel<<std::fixed<<std::setprecision(3)<<"H2 USE "<<(paused?0.0:item.supply.hydrogen_consumed_kg_per_day)<<" KG/D / "<<kHydrogenElectricalKwhPerKg<<" KWH/KG NET";
+            game_label(r,{x,p.y+190},power.str(),0.50f,theme_);
+            game_label(r,{x,p.y+212},fuel.str(),0.42f,theme_,true);
+            game_label(r,{x,p.y+234},(item.supply.warnings&NoHydrogen)?"STATE  WAITING FOR CONNECTED H2":"STATE  DISPATCH / BATTERY CHARGE READY",0.42f,theme_,true);
+            game_label(r,{x,p.y+256},"H2 ARRIVES THROUGH COMPLETED SUPPLY-CHANNEL NETWORK",0.40f,theme_,true);
+            game_label(r,{x,p.y+280},"DEL REMOVE / LMB SELECT OTHER",0.44f,theme_,true);
             return;
         }
         if(item.kind==ResourceKind::RobotWorkshop){

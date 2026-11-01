@@ -22,7 +22,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=19;
+constexpr std::uint32_t kSaveSchema=20;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -243,10 +243,11 @@ CorridorEndpoint read_corridor_endpoint(Reader& r){
 }
 void write_corridor_mesh(Writer& w,const CorridorMesh& m){ write_vec3s(w,m.shell); write_vec3s(w,m.details); write_vec3s(w,m.edges); }
 CorridorMesh read_corridor_mesh(Reader& r){ CorridorMesh m{}; m.shell=read_vec3s(r); m.details=read_vec3s(r); m.edges=read_vec3s(r); return m; }
-void write_supply(Writer& w,const SupplyState& s){w.pod(s.oxygen_kg);w.pod(s.energy_kwh);w.pod(s.water_litres);}
-SupplyState read_supply(Reader& r){
+void write_supply(Writer& w,const SupplyState& s){w.pod(s.oxygen_kg);w.pod(s.energy_kwh);w.pod(s.water_litres);w.pod(s.hydrogen_kg);}
+SupplyState read_supply(Reader& r,bool with_hydrogen=false){
     SupplyState s;s.oxygen_kg=r.pod<double>();s.energy_kwh=r.pod<double>();s.water_litres=r.pod<double>();
-    for(double v:{s.oxygen_kg,s.energy_kwh,s.water_litres})if(!std::isfinite(v) || v<0 || v>1e12)r.valid=false;
+    if(with_hydrogen)s.hydrogen_kg=r.pod<double>();
+    for(double v:{s.oxygen_kg,s.energy_kwh,s.water_litres,s.hydrogen_kg})if(!std::isfinite(v) || v<0 || v>1e12)r.valid=false;
     return s;
 }
 void write_corridor(Writer& w,const CorridorConnection& c){
@@ -255,12 +256,12 @@ void write_corridor(Writer& w,const CorridorConnection& c){
     w.pod(c.placement_sequence);
     write_supply(w,c.supply);
 }
-CorridorConnection read_corridor(Reader& r,bool with_site_buffer,bool with_placement_sequence=false,bool with_supply=false){
+CorridorConnection read_corridor(Reader& r,bool with_site_buffer,bool with_placement_sequence=false,bool with_supply=false,bool with_hydrogen=false){
     CorridorConnection c{}; c.kind=(CorridorConnectionKind)r.pod<std::uint8_t>(); c.endpoint_a=read_corridor_endpoint(r); c.endpoint_b=read_corridor_endpoint(r);
     c.path=read_vec3s(r); c.mesh=read_corridor_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
     if(with_site_buffer) c.site_buffer=read_bundle(r);
     if(with_placement_sequence) c.placement_sequence=r.pod<std::uint64_t>();
-    if(with_supply)c.supply=read_supply(r);
+    if(with_supply)c.supply=read_supply(r,with_hydrogen);
     return c;
 }
 
@@ -274,12 +275,12 @@ void write_utility(Writer& w,const UtilityConnection& c){
     w.pod(c.placement_sequence);
     write_supply(w,c.supply);
 }
-UtilityConnection read_utility(Reader& r,bool with_site_buffer,bool with_placement_sequence=false,bool with_supply=false){
+UtilityConnection read_utility(Reader& r,bool with_site_buffer,bool with_placement_sequence=false,bool with_supply=false,bool with_hydrogen=false){
     UtilityConnection c{}; c.kind=(UtilityKind)r.pod<std::uint8_t>(); c.endpoint_a=read_utility_endpoint(r); c.endpoint_b=read_utility_endpoint(r);
     c.path=read_vec3s(r); c.junctions=read_vec3s(r); c.mesh=read_utility_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
     if(with_site_buffer) c.site_buffer=read_bundle(r);
     if(with_placement_sequence) c.placement_sequence=r.pod<std::uint64_t>();
-    if(with_supply)c.supply=read_supply(r);
+    if(with_supply)c.supply=read_supply(r,with_hydrogen);
     return c;
 }
 
@@ -523,6 +524,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,utility_network_.connections(),write_utility);
     write_object_vector(w,walkway_network_.connections(),write_walkway);
 
+    // Save schema 20: persistent hydrogen buffer inventory in SupplyState.
     // Save schema 13: persistent global blueprint placement order for FIFO carrier logistics.
     // Save schema 12: v0.40.40 eight-pallet starter depots are migrated to hull-safe boundary clearance.
     // Save schema 11: Aluminum is persisted as the eighth resource in bundles and production state.
@@ -614,7 +616,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         if(source_schema>=6) h.site_buffer=read_bundle(in);
         if(source_schema>=10) h.instance_serial=in.pod<std::uint32_t>();
         if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
-        if(source_schema>=17)h.supply=read_supply(in);
+        if(source_schema>=17)h.supply=read_supply(in,source_schema>=20);
         return h;
     })){ error="Template habitat data is damaged."; return false; }
 
@@ -646,7 +648,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
             if(item.storage_loading_face < -1 || item.storage_loading_face > 10) in.valid=false;
         }
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
-        if(source_schema>=17){item.supply=read_supply(in);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
+        if(source_schema>=17){item.supply=read_supply(in,source_schema>=20);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
         sync_stored_resource_totals(item);
         return item;
     })){ error="Template structure data is damaged."; return false; }
@@ -664,11 +666,11 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     })){ error="Template resource-pile data is damaged."; return false; }
 
     std::vector<CorridorConnection> corridors;
-    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13,source_schema>=17); })){
+    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13,source_schema>=17,source_schema>=20); })){
         error="Template corridor data is damaged."; return false;
     }
     std::vector<UtilityConnection> utilities;
-    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13,source_schema>=17); })){
+    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13,source_schema>=17,source_schema>=20); })){
         error="Template utility data is damaged."; return false;
     }
     std::vector<WalkwayConnection> walkways;
@@ -794,7 +796,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         h.construction=read_construction(in); h.resource_plan=read_plan(in); if(source_schema>=6) h.site_buffer=read_bundle(in);
         if(source_schema>=10) h.instance_serial=in.pod<std::uint32_t>();
         if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
-        if(source_schema>=17)h.supply=read_supply(in);
+        if(source_schema>=17)h.supply=read_supply(in,source_schema>=20);
         return h;
     })){ error="Savegame habitat data is damaged."; return false; }
 
@@ -813,7 +815,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
             if(item.storage_loading_face < -1 || item.storage_loading_face > 10) in.valid=false;
         }
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
-        if(source_schema>=17){item.supply=read_supply(in);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
+        if(source_schema>=17){item.supply=read_supply(in,source_schema>=20);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
         sync_stored_resource_totals(item); return item;
     })){ error="Savegame structure data is damaged."; return false; }
 
@@ -855,9 +857,9 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     })){ error="Savegame resource-box data is damaged."; return false; }
 
     std::vector<CorridorConnection> corridors;
-    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13,source_schema>=17); })){ error="Savegame corridor data is damaged."; return false; }
+    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13,source_schema>=17,source_schema>=20); })){ error="Savegame corridor data is damaged."; return false; }
     std::vector<UtilityConnection> utilities;
-    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13,source_schema>=17); })){ error="Savegame supply-channel data is damaged."; return false; }
+    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13,source_schema>=17,source_schema>=20); })){ error="Savegame supply-channel data is damaged."; return false; }
     std::vector<WalkwayConnection> walkways;
     if(!read_object_vector(r,walkways,[&](Reader& in){ return read_walkway(in,source_schema>=6,source_schema>=13); })){ error="Savegame walkway data is damaged."; return false; }
 

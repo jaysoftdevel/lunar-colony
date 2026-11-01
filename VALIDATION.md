@@ -1,3 +1,22 @@
+# v0.43.15 validation (2026-11-01)
+
+- Optimized Linux build completes for the game executable, UI regression executable and navigation regression executable after the new shared solar/status state is compiled through all dependent clusters.
+- New `colony_hydrogen_solar` regression verifies east-to-west 3D stellar motion, ~60-degree southern noon elevation, below-horizon night, the stable nonvisualized future-render position, tracked irradiance, physical collector-head rotation, component-local H2 isolation and fuel-cell energy balance.
+- Oxygen regression verifies electrolysis H2 production at 1:8 H2:O2 mass ratio and retained generator buffer. Supply save/load regression verifies persistent hydrogen inventory under schema 20. Existing schemas remain accepted by the conditional supply reader.
+- UI regression passes 475 resolution/zoom/screen cases plus 44 structure-warning cases. Oxygen-generator H2 output/buffer and Hydrogen Generator output/fuel telemetry are covered; the compact `NO CONNECTED H2` warning keeps panels clear of the build bar at maximum UI scaling.
+- CTest groups 1-21 pass together in 31.22 s. The two long construction groups (`navigation_construction`, `navigation_late_corridor`) also pass in a separate CTest invocation (10.57 s), covering all 23 registered tests.
+- Existing progression stages, robot logistics, collision/safety, air-lock behavior, utility topology and construction ordering are not intentionally changed.
+
+# v0.43.14 validation (2026-11-01)
+
+- GCC/C++20 build passes with `GAME_BUILD_NAVIGATION_TESTS=ON`. The resource simulation reuses the existing connected-component topology and does not change robot pathfinding, collision arbitration or build sequencing.
+- Colony progression regression builds a completed Stage 1 resource network, extends the same physical utility component through an Air Lock/Oxygen Generator for Stage 2, then verifies a Canteen, Mid Crew Quarters (6-person capacity), Landing Pad and >=95% breathability unlock READY FOR HUMAN CREW. Fresh colonies report 0/0 crew.
+- Oxygen regression verifies a nearly/full pressurized base still incurs bounded seal/hatch leakage and therefore nominal oxygen-generator/water use. Existing supply-network isolation tests continue to confirm disconnected components cannot exchange power or water. Priority/FIFO construction regressions remain unchanged and pass.
+- Progress-tree UI regression covers all five UI zoom levels across five resolutions. The checklist stays between the top status strip and bottom build bar at the maximum 200% scale, is absent when the debug frame is enabled, and its reserved rectangle prevents construction-status frames from overlapping it.
+- The status HUD preserves signed battery/tank net-rate readouts and now adds current POWER LOAD / WATER USE; demand remains a requested-load quantity even when generation/storage cannot fully serve it.
+- Full CTest suite passes: 22/22 groups in 32.06 s, including UI scaling, progression, oxygen, isolated supply components, construction priority/queue flow, navigation, gates, workshops and construction.
+- Shell installer validation applies the package to a clean v0.43.13 tree outside Git through a path containing spaces, reproduces all 21 update-owned files byte-for-byte, preserves an unrelated local `.gitignore` edit, reports zero changed files on repeat application, rejects a wrong source version without writes, and rejects a conflicting patched hunk atomically before VERSION changes. `apply.bat` uses the same `git apply --check`/apply sequence; it is included for Windows but was not executed in this Linux validation environment. Neither installer builds.
+
 # v0.43.10 validation (2026-11-01)
 
 - GCC/C++20 UI build passes using the headless Application harness. Gameplay, supply simulation and render backends are unchanged; native OpenGL/Direct3D display execution remains unverified.
@@ -104,3 +123,12 @@ Validated in the available Linux build environment:
 - Every primary development operation has a paired `.sh` and `.bat` entry point.
 
 Windows compilation cannot be executed in this Linux environment because MSVC, the Windows SDK and a Direct3D runtime are not present. The Windows backend remains the same Win32/Direct3D 12 implementation from the preceding port, while the build paths and command wrappers were unified around `build/windows`.
+
+## v0.43.16 narrow-passage regression
+
+- Reproduction fixture: user save `0-43-14.gmsave`, builder initially at approximately `(8.23, 0.54)` and workshop return goal approximately `(-23.0, -2.5)`.
+- v0.43.15 result: repeated `NO SAFE ROUTE`; the 1.00 m comfort start was blocked, 0.00 m physical-only start/goal were legal, wide/coarse and fine/narrow route tiers both failed.
+- Diagnostic proof: a wide sub-metre physical-only search found a full-hull-safe route, confirming that the robot was not physically trapped.
+- v0.43.16 regression command: `navigation_regression clearance-save <path>`; requires a route publication, >8 m escape travel within 30 simulated seconds, no SafetyMode::Fault, and bounded replan count.
+- Optimized regression result: all 23 registered CTest groups passed across split runs. The relevant navigation subset (`fault_recovery`, `fleet`, `workshops`, `global_routes`, `queue_flow`, `construction`, `late_corridor`) passed together in 18.35 s; remaining colony/UI/navigation groups also passed in their split runs.
+- Baseline construction regression retained established behavior after narrowing the precision search to last-resort only: 7/7 targets completed, with no safety fault.

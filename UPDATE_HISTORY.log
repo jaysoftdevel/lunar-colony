@@ -1,3 +1,20 @@
+0.43.15 - hydrogen fuel-cell generation and tracked stellar solar input
+- Add Hydrogen Generator as an outdoor buildable resource structure with native procedural fuel-cell/radiator/manifold geometry, construction costs, catalog icon, selection telemetry and supply warnings.
+- Oxygen Generator electrolysis now preserves the physical 1:8 H2:O2 by-product mass ratio. Each generator buffers size-scaled hydrogen locally; excess is reported as vented when the buffer is full. Hydrogen inventory is persistent in save schema 20; schemas 1-19 remain readable and default to an empty H2 buffer.
+- Connected Hydrogen Generators consume H2 only from Oxygen Generators in the same completed Supply Channel component. Net electrical output uses 33.3 kWh/kg hydrogen LHV at 55% fuel-cell electrical efficiency (18.315 kWh/kg net) and is demand-dispatched: local loads first, then connected batteries, with no fuel burn when neither can use the energy.
+- Replace the old scalar sunrise/sunset sine factor with a reusable 3D stellar pose. The current nonvisualized reference follows an equinox-like 30-degree-north arc: east sunrise, southern ~60-degree noon altitude, west sunset and below-horizon night, with a stable future render position.
+- Completed Solar Panels use a two-axis collector-head transform that follows the hidden star while keeping the pedestal fixed. With an airless environment and normal-incidence tracking, rated photovoltaic output is retained while the star is above the horizon apart from a narrow 2-degree horizon ramp.
+- Extend UI and regressions for H2 production/buffering/dispatch, network isolation, save persistence, star motion and physical panel tracking. Existing Stage 1-3 progression and robot/build behavior remain unchanged.
+
+0.43.14 - life-support consumption and colony progression
+- Keep the existing component-local utility simulation and expose explicit electrical, water and oxygen demand. Fresh colonies begin uncrewed; completed Crew Quarters provide 2/4/6/8 crew capacity for Small/Standard/Mid/Big sizes. Existing saves remain readable and keep any larger already-populated crew capacity.
+- Use the existing realistic crew needs of 0.84 kg O2 and 4 L water per person/game-day as named life-support constants. Fully pressurized interiors (>=99%) now lose a conservative 0.1% of contained oxygen per game-day through seals/hatches, so the oxygen generator must continue consuming network water and power to maintain a base.
+- Show actual POWER load and WATER use alongside signed battery/tank net rates. Demand remains visible during shortages instead of collapsing to only the amount successfully supplied.
+- Add a data-driven three-stage colony progress tree, hidden in debugging mode and rendered as a non-overlapping checklist at the right playfield border. Construction status frames reserve the checklist area at every supported UI scale. Future stages are added by appending another requirement table/stage definition.
+- Stage 1 requires a completed Solar Collector, Battery, Water Driller and Water Storage in one physically connected completed Supply Channel component. Stage 2 requires the first completed Air Lock, an Oxygen Generator and an actual pipe-network path linking the resource network to an inside structure.
+- Stage 3 requires a Canteen, completed Crew Quarters with capacity for at least six people, a Landing Pad and every completed indoor/storage volume at >=95% breathable air. Completing all three stages unlocks the milestone READY FOR HUMAN CREW.
+- Progress and demand telemetry are derived at runtime; save schema remains 19. Add progression and UI-scale regressions while retaining existing navigation, logistics and construction behavior. Update installers continue to list every changed file and never build.
+
 0.43.13 - three-chamber bidirectional air lock
 - Divide the existing air-lock envelope into an exterior isolation cabin, a central pressure chamber and an interior access cabin. Add two physical internal bulkheads and four animated pressure seals, retaining both authored end hatches, size tiers, footprints and corridor interfaces.
 - Determine the inside/outside orientation from the completed corridor attachment. Approach the next door to pass either way, or reverse/retreat at any stage. One controller owns all four seals; previous doors must close completely before the next opens. A body in an open aperture prevents closing on the avatar.
@@ -391,3 +408,8 @@ v0.40.9
 - Gate placement validates and reserves the complete loading apron against map bounds, structures, workshop placement clearance, corridors, walkways, Supply Channels, and resource piles before accepting the extension blueprint.
 - Gate-less dome hulls remain fully available for normal seamless/free-angle corridor and Supply Channel attachment; only explicitly placed gate sectors are reserved.
 - Existing saves with the former integrated primary cargo gate migrate it into an equivalent child Storage Gate task without changing the save schema.
+
+0.43.16 - adaptive narrow-passage clearance fallback
+- Fixed a builder deadlock reproduced by 0-43-14.gmsave: the route was physically valid, but v0.43.15 searched the wide detour only on a coarse 1.70 m grid and searched physical-only clearance only inside a narrower corridor. The required narrow exit vanished on the coarse grid while the narrow fine search could not see the later wide detour.
+- Added a precision-passage fallback that reduces only the discretionary structure halo to 0.00 m extra clearance while retaining the full circumscribed rover hull and final motion-contract collision authority.
+- Only after the existing direct/dogleg, wide/coarse and fine/local tiers fail does routing run the wide 0.80 m physical-only precision search. Normal construction/service routes therefore keep their established route choices and CPU profile.

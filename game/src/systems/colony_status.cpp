@@ -8,8 +8,8 @@ void ColonyStatus::reset(){
     power_capacity_=100;
     water_current_=840;
     water_capacity_=1000;
-    crew_current_=6;
-    crew_capacity_=8;
+    crew_current_=0;
+    crew_capacity_=0;
 }
 
 ColonyStatusState ColonyStatus::state() const {
