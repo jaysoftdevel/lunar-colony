@@ -1,4 +1,5 @@
 #include "game/game_app.hpp"
+#include "game/ui/supply_warnings.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/world_labels.hpp"
@@ -131,16 +132,24 @@ Vec3 point_along_path(const std::vector<Vec3>& path,float fraction,Vec3* tangent
 }
 
 Rect GameApp::selection_panel_rect() const {
+    float extra=0;
+    const float warning_font=eng::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_);
     if(selection_kind_==SelectionKind::Robot)
         return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,485.0f,390.0f};
     if(selection_kind_==SelectionKind::Habitat){
-        const bool generator=selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size() && placed_habitats_[(std::size_t)selected_habitat_].kind==HabitatKind::OxygenGeneratorDome;
-        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,generator?344.0f:306.0f};
+        bool generator=false;
+        if(selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size()){
+            const auto& h=placed_habitats_[(std::size_t)selected_habitat_];generator=h.kind==HabitatKind::OxygenGeneratorDome || h.kind==HabitatKind::AirLock;
+            if(h.construction.complete())extra=supply_warning_extra_height(supply_warning_lines(h.supply,382.0f,warning_font));
+        }
+        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,(generator?344.0f:306.0f)+extra};
     }
     if(selection_kind_==SelectionKind::Corridor)return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,344.0f};
-    if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 && (std::size_t)selected_resource_<placed_resources_.size() &&
-       placed_resources_[(std::size_t)selected_resource_].kind==ResourceKind::StorageDome){
-        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,485.0f,388.0f};
+    if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 && (std::size_t)selected_resource_<placed_resources_.size()){
+        const auto& item=placed_resources_[(std::size_t)selected_resource_];const bool storage=item.kind==ResourceKind::StorageDome;
+        const float width=storage?485.0f:410.0f;
+        if(item.construction.complete())extra=supply_warning_extra_height(supply_warning_lines(item.supply,width-28.0f,warning_font,item.kind));
+        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,width,(storage?388.0f:280.0f)+extra};
     }
     return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,280.0f};
 }
@@ -170,6 +179,8 @@ Rect GameApp::ground_resource_panel_rect() const {
 
 bool GameApp::mouse_over_selection_panel(const InputState& input) const {
     if(selection_kind_==SelectionKind::None) return false;
+    if(selected_construction_target().same_as(construction_priority_button_target_) && construction_priority_button_rect_.w>0 &&
+       construction_priority_button_rect_.contains((float)input.mouse_x/ui_scale_,(float)input.mouse_y/ui_scale_))return true;
     const Rect p=selection_kind_==SelectionKind::GroundResource?ground_resource_panel_rect():selection_panel_rect();
     return p.contains((float)input.mouse_x/ui_scale_,(float)input.mouse_y/ui_scale_);
 }

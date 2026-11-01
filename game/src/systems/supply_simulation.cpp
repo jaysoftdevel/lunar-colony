@@ -61,7 +61,9 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     }
     for(std::size_t i=0;i<placed_resources_.size();++i){
         auto& r=placed_resources_[i];const auto& m=resource_models_.mesh(r);
-        add_node(r.supply,r.position,r.kind==ResourceKind::StorageDome && r.construction.complete()?m.footprint_x*m.footprint_z*std::max(0.0f,m.height-m.walkable_floor_y)*0.65:0,0);
+        // External equipment has a small sealed service manifold: its ports
+        // relay air between pipes without treating the exterior as a cabin.
+        add_node(r.supply,r.position,r.kind==ResourceKind::StorageDome && r.construction.complete()?m.footprint_x*m.footprint_z*std::max(0.0f,m.height-m.walkable_floor_y)*0.65:(r.construction.complete()?0.02:0),0);
         if(!r.construction.complete())continue;
         // A standalone battery/tank/solar plant is its own component, never a global pool.
         const auto key=services.resources[i].connected?services.resources[i].component:nodes.size()+1000000;
@@ -71,7 +73,7 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         if(r.kind==ResourceKind::WaterDriller)g.drillers.push_back(i);
         if(r.kind==ResourceKind::SolarPanel){
             const double sun=std::max(0.0,std::sin((status_.hour()-6.0)*3.141592653589793/12.0));
-            g.solar_kw+=8.0*scale(r)*sun;
+            g.solar_kw+=kSolarPeakKw*scale(r)*sun;
         }
     }
     for(auto& u:utility_network_.mutable_connections()){
@@ -80,9 +82,11 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     for(auto& c:corridor_network_.mutable_connections()){
         const double len=path_length(c.path);add_node(c.supply,c.path.empty()?eng::Vec3{}:c.path[c.path.size()/2],c.construction.complete()?std::max(0.1,len*4.0):0,len);
     }
+    double initial_energy=0,initial_water=0,consumed_water=0,supplied_energy=0;
+    for(const auto& [key,g]:groups){(void)key;for(auto i:g.batteries)initial_energy+=placed_resources_[i].supply.energy_kwh;for(auto i:g.tanks)initial_water+=placed_resources_[i].supply.water_litres;}
     const auto water_total=[&](const Component& g){double v=0;for(auto i:g.tanks)v+=placed_resources_[i].supply.water_litres;return v;};
     const auto take_water=[&](Component& g,double wanted){
-        double remaining=wanted;for(auto i:g.tanks){auto& v=placed_resources_[i].supply.water_litres;const double q=std::min(v,remaining);v-=q;remaining-=q;}return wanted-remaining;
+        double remaining=wanted;for(auto i:g.tanks){auto& v=placed_resources_[i].supply.water_litres;const double q=std::min(v,remaining);v-=q;remaining-=q;}consumed_water+=wanted-remaining;return wanted-remaining;
     };
     // A zero-time refresh restores volume/percentages and input availability
     // immediately after loading a paused save, without processing any resources.
@@ -103,6 +107,7 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
             double supplied=std::min(generation,demand);generation-=supplied;
             for(auto i:g.batteries){auto& r=placed_resources_[i];const double q=std::min({r.supply.energy_kwh,demand-supplied,10.0*scale(r)*hours});r.supply.energy_kwh-=q;supplied+=q;}
             g.power=demand>0?std::clamp(supplied/demand,0.0,1.0):1.0;
+            supplied_energy+=supplied;
             for(auto i:g.batteries){auto& r=placed_resources_[i];const double q=std::min({generation,(battery_capacity(r)-r.supply.energy_kwh)/0.95,10.0*scale(r)*hours});r.supply.energy_kwh+=q*0.95;generation-=q;}
             for(auto i:g.drillers){
                 const double produced=500.0*scale(placed_resources_[i])*days*g.power;
@@ -181,6 +186,10 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
             s.air_change_percentage_points_per_day=target>0?100.0*s.oxygen_net_kg_per_day/target:0;
         }
     }
+    battery_net_kw_=dt>0?(stored_power-initial_energy)/((double)dt/10.0):0;
+    water_net_litres_per_day_=dt>0?(stored_water-initial_water)/((double)dt/240.0):0;
+    supply_power_load_kw_=dt>0?supplied_energy/((double)dt/10.0):0;
+    supply_water_load_litres_per_day_=dt>0?consumed_water/((double)dt/240.0):0;
     auto state=status_.state();state.power_current=(int)std::floor(stored_power);state.power_capacity=(int)power_capacity;
     state.water_current=(int)std::floor(stored_water);state.water_capacity=(int)water_capacity;status_.restore(state);
     return services;

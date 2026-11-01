@@ -1,7 +1,5 @@
 #include "game/world/resource_mesh.hpp"
 #include "game/world/storage_loading_gate.hpp"
-#include <map>
-#include <tuple>
 #include "game/world/resources/resource_generators.hpp"
 #include "game/world/resource_builder.hpp"
 
@@ -59,19 +57,7 @@ const ResourceMesh& ResourceModelLibrary::mesh(ResourceKind kind,StorageDomeSize
 const ResourceMesh& ResourceModelLibrary::mesh(const PlacedResource& placed) const {
     if(placed.kind==ResourceKind::StorageDome)return mesh(placed.kind,placed.storage_size);
     if(placed.kind!=ResourceKind::StorageGate)return mesh(placed.kind,placed.size);
-    using Key=std::tuple<int,int,float>;
-    // Per-thread derived geometry avoids writes shared by navigation workers.
-    static thread_local std::map<Key,ResourceMesh> cache;
-    const Key key{(int)placed.storage_size,placed.storage_loading_face,placed.storage_gate_angle_degrees};
-    const auto found=cache.find(key);if(found!=cache.end())return found->second;
-    ResourceMesh model=mesh(placed.kind,placed.storage_size);
-    PlacedResource owner;owner.kind=ResourceKind::StorageDome;owner.storage_size=placed.storage_size;
-    owner.storage_loading_face=placed.storage_loading_face;owner.storage_gate_angle_degrees=placed.storage_gate_angle_degrees;
-    const float desired=eng::length(storage_loading::mouth(owner)-storage_loading::wall(owner));
-    const float ratio=desired/std::max(0.01f,model.footprint_x-0.20f);
-    for(auto* layer:{&model.body,&model.foundation,&model.details,&model.edges})for(auto& v:*layer)v.x*=ratio;
-    model.footprint_x*=ratio;
-    return cache.emplace(key,std::move(model)).first->second;
+    return mesh(placed.kind,placed.storage_size);
 }
 
 }

@@ -12,6 +12,7 @@
 #include "game/world/resource_mesh.hpp"
 #include "game/world/corridor_network.hpp"
 #include "game/world/pressure_door.hpp"
+#include "game/world/airlock_cycle.hpp"
 #include "game/world/utility_network.hpp"
 #include "game/world/walkway_network.hpp"
 #include <optional>
@@ -63,12 +64,12 @@ private:
     int viewport_height_=900;
     float fps_=0.0f;
     float supply_warning_time_=0.0f;
-    float ui_scale_=1.5f;
+    float ui_scale_=1.0f;
     bool debug_frame_enabled_=true;
     bool game_session_active_=false;
     bool debug_start_template_enabled_=false;
     std::string new_game_status_message_{};
-    int ui_scale_index_=2;
+    int ui_scale_index_=0;
     std::vector<eng::DisplayMode> display_modes_{};
     int display_mode_index_=-1;
     Playfield playfield_{};
@@ -76,6 +77,9 @@ private:
     FirstPersonController first_person_{};
     FirstPersonMode first_person_mode_{FirstPersonMode::Off};
     ColonyStatus status_{};
+    // Derived live telemetry; never serialized as stored resources.
+    double battery_net_kw_{0},water_net_litres_per_day_{0};
+    double supply_power_load_kw_{0},supply_water_load_litres_per_day_{0};
     ResourceManagement resources_{};
     std::vector<BuilderRobotState> builder_robots_{};
     // Monotonic simulation time used by the shared robot safety coordinator.
@@ -98,12 +102,17 @@ private:
     std::vector<GroundResourcePile> ground_resource_piles_{};
     // Monotonic placement order shared by structures and network blueprints.
     std::uint64_t next_blueprint_placement_sequence_{1};
+    std::vector<std::uint64_t> construction_priority_{}; // FIFO priorities, stable placement IDs
+    eng::Rect construction_priority_button_rect_{};
+    ConstructionTargetRef construction_priority_button_target_{};
+    int debug_move_pick_robot_{-1};
     std::optional<GroundResourcePile> first_person_carried_resource_{};
     int first_person_hover_ground_resource_=-1;
     int first_person_hover_storage_resource_=-1;
     int first_person_hover_storage_box_=-1;
     CorridorNetwork corridor_network_{};
     std::vector<PressureDoorState> pressure_doors_{};
+    std::vector<airlock::Cycle> airlock_cycles_{}; // transient, seals reset safely on load
     std::vector<float> storage_gate_open_{};
     UtilityNetwork utility_network_{};
     WalkwayNetwork walkway_network_{};
@@ -196,6 +205,16 @@ private:
     void finish_selection_marquee();
     void delete_selected_world_object();
     void update_construction(float dt);
+    ConstructionTargetRef selected_construction_target() const;
+    std::uint64_t construction_target_sequence(const ConstructionTargetRef& target) const;
+    std::size_t construction_priority_rank(const ConstructionTargetRef& target) const;
+    void toggle_construction_priority(const ConstructionTargetRef& target);
+    bool construction_ready_connection(const ConstructionTargetRef& target) const;
+    std::size_t construction_dispatch_rank(const ConstructionTargetRef& target) const;
+    void prune_construction_priorities();
+    bool debug_robot_move_available(std::size_t index) const;
+    bool issue_debug_robot_move(std::size_t index,eng::Vec3 destination);
+
     void reset_builder_robot_and_starter_stash();
     void update_builder_robot(float dt);
     float game_speed_multiplier() const;
@@ -234,9 +253,11 @@ private:
     bool first_person_spawn_valid(eng::Vec3 p) const;
     bool first_person_move_allowed(eng::Vec3 from,eng::Vec3 to) const;
     float first_person_floor_height(eng::Vec3 p) const;
+    float first_person_ceiling_height(eng::Vec3 p) const;
     std::string first_person_environment_label() const;
     float first_person_door_open_fraction(eng::Vec3 door_position) const;
     void update_pressure_doors(float dt);
+    int airlock_inside_sign(std::size_t habitat_index) const;
     void update_workshop_gates(float dt);
     bool workshop_accessible(const PlacedResource& candidate) const;
     bool workshop_supplied(std::size_t resource_index) const;

@@ -170,11 +170,7 @@ void GameApp::render_resource_placement(Renderer& r){
         const Vec3 n=storage_loading::normal(owner,selected_face);
         const Vec3 gate_position=(storage_loading::wall(owner,selected_face)+storage_loading::mouth(owner,selected_face))*0.5f;
         const float gate_rotation=std::atan2(-n.z,n.x)*180.0f/3.14159265358979323846f;
-        auto gate_mesh=resource_models_.mesh(ResourceKind::StorageGate,owner.storage_size);
-        const float desired=length(storage_loading::mouth(owner,selected_face)-storage_loading::wall(owner,selected_face));
-        const float ratio=desired/std::max(0.01f,gate_mesh.footprint_x-0.20f);
-        for(auto* layer:{&gate_mesh.body,&gate_mesh.foundation,&gate_mesh.details,&gate_mesh.edges})for(auto& v:*layer)v.x*=ratio;
-        gate_mesh.footprint_x*=ratio;
+        const auto& gate_mesh=resource_models_.mesh(ResourceKind::StorageGate,owner.storage_size);
         render_resource_mesh(r,gate_mesh,gate_position,gate_rotation,true,valid);
         render_storage_gate_shutters(r,owner,selected_face,0.0f,0.0f,true);
         gate_area::draw(r,{storage_loading::service(owner,selected_face),n,1.0f,0.75f},valid);
@@ -213,8 +209,6 @@ void GameApp::render_resource_placement(Renderer& r){
     const auto plan=construction_costs::structure(selected->resource_kind,mesh);
     const bool valid=resource_placement_valid(selected->resource_kind,resource_size,storage_size,snapped,rotation) && can_start_construction(plan);
     render_resource_mesh(r,mesh,snapped,rotation,true,valid);
-    if(selected->resource_kind==ResourceKind::StorageDome){PlacedResource preview;preview.kind=ResourceKind::StorageDome;preview.storage_size=storage_size;preview.position=snapped;preview.rotation_degrees=rotation;
-        for(const auto& a:gate_area::storage(preview,mesh,kNoRobotIndex,{}))gate_area::draw(r,a,valid);}
 
     if(selected->resource_kind==ResourceKind::RobotWorkshop){
         PlacedResource item;item.kind=ResourceKind::RobotWorkshop;item.position=snapped;item.rotation_degrees=rotation;

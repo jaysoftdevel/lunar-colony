@@ -1,3 +1,67 @@
+0.43.13 - three-chamber bidirectional air lock
+- Divide the existing air-lock envelope into an exterior isolation cabin, a central pressure chamber and an interior access cabin. Add two physical internal bulkheads and four animated pressure seals, retaining both authored end hatches, size tiers, footprints and corridor interfaces.
+- Determine the inside/outside orientation from the completed corridor attachment. Approach the next door to pass either way, or reverse/retreat at any stage. One controller owns all four seals; previous doors must close completely before the next opens. A body in an open aperture prevents closing on the avatar.
+- Equalize the central chamber gradually toward the approached side, only with every seal closed. Internal doors open only at matching pressure. The displayed cycle pressure is relative to the colony interior; breathable-air inventory and the existing supply simulation remain separate. No through-path to the surface is opened.
+- Match POV collision to the complete internal bulkheads, including aperture width, shoulders and overhead clearance. Block walking around, jumping over and tunneling through a closed partition.
+- Show current cabin, center pressure and sealing/equalization state in the POV HUD and selected-air-lock details. Existing air locks gain the internal layout on load; transient cycle state resets with closed seals. Save schema remains 19.
+- Add full physical crossings in both directions and center-chamber retreats across rotated small/standard variants; retain single-side connection rules. Update geometric traversal checks to wait for actual pressure cycles. Update installers continue to list every changed file and never build.
+
+0.43.12 - keep one air-lock side free
+- Air Locks dock corridors only at their two authored end hatches; the curved hull no longer receives generated side doors. Either end can be selected for the first connection.
+- A corridor or Supply Channel blueprint immediately reserves its side. Reject new corridor, utility and walkway attachments on the opposite side in placement previews and before committing. Same-side corridors reuse the existing sealed trunk, and removing the final connection releases the side.
+- Keep the unused hatch, stairs, surface/POV access and pressure-door interlock. Existing saved links are preserved; new placements cannot extend an already conflicting two-sided Air Lock. Save schema remains 19, with reservations derived from actual links rather than new persistent flags.
+- Add rotated small/standard Air Lock regressions for source/destination rejection, blueprint reservations, utility-first ordering, shared-trunk branching, reservation release and exterior access.
+
+0.43.11 - floating FIFO priorities and storage flow rates
+- Default new UI preferences to 100%; preserve saved UI-size choices and the shared resolution transform.
+- Move PRIORITIZE BUILD / REMOVE PRIORITY into the selected unfinished object's floating construction frame. Show its PRIO queue position in that frame and keep overhead badges on other promoted objects. Protect the floating button from world-selection input.
+- Append manual priorities in first-in-first-solved order. Keep later queued objects from receiving new assignments until the head completes or is removed; prune completed/deleted entries. Allow the head's unfinished prerequisites to progress so the queue cannot block itself. Active build work and loaded deliveries finish safely.
+- Automatically prefer unfinished corridors and Supply Channels whose two closed endpoints are already complete, ahead of unfinished structures, including manually queued buildings. Show AUTO LINK on these ready connections.
+- Add a water-tank fill bar and signed POWER / WATER rate indicators. Measure actual net battery charging/draining in kW and net tank filling/draining in litres per game day; hover text also reports actual supplied electrical load and water consumption. Capacity, input and charge limits affect the measured values. Paused indicators report PAUSED.
+- Save schema 19 retains stable priority IDs and migrates schema-18 newest-first lists into chronological FIFO order. Derived flow telemetry remains transient; older saves remain readable.
+- Extend queue, migration, automatic-link, prerequisite, charge/fill/drain and floating-button resolution regressions. Keep installer file summaries and never build from an update installer.
+
+0.43.10 - update file summaries and colony status indicators
+- Shell and batch installers print the update version and the complete list of added, modified and deleted workspace files after successful application. Include update-summary.txt in each new package. Repeat applications and rejected updates report zero changed files; neither installer builds.
+- Add a battery-charge indicator below the POWER status tile. Use actual completed-battery kWh divided by their combined 60 kWh standard / 30 kWh small capacity; show matching decimal inventory totals instead of placeholder counters.
+- Add an AIR status tile and indicator for the combined breathable-air fill of all completed indoor habitats and Storage Domes. Weight each interior by volume, include disconnected interiors, and exclude blueprints, exterior service manifolds and connection volumes. Newly completed interiors with no refreshed supply volume still count using their model envelope.
+- Empty colonies show AIR -- and zero fill. Clamp readings to valid bounds; low charge/air uses the existing warning color. Hover text explains battery charge and the volume-weighted air average. Keep the shared resolution/UI transform and accommodate all existing resource tiles.
+- Save schema remains 18; this is presentation and installer behavior only.
+
+0.43.9 - recover routes into and out of narrow service bays
+- Reproduce the 0-43-7 save's CR-01 stall with 21 kg aboard: the actual supply-channel delivery point is clear, but the start-relative coarse lattice has no free terminal row between the water driller and water storage.
+- After two failures of the existing incremental/coarse planners, escalate to a retained full-playfield fallback with a destination-aligned lattice and nominal 1.05 m cells. Successful existing routes keep their previous planner and traffic behavior.
+- Find a checked connection from the exact robot position to a grid entry up to twelve cells away, and retain that entry in the extracted route. Smoothing can no longer omit the necessary first bend when leaving a narrow bay.
+- Limit the global graph to 40000 cells, retain the expansion budget and check a 4 ms propagation deadline. Defer unfinished searches across updates; reseed changed global geometry lazily instead of resampling all known nodes in a single revision pass. This deadline does not cap the entire game frame or an individual geometry callback.
+- Preserve pending global parking searches across idle dispatch slices. Every path still passes exact segment clearance and shared motion-contract checks; no collision radius, physical obstacle or cargo accounting is weakened.
+- Save schema stays 18; old saves load directly and planner state remains transient. Add focused narrow-entry/exit, broad detour, map-edge and obstacle-change regressions plus an optional saved-route replay command.
+
+0.43.8 - debug idle-robot movement and construction priorities
+- In debug mode select an idle robot, use DEBUG MOVE / PICK DESTINATION, then click the ground. The robot uses the normal collision-checked planner and certified motion contracts, and holds the chosen position after arrival. Reissuing moves the destination; Cancel stops the custom order, and Escape/right-click cancels destination picking.
+- Keep constructor/carrier assignment active while a debug move or hold exists. Real work immediately drops the custom destination, including during motion. Busy robots, loaded/reserved cargo, active actions and delivery-exit phases cannot receive debug move orders. Disable debug mode to release all custom moves. Debug destinations are transient and are not restored from saves.
+- Add PRIORITIZE BUILD / NORMAL PRIORITY to the shared details header for every unfinished habitat, resource structure/extension, corridor, supply channel and walkway. New promotions go to the front; toggling off restores ordinary ordering. The control remains available outside debug mode.
+- Apply priority tiers before carrier FIFO and before builder distance/team scoring. Existing dependencies, supplied-material gates, stage safety and loaded cargo delivery remain authoritative; active build jobs finish normally before reassignment.
+- Show cyan PRIO badges above promoted unfinished objects, using the shared resolution/UI transform. Completed objects lose the badge and promotion control.
+- Save schema 18 appends the ordered stable placement IDs, preserving priority across loading and vector reindexing. Older schemas remain readable and default to normal priority. New colonies and debug blueprint imports clear the previous colony's priorities.
+
+0.43.7 - reduce idle-colony CPU and graphics submission load
+- Cache the four immutable storage packing grids instead of regenerating and sorting a grid for every rendered or navigation-tested inventory box.
+- Remove redundant indoor-box obstacles from outdoor rover snapshots. Completed dome envelopes already enclose their entire contents; ground and site packages retain collision checks, and POV picking/collision is unchanged.
+- Batch warehouse package faces and outlines, reducing this save's 3D submissions from 1827 to 162 while retaining the same 472386 submitted vertices and individual physical packages.
+- Stream ordered OpenGL geometry once per projection/depth pass, orphaning previous GPU backing before upload. Preserve draw order, colors, widths and world/HUD boundaries; stop repeatedly replacing offset zero while previous draws may still use it. Direct3D already streams frame geometry.
+- Give completed exterior equipment a 20-litre sealed service manifold, allowing oxygen to traverse equipment ports between supply pipes. Every habitat kind, storage dome and connected corridor remains a finite air volume; filling is gradual and consumes real connected tank water.
+- Double solar peak production from 8 to 16 kW standard and from 4 to 8 kW small. Keep nightfall, dispatch, battery capacity and charge limits; use the same peak constant in telemetry.
+- Save schema remains 17; v0.43.6 saves load directly. CPU workers already use all permitted processors; avoid manufacturing background work just to fill idle CPUs.
+
+0.43.6 - compact storage gates, POV jump and warning reasons
+- Replace angle/size-dependent gate stretching with one rigid 2.0 m transfer chamber (2.2 m external depth, 2.6 m width). Preview, completed mesh, shutters, robot service point and clearance use the same radial anchors at every angle and dome tier.
+- Completed storage domes use a conservative circular rover envelope instead of square corners. Keep exact swept-disc collision checks and reserve the fully opened cargo shutters as solid rover geometry. Gates remain separate construction tasks, with up to three per dome.
+- Keep the pickup/drop-off point 1.55 m in front of the gate. Reserve the compact staging bay, full shutter travel and a clearance margin against structures, corridors, walkways, pipes, material piles and other cargo approaches.
+- Remove unused sealed-door candidate placing pads/reservations and persistent orange cross-filled squares. Retain actual door/cargo clearances, show selected cargo pads as cyan outlines, and show the accepted/rejected approach boundary during gate placement.
+- Space triggers a grounded POV jump with lunar gravity, floor landing and body/head clearance against pressure roofs, docking sleeves and door headers. Holding Space does not auto-jump and pressing it in the air does not reset velocity. Add press/release/focus handling on Linux and Windows and update POV help.
+- Every habitat and outdoor/resource structure shares warning-reason rendering before specialized panel branches. Explain all active warning bits, including missing connected battery/tank, low power/water/air/stock/food/medical. Wrap multiple reasons and grow the details frame consistently without changing screen scaling.
+- Save schema remains 17; existing gate tasks/angles are retained and their compact positions are derived on synchronization/load.
+
 0.43.5 - water-to-oxygen processing and breathable-air telemetry
 - Report BREATHABLE AIR percentage and interior volume in habitat, storage-dome and corridor details. Show signed percentage-point change per game day; habitats/corridors also show net oxygen change.
 - Oxygen generator details show measured oxygen output and actual connected-tank water intake, plus processing, paused, missing-input and full-network status. Displayed rates reflect actual simulated production/transfer/consumption, including power, water and capacity limits.

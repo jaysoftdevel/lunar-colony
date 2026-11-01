@@ -53,6 +53,8 @@ game/include/game/ui/layout.hpp
 game/include/game/util/mesh_wireframe.hpp
 game/include/game/util/world_math.hpp
 game/include/game/version.hpp
+game/include/game/world/airlock_connections.hpp
+game/include/game/world/airlock_cycle.hpp
 game/include/game/world/construction.hpp
 game/include/game/world/construction_sequence.hpp
 game/include/game/world/corridor/corridor_module.hpp
@@ -196,3 +198,5 @@ todos.txt
 engine/include/engine/ui_metrics.hpp
 engine/include/engine/ui_font.hpp
 game/tests/ui_regression.cpp
+game/include/game/ui/supply_warnings.hpp
+engine/include/engine/geometry_stream.hpp

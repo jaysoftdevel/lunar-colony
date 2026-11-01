@@ -1,6 +1,7 @@
 #include "engine/engine.hpp"
 #include "engine/ui_metrics.hpp"
 #include "engine/ui_font.hpp"
+#include "engine/geometry_stream.hpp"
 #include <algorithm>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -55,6 +56,7 @@ struct GLApi {
 class GLRenderer final: public Renderer {
     GLApi gl_; Display* d_{}; Window w_{}; GLXContext ctx_{}; int width_{},height_{}; GLuint prog_{},vbo_{}; GLint u_mvp_{},u_color_{}; Mat4 mvp_=Mat4::identity();
     GLsizeiptr vbo_capacity_bytes_{0};
+    GeometryStream stream_;
     bool hardware_accelerated_{false};
     std::string gpu_vendor_{};
     std::string gpu_renderer_{};
@@ -89,19 +91,36 @@ class GLRenderer final: public Renderer {
         return false;
     }
     GLuint shader(GLenum type,const char* src){ GLuint s=gl_.glCreateShader(type); gl_.glShaderSource(s,1,&src,nullptr); gl_.glCompileShader(s); GLint ok=0; gl_.glGetShaderiv(s,GL_COMPILE_STATUS,&ok); if(!ok){ char log[2048]{}; GLsizei n=0; gl_.glGetShaderInfoLog(s,2047,&n,log); std::cerr<<"Shader error: "<<log<<"\n"; } return s; }
-    void upload_and_draw(const float* data,size_t floats,GLenum prim,Color c,float width=1.0f){
-        if(!data || floats==0) return;
-        gl_.glUseProgram(prog_); gl_.glUniformMatrix4fv(u_mvp_,1,GL_FALSE,mvp_.m.data()); gl_.glUniform4f(u_color_,c.r,c.g,c.b,c.a); gl_.glBindBuffer(GL_ARRAY_BUFFER,vbo_);
-        const GLsizeiptr bytes=(GLsizeiptr)(floats*sizeof(float));
+    void flush_geometry(){
+        if(stream_.commands.empty()) return;
+        gl_.glUseProgram(prog_);
+        gl_.glUniformMatrix4fv(u_mvp_,1,GL_FALSE,mvp_.m.data());
+        gl_.glBindBuffer(GL_ARRAY_BUFFER,vbo_);
+        const GLsizeiptr bytes=(GLsizeiptr)(stream_.vertices.size()*sizeof(float));
         if(bytes>vbo_capacity_bytes_){
-            GLsizeiptr capacity=4096;
-            while(capacity<bytes) capacity*=2;
-            gl_.glBufferData(GL_ARRAY_BUFFER,capacity,nullptr,GL_DYNAMIC_DRAW);
-            vbo_capacity_bytes_=capacity;
+            vbo_capacity_bytes_=4096;
+            while(vbo_capacity_bytes_<bytes) vbo_capacity_bytes_*=2;
         }
-        gl_.glBufferSubData(GL_ARRAY_BUFFER,0,bytes,data);
-        gl_.glEnableVertexAttribArray(0); gl_.glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),nullptr); gl_.glLineWidth(width); gl_.glDrawArrays(prim,0,(GLsizei)(floats/3));
+        // Orphan the previous backing once per pass. The driver can finish
+        // reading that storage while this frame gets its own upload region.
+        gl_.glBufferData(GL_ARRAY_BUFFER,vbo_capacity_bytes_,nullptr,GL_DYNAMIC_DRAW);
+        gl_.glBufferSubData(GL_ARRAY_BUFFER,0,bytes,stream_.vertices.data());
+        gl_.glEnableVertexAttribArray(0);
+        gl_.glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),nullptr);
+        for(const auto& cmd:stream_.commands){
+            const auto c=cmd.color;
+            gl_.glUniform4f(u_color_,c.r,c.g,c.b,c.a);
+            gl_.glLineWidth(cmd.width);
+            gl_.glDrawArrays(cmd.primitive,(GLint)cmd.first,(GLsizei)cmd.count);
+        }
+        stream_.clear();
     }
+    void upload_and_draw(const float* data,size_t floats,GLenum prim,Color c,float width=1.0f){
+        stream_.append(data,floats,prim,c,width);
+        // Keep pathological worlds bounded without changing draw order.
+        if(stream_.vertices.size()*sizeof(float)>=32*1024*1024) flush_geometry();
+    }
+
 public:
     bool initialize(void* native_display,std::uintptr_t native_window,int width,int height) override {
         d_=(Display*)native_display; w_=(Window)native_window; width_=width;height_=height; if(!gl_.init()) return false;
@@ -137,11 +156,12 @@ public:
         GLuint sv=shader(GL_VERTEX_SHADER,vs), sf=shader(GL_FRAGMENT_SHADER,fs); prog_=gl_.glCreateProgram(); gl_.glAttachShader(prog_,sv); gl_.glAttachShader(prog_,sf); gl_.glBindAttribLocation(prog_,0,"aPos"); gl_.glLinkProgram(prog_); GLint ok=0; gl_.glGetProgramiv(prog_,GL_LINK_STATUS,&ok); if(!ok){ char log[2048]{}; GLsizei n=0; gl_.glGetProgramInfoLog(prog_,2047,&n,log); std::cerr<<"Program link error: "<<log<<"\n"; return false; }
         u_mvp_=gl_.glGetUniformLocation(prog_,"uMVP"); u_color_=gl_.glGetUniformLocation(prog_,"uColor"); gl_.glGenBuffers(1,&vbo_); resize(width,height); return true;
     }
-    void resize(int w,int h) override { width_=w;height_=h; if(h<1)h=1; gl_.glViewport(0,0,w,h); }
-    void begin_frame(Color c) override { gl_.glClearColor(c.r,c.g,c.b,c.a); gl_.glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); gl_.glEnable(GL_DEPTH_TEST); gl_.glEnable(GL_BLEND); gl_.glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA); }
-    void end_frame() override { gl_.glXSwapBuffers(d_,w_); }
-    void set_3d(const Mat4& vp) override { mvp_=vp; gl_.glEnable(GL_DEPTH_TEST); }
+    void resize(int w,int h) override { flush_geometry(); width_=w;height_=h; if(h<1)h=1; gl_.glViewport(0,0,w,h); }
+    void begin_frame(Color c) override { stream_.clear(); gl_.glClearColor(c.r,c.g,c.b,c.a); gl_.glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); gl_.glEnable(GL_DEPTH_TEST); gl_.glEnable(GL_BLEND); gl_.glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA); }
+    void end_frame() override { flush_geometry(); gl_.glXSwapBuffers(d_,w_); }
+    void set_3d(const Mat4& vp) override { flush_geometry(); mvp_=vp; gl_.glEnable(GL_DEPTH_TEST); }
     void set_2d(float scale=1.0f) override {
+        flush_geometry();
         scale=std::max(0.01f,scale);
         mvp_=ortho(0,(float)width_/scale,(float)height_/scale,0,-1,1);
         gl_.glDisable(GL_DEPTH_TEST);

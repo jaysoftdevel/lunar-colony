@@ -269,6 +269,13 @@ std::optional<CorridorConnection> CorridorNetwork::preview_built_corridor(
 bool CorridorNetwork::build_corridor(const CorridorBuildAnchor& a,const CorridorBuildAnchor& b,
                                      const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
                                      const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
+    // Validate the selected air-lock hatch before network reuse or component
+    // fallback can silently reroute a forbidden exterior-side request.
+    for(const auto* anchor:{&a,&b}) if(anchor->kind==CorridorEndpointKind::Habitat){
+        if(anchor->index>=habitats.size())return false;
+        if(habitats[anchor->index].kind==HabitatKind::AirLock &&
+           !resolve_anchor(*anchor,anchor==&a?b.position:a.position,habitats,library,resources,resource_library,connections_))return false;
+    }
     // Do not add a second physical pressure tube when both requested anchors are
     // already connected through the merged corridor graph. A dense colony can
     // therefore accept repeated/all-to-all connection requests without growing

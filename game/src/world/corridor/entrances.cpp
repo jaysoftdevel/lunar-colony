@@ -1,3 +1,4 @@
+#include "game/world/airlock_connections.hpp"
 #include "game/world/corridor/detail.hpp"
 #include <array>
 #include "game/world/storage_loading_gate.hpp"
@@ -462,6 +463,9 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     const auto& habitat=habitats[anchor.index];
     const auto& mesh=library.mesh(habitat);
 
+    if(habitat.kind==HabitatKind::AirLock &&
+       !airlock_connections::allows(anchor.index,anchor.position,habitats,existing))return std::nullopt;
+
     // An already-used entrance remains a valid build source. Additional
     // corridors merge into the existing sealed trunk just outside that door
     // instead of creating another overlapping entrance/vestibule.
@@ -472,7 +476,7 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     // that region, preserve the cursor-selected pressure-hull attachment.
     constexpr float BUILTIN_SNAP_RADIUS=1.75f;
     bool found_builtin=false;
-    float best_cursor_distance=BUILTIN_SNAP_RADIUS;
+    float best_cursor_distance=habitat.kind==HabitatKind::AirLock?std::numeric_limits<float>::max():BUILTIN_SNAP_RADIUS;
     CorridorDoor d{};
     for(std::size_t i=0;i<mesh.entrances.size();++i){
         CorridorDoor candidate=transformed_builtin_door(habitat,mesh,i);
@@ -483,6 +487,9 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
             found_builtin=true;
         }
     }
+
+    if(habitat.kind==HabitatKind::AirLock &&
+       (!found_builtin || !airlock_connections::allows(anchor.index,d.wall_position,habitats,existing)))return std::nullopt;
 
     if(found_builtin){
         if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,d.wall_position,existing,0.55f))

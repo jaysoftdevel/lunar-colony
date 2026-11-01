@@ -80,9 +80,6 @@ void GameApp::render_habitat_placement(Renderer& r){
     const bool valid=placement_valid(selected->habitat_kind,size,snapped,placement_rotation_degrees_) && can_start_construction(plan);
 
     render_habitat_mesh(r,habitat_models_.mesh(selected->habitat_kind,size),snapped,placement_rotation_degrees_,true,valid);
-    PlacedHabitat preview;preview.kind=selected->habitat_kind;preview.size=size;preview.position=snapped;preview.rotation_degrees=placement_rotation_degrees_;
-    for(const auto& a:gate_area::habitat(preview,habitat_models_.mesh(preview),kNoRobotIndex,{}))gate_area::draw(r,a,valid);
-
 
     if(valid && input_.left_pressed){
         PlacedHabitat placed;

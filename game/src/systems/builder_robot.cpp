@@ -313,6 +313,7 @@ struct NavSnapshot {
     std::vector<PendingGeometry> corridor_geo{};
     std::vector<PendingGeometry> walkway_geo{};
     std::vector<NavRect> solids{};
+    std::vector<std::size_t> storage_domes{};
     std::vector<Bounds> habitat_bounds{};
     std::vector<Bounds> resource_bounds{};
     std::vector<Bounds> corridor_bounds{};
@@ -1946,17 +1947,11 @@ void GameApp::update_builder_robot(float dt){
         cache_site_buffer_obstacles({ConstructionTargetKind::Utility,i},utility_network_.connections()[i].site_buffer);
     for(std::size_t i=0;i<walkway_network_.connections().size();++i)
         cache_site_buffer_obstacles({ConstructionTargetKind::Walkway,i},walkway_network_.connections()[i].site_buffer);
-    for(std::size_t structure_index=0;structure_index<placed_resources_.size();++structure_index){
-        const auto& structure=placed_resources_[structure_index];
-        if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
-        const auto& mesh=resource_models_.mesh(structure);
-        for(std::size_t bi=0;bi<structure.stored_boxes.size();++bi){
-            Vec3 base{}; float half=0.0f,height=0.0f;
-            stored_resource_box_pose(structure,mesh,bi,base,half,height);
-            (void)height;
-            cached_resource_obstacles.push_back({base,half*1.41421356f});
-        }
-    }
+    // Stored packages are entirely inside the completed dome's conservative
+    // solid rover envelope. The hull already rejects their whole region, so
+    // enumerating every indoor box in every 90 Hz outdoor navigation snapshot
+    // adds no protection. Ground and construction-site packages remain hard
+    // obstacles; indoor POV collision/picking retains the individual boxes.
 
     auto build_nav_snapshot=[&](){
         nav=NavSnapshot{};
@@ -1969,8 +1964,10 @@ void GameApp::update_builder_robot(float dt){
             const auto& item=placed_resources_[i];
             if(!item.construction.complete()) continue;
             if(item.kind==ResourceKind::RobotWorkshop){ nav.workshops.push_back(i); continue; }
+            if(item.kind==ResourceKind::StorageDome){nav.storage_domes.push_back(i);continue;}
             const auto& mesh=resource_models_.mesh(item);
-            nav.solids.push_back(make_nav_rect(item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z));
+            nav.solids.push_back(make_nav_rect(item.position,item.rotation_degrees,mesh.footprint_x+ (item.kind==ResourceKind::StorageGate?0.10f:0.0f),
+                item.kind==ResourceKind::StorageGate?2*storage_loading::kOpenHalfWidth:mesh.footprint_z));
         }
         for(const auto& corridor:corridor_network_.connections()){
             if(!corridor.construction.complete() || corridor.path.size()<2) continue;
@@ -2232,6 +2229,8 @@ void GameApp::update_builder_robot(float dt){
                 if(std::abs(local.x)<rect.half_x+structure_radius &&
                    std::abs(local.z)<rect.half_z+structure_radius) return false;
             }
+            for(const std::size_t index:nav.storage_domes)
+                if(dist_xz(candidate,placed_resources_[index].position)<storage_loading::body_radius(placed_resources_[index])+structure_radius)return false;
             for(const std::size_t index:nav.workshops)
                 if(!workshop::clear(placed_resources_[index],candidate,candidate,structure_radius)) return false;
             for(const auto& poly:nav.corridors){
@@ -2254,10 +2253,15 @@ void GameApp::update_builder_robot(float dt){
                     if(!workshop::clear(item,candidate,candidate,structure_radius)) return false;
                     continue;
                 }
+                if(item.kind==ResourceKind::StorageDome){
+                    if(dist_xz(candidate,item.position)<storage_loading::body_radius(item)+structure_radius)return false;
+                    continue;
+                }
                 const auto& mesh=resource_models_.mesh(item);
                 const Vec3 local=world_math::rotate_y(candidate-item.position,-item.rotation_degrees);
-                if(std::abs(local.x)<mesh.footprint_x*0.5f+structure_radius &&
-                   std::abs(local.z)<mesh.footprint_z*0.5f+structure_radius) return false;
+                const float half_x=mesh.footprint_x*0.5f+(item.kind==ResourceKind::StorageGate?0.05f:0.0f);
+                const float half_z=item.kind==ResourceKind::StorageGate?storage_loading::kOpenHalfWidth:mesh.footprint_z*0.5f;
+                if(std::abs(local.x)<half_x+structure_radius && std::abs(local.z)<half_z+structure_radius)return false;
             }
             // Airtight completed corridors are permanent outdoor rover obstacles.
             // Keeping their conservative centreline envelope in the cheap nav mask
@@ -2384,6 +2388,8 @@ void GameApp::update_builder_robot(float dt){
         if(nav.valid){
             for(const auto& rect:nav.solids)
                 if(segment_intersects_nav_rect(from,to,rect,rect.half_x+structure_radius,rect.half_z+structure_radius)) return false;
+            for(const std::size_t index:nav.storage_domes)
+                if(segment_distance_xz(placed_resources_[index].position,from,to)<=storage_loading::body_radius(placed_resources_[index])+structure_radius)return false;
             for(const std::size_t index:nav.workshops)
                 if(!workshop::clear(placed_resources_[index],from,to,structure_radius)) return false;
             const float clearance=geometry::kCorridorHalfWidth+structure_radius+0.18f;
@@ -2408,9 +2414,14 @@ void GameApp::update_builder_robot(float dt){
                     if(!workshop::clear(item,from,to,structure_radius)) return false;
                     continue;
                 }
+                if(item.kind==ResourceKind::StorageDome){
+                    if(segment_distance_xz(item.position,from,to)<=storage_loading::body_radius(item)+structure_radius)return false;
+                    continue;
+                }
                 const auto& mesh=resource_models_.mesh(item);
-                if(segment_intersects_rectangle(from,to,item.position,item.rotation_degrees,
-                    mesh.footprint_x*0.5f+structure_radius,mesh.footprint_z*0.5f+structure_radius)) return false;
+                const float half_x=mesh.footprint_x*0.5f+(item.kind==ResourceKind::StorageGate?0.05f:0.0f);
+                const float half_z=item.kind==ResourceKind::StorageGate?storage_loading::kOpenHalfWidth:mesh.footprint_z*0.5f;
+                if(segment_intersects_rectangle(from,to,item.position,item.rotation_degrees,half_x+structure_radius,half_z+structure_radius))return false;
             }
             for(const auto& corridor:corridor_network_.connections()){
                 if(!corridor.construction.complete()) continue;
@@ -2450,6 +2461,8 @@ void GameApp::update_builder_robot(float dt){
                 const float dz=rect.half_z+radius-std::abs(local.z);
                 if(dx>0.0f && dz>0.0f) penetration=std::max(penetration,std::min(dx,dz));
             }
+            for(const std::size_t index:nav.storage_domes)
+                penetration=std::max(penetration,storage_loading::body_radius(placed_resources_[index])+radius-dist_xz(candidate,placed_resources_[index].position));
             return penetration;
         }
         for(const auto& h:placed_habitats_){
@@ -2460,8 +2473,9 @@ void GameApp::update_builder_robot(float dt){
         for(const auto& item:placed_resources_){
             if(!item.construction.complete()) continue;
             if(item.kind==ResourceKind::RobotWorkshop) continue;
+            if(item.kind==ResourceKind::StorageDome){penetration=std::max(penetration,storage_loading::body_radius(item)+radius-dist_xz(candidate,item.position));continue;}
             const auto& mesh=resource_models_.mesh(item);
-            rect_penetration(item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+            rect_penetration(item.position,item.rotation_degrees,mesh.footprint_x+(item.kind==ResourceKind::StorageGate?0.10f:0.0f),item.kind==ResourceKind::StorageGate?2*storage_loading::kOpenHalfWidth:mesh.footprint_z);
         }
         return penetration;
     };
@@ -2683,6 +2697,9 @@ void GameApp::update_builder_robot(float dt){
         request.stop_radius=stop_radius;
         request.cell_size=1.28f;
         const float map_half=std::max(8.0f,(float)playfield_.size()*0.5f-1.5f);
+        // Preserve existing D*/coarse routing when it succeeds. Escalate only
+        // after both established planners have failed this scheduled trip.
+        request.world_half_extent=(robot.safety.route_failure_count>=2 || planner_state.global_search)?(float)playfield_.size()*0.5f:0.0f;
         request.corridor_half_width=std::clamp(dist_xz(start,goal)*0.42f+7.0f,
                                                10.0f,std::min(30.0f,map_half));
         // A single invocation is intentionally modest. If the initial D* wave
@@ -4435,6 +4452,7 @@ void GameApp::update_builder_robot(float dt){
         auto choose_target=[&](){
             ConstructionTargetRef best{};
             float best_score=std::numeric_limits<float>::max();
+            std::size_t best_priority=kNoRobotIndex;
             auto consider=[&](ConstructionTargetKind kind,std::size_t index){
                 ConstructionTargetRef candidate{kind,index};
                 if(construction_target_complete(candidate) || !construction_target_dependencies_ready(candidate)) return;
@@ -4466,7 +4484,9 @@ void GameApp::update_builder_robot(float dt){
                 if(kind==ConstructionTargetKind::Corridor) network_priority=-600.0f;
                 else if(kind==ConstructionTargetKind::Utility || kind==ConstructionTargetKind::Walkway) network_priority=-350.0f;
                 const float score=distance+load_penalty-cooperation_bonus+staffed_site_penalty+network_priority;
-                if(score<best_score){ best_score=score; best=candidate; }
+                const auto priority=construction_dispatch_rank(candidate);
+                if(priority==3)return;
+                if(priority<best_priority || (priority==best_priority && score<best_score)){ best_priority=priority;best_score=score;best=candidate; }
             };
             for(std::size_t i=0;i<placed_habitats_.size();++i) consider(ConstructionTargetKind::Habitat,i);
             for(std::size_t i=0;i<placed_resources_.size();++i) consider(ConstructionTargetKind::Resource,i);
@@ -4500,7 +4520,8 @@ void GameApp::update_builder_robot(float dt){
             robot.build_orbit_phase=0.0f;
             robot.build_side_corner_reached=false;
             clear_action(robot);
-            if(robot.target.valid() || !has_workshop) clear_route(robot);
+            // A bounded global fallback must survive idle dispatch slices.
+            if(robot.target.valid() || (!has_workshop && !robot.debug_move_active && !robot.safety.incremental_path.global_search)) clear_route(robot);
             robot.mode=robot.target.valid()?BuilderRobotMode::AwaitingMaterials:BuilderRobotMode::Idle;
         }
         if(!robot.target.valid()){
@@ -4515,7 +4536,7 @@ void GameApp::update_builder_robot(float dt){
             // construction queue is complete. As soon as a supplied build task
             // becomes available on a later tick, choose_target() preempts this
             // cosmetic return trip immediately.
-            if(has_workshop) continue;
+            if(has_workshop || robot.debug_move_active) continue;
             const Vec3 home=constructor_parking_position(robot_index);
             if(dist_xz(robot.position,home)>0.30f || std::abs(robot.current_speed_mps)>0.04f){
                 move_towards(robot_index,home,0.22f,0.90f);
@@ -5029,28 +5050,15 @@ void GameApp::update_builder_robot(float dt){
             return false;
         };
 
-        // CR-01 logistics is strict FIFO by blueprint placement order. The
+        // Within equal player priority CR-01 logistics is FIFO by placement order. The
         // fleet fully stages the complete remaining bill of materials for the
         // oldest blueprint before any carrier is allowed to advance to a newer
         // one. Construction dependencies do not alter this logistics order.
-        auto placement_sequence=[&](const ConstructionTargetRef& target)->std::uint64_t{
-            switch(target.kind){
-                case ConstructionTargetKind::Habitat:
-                    return target.index<placed_habitats_.size()?placed_habitats_[target.index].placement_sequence:0;
-                case ConstructionTargetKind::Resource:
-                    return target.index<placed_resources_.size()?placed_resources_[target.index].placement_sequence:0;
-                case ConstructionTargetKind::Corridor:
-                    return target.index<corridor_network_.connections().size()?corridor_network_.connections()[target.index].placement_sequence:0;
-                case ConstructionTargetKind::Utility:
-                    return target.index<utility_network_.connections().size()?utility_network_.connections()[target.index].placement_sequence:0;
-                case ConstructionTargetKind::Walkway:
-                    return target.index<walkway_network_.connections().size()?walkway_network_.connections()[target.index].placement_sequence:0;
-                default: return 0;
-            }
-        };
+        auto placement_sequence=[&](const ConstructionTargetRef& target){ return construction_target_sequence(target); };
 
         auto fifo_front_target=[&](){
             ConstructionTargetRef best{};
+            std::size_t best_priority=kNoRobotIndex;
             std::uint64_t best_sequence=std::numeric_limits<std::uint64_t>::max();
             std::uint64_t fallback_order=0;
             std::uint64_t best_fallback=std::numeric_limits<std::uint64_t>::max();
@@ -5063,6 +5071,11 @@ void GameApp::update_builder_robot(float dt){
                 if(logistics_remaining(target,true,false,kNoRobotIndex).empty()) return;
                 const std::uint64_t sequence=placement_sequence(target);
                 const std::uint64_t fallback=++fallback_order;
+                const auto priority=construction_dispatch_rank(target);
+                if(priority==3)return;
+                if(priority>best_priority)return;
+                if(priority<best_priority){best_priority=priority;best_sequence=std::numeric_limits<std::uint64_t>::max();best_fallback=std::numeric_limits<std::uint64_t>::max();}
+
                 if(sequence>0){
                     if(sequence<best_sequence){ best_sequence=sequence; best_fallback=fallback; best=target; }
                 }else if(best_sequence==std::numeric_limits<std::uint64_t>::max() && fallback<best_fallback){
@@ -5199,7 +5212,7 @@ void GameApp::update_builder_robot(float dt){
                 // once the current construction queue is complete.
                 carrier.mode=any_unfinished_blueprint()?BuilderRobotMode::Idle:BuilderRobotMode::DepotTransfer;
                 carrier.cargo_committed_to_build=false;
-                clear_route(carrier);
+                if(!carrier.debug_move_active)clear_route(carrier);
             }
         }
 
@@ -5489,7 +5502,7 @@ void GameApp::update_builder_robot(float dt){
            !robot.cargo.empty() || robot.target.valid()) continue;
         clear_action(robot);
         clear_interaction_station(robot);
-        if(has_workshop) continue;
+        if(has_workshop || robot.debug_move_active) continue;
         clear_route(robot);
         robot.route_resolution_elapsed=0.0f;
         robot.route_force_full_replan=false;
@@ -5534,7 +5547,7 @@ void GameApp::update_builder_robot(float dt){
         auto incoming=[&](std::size_t i){
             if(i>=builder_robots_.size()) return false;
             const auto& r=builder_robots_[i];
-            return r.workshop_index==home && r.mode==BuilderRobotMode::Idle && !r.target.valid() && r.cargo.empty() &&
+            return !r.debug_move_active && r.workshop_index==home && r.mode==BuilderRobotMode::Idle && !r.target.valid() && r.cargo.empty() &&
                 !r.drop_exit_pending && (dist_xz(r.position,workshop::bay(item,r.workshop_bay))>=0.22f || std::abs(r.current_speed_mps)>=0.04f);
         };
         bool exiting=false;
@@ -5551,7 +5564,7 @@ void GameApp::update_builder_robot(float dt){
     }
     for(std::size_t i=0;i<builder_robots_.size();++i){
         auto& robot=builder_robots_[i];
-        if(robot.workshop_index==kNoRobotIndex || robot.mode!=BuilderRobotMode::Idle || robot.target.valid() ||
+        if(robot.debug_move_active || robot.workshop_index==kNoRobotIndex || robot.mode!=BuilderRobotMode::Idle || robot.target.valid() ||
            !robot.cargo.empty() || robot.action!=BuilderRobotAction::None || robot.drop_exit_pending){
             robot.workshop_entry_started=false;continue;
         }
@@ -5578,6 +5591,20 @@ void GameApp::update_builder_robot(float dt){
                 move_towards(i,robot.workshop_entry_started?destination:entry,0.14f,0.42f);
             }else move_towards(i,destination,0.14f,0.42f);
         }
+    }
+    for(std::size_t i=0;i<builder_robots_.size();++i){
+        auto& robot=builder_robots_[i];if(!robot.debug_move_active)continue;
+        if(!debug_robot_move_available(i)){
+            robot.debug_move_active=false;
+            // A real intent has already been submitted above. Never overwrite
+            // it when cancelling the debug destination.
+            robot.safety.temporary_goal_valid=false;
+            continue;
+        }
+        robot.workshop_parked=false;robot.workshop_returning=false;robot.post_delivery_hold=false;
+        navigation_requests[i]={};
+        if(dist_xz(robot.position,robot.debug_move_destination)>0.22f || std::abs(robot.current_speed_mps)>0.04f)
+            move_towards(i,robot.debug_move_destination,0.18f,1.0f);
     }
     for(const auto& home:placed_resources_){
         if(home.kind!=ResourceKind::RobotWorkshop || !home.construction.complete() || home.workshop_gate_open>=0.999f) continue;

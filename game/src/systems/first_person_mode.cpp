@@ -275,7 +275,7 @@ float ray_hit_distance(Vec3 ray_origin,Vec3 ray_dir,Vec3 center,float radius,flo
     return t;
 }
 
-std::vector<Vec3> storage_floor_cells(StorageDomeSize size){
+std::vector<Vec3> make_storage_floor_cells(StorageDomeSize size){
     float max_half=0.0f;
     for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
         const auto material=static_cast<MaterialResource>(ri);
@@ -303,6 +303,15 @@ std::vector<Vec3> storage_floor_cells(StorageDomeSize size){
     });
     if(cells.empty()) cells.push_back({0.0f,0.0f,0.0f});
     return cells;
+}
+
+const std::vector<Vec3>& storage_floor_cells(StorageDomeSize size){
+    // Packing grids depend only on the dome tier. Sorting them for every box
+    // made render and navigation cost grow with inventory size every frame.
+    static const std::array<std::vector<Vec3>,4> grids{{
+        make_storage_floor_cells((StorageDomeSize)0),make_storage_floor_cells((StorageDomeSize)1),
+        make_storage_floor_cells((StorageDomeSize)2),make_storage_floor_cells((StorageDomeSize)3)}};
+    return grids.at((std::size_t)size);
 }
 
 } // namespace
@@ -394,6 +403,8 @@ std::vector<CorridorDoor> GameApp::habitat_doors(std::size_t habitat_index) cons
             add_unique(d);
         }
     }
+    if(h.kind==HabitatKind::AirLock && h.construction.complete())
+        for(const auto& d:airlock::partitions(h,mesh))add_unique(d);
     return doors;
 }
 
@@ -524,6 +535,19 @@ float GameApp::first_person_floor_height(Vec3 p) const {
             // vertically.
             return h.position.y+habitat_basement_height(mesh);
         }
+        // The authored air-lock hatch sits slightly beyond the pressure hull.
+        // Its visible deck landing bridges that gap to the exterior stairs;
+        // keep feet at deck height on both sides of the hatch plane.
+        if(h.kind==HabitatKind::AirLock){
+            const auto local=rotate_y(p-h.position,-h.rotation_degrees);
+            for(const auto& entrance:mesh.entrances){
+                const auto delta=local-entrance.local_position;
+                const auto normal=entrance.local_normal;const Vec3 side{-normal.z,0,normal.x};
+                const float along=dot(delta,normal);
+                if(along>=-0.9f && along<=0.001f && std::abs(dot(delta,side))<=geometry::kDoorClearWidth*0.5f)
+                    return h.position.y+habitat_basement_height(mesh);
+            }
+        }
     }
     for(const auto& item:placed_resources_){
         if(!item.construction.complete() || item.kind!=ResourceKind::StorageDome) continue;
@@ -588,6 +612,46 @@ float GameApp::first_person_floor_height(Vec3 p) const {
     return 0.0f;
 }
 
+float GameApp::first_person_ceiling_height(Vec3 p) const {
+    float ceiling=std::numeric_limits<float>::max();
+    const float head=first_person_floor_height(p)+first_person_.body_height();
+    const auto scan=[&](const std::vector<Vec3>& triangles,Vec3 origin,float rotation){
+        const Vec3 local=rotate_y(p-origin,-rotation);
+        // Cover the body footprint under curved/sloping pressure roofs.
+        for(int sample=0;sample<9;++sample){
+            Vec3 probe=local;
+            if(sample){const float angle=2*3.14159265358979323846f*(float)(sample-1)/8;probe.x+=std::cos(angle)*first_person_.body_radius();probe.z+=std::sin(angle)*first_person_.body_radius();}
+            for(std::size_t i=0;i+2<triangles.size();i+=3){
+                float y=0;
+                if(triangle_height_at_xz(probe,triangles[i],triangles[i+1],triangles[i+2],y) && origin.y+y>=head-0.025f)
+                    ceiling=std::min(ceiling,origin.y+y);
+            }
+        }
+    };
+    for(std::size_t i=0;i<placed_habitats_.size();++i){const auto& h=placed_habitats_[i];if(!h.construction.complete())continue;
+        const auto& m=habitat_models_.mesh(h);
+        if(!near_rotated_footprint(p,h.position,h.rotation_degrees,m.footprint_x,m.footprint_z,first_person_.body_radius()+0.5f))continue;
+        scan(m.shell,h.position,h.rotation_degrees);scan(m.glazing,h.position,h.rotation_degrees);
+        for(const auto& door:habitat_doors(i))if(point_in_doorway_clearance(p,door,first_person_.body_radius()))ceiling=std::min(ceiling,door.position.y+geometry::kDoorClearHeight);
+    }
+    for(std::size_t i=0;i<placed_resources_.size();++i){const auto& item=placed_resources_[i];if(!item.construction.complete())continue;
+        if(item.kind!=ResourceKind::StorageDome && item.kind!=ResourceKind::RobotWorkshop)continue;
+        const auto& m=resource_models_.mesh(item);
+        if(!near_rotated_footprint(p,item.position,item.rotation_degrees,m.footprint_x,m.footprint_z,first_person_.body_radius()+0.5f))continue;
+        scan(m.body,item.position,item.rotation_degrees);
+        if(item.kind==ResourceKind::StorageDome)for(const auto& door:storage_dome_doors(i))if(point_in_doorway_clearance(p,door,first_person_.body_radius()))ceiling=std::min(ceiling,door.position.y+geometry::kDoorClearHeight);
+    }
+    for(const auto& c:corridor_network_.connections())if(c.construction.complete()){
+        bool near=false;for(std::size_t j=1;j<c.path.size();++j)if(point_segment_distance_xz(p,c.path[j-1],c.path[j])<=geometry::kCorridorHalfWidth+first_person_.body_radius()+0.5f){near=true;break;}
+        if(near)scan(c.mesh.shell,{},0);
+        for(const auto* ep:{&c.endpoint_a,&c.endpoint_b})if(ep->kind==CorridorEndpointKind::Habitat || ep->kind==CorridorEndpointKind::Resource){
+            if(point_segment_distance_xz(p,ep->position,ep->door.wall_position)<=geometry::kDockSleeveHalfWidth+first_person_.body_radius())
+                ceiling=std::min(ceiling,std::min(ep->position.y+geometry::kCorridorDeckY,ep->door.position.y)+geometry::kDockSleeveHeight);
+        }
+    }
+    return ceiling;
+}
+
 bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
     const float radius=first_person_.body_radius();
     const float half=(float)playfield_.size()*0.5f-radius;
@@ -597,8 +661,11 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
     // travel as rendering, so an avatar cannot step through a closed outline.
     for(std::size_t i=0;i<placed_habitats_.size();++i){
         if(!placed_habitats_[i].construction.complete()) continue;
-        for(const auto& d:habitat_doors(i))
-            if(pressure_door::blocks(d,first_person_door_open_fraction(d.wall_position),from,to,radius)) return false;
+        for(const auto& d:habitat_doors(i)){
+            const float fraction=first_person_door_open_fraction(d.wall_position);
+            if(airlock::internal(d)?airlock::bulkhead_blocks(d,fraction,from,to,radius,first_person_.body_height(),std::abs(habitat_models_.mesh(placed_habitats_[i]).entrances[0].local_position.x)/5.25f):
+               pressure_door::blocks(d,fraction,from,to,radius))return false;
+        }
     }
     for(std::size_t i=0;i<placed_resources_.size();++i){
         if(!placed_resources_[i].construction.complete()) continue;
@@ -787,7 +854,10 @@ std::string GameApp::first_person_environment_label() const {
         const auto& h=placed_habitats_[i];
         if(!h.construction.complete()) continue;
         const auto& mesh=habitat_models_.mesh(h);
-        if(inside_habitat_hull(p,h,mesh,0.02f)) return "INTERIOR / PRESSURIZED";
+        if(inside_habitat_hull(p,h,mesh,0.02f)){
+            if(h.kind==HabitatKind::AirLock){const auto local=rotate_y(p-h.position,-h.rotation_degrees);return airlock::chamber(local.x,airlock::partition_x(mesh),airlock_inside_sign(i));}
+            return "INTERIOR / PRESSURIZED";
+        }
     }
     for(const auto& item:placed_resources_){
         if(!item.construction.complete() || item.kind!=ResourceKind::StorageDome) continue;
@@ -828,7 +898,7 @@ void GameApp::stored_resource_box_pose(const PlacedResource& structure,const Res
     // a second layer starts. Within a column the exact previous box heights are
     // accumulated, so boxes physically sit on one another instead of sharing a
     // fixed/overlapping Y offset.
-    const auto cells=storage_floor_cells(structure.storage_size);
+    const auto& cells=storage_floor_cells(structure.storage_size);
     const std::size_t cell_count=std::max<std::size_t>(1,cells.size());
     const std::size_t cell=box_index%cell_count;
     const float storage_floor=storage_basement_height(mesh);
@@ -990,19 +1060,19 @@ void GameApp::update_first_person(float dt,const InputState& input){
         // the requested path goes cleanly through the opening. Preserve the
         // old axis attempts only as wall-sliding fallbacks.
         const Vec3 direct=current+displacement;
-        if(first_person_move_allowed(current,direct)){
+        const auto move_allowed=[&](Vec3 from,Vec3 to){return (first_person_.grounded() || to.y+first_person_.body_height()+0.02f<=first_person_ceiling_height(to)) && first_person_move_allowed(from,to);};
+        if(move_allowed(current,direct)){
             current=direct;
         }else{
             Vec3 x_try{current.x+displacement.x,current.y,current.z};
-            if(first_person_move_allowed(current,x_try)) current=x_try;
+            if(move_allowed(current,x_try)) current=x_try;
             Vec3 z_try{current.x,current.y,current.z+displacement.z};
-            if(first_person_move_allowed(current,z_try)) current=z_try;
+            if(move_allowed(current,z_try)) current=z_try;
         }
     }
-    const float target_floor=first_person_floor_height(current);
-    const float max_step=std::max(0.055f,dt*1.65f);
-    current.y += std::clamp(target_floor-current.y,-max_step,max_step);
     first_person_.set_feet_position(current);
+    const float ceiling=input.key_space_pressed || !first_person_.grounded()?first_person_ceiling_height(current):std::numeric_limits<float>::max();
+    first_person_.advance_vertical(input.key_space_pressed,dt,first_person_floor_height(current),ceiling);
     update_first_person_resource_hover();
     if(input.left_pressed) first_person_grab_or_drop_resource();
 }

@@ -30,6 +30,9 @@ struct PathPlanRequest {
     float stop_radius{0.0f};
     float corridor_half_width{9.0f};
     float cell_size{0.72f};
+    // Optional complete map bounds for persistent global planning. Zero keeps
+    // the legacy local window used by standalone/coarse queries.
+    float world_half_extent{0.0f};
     int max_expansions{4200};
     std::size_t visibility_skip_limit{10};
     // Cheap direct/dogleg routing is always attempted first. Callers may turn
@@ -55,6 +58,7 @@ struct IncrementalPathPlannerState {
     };
 
     bool initialized{false};
+    bool global_search{false}; // fallback after the established local graph fails
     float cell_size{1.25f};
     float origin_x{0.0f};
     float origin_z{0.0f};

@@ -1,6 +1,7 @@
 #include "game/systems/construction_costs.hpp"
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
+#include "game/ui/supply_warnings.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/world_labels.hpp"
 #include "game/world/storage_loading_gate.hpp"
@@ -81,8 +82,18 @@ std::string oxygen_net_text(const SupplyState& supply,bool paused){
 
 void GameApp::render_selection_panel(Renderer& r){
     const Rect text_panel=selection_kind_==SelectionKind::GroundResource && selected_ground_resources_.size()<=1?ground_resource_panel_rect():selection_panel_rect();
+    float warning_extra=0;
     const auto game_label=[&](Renderer& renderer,Vec2 pos,const std::string& text,float scale,const ui::Theme& theme,bool muted=false){
+        if(pos.y>=text_panel.y+80.0f)pos.y+=warning_extra;
         layout::game_label_fitted(renderer,{pos.x,pos.y,std::max(0.0f,text_panel.x+text_panel.w-pos.x-12.0f),14.0f},text,scale,theme,muted);
+    };
+
+    const auto warning_reasons=[&](const SupplyState& supply,bool complete,ResourceKind kind=ResourceKind::Count){
+        if(!complete)return;
+        const auto lines=supply_warning_lines(supply,text_panel.w-28.0f,eng::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_),kind);
+        for(std::size_t i=0;i<lines.size();++i)
+            layout::game_label_fitted(r,{text_panel.x+14.0f,text_panel.y+75.0f+(float)i*12.0f,text_panel.w-28.0f,11.0f},lines[i],0.43f,theme_);
+        warning_extra=supply_warning_extra_height(lines);
     };
 
     if(selection_kind_==SelectionKind::GroundResource){
@@ -263,6 +274,11 @@ void GameApp::render_selection_panel(Renderer& r){
                 break;
         }
 
+        if(robot.debug_move_active){
+            task.str("");task.clear();
+            const auto delta=robot.position-robot.debug_move_destination;
+            task<<((std::hypot(delta.x,delta.z)<0.25f && std::abs(robot.current_speed_mps)<0.04f)?"TASK  DEBUG HOLD AT SELECTED PLACE":"TASK  DEBUG MOVE TO SELECTED PLACE");
+        }
         navigation<<"NAVIGATION  "<<robots::safety_mode_name(robot.safety.mode);
         if(robot.safety.motion_intent==robots::MotionIntent::Retreat) navigation<<" / RETREAT";
         if(robot.safety.blocker_robot_id<builder_robots_.size()) navigation<<" / BLOCKED BY "<<robot_identity(robot.safety.blocker_robot_id);
@@ -345,7 +361,14 @@ void GameApp::render_selection_panel(Renderer& r){
 
         game_label(r,{x,p.y+300},recovery.str(),0.40f,theme_,true);
         game_label(r,{x,p.y+322},condition.str(),0.42f,theme_,true);
-        game_label(r,{x,p.y+p.h-27.0f},"LMB SELECT OTHER / ROBOTS ARE NOT DELETABLE",0.42f,theme_,true);
+        if(debug_frame_enabled_){
+            const bool picking=debug_move_pick_robot_==(int)robot_index;
+            const char* label=picking?"CANCEL DESTINATION PICK":robot.debug_move_active?"CANCEL DEBUG MOVE":"DEBUG MOVE / PICK DESTINATION";
+            if(ui::button(r,ui_input_,{x,p.y+p.h-43,p.w-28,30},label,theme_,debug_robot_move_available(robot_index))){
+                if(robot.debug_move_active)builder_robots_[robot_index].debug_move_active=false;
+                else debug_move_pick_robot_=picking?-1:(int)robot_index;
+            }
+        }else game_label(r,{x,p.y+p.h-27.0f},"LMB SELECT OTHER / ROBOTS ARE NOT DELETABLE",0.42f,theme_,true);
         return;
     }
 
@@ -366,17 +389,7 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
             game_label(r,{x,p.y+73},next_material_cost(h.resource_plan,h.construction.step),0.43f,theme_,true);
         }
-        if(h.construction.complete() && h.supply.warnings){
-            std::string missing="NEEDS";const auto flags=h.supply.warnings;
-            if(flags&NoPower)missing+=" POWER";
-            if(flags&NoWater)missing+=" WATER";
-            if(flags&LowAir)missing+=" AIR";
-            if(flags&LowStock)missing+=" RESERVE";
-            if(flags&NoStorage)missing+=" STORAGE";
-            if(flags&NoFood)missing+=" FOOD";
-            if(flags&NoMedical)missing+=" MEDICAL";
-            game_label(r,{x,p.y+75},missing,0.38f,theme_);
-        }
+        warning_reasons(h.supply,h.construction.complete());
         game_label(r,{x,p.y+88},used_material_cost(h.resource_plan,h.construction.step),0.44f,theme_,true);
         game_label(r,{x,p.y+112},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+136},rot.str(),0.58f,theme_,true);
@@ -394,6 +407,13 @@ void GameApp::render_selection_panel(Renderer& r){
             const char* state=!h.construction.complete()?"NOT BUILT":paused?"PAUSED":h.supply.power_fraction<=0?"WAITING FOR POWER":(h.supply.warnings&NoWater)?"WAITING FOR TANK WATER":h.supply.oxygen_produced_kg_per_day>1e-8?"CONVERTING WATER TO OXYGEN":h.supply.network_water_to_fill_litres<1e-6?"NETWORK AIR TARGET REACHED":"DISTRIBUTING OXYGEN";
             game_label(r,{x,p.y+300},state,0.44f,theme_,true);
             game_label(r,{x,p.y+320},"RATES PER GAME DAY / DEL REMOVE",0.40f,theme_,true);
+        }else if(h.kind==HabitatKind::AirLock){
+            const auto index=(std::size_t)selected_habitat_;const airlock::Cycle idle{};
+            const auto& cycle=index<airlock_cycles_.size()?airlock_cycles_[index]:idle;
+            std::ostringstream pressure;pressure<<"CENTER PRESSURE "<<std::fixed<<std::setprecision(0)<<cycle.pressure*100<<"% OF INSIDE";
+            game_label(r,{x,p.y+278},pressure.str(),0.43f,theme_);
+            game_label(r,{x,p.y+300},airlock::phase(cycle),0.43f,theme_,true);
+            game_label(r,{x,p.y+320},"3 CHAMBERS / BIDIRECTIONAL / DEL REMOVE",0.40f,theme_,true);
         }else game_label(r,{x,p.y+282},"RATES PER GAME DAY / DEL REMOVE",0.40f,theme_,true);
         return;
     }
@@ -414,10 +434,11 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+60},build.str(),0.58f,theme_);
             game_label(r,{x,p.y+73},next_material_cost(item.resource_plan,item.construction.step),0.43f,theme_,true);
         }
+        warning_reasons(item.supply,item.construction.complete(),item.kind);
         if(item.kind==ResourceKind::SolarPanel || item.kind==ResourceKind::WaterDriller){
             const double factor=item.size==ResourceSizeTier::Small?0.5:1.0;
             std::ostringstream rate;rate<<std::fixed<<std::setprecision(1);
-            if(item.kind==ResourceKind::SolarPanel){const double sun=std::max(0.0,std::sin((status_.hour()-6.0)*3.141592653589793/12.0));rate<<"SOLAR "<<8*factor*sun<<" / "<<8*factor<<" KW PEAK";}
+            if(item.kind==ResourceKind::SolarPanel){const double sun=std::max(0.0,std::sin((status_.hour()-6.0)*3.141592653589793/12.0));rate<<"SOLAR "<<kSolarPeakKw*factor*sun<<" / "<<kSolarPeakKw*factor<<" KW PEAK";}
             else rate<<"PUMP "<<500*factor*item.supply.power_fraction<<" L/D / "<<4*factor<<" KW";
             game_label(r,{x,p.y+208},rate.str(),0.48f,theme_);
         }
@@ -472,7 +493,7 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+364},"DEL REMOVE / LMB SELECT OTHER",0.43f,theme_,true);
             const bool available=gates<3;
             const std::string caption=gates>=3?"MAX THREE GATES":(available?"PLACE GATE":"NO FREE GATE AREA");
-            if(ui::button(r,ui_input_,{p.x+p.w-174,p.y+125,160,28},caption,theme_,available && !storage_gate_placement_active_)){
+            if(ui::button(r,ui_input_,{p.x+p.w-174,p.y+125+warning_extra,160,28},caption,theme_,available && !storage_gate_placement_active_)){
                 storage_gate_placement_active_=true;
                 storage_gate_placement_owner_=(std::size_t)selected_resource_;
                 corridor_build_start_.reset();
@@ -495,17 +516,7 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+248},"DEL REMOVE / LMB SELECT OTHER",0.46f,theme_,true);
             return;
         }
-        if(item.construction.complete() && item.supply.warnings){
-            std::string missing="NEEDS";const auto flags=item.supply.warnings;
-            if(flags&NoPower)missing+=" POWER";
-            if(flags&NoWater)missing+=" WATER";
-            if(flags&LowAir)missing+=" AIR";
-            if(flags&LowStock)missing+=" RESERVE";
-            if(flags&NoStorage)missing+=" STORAGE";
-            if(flags&NoFood)missing+=" FOOD";
-            if(flags&NoMedical)missing+=" MEDICAL";
-            game_label(r,{x,p.y+75},missing,0.38f,theme_);
-        }
+
         game_label(r,{x,p.y+88},used_material_cost(item.resource_plan,item.construction.step),0.44f,theme_,true);
         game_label(r,{x,p.y+112},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+136},rot.str(),0.58f,theme_,true);

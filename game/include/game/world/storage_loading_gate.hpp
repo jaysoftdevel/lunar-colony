@@ -7,10 +7,13 @@
 namespace game::storage_loading {
 inline constexpr float kHalfWidth=1.20f;
 inline constexpr float kHeight=1.65f;
+inline constexpr float kOpenHalfWidth=2*kHalfWidth+0.10f;
+inline constexpr float kDepth=2.00f; // one rigid transfer module at every angle/tier
+inline constexpr float kClearance=0.20f;
 inline constexpr float kServiceOffset=1.55f;
 inline constexpr float kReach=0.55f;
-inline constexpr float kApronDepth=4.40f;
-inline constexpr float kApronHalfWidth=2.15f;
+inline constexpr float kApronDepth=2.80f;
+inline constexpr float kApronHalfWidth=2.65f;
 inline constexpr std::array<int,4> kCargoFaces{{4,5,6,7}};
 
 inline eng::Vec3 local_normal(int face){
@@ -55,19 +58,19 @@ inline void set_angle(PlacedResource& owner,int f,float angle){
 inline eng::Vec3 normal(const PlacedResource& item,int selected=-1){
     return world_math::rotate_y(local_normal(item,selected),item.rotation_degrees);
 }
-inline float outer_radius(const PlacedResource& item,int selected=-1){
-    const auto n=local_normal(item,selected);
-    const float half=storage_dome_diameter_m(item.storage_size)*0.5f;
-    // Extend the physical loading sleeve out to the rover-safe envelope.
-    // Its pad is then immediately beside the real gate, with no route through
-    // the warehouse collision footprint.
-    return half/std::max(std::abs(n.x),std::abs(n.z))+(face(item,selected)>=4?0.50f:0.20f);
+inline float body_radius(const PlacedResource& item){
+    // Circumscribed circular envelope of the dome/foundation and crew frames.
+    // Cargo modules remain separate solid children; no square corner extensions.
+    return storage_dome_diameter_m(item.storage_size)*0.5f;
 }
 inline eng::Vec3 wall(const PlacedResource& item,int selected=-1){
     return item.position+normal(item,selected)*(storage_dome_diameter_m(item.storage_size)*(5.35f/13.0f));
 }
 inline eng::Vec3 mouth(const PlacedResource& item,int selected=-1){
-    return item.position+normal(item,selected)*(outer_radius(item,selected)-0.20f);
+    return wall(item,selected)+normal(item,selected)*kDepth;
+}
+inline float outer_radius(const PlacedResource& item,int selected=-1){
+    return eng::length(mouth(item,selected)-item.position)+0.20f;
 }
 inline eng::Vec3 service(const PlacedResource& item,int selected=-1){
     return mouth(item,selected)+normal(item,selected)*kServiceOffset;

@@ -53,7 +53,14 @@ bool GameApp::gate_layout_clear(const PlacedHabitat* habitat,const PlacedResourc
     return true;
 }
 void GameApp::render_gate_areas(eng::Renderer& r) const {
-    for(std::size_t i=0;i<placed_habitats_.size();++i)for(const auto& a:gate_area::habitat(placed_habitats_[i],habitat_models_.mesh(placed_habitats_[i]),i,corridor_network_.connections()))gate_area::draw(r,a);
-    for(std::size_t i=0;i<placed_resources_.size();++i)for(const auto& a:gate_area::storage(placed_resources_[i],resource_models_.mesh(placed_resources_[i]),i,corridor_network_.connections()))gate_area::draw(r,a);
+    // Clearances stay authoritative, but unused door candidates are not world
+    // placements. Show only real cargo pads for the selected dome/gate.
+    if(selection_kind_!=SelectionKind::Resource || selected_resource_<0 || (std::size_t)selected_resource_>=placed_resources_.size())return;
+    const auto& selected=placed_resources_[(std::size_t)selected_resource_];
+    const auto index=selected.kind==ResourceKind::StorageGate?selected.storage_parent_index:(std::size_t)selected_resource_;
+    if(index>=placed_resources_.size())return;
+    const auto& owner=placed_resources_[index];if(owner.kind!=ResourceKind::StorageDome)return;
+    for(int f:storage_loading::faces(owner))if(f>=0 && (selected.kind!=ResourceKind::StorageGate || selected.storage_loading_face==f))
+        gate_area::draw(r,{storage_loading::service(owner,f),storage_loading::normal(owner,f),1.0f,0.75f});
 }
 }

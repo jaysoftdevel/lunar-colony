@@ -4,8 +4,8 @@
 namespace game::resources {
 ResourceMesh make_storage_gate(StorageDomeSize size){
     Builder b;
-    PlacedResource owner;owner.kind=ResourceKind::StorageDome;owner.storage_size=size;owner.storage_loading_face=1;
-    const float depth=length(storage_loading::mouth(owner)-storage_loading::wall(owner));
+    (void)size; // A cargo hatch does not grow with its warehouse.
+    const float depth=storage_loading::kDepth;
     const float w=storage_loading::kHalfWidth,h=storage_loading::kHeight;
     b.mesh.footprint_x=depth+0.20f;b.mesh.footprint_z=2*w+0.20f;b.mesh.height=h+0.28f;
     b.box(b.mesh.foundation,{0,0.14f,0},{depth+0.20f,0.18f,2*w+0.18f});

@@ -22,7 +22,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=17;
+constexpr std::uint32_t kSaveSchema=19;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -540,6 +540,8 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_vec3(w,starter_stash_center_);
     for(double value:production_fraction_) w.pod(value);
     w.pod(life_support_fraction_seconds_);
+    w.pod((std::uint64_t)construction_priority_.size());
+    for(auto sequence:construction_priority_)w.pod(sequence);
 
     w.out.flush();
     if(!w.ok()){ w.out.close(); fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
@@ -732,12 +734,13 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     corridor_network_.synchronize_structure_interfaces(placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     assign_storage_loading_faces();
     synchronize_storage_gates();
-    pressure_doors_.clear();storage_gate_open_.clear();
+    pressure_doors_.clear();airlock_cycles_.clear();storage_gate_open_.clear();
     utility_network_.restore_connections(std::move(utilities));
     utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     walkway_network_.restore_connections(std::move(walkways));
 
     next_blueprint_placement_sequence_=1;
+    construction_priority_.clear();debug_move_pick_robot_=-1;
     auto advance_sequence=[&](std::uint64_t sequence){
         next_blueprint_placement_sequence_=std::max(next_blueprint_placement_sequence_,sequence+1);
     };
@@ -936,6 +939,15 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         for(std::size_t i=0;i<r.material_resource_count && i<saved_production.size();++i) saved_production[i]=r.pod<double>();
         saved_life_fraction=r.pod<double>();
     }
+    std::vector<std::uint64_t> saved_priority;
+    if(source_schema>=18){
+        const auto count=r.pod<std::uint64_t>();if(count>100000)r.valid=false;
+        for(std::uint64_t i=0;i<count && r.valid;++i){const auto sequence=r.pod<std::uint64_t>();
+            if(!sequence || std::find(saved_priority.begin(),saved_priority.end(),sequence)!=saved_priority.end()){r.valid=false;break;}
+            saved_priority.push_back(sequence);
+        }
+    }
+    if(source_schema==18)std::reverse(saved_priority.begin(),saved_priority.end()); // old saves stored newest first
     if(!r.valid){ error="Savegame ended unexpectedly."; return false; }
 
     // v0.40.11 and older stored delivered construction material on the BR-02
@@ -986,12 +998,13 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     corridor_network_.synchronize_structure_interfaces(placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     assign_storage_loading_faces();
     synchronize_storage_gates();
-    pressure_doors_.clear();storage_gate_open_.clear();
+    pressure_doors_.clear();airlock_cycles_.clear();storage_gate_open_.clear();
     utility_network_.restore_connections(std::move(utilities));
     utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     walkway_network_.restore_connections(std::move(walkways));
 
     next_blueprint_placement_sequence_=1;
+    construction_priority_=std::move(saved_priority);debug_move_pick_robot_=-1;
     auto advance_sequence=[&](std::uint64_t sequence){
         next_blueprint_placement_sequence_=std::max(next_blueprint_placement_sequence_,sequence+1);
     };

@@ -1,3 +1,4 @@
+#include "game/world/airlock_connections.hpp"
 #include "game/world/utility_network.hpp"
 #include "game/world/geometry_standards.hpp"
 #include "game/world/storage_loading_gate.hpp"
@@ -889,7 +890,10 @@ std::optional<UtilityEndpoint> UtilityNetwork::preview_anchor(
     const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
     const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const {
     if(!anchor_compatible(kind,anchor,habitats,resources)) return std::nullopt;
-    return surface_endpoint(anchor,toward,kind,habitats,habitat_library,resources,resource_library);
+    auto endpoint=surface_endpoint(anchor,toward,kind,habitats,habitat_library,resources,resource_library);
+    if(endpoint && endpoint->kind==UtilityEndpointKind::Habitat &&
+       !airlock_connections::allows(endpoint->index,endpoint->position,habitats,{},connections_))return std::nullopt;
+    return endpoint;
 }
 
 UtilityMesh UtilityNetwork::preview_endpoint_mesh(const UtilityEndpoint& endpoint) const {
@@ -908,8 +912,8 @@ std::optional<UtilityConnection> UtilityNetwork::preview_connection(
 
     const Vec3 center_a=structure_center(a,habitats,resources);
     const Vec3 center_b=structure_center(b,habitats,resources);
-    const auto ea=surface_endpoint(a,center_b,kind,habitats,habitat_library,resources,resource_library);
-    const auto eb=surface_endpoint(b,center_a,kind,habitats,habitat_library,resources,resource_library);
+    const auto ea=preview_anchor(kind,a,center_b,habitats,habitat_library,resources,resource_library);
+    const auto eb=preview_anchor(kind,b,center_a,habitats,habitat_library,resources,resource_library);
     if(!ea || !eb) return std::nullopt;
     const std::vector<Vec3> path=make_route(kind,*ea,*eb,habitats,habitat_library,resources,resource_library,connections_,playfield_half_extent_);
     if(path.size()<2) return std::nullopt;
@@ -928,6 +932,11 @@ bool UtilityNetwork::build_connection(
     UtilityKind kind,const UtilityBuildAnchor& a,const UtilityBuildAnchor& b,
     const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
     const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
+    for(const auto* anchor:{&a,&b}) if(anchor->kind==UtilityEndpointKind::Habitat){
+        if(anchor->index>=habitats.size())return false;
+        if(habitats[anchor->index].kind==HabitatKind::AirLock &&
+           !preview_anchor(kind,*anchor,anchor==&a?b.hit:a.hit,habitats,habitat_library,resources,resource_library))return false;
+    }
     // Supply channels are one shared manifold. If both requested structures are
     // already in the same manifold, the request is satisfied without laying a
     // second parallel/overlapping tray.

@@ -121,6 +121,7 @@ void GameApp::render_construction_status_frames(Renderer& r){
     // rest of the HUD. World projection is converted back to logical UI units,
     // so panel geometry, progress bars, text and spacing all follow UI SCALE.
     r.set_2d(ui_scale_);
+    construction_priority_button_rect_={};construction_priority_button_target_={};
     std::vector<ConstructionFrame> frames;
     frames.reserve(placed_habitats_.size()+placed_resources_.size()+
                    corridor_network_.connections().size()+utility_network_.connections().size()+
@@ -226,12 +227,16 @@ void GameApp::render_construction_status_frames(Renderer& r){
         const auto needed_lines=frame.selected?resource_lines("NEEDED",frame.needed,"NONE"):std::vector<std::string>{};
         const auto shipped_lines=frame.selected?resource_lines("SHIPPED",frame.shipped,"NONE"):std::vector<std::string>{};
         const float width=frame.selected?255.0f:126.0f;
-        const float height=frame.selected?52.0f+18.0f*(float)(needed_lines.size()+shipped_lines.size()):9.0f;
+        const float height=frame.selected?82.0f+18.0f*(float)(needed_lines.size()+shipped_lines.size()):9.0f;
         float x=frame.screen_x-width*0.5f;
         float y=frame.screen_y-height-13.0f;
         x=std::clamp(x,6.0f,std::max(6.0f,logical_w-width-6.0f));
         y=std::clamp(y,STATUS_BAR_H+6.0f,std::max(STATUS_BAR_H+6.0f,logical_h-bottom_guard-height));
         Rect candidate{x,y,width,height};
+        if(frame.selected && !occupied.empty() && overlaps(candidate,occupied.front())){
+            const float right=occupied.front().x+occupied.front().w+8;
+            if(right+width<=logical_w-6)candidate.x=right;
+        }
 
         // Dense construction sites can project several objects onto almost the
         // same screen location. Keep every progress indicator visible, while
@@ -267,6 +272,9 @@ void GameApp::render_construction_status_frames(Renderer& r){
         std::ostringstream title;
         title<<frame.title<<"   STEP "<<(int)frame.step<<"/"<<(int)frame.total_steps
              <<"   "<<(int)std::lround(frame.progress*100.0f)<<"%";
+        const auto rank=construction_priority_rank(frame.target);
+        if(rank!=kNoRobotIndex)title<<"   PRIO "<<rank+1;
+        else if(construction_ready_connection(frame.target))title<<"   AUTO LINK";
         game_label_fitted(r,{candidate.x+8.0f,candidate.y+6.0f,candidate.w-16.0f,13.0f},title.str(),0.43f,theme_);
 
         const Rect progress_track{candidate.x+8.0f,candidate.y+23.0f,candidate.w-16.0f,7.0f};
@@ -282,6 +290,13 @@ void GameApp::render_construction_status_frames(Renderer& r){
             game_label_fitted(r,{candidate.x+8.0f,text_y,candidate.w-16.0f,14.0f},line,0.36f,theme_,true);
             text_y+=18.0f;
         }
+        construction_priority_button_rect_={candidate.x+8,candidate.y+candidate.h-30,candidate.w-16,22};
+        construction_priority_button_target_=frame.target;
+        const bool queued=construction_priority_rank(frame.target)!=kNoRobotIndex;
+        if(ui::button(r,ui_input_,construction_priority_button_rect_,queued?"REMOVE PRIORITY":"PRIORITIZE BUILD",theme_)){
+            toggle_construction_priority(frame.target);selection_marquee_active_=false;selection_marquee_dragged_=false;
+        }
+
     }
 }
 
@@ -302,6 +317,20 @@ void GameApp::render_supply_indicators(Renderer& r){
             game_label(r,{x-26,y+8},label,0.40f,theme_);
         }
     };
+    const auto priority=[&](ConstructionTargetRef target,Vec3 position,float height){
+        if(target.same_as(selected_construction_target()))return; // selected frame already labels its priority
+        const auto rank=construction_priority_rank(target);const bool automatic=construction_ready_connection(target);
+        if((rank==kNoRobotIndex && !automatic) || construction_target_complete(target))return;
+        float x=0,y=0;if(!project_world_to_logical(vp,position+Vec3{0,height+2.0f,0},r.width(),r.height(),ui_scale_,x,y))return;
+        const Color c{0.28f,0.88f,1.0f,1};
+        r.draw_rect({x+20,y-23,82,24},{0.02f,0.06f,0.09f,0.95f});
+        r.draw_line({x+24,y-10},{x+29,y-16},c,2);r.draw_line({x+29,y-16},{x+34,y-10},c,2);
+        game_label(r,{x+39,y-17},rank==kNoRobotIndex?"AUTO LINK":"PRIO "+std::to_string(rank+1),0.42f,theme_);
+    };
+    for(std::size_t i=0;i<placed_habitats_.size();++i)priority({ConstructionTargetKind::Habitat,i},placed_habitats_[i].position,habitat_models_.mesh(placed_habitats_[i]).height);
+    for(std::size_t i=0;i<placed_resources_.size();++i)priority({ConstructionTargetKind::Resource,i},placed_resources_[i].position,resource_models_.mesh(placed_resources_[i]).height);
+    const auto links=[&](const auto& connections,ConstructionTargetKind kind){for(std::size_t i=0;i<connections.size();++i){const auto& path=connections[i].path;if(!path.empty())priority({kind,i},path[path.size()/2],3);}};
+    links(corridor_network_.connections(),ConstructionTargetKind::Corridor);links(utility_network_.connections(),ConstructionTargetKind::Utility);links(walkway_network_.connections(),ConstructionTargetKind::Walkway);
     for(const auto& h:placed_habitats_)if(h.construction.complete())draw(h.position,habitat_models_.mesh(h).height,h.supply,true);
     for(const auto& q:placed_resources_)if(q.construction.complete())draw(q.position,resource_models_.mesh(q).height,q.supply,q.kind==ResourceKind::StorageDome);
 }

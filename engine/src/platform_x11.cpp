@@ -205,6 +205,7 @@ struct Application::Impl {
         input.key_v_down=false;
         input.key_w_down=input.key_a_down=input.key_s_down=input.key_d_down=false;
         input.key_shift_down=false;
+        input.key_space_down=false;input.key_space_pressed=false;
         input.mouse_dx=input.mouse_dy=0;
     }
 
@@ -466,6 +467,7 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
         p.input.left_pressed=p.input.middle_pressed=p.input.right_pressed=false;
         p.input.escape_pressed=p.input.key_n_pressed=p.input.key_m_pressed=p.input.key_v_pressed=p.input.delete_pressed=false;
         p.input.backspace_pressed=p.input.enter_pressed=false;
+        p.input.key_space_pressed=false;
         p.input.text_input.clear();
         p.input.wheel=0; p.input.mouse_dx=0; p.input.mouse_dy=0;
         while(XPending(p.display)){
@@ -514,6 +516,7 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
                 else if(k==XK_Return || k==XK_KP_Enter) p.input.enter_pressed=true;
                 else if(k==XK_n || k==XK_N) p.input.key_n_pressed=true;
                 else if(k==XK_m || k==XK_M) p.input.key_m_pressed=true;
+                else if(k==XK_space){if(!p.input.key_space_down)p.input.key_space_pressed=true;p.input.key_space_down=true;}
                 else if(k==XK_v || k==XK_V){ if(!p.input.key_v_down) p.input.key_v_pressed=true; p.input.key_v_down=true; }
                 else if(k==XK_w || k==XK_W) p.input.key_w_down=true;
                 else if(k==XK_a || k==XK_A) p.input.key_a_down=true;
@@ -530,7 +533,8 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
                 }
             } else if(e.type==KeyRelease){
                 KeySym k=XLookupKeysym(&e.xkey,0);
-                if(k==XK_v || k==XK_V) p.input.key_v_down=false;
+                if(k==XK_space) p.input.key_space_down=false;
+                else if(k==XK_v || k==XK_V) p.input.key_v_down=false;
                 else if(k==XK_w || k==XK_W) p.input.key_w_down=false;
                 else if(k==XK_a || k==XK_A) p.input.key_a_down=false;
                 else if(k==XK_s || k==XK_S) p.input.key_s_down=false;

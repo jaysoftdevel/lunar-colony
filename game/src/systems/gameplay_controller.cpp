@@ -34,6 +34,9 @@ void GameApp::update(float dt,const InputState& in){
     }
 
     if(screen_==Screen::Playfield){
+        if(debug_move_pick_robot_>=0 && (!debug_robot_move_available((std::size_t)debug_move_pick_robot_) || build_catalog_.selected()))debug_move_pick_robot_=-1;
+        if(debug_move_pick_robot_>=0 && (in.escape_pressed || in.right_pressed)){debug_move_pick_robot_=-1;return;}
+
         const float sim_dt=dt*game_speed_multiplier();
         update_pressure_doors(dt);
         if(in.key_v_pressed){
@@ -192,7 +195,13 @@ void GameApp::update(float dt,const InputState& in){
         const bool over_world=logical_y>=STATUS_BAR_H && logical_y<((float)viewport_height_/ui_scale_-BUILD_BAR_H);
         const bool selection_idle=!storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 &&
                                   !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_;
-        if(selection_idle && in.left_pressed && over_world && !mouse_over_selection_panel(in)){
+        if(debug_move_pick_robot_>=0 && in.left_pressed && over_world && !mouse_over_selection_panel(in)){
+            Vec3 hit{};
+            if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit) &&
+               issue_debug_robot_move((std::size_t)debug_move_pick_robot_,hit))debug_move_pick_robot_=-1;
+            selection_marquee_active_=false;return;
+        }
+        if(debug_move_pick_robot_<0 && selection_idle && in.left_pressed && over_world && !mouse_over_selection_panel(in)){
             Vec3 hit{};
             if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
                 selection_marquee_active_=true;

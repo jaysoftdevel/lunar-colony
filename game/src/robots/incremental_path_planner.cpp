@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -206,10 +207,11 @@ void update_around(State& s,int index,std::uint64_t epoch,const PathPlannerCallb
 enum class ComputeStatus { Converged, Pending };
 
 ComputeStatus compute_shortest_path(State& s,std::uint64_t epoch,const PathPlannerCallbacks& callbacks,
-                                    int max_expansions){
+                                    int max_expansions,std::chrono::steady_clock::time_point deadline){
     int expansions=0;
     const int bounded_max=std::max(64,max_expansions);
     while(expansions<bounded_max){
+        if(s.global_search && std::chrono::steady_clock::now()>=deadline)return ComputeStatus::Pending;
         const auto start_key=calculate_key(s,s.last_start_index);
         if(s.open_heap.empty())
             return ComputeStatus::Converged;
@@ -264,7 +266,7 @@ int find_start_index(State& s,Vec3 actual,std::uint64_t epoch,const PathPlannerC
     const auto base=coordinates(s,nearest);
     int best=-1;
     float best_distance=kInf;
-    for(int radius=0;radius<=3;++radius){
+    for(int radius=0;radius<=(s.global_search?12:3);++radius){
         for(int dz=-radius;dz<=radius;++dz){
             for(int dx=-radius;dx<=radius;++dx){
                 if(radius>0 && std::max(std::abs(dx),std::abs(dz))!=radius) continue;
@@ -284,26 +286,41 @@ int find_start_index(State& s,Vec3 actual,std::uint64_t epoch,const PathPlannerC
 }
 
 bool initialize_state(const PathPlanRequest& request,std::uint64_t epoch,
-                      const PathPlannerCallbacks& callbacks,State& s){
+                      const PathPlannerCallbacks& callbacks,State& s,bool global=false){
     reset_incremental_path_state(s);
+    s.global_search=global;
     if(!callbacks.floor_height || !callbacks.point_clear || !callbacks.segment_clear) return false;
     if(!callbacks.point_clear(request.goal)) return false;
 
-    float cell=std::max(0.78f,request.cell_size);
+    float cell=global?std::clamp(request.cell_size,0.78f,1.05f):std::max(0.78f,request.cell_size);
     const float margin=std::clamp(request.corridor_half_width,6.0f,34.0f);
     float min_x=std::min(request.start.x,request.goal.x)-margin;
     float max_x=std::max(request.start.x,request.goal.x)+margin;
     float min_z=std::min(request.start.z,request.goal.z)-margin;
     float max_z=std::max(request.start.z,request.goal.z)+margin;
-    int nx=std::max(5,(int)std::ceil((max_x-min_x)/cell)+1);
-    int nz=std::max(5,(int)std::ceil((max_z-min_z)/cell)+1);
-    constexpr int max_cells=10000;
-    if((std::int64_t)nx*(std::int64_t)nz>max_cells){
-        const float scale=std::sqrt((float)((std::int64_t)nx*(std::int64_t)nz)/(float)max_cells);
-        cell*=scale;
-        nx=std::max(5,(int)std::ceil((max_x-min_x)/cell)+1);
-        nz=std::max(5,(int)std::ceil((max_z-min_z)/cell)+1);
+    if(global && request.world_half_extent>0){
+        min_x=min_z=-request.world_half_extent;
+        max_x=max_z=request.world_half_extent;
     }
+    // Anchor the lattice at the EXACT destination. A valid service bay can be
+    // narrower than one cell; the old start-relative phase could put every
+    // nearby row inside an adjacent building, returning NoPath without even
+    // expanding a node. The goal and its approach now exist in the graph.
+    const auto dimensions=[&](){
+        if(global){
+            min_x=request.goal.x-std::ceil((request.goal.x-min_x)/cell)*cell;
+            min_z=request.goal.z-std::ceil((request.goal.z-min_z)/cell)*cell;
+        }
+        return std::array<int,2>{{std::max(5,(int)std::ceil((max_x-min_x)/cell)+1),
+                                 std::max(5,(int)std::ceil((max_z-min_z)/cell)+1)}};
+    };
+    auto dims=dimensions();
+    const int max_cells=global?40000:10000;
+    if((std::int64_t)dims[0]*dims[1]>max_cells){
+        cell*=std::sqrt((float)((std::int64_t)dims[0]*dims[1])/(float)max_cells)*(global?1.01f:1.0f);
+        dims=dimensions();
+    }
+    const int nx=dims[0],nz=dims[1];
 
     s.initialized=true;
     s.cell_size=cell;
@@ -360,6 +377,7 @@ bool state_compatible(const PathPlanRequest& request,const State& s){
     if(dist_xz(request.goal,s.goal)>std::max(0.18f,s.cell_size*0.30f)) return false;
     const int idx=nearest_grid_index(s,request.start);
     if(idx<0) return false;
+    if(s.global_search && request.world_half_extent>0)return true; // full-map bounds never need a moving repair border
     const auto c=coordinates(s,idx);
     // Leave a small repair border. If local avoidance moved the robot outside
     // the retained planning window, rebuilding a fresh D* state is safer and
@@ -393,6 +411,10 @@ bool extract_route(State& s,const PathPlanRequest& request,std::uint64_t epoch,
     raw.clear();
     repair_requested=false;
     int current=s.last_start_index;
+    // Retain the validated connection from the exact robot pose to the grid.
+    // Dropping this vertex made smoothing try to cut a corner directly to the
+    // first grid NEIGHBOR, falsely rejecting a valid exit from a narrow bay.
+    if(s.global_search && current>=0){const Vec3 entry=point_for(s,current,callbacks);if(dist_xz(request.start,entry)>0.03f)raw.push_back(entry);}
     std::vector<std::uint8_t> visited(s.g.size(),0);
     const int guard_limit=std::min<int>((int)s.g.size(),4096);
     for(int guard=0;guard<guard_limit;++guard){
@@ -543,18 +565,28 @@ IncrementalPathResult plan_incremental_path(const PathPlanRequest& request,
     geometric.clear();
     if(!callbacks.floor_height || !callbacks.point_clear || !callbacks.segment_clear) return IncrementalPathResult::NoPath;
 
-    if(!state_compatible(request,state)){
-        if(!initialize_state(request,world_epoch,callbacks,state)){
-            reset_incremental_path_state(state);
-            return IncrementalPathResult::NoPath;
+    const auto global_fallback=[&](){
+        if(state.global_search || request.world_half_extent<=0)return IncrementalPathResult::NoPath;
+        if(!initialize_state(request,world_epoch,callbacks,state,true)){
+            reset_incremental_path_state(state);return IncrementalPathResult::NoPath;
         }
+        // Defer graph propagation to the next granted search slice, preserving
+        // the normal per-call expansion budget even when a legacy search fails.
+        return IncrementalPathResult::Pending;
+    };
+    if(!state_compatible(request,state)){
+        if(!initialize_state(request,world_epoch,callbacks,state))return global_fallback();
     }else{
+        if(state.global_search && state.world_epoch!=world_epoch){
+            // Do not resample thousands of retained global nodes in one frame
+            // after construction changes. A fresh lazy graph is cheap to seed
+            // and its propagation resumes under the normal slice budget.
+            if(!initialize_state(request,world_epoch,callbacks,state,true))return IncrementalPathResult::NoPath;
+            return IncrementalPathResult::Pending;
+        }
         refresh_known_nodes(state,world_epoch,callbacks);
         const int next_start=find_start_index(state,request.start,world_epoch,callbacks);
-        if(next_start<0){
-            reset_incremental_path_state(state);
-            return IncrementalPathResult::NoPath;
-        }
+        if(next_start<0)return global_fallback();
         if(next_start!=state.last_start_index){
             state.km+=heuristic(state,state.last_start_index,next_start);
             state.last_start_index=next_start;
@@ -565,20 +597,20 @@ IncrementalPathResult plan_incremental_path(const PathPlanRequest& request,
     // the moving start. A route extraction may discover a newly blocked edge
     // whose endpoints stayed free; feed that edge back into the inconsistent
     // set and allow two bounded repair passes before falling back to A*.
+    const auto deadline=state.global_search?std::chrono::steady_clock::now()+std::chrono::milliseconds(4):std::chrono::steady_clock::time_point::max();
     constexpr int extraction_repairs=3;
     for(int attempt=0;attempt<extraction_repairs;++attempt){
-        const auto compute=compute_shortest_path(state,world_epoch,callbacks,request.max_expansions);
+        const auto compute=compute_shortest_path(state,world_epoch,callbacks,request.max_expansions,deadline);
         if(compute==ComputeStatus::Pending) return IncrementalPathResult::Pending;
         if(!finite_cost(state.g[(std::size_t)state.last_start_index]) &&
            !finite_cost(state.rhs[(std::size_t)state.last_start_index]))
-            return IncrementalPathResult::NoPath;
+            return global_fallback();
 
         std::vector<Vec3> raw;
         bool repair_requested=false;
         if(extract_route(state,request,world_epoch,callbacks,raw,repair_requested))
-            return smooth_route(request,callbacks,raw,geometric)?IncrementalPathResult::Success:
-                                                               IncrementalPathResult::NoPath;
-        if(!repair_requested) return IncrementalPathResult::NoPath;
+            return smooth_route(request,callbacks,raw,geometric)?IncrementalPathResult::Success:global_fallback();
+        if(!repair_requested) return global_fallback();
         ++state.incremental_repair_count;
     }
     return IncrementalPathResult::Pending;

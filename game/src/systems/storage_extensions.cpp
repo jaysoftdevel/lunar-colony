@@ -121,13 +121,14 @@ bool GameApp::storage_gate_face_clear(const PlacedResource& owner,int face,std::
     if(owner.kind!=ResourceKind::StorageDome || face<0 || face>10) return false;
     for(int f:storage_loading::faces(owner))if(f>=0 && f!=face &&
         world_math::distance_xz(storage_loading::mouth(owner,f),storage_loading::mouth(owner,face))<4.0f)return false;
+    const auto bay=storage_loading::apron(owner,face);
+    for(int f:storage_loading::faces(owner))if(f>=0 && f!=face && world_math::overlaps(bay,storage_loading::apron(owner,f),storage_loading::kClearance))return false;
     const gate_area::Area pad{storage_loading::service(owner,face),storage_loading::normal(owner,face),1.0f,0.75f};
     for(std::size_t i=0;i<placed_habitats_.size();++i)for(const auto& a:gate_area::habitat(placed_habitats_[i],habitat_models_.mesh(placed_habitats_[i]),i,corridor_network_.connections()))if(world_math::overlaps(pad.bounds(),a.bounds(),0.2f))return false;
     for(std::size_t i=0;i<placed_resources_.size();++i)for(const auto& a:gate_area::storage(placed_resources_[i],resource_models_.mesh(placed_resources_[i]),i,corridor_network_.connections())){
         if(owner_index && i==*owner_index && world_math::distance_xz(a.center,pad.center)<0.25f)continue;
         if(world_math::overlaps(pad.bounds(),a.bounds(),0.2f))return false;
     }
-    const auto bay=storage_loading::apron(owner,face);
     const float half=(float)playfield_.size()*0.5f;
     constexpr float clearance=0.45f;
 

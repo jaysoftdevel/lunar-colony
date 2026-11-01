@@ -86,12 +86,13 @@ void GameApp::render_new_game(Renderer& r){
         placed_resources_.clear();
         ground_resource_piles_.clear();
         next_blueprint_placement_sequence_=1;
+        construction_priority_.clear();debug_move_pick_robot_=-1;
         first_person_carried_resource_.reset();
         first_person_hover_ground_resource_=-1;
         first_person_hover_storage_resource_=-1;
         first_person_hover_storage_box_=-1;
         corridor_network_.clear();
-        pressure_doors_.clear();storage_gate_open_.clear();
+        pressure_doors_.clear();airlock_cycles_.clear();storage_gate_open_.clear();
         corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
         utility_network_.clear();
         utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);

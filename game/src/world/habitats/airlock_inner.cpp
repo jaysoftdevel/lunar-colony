@@ -6,23 +6,27 @@ using namespace eng;
 using namespace interior_detail;
 
 void build_airlock_inner(Builder& b){
-    // Interior deck and equipment remain opaque when hull view modes are active.
-    b.box(b.mesh.interior,{0,0.72f,0},{6.4f,0.16f,3.2f},false);
-    b.box(b.mesh.interior,{-1.7f,1.55f,-1.35f},{1.6f,0.65f,0.48f},false);
-    b.box(b.mesh.interior,{0.9f,1.55f,-1.35f},{1.6f,0.65f,0.48f},false);
-    b.cylinder_y(b.mesh.interior,{2.35f,1.55f,0.95f},1.6f,0.30f,10,false);
-
-    // Suit prep, storage and pressure-control equipment along the cylindrical walls.
-    locker_bank(b,{-1.7f,1.75f,-1.65f},4);
-    locker_bank(b,{1.55f,1.75f,-1.65f},3);
-    for(float x:{-2.4f,-0.8f,0.8f,2.4f}){
-        b.cylinder_y(b.mesh.interior,{x,2.15f,1.60f},1.75f,0.16f,8,false);
-        b.box(b.mesh.interior,{x,1.12f,1.60f},{0.55f,0.24f,0.55f},false);
+    // Three bays, with a real pressure bulkhead on either side of the center.
+    // The shared post-scaling crew-interface pass carves human-sized apertures;
+    // runtime sliding leaves occupy those same apertures in both size tiers.
+    b.box(b.mesh.interior,{0,0.72f,0},{9.5f,0.16f,3.2f},false);
+    for(float x:{-1.6f,1.6f}){
+        b.cylinder_x(b.mesh.interior,{x,2.55f,0},0.14f,2.12f,18,false);
+        b.torus_x(b.mesh.interior,{x,2.55f,0},2.06f,0.055f,18,6);
+        console(b,{x+0.32f,1.38f,1.52f},0.60f,1.0f);
     }
-    console(b,{0.2f,1.38f,1.52f},1.45f,1.0f);
-    b.box(b.mesh.interior,{0,1.02f,0},{1.9f,0.22f,0.75f},false);
-    ceiling_light(b,{-2.7f,4.15f,0},{2.7f,4.15f,0});
+    // Both end cabins have suit/isolation equipment, so either authored hatch
+    // can face the colony without rebuilding or mirroring the structure.
+    for(float x:{-3.15f,3.15f}){
+        locker_bank(b,{x,1.75f,-1.65f},2);
+        b.cylinder_y(b.mesh.interior,{x,1.75f,1.6f},1.70f,0.20f,10,false);
+        ceiling_light(b,{x-0.55f,4.0f,0},{x+0.55f,4.0f,0});
+    }
+    // Central pressure-control/recovery manifold stays beside the clear aisle.
+    console(b,{0,1.38f,1.52f},1.0f,1.0f);
+    tank(b,{-0.45f,0.8f,-1.65f},1.8f,0.24f);
+    tank(b,{0.45f,0.8f,-1.65f},1.8f,0.24f);
+    ceiling_light(b,{-1.2f,4.15f,0},{1.2f,4.15f,0});
     b.cylinder_between(b.mesh.interior,{-3.0f,3.82f,1.3f},{3.0f,3.82f,1.3f},0.06f,6,true,false);
 }
-
 } // namespace game::habitats

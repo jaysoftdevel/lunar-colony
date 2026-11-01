@@ -95,6 +95,8 @@ struct BuilderRobotState {
     float heading_degrees{0.0f};
     BuilderRobotMode mode{BuilderRobotMode::Idle};
     ConstructionTargetRef target{};
+    bool debug_move_active{false}; // transient, real assignments always preempt
+    eng::Vec3 debug_move_destination{};
     ResourceBundle cargo{};
     ResourceBundle site_buffer{};       // legacy save field; blueprint site_buffer is authoritative since 0.40.12
 

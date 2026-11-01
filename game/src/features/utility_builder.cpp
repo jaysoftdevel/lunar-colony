@@ -1,3 +1,4 @@
+#include "game/world/airlock_connections.hpp"
 #include "game/game_app.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/ui/layout.hpp"
@@ -78,6 +79,14 @@ void GameApp::render_utility_placement(Renderer& r){
         }
     };
 
+    const auto airlock_allowed=[&](const UtilityEndpoint& endpoint){
+        return endpoint.kind!=UtilityEndpointKind::Habitat || airlock_connections::allows(endpoint.index,endpoint.position,
+            placed_habitats_,corridor_network_.connections(),utility_network_.connections(),walkway_network_.connections());
+    };
+    const auto filter_airlock=[&](std::optional<UtilityConnection>& connection){
+        if(connection && (!airlock_allowed(connection->endpoint_a) || !airlock_allowed(connection->endpoint_b)))connection.reset();
+    };
+
     if(!utility_build_start_){
         std::optional<UtilityEndpoint> source_endpoint;
         std::optional<UtilityConnection> sample;
@@ -92,6 +101,8 @@ void GameApp::render_utility_placement(Renderer& r){
             sample=utility_network_.preview_connection(selected->utility_kind,*hover,end,
                                                         placed_habitats_,habitat_models_,placed_resources_,resource_models_);
         }
+        if(source_endpoint && !airlock_allowed(*source_endpoint))source_endpoint.reset();
+        filter_airlock(sample);
         const bool sample_valid=sample.has_value() && can_start_construction(supply_plan(*sample));
         if(sample){
             const Color shell{0.34f,0.82f,1.00f,0.74f};
@@ -136,6 +147,7 @@ void GameApp::render_utility_placement(Renderer& r){
                                                      placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     }
 
+    filter_airlock(preview);
     const bool affordable=preview && (can_start_construction(supply_plan(*preview)) && gate_route_clear(preview->path,geometry::kSupplyTrayWidth*0.5f+0.2f));
     if(preview){
         const Color shell=affordable?Color{0.68f,0.86f,0.98f,0.95f}:Color{1.00f,0.24f,0.18f,0.86f};

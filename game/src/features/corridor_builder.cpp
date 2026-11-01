@@ -1,3 +1,4 @@
+#include "game/world/airlock_connections.hpp"
 #include "game/game_app.hpp"
 #include "game/world/storage_loading_gate.hpp"
 #include "game/systems/construction_costs.hpp"
@@ -235,6 +236,11 @@ void GameApp::render_corridor_placement(Renderer& r){
         render_resource_mesh(r,resource_models_.mesh(item),item.position,item.rotation_degrees,true,true,false);
     };
 
+    const auto airlock_allowed=[&](const CorridorBuildAnchor& anchor){
+        return anchor.kind!=CorridorEndpointKind::Habitat || airlock_connections::allows(anchor.index,anchor.position,
+            placed_habitats_,corridor_network_.connections(),utility_network_.connections(),walkway_network_.connections());
+    };
+
     // Before the first click, highlight the exact structural element that would
     // become the corridor source: habitat entrance/vestibule, corridor branch
     // sleeve, or a free sealed end.
@@ -242,6 +248,7 @@ void GameApp::render_corridor_placement(Renderer& r){
         highlight_habitat_anchor(hover);
         highlight_resource_anchor(hover);
         auto candidate=corridor_network_.preview_anchor(hover,source_hint(hover,hit,placed_habitats_,placed_resources_),placed_habitats_,habitat_models_,placed_resources_,resource_models_);
+        if(!airlock_allowed(hover))candidate.reset();
         std::optional<CorridorConnection> sample;
         if(candidate && candidate->kind!=CorridorEndpointKind::Corridor){
             const Vec3 dir=flat_dir(candidate->tangent);
@@ -295,6 +302,7 @@ void GameApp::render_corridor_placement(Renderer& r){
             highlight_resource_anchor(hover);
         }
         preview=corridor_network_.preview_built_corridor(*corridor_build_start_,hover,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
+        if(!airlock_allowed(*corridor_build_start_) || !airlock_allowed(hover))preview.reset();
         if(preview){
             source_endpoint=preview->endpoint_a;
             destination_endpoint=preview->endpoint_b;
@@ -307,6 +315,8 @@ void GameApp::render_corridor_placement(Renderer& r){
             source_endpoint=corridor_network_.preview_anchor(*corridor_build_start_,hover.position,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
             const Vec3 other=source_endpoint?source_endpoint->position:corridor_build_start_->position;
             destination_endpoint=corridor_network_.preview_anchor(hover,other,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
+            if(!airlock_allowed(*corridor_build_start_))source_endpoint.reset();
+            if(!airlock_allowed(hover))destination_endpoint.reset();
             const Vec3 a=source_endpoint?source_endpoint->position:corridor_build_start_->position;
             r.draw_lines_3d({a+Vec3{0,0.08f,0},hit+Vec3{0,0.08f,0}},{1.0f,0.28f,0.22f,0.9f},2.0f);
         }

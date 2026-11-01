@@ -70,7 +70,25 @@ Color resource_box_color(MaterialResource resource){
     return {0.6f,0.6f,0.6f,1.0f};
 }
 
-void draw_resource_box(Renderer& r,Vec3 base,float half_width,float height,MaterialResource resource,bool selected=false){
+struct ResourceBoxBatch {
+    struct Faces {MaterialResource material;std::vector<Vec3> vertices;};
+    std::vector<Faces> faces;
+    std::vector<Vec3> edges;
+    void append(const std::vector<Vec3>& triangles,const std::vector<Vec3>& lines,MaterialResource material){
+        if(faces.empty() || faces.back().material!=material)faces.push_back({material,{}});
+        auto& batch=faces.back().vertices;batch.insert(batch.end(),triangles.begin(),triangles.end());
+        edges.insert(edges.end(),lines.begin(),lines.end());
+    }
+    void draw(Renderer& r) const {
+        // Inventory packages never intersect. Keep face order and consolidate
+        // their common outline after the depth-tested faces, instead of two
+        // GPU submissions for every individual 10 kg package.
+        for(const auto& batch:faces){const auto c=resource_box_color(batch.material);r.draw_triangles_3d(batch.vertices,{c.r,c.g,c.b,0.90f});}
+        if(!edges.empty())r.draw_lines_3d(edges,{0.10f,0.12f,0.13f,1},1.25f);
+    }
+};
+
+void draw_resource_box(Renderer& r,Vec3 base,float half_width,float height,MaterialResource resource,bool selected=false,ResourceBoxBatch* batch=nullptr){
     const Vec3 c=base+Vec3{0,height*0.5f+0.025f,0};
     const float x0=c.x-half_width,x1=c.x+half_width,z0=c.z-half_width,z1=c.z+half_width,y0=c.y-height*0.5f,y1=c.y+height*0.5f;
     const std::vector<Vec3> tris{
@@ -86,6 +104,7 @@ void draw_resource_box(Renderer& r,Vec3 base,float half_width,float height,Mater
         {x0,y1,z0},{x1,y1,z0},{x1,y1,z0},{x1,y1,z1},{x1,y1,z1},{x0,y1,z1},{x0,y1,z1},{x0,y1,z0},
         {x0,y0,z0},{x0,y1,z0},{x1,y0,z0},{x1,y1,z0},{x1,y0,z1},{x1,y1,z1},{x0,y0,z1},{x0,y1,z1}
     };
+    if(batch){batch->append(tris,edges,resource);return;}
     const Color base_color=resource_box_color(resource);
     r.draw_triangles_3d(tris,{base_color.r,base_color.g,base_color.b,0.90f});
     r.draw_lines_3d(edges,selected?Color{0.34f,1.00f,0.72f,1.0f}:Color{0.10f,0.12f,0.13f,1.0f},selected?2.8f:1.25f);
@@ -440,11 +459,13 @@ void GameApp::render_resources(Renderer& r){
         // Every stored resource remains a physical human-portable package. The
         // same deterministic pallet pose is used by FPV picking, so the box a
         // player sees is exactly the box that can be grabbed.
+        ResourceBoxBatch boxes;
         for(std::size_t bi=0;bi<instance.stored_boxes.size();++bi){
             Vec3 base{}; float half=0.0f,box_h=0.0f;
             stored_resource_box_pose(instance,mesh,bi,base,half,box_h);
-            draw_resource_box(r,base,half,box_h,instance.stored_boxes[bi].resource,false);
+            draw_resource_box(r,base,half,box_h,instance.stored_boxes[bi].resource,false,&boxes);
         }
+        boxes.draw(r);
     }
 }
 

@@ -35,6 +35,7 @@ struct InputState {
     bool key_v_pressed{}, key_v_down{};
     bool key_w_down{}, key_a_down{}, key_s_down{}, key_d_down{};
     bool key_shift_down{};
+    bool key_space_pressed{}, key_space_down{};
     bool delete_pressed{};
     bool backspace_pressed{}, enter_pressed{};
     std::string text_input{};

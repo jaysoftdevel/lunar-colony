@@ -129,22 +129,34 @@ void GameApp::render_first_person_hud(Renderer& r){
         r.draw_line({cx,cy-8.0f},{cx,cy-2.0f},cross,1.5f);
         r.draw_line({cx,cy+2.0f},{cx,cy+8.0f},cross,1.5f);
 
-        Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,510.0f,54.0f};
+        Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,580.0f,54.0f};
         r.draw_rect(help,{0.025f,0.035f,0.045f,0.86f});
         game_label(r,{help.x+12.0f,help.y+8.0f},"FIRST PERSON TEST VIEW",0.64f,theme_);
-        game_label(r,{help.x+12.0f,help.y+30.0f},"WASD WALK / SHIFT FAST / LMB GRAB-DROP / MOUSE LOOK / V OR ESC EXIT",0.43f,theme_,true);
+        game_label(r,{help.x+12.0f,help.y+30.0f},"WASD WALK / SHIFT FAST / SPACE JUMP / LMB GRAB-DROP / MOUSE LOOK / V OR ESC EXIT",0.43f,theme_,true);
 
         const std::string environment=first_person_environment_label();
-        Rect env{help.x,help.y+help.h+8.0f,300.0f,34.0f};
+        Rect env{help.x,help.y+help.h+8.0f,580.0f,34.0f};
         const bool exterior=environment.find("EXTERIOR")!=std::string::npos;
         r.draw_rect(env,exterior?Color{0.20f,0.055f,0.045f,0.92f}:Color{0.035f,0.095f,0.085f,0.92f});
-        game_label(r,{env.x+10.0f,env.y+8.0f},environment,0.48f,theme_);
+        game_label_fitted(r,{env.x+10,env.y+8,env.w-20,20},environment,0.48f,theme_);
+        const auto feet=first_person_.feet_position();
+        for(std::size_t i=0;i<placed_habitats_.size();++i){
+            const auto& h=placed_habitats_[i];if(h.kind!=HabitatKind::AirLock || !h.construction.complete())continue;
+            const auto& mesh=habitat_models_.mesh(h);const auto local=rotate_y(feet-h.position,-h.rotation_degrees);
+            if(std::abs(local.x)>std::abs(mesh.entrances.front().local_position.x)+0.2f || std::abs(local.z)>mesh.footprint_z*0.5f)continue;
+            const airlock::Cycle idle{};const auto& cycle=i<airlock_cycles_.size()?airlock_cycles_[i]:idle;
+            Rect status{env.x,env.y+env.h,env.w,44};r.draw_rect(status,{0.035f,0.075f,0.085f,0.92f});
+            std::ostringstream text;text<<"CENTER "<<std::fixed<<std::setprecision(0)<<cycle.pressure*100<<"% OF INSIDE / "<<airlock::phase(cycle);
+            game_label_fitted(r,{status.x+10,status.y+6,status.w-20,16},text.str(),0.46f,theme_);
+            game_label_fitted(r,{status.x+10,status.y+25,status.w-20,13},"APPROACH NEXT DOOR / WAIT FOR PRESSURE / WALK EITHER DIRECTION",0.39f,theme_,true);
+            env.h+=status.h;break;
+        }
 
         if(first_person_carried_resource_){
             const auto& carried=*first_person_carried_resource_;
             std::ostringstream line;
             line<<"CARRYING  "<<material_resource_name(carried.resource)<<"  "<<carried.amount<<" kg";
-            Rect carry{PLAYFIELD_MARGIN,help.y+help.h+50.0f,300.0f,44.0f};
+            Rect carry{PLAYFIELD_MARGIN,env.y+env.h+8.0f,300.0f,44.0f};
             r.draw_rect(carry,{0.035f,0.055f,0.065f,0.92f});
             game_label(r,{carry.x+10.0f,carry.y+8.0f},line.str(),0.54f,theme_);
             game_label(r,{carry.x+10.0f,carry.y+26.0f},"LMB DROP  |  DROP INSIDE DOME TO STORE",0.39f,theme_,true);

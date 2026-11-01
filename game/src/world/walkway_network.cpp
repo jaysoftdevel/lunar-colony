@@ -1,3 +1,4 @@
+#include "game/world/airlock_connections.hpp"
 #include "game/world/storage_loading_gate.hpp"
 #include "game/world/robot_workshop.hpp"
 #include "game/world/walkway_network.hpp"
@@ -100,6 +101,7 @@ std::optional<WalkwayEndpoint> resolve_habitat_endpoint(const WalkwayBuildAnchor
     }
     if(!networked) return std::nullopt;
 
+    if(!airlock_connections::allows(a.index,a.hit,habitats,corridors.connections(),{},existing))return std::nullopt;
     CorridorBuildAnchor ca{CorridorEndpointKind::Habitat,a.index,a.hit};
     auto ep=corridors.preview_anchor(ca,other,habitats,library);
     if(!ep || ep->kind!=CorridorEndpointKind::Habitat || !door_clear(ep->door,existing)) return std::nullopt;

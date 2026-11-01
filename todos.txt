@@ -43,16 +43,49 @@ revise the UI and fonts scaling for all display element
 
 the oxygen generator shall process water to oxygen and fill the inside structures. The rate of "breathable air" shall be shown in the structures details panel
 
-*** ToDo:
-
-
-
 - the storage-gates of the storage dome are "squeezing" or stretching when placing around the base structure. Make it of minimal size and regardless of the angle it is placed (consider the dropoff/pickup area right infront of it!, add minimal clearence!")
 - remove unneded placements (oranges squares...)
 - add a POV jump feature "space"
 - add the reason for any warning icon in the details frame for all structrures
 
-add a game progress tree (when not in debugging mode) and display as checkpoint list at the screen border (no overlaps!)
+run the save game, it produces a lot of load but no tasks are to be done. What causes that load and why is it not spread over all/other CPUs?
+- seems like only the graphics are laggy, in the status bar the mouse pointer runs fast and smooth
+- try to fix that load peak
+ensure all indoor structures connected via corridors or pipelines can be filled with oxygen
+increas the energy production rate of the solar panels
+
+in debug mode, let select a robot without tasks a move it to selected place. Once it gets a task, drop the custom placement order
+add a priority shift option button to the detailed status box for all not yet built structures to prior them in the building/processing queue
+- add an indication above the affected prio shifted structure above (like the warning indicator)
+
+- add a update summary listing all updated files for each update process
+- add indicator bars to the status tiles showing
+	- electricity charge
+	- average breathable air (from all indoor structured combined)
+
+set the UI scaling to 100% by default
+move the "prio button" into the status bar that floats above the structure that is selected
+make to priority queue "first-in-first-solved"
+add the option to remove a priorisation (remove the item from the queue)
+if there are unbuilt connections (corridors or supply channels) between already built structures, give them priority before other unbuilt structures
+to power and water load bars add each another indicator showing current load rate
+
+an air-lock may only be connected from one side, the other must stay unconnected!
+
+make the air-lock inside a three stages facility
+- enter from outside (isolation cabin)
+- adjust pressure (in the center from both sides)
+- exit to inside area
+- it shall be passable in both direction just like a usual airlock system
+
+*** ToDo:
+
+
+
+
+apply a realistic power/water/air consumption mechanic
+
+add a game progress tree (when not in debugging mode) and display as check list at the screen border (no overlaps!)
 Stage 1:
 - build a solar collector (collect energy)
 - build a battery (store energy)
@@ -65,12 +98,16 @@ Stage 2:
 - build an oxygen-generator
 - connect one resource structure to one of the insde structures)
 	- all resource structures can exchange resources via a pipe netnetwork. In order to connect a resource structure there must be pipe a path available.
+Stage 3:
+- build a canteen
+- build dorms (to accomodate at least 6 persons)
+- build a landing pad
+- wait until all structures are filled with breathable air
+=> Make this a game milestone "Ready for human crew"
+Keep the option for the definition of further stages!
 
-add a priority shift option button to the detailed status box for all not yet built structures to prior them in the building/processing queue
-
-- create a hydrogen power generator as outdoor structure
-	- it shall process the produced hydrogen from the oxygen generator into electricity/energy that can be stored or used
-
+create a hydrogen power generator as outdoor structure
+- it shall process the produced hydrogen from the oxygen generator into electricity/energy that can be stored or used
 to the day/night cycle add a (not yet visualized) movement of a star (sun-like) accross the playfield following a realistic position above the playfield:
 - the solar panel shall follow it orientation for maximum photovoltic collection of energy
 
