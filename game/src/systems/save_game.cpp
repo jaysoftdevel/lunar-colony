@@ -22,7 +22,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=20;
+constexpr std::uint32_t kSaveSchema=21;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -370,6 +370,8 @@ void write_builder_robot(Writer& w,const BuilderRobotState& robot){
     w.boolean(robot.cargo_committed_to_build);
     write_bundle(w,robot.logistics_reservation);
     w.pod(robot.condition);
+    w.pod(robot.battery_capacity_kwh);
+    w.pod(robot.battery_charge_kwh);
 }
 
 BuilderRobotState read_builder_robot_v5(Reader& r){
@@ -385,6 +387,17 @@ BuilderRobotState read_builder_robot_v5(Reader& r){
     robot.condition=r.pod<float>();
     if((int)robot.role>1 || robot.payload_capacity_kg<=0 || robot.payload_capacity_kg>100000 || !std::isfinite(robot.condition)) r.valid=false;
     robot.condition=std::clamp(robot.condition,0.0f,1.0f);
+    return robot;
+}
+
+BuilderRobotState read_builder_robot_v6(Reader& r){
+    BuilderRobotState robot=read_builder_robot_v5(r);
+    robot.battery_capacity_kwh=r.pod<float>();
+    robot.battery_charge_kwh=r.pod<float>();
+    if(!std::isfinite(robot.battery_capacity_kwh) || !std::isfinite(robot.battery_charge_kwh) ||
+       robot.battery_capacity_kwh<=0.1f || robot.battery_capacity_kwh>500.0f ||
+       robot.battery_charge_kwh<0.0f || robot.battery_charge_kwh>robot.battery_capacity_kwh+0.1f) r.valid=false;
+    robot.battery_charge_kwh=std::clamp(robot.battery_charge_kwh,0.0f,robot.battery_capacity_kwh);
     return robot;
 }
 
@@ -914,7 +927,8 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         const auto robot_count=r.pod<std::uint8_t>();
         if(robot_count<1 || robot_count>12) r.valid=false;
         saved_robots.reserve(robot_count);
-        for(std::uint8_t i=0;i<robot_count && r.valid;++i) saved_robots.push_back(read_builder_robot_v5(r));
+        for(std::uint8_t i=0;i<robot_count && r.valid;++i)
+            saved_robots.push_back(source_schema>=21?read_builder_robot_v6(r):read_builder_robot_v5(r));
         saved_stash=read_vec3(r);
         for(std::size_t i=0;i<r.material_resource_count && i<saved_production.size();++i) saved_production[i]=r.pod<double>();
         saved_life_fraction=r.pod<double>();
@@ -1114,6 +1128,19 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         // Payload is a role characteristic just like transit speed. v0.40.40
         // doubles both rover payloads and normalizes existing savegames.
         robot.payload_capacity_kg=robot.role==RobotRole::Carrier?3600:2400;
+        const float role_capacity=robot_battery_capacity_kwh(robot.role);
+        if(source_schema<21){
+            robot.battery_capacity_kwh=role_capacity;
+            robot.battery_charge_kwh=role_capacity;
+        }else{
+            // Capacity is a chassis characteristic. Preserve charge percentage
+            // when balancing changes adjust a role's nominal pack size.
+            const float fraction=robot.battery_capacity_kwh>0.001f?
+                std::clamp(robot.battery_charge_kwh/robot.battery_capacity_kwh,0.0f,1.0f):1.0f;
+            robot.battery_capacity_kwh=role_capacity;
+            robot.battery_charge_kwh=role_capacity*fraction;
+        }
+        robot.battery_last_draw_kw=0.0f;robot.battery_charging=false;
         robot.condition=std::clamp(robot.condition,0.0f,1.0f);
         robot.visual_position=robot.position;
         robot.visual_heading_degrees=robot.heading_degrees;

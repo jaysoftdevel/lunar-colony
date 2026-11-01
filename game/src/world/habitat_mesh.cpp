@@ -133,6 +133,13 @@ HabitatModelLibrary::HabitatModelLibrary(){
     for(std::size_t i=0;i<(std::size_t)HabitatKind::Count;++i){
         const HabitatKind kind=(HabitatKind)i;
         HabitatMesh standard=base_mesh(kind);
+        // Crew entrances are no longer authored into a structure template.
+        // A pressure hatch is cut into the completed hull only when a real
+        // corridor/walkway connection is created.  Clearing the legacy author
+        // metadata here also removes the fixed exterior stair sets before size
+        // variants are generated.
+        standard.entrances.clear();
+        standard.entrance_access.clear();
         meshes_[i][(std::size_t)HabitatSizeTier::Standard]=standard;
         // SMALL is a horizontal-only variant for every habitat. Keep the full
         // authored height, floor Y and door clear height so colonists can walk

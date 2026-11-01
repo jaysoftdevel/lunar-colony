@@ -132,3 +132,20 @@ Windows compilation cannot be executed in this Linux environment because MSVC, t
 - v0.43.16 regression command: `navigation_regression clearance-save <path>`; requires a route publication, >8 m escape travel within 30 simulated seconds, no SafetyMode::Fault, and bounded replan count.
 - Optimized regression result: all 23 registered CTest groups passed across split runs. The relevant navigation subset (`fault_recovery`, `fleet`, `workshops`, `global_routes`, `queue_flow`, `construction`, `late_corridor`) passed together in 18.35 s; remaining colony/UI/navigation groups also passed in their split runs.
 - Baseline construction regression retained established behavior after narrowing the precision search to last-resort only: 7/7 targets completed, with no safety fault.
+
+
+## v0.43.17 generated-entrance and robot-energy regression
+
+- Release build: `cmake --build build/linux --target navigation_regression game -j2`; full `ctest --output-on-failure` passes 24/24 registered groups.
+- `navigation_geometry` covers every habitat kind/size/rotation with empty `mesh.entrances`/`mesh.entrance_access`, requires generated on-demand doors, and physically traverses the generated docking ramp/door in both directions.
+- Air Lock regressions cover rotated Small/Standard variants with no authored hatches, generated longitudinal connection selection, opposite-side rejection, four-seal three-chamber cycling and synthesized exterior access.
+- `colony_robot_battery_bootstrap` runs the intended uninterrupted Stage-1 -> Stage-2 construction sequence with one BR-02 and one CR-01 and explicitly rejects any workshop charging. Measured use is 40.4401/48.0 kWh for BR-02 (15.7498% left) and 65.4184/76.0 kWh for CR-01 (13.9231% left), satisfying the >=10% reserve.
+- `navigation_workshops` additionally verifies that a low-charge rover parked in a powered workshop actually gains stored battery energy and reports charging.
+
+
+## v0.43.18 perimeter lane / debug layout validation
+
+- `navigation_workshops` now verifies that a structure which geometrically fits inside the map is rejected when its footprint consumes the 2.25 m rover perimeter lane, while the same structure remains valid immediately inside the reserved boundary.
+- Workshop approach and Storage Dome cargo apron placement share the same boundary rule; generated corridor access pads are also rejected when they enter the lane.
+- `ui_resolution_scaling` exercises the debug-frame MESH -> TEXTURED selector and checks the enlarged debug panel remains inside the UI bounds.
+- Release validation: 24/24 registered CTest groups pass after the v0.43.18 changes.

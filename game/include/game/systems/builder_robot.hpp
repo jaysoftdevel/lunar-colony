@@ -49,6 +49,23 @@ inline constexpr float kRobotMovementSpeedMultiplier = 2.00f;
 // global 200% movement multiplier that made BR-02 visibly lag behind logistics.
 inline constexpr float kBuilderRobotTransitSpeedMps = 6.00f;
 inline constexpr float kCarrierRobotTransitSpeedMps = 6.00f;
+
+// Rover traction batteries. The capacities are deliberately sized around the
+// compact Stage-1/Stage-2 bootstrap mission: one constructor and one carrier
+// can establish power/water, the Air Lock and Oxygen Generator without an
+// intermediate recharge, while retaining at least a 10% design reserve.
+inline constexpr float kBuilderRobotBatteryCapacityKwh = 48.0f;
+inline constexpr float kCarrierRobotBatteryCapacityKwh = 76.0f;
+inline constexpr float kRobotBatteryReserveFraction = 0.10f;
+inline constexpr float kRobotBatteryCriticalFraction = 0.025f;
+inline constexpr float kRobotWorkshopChargePowerKw = 8.0f;
+inline constexpr float kRobotWorkshopChargeEfficiency = 0.92f;
+inline constexpr float kBuilderDriveEnergyKwhPerMeter = 0.0032f;
+inline constexpr float kCarrierDriveEnergyKwhPerMeter = 0.0038f;
+inline constexpr float kBuilderAuxiliaryPowerKw = 0.08f;
+inline constexpr float kCarrierAuxiliaryPowerKw = 0.10f;
+inline constexpr float kBuilderWorkPowerKw = 1.20f;
+inline constexpr float kCarrierWorkPowerKw = 0.75f;
 // Physical construction-drop package layout. Keeping these dimensions shared
 // between rendering and navigation makes the visible material stacks real
 // obstacles instead of decoration that a rover can drive through.
@@ -59,6 +76,18 @@ inline constexpr std::size_t kNoRobotIndex = std::numeric_limits<std::size_t>::m
 
 inline float robot_body_radius(RobotRole role){
     return role==RobotRole::Carrier?kCarrierRobotBodyRadiusM:kBuilderRobotBodyRadiusM;
+}
+inline float robot_battery_capacity_kwh(RobotRole role){
+    return role==RobotRole::Carrier?kCarrierRobotBatteryCapacityKwh:kBuilderRobotBatteryCapacityKwh;
+}
+inline float robot_drive_energy_kwh_per_meter(RobotRole role){
+    return role==RobotRole::Carrier?kCarrierDriveEnergyKwhPerMeter:kBuilderDriveEnergyKwhPerMeter;
+}
+inline float robot_auxiliary_power_kw(RobotRole role){
+    return role==RobotRole::Carrier?kCarrierAuxiliaryPowerKw:kBuilderAuxiliaryPowerKw;
+}
+inline float robot_work_power_kw(RobotRole role){
+    return role==RobotRole::Carrier?kCarrierWorkPowerKw:kBuilderWorkPowerKw;
 }
 
 inline const char* builder_robot_action_name(BuilderRobotAction action){
@@ -111,6 +140,10 @@ struct BuilderRobotState {
     // model consumes it yet, but it is persistent and ready for maintenance /
     // damage gameplay without changing the robot-state format again.
     float condition{1.0f};
+    float battery_capacity_kwh{kBuilderRobotBatteryCapacityKwh};
+    float battery_charge_kwh{kBuilderRobotBatteryCapacityKwh};
+    float battery_last_draw_kw{0.0f};       // telemetry, transient
+    bool battery_charging{false};            // telemetry, transient
     float work_elapsed{0.0f};
     float idle_elapsed{0.0f};
     std::size_t workshop_index{kNoRobotIndex};

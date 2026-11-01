@@ -19,7 +19,7 @@ void GameApp::render_debug_frame(Renderer& r){
     const float logical_w=ui_width(r);
     const float logical_h=ui_height(r);
     constexpr float frame_w=360.0f;
-    constexpr float frame_h=198.0f;
+    constexpr float frame_h=236.0f;
     const Rect frame={logical_w-frame_w-PLAYFIELD_MARGIN,logical_h-BUILD_BAR_H-frame_h-PLAYFIELD_MARGIN,frame_w,frame_h};
 
     r.draw_rect(frame,{0.025f,0.035f,0.045f,0.92f});
@@ -51,6 +51,16 @@ void GameApp::render_debug_frame(Renderer& r){
     game_label(r,{frame.x+12,frame.y+117},camera_b.str(),0.58f,theme_);
     game_label(r,{frame.x+12,frame.y+140},cpu.str(),0.56f,theme_);
     game_label(r,{frame.x+12,frame.y+163},"GPU HW " + gpu,0.54f,theme_);
+
+    game_label(r,{frame.x+12,frame.y+188},"WORLD LAYOUT",0.56f,theme_,true);
+    const bool textured=world_layout_mode_==WorldLayoutMode::Textured;
+    const std::string layout_label=textured?"TEXTURED":"MESH";
+    if(ui::button(r,ui_input_,{frame.x+222,frame.y+181,126,32},layout_label,theme_)){
+        world_layout_mode_=textured?WorldLayoutMode::Mesh:WorldLayoutMode::Textured;
+    }
+    // The current project has no texture asset/material pipeline yet. The mode
+    // is nevertheless carried by GameApp and exposed here so a future textured
+    // renderer can dispatch on it without changing gameplay/UI contracts.
 }
 
 } // namespace game

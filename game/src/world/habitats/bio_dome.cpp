@@ -18,15 +18,9 @@ void build_bio_dome_outer(Builder& b){
     // Environmental control column and ducting.
     b.cylinder_y(b.mesh.details,{0,3.1f,0},3.6f,0.38f,12,true);
     b.cylinder_between(b.mesh.details,{-4.7f,4.2f,0},{4.7f,4.2f,0},0.12f,8,true,true);
-    // Entry/service module on +X.
-    b.box(b.mesh.shell,{6.05f,2.05f,0},{1.7f,3.5f,3.1f});
-    b.torus_x(b.mesh.details,{6.92f,2.05f,0},0.58f,0.09f,16,6);
-    b.cylinder_x(b.mesh.details,{6.97f,2.05f,0},0.12f,0.48f,14,true);
-    b.box(b.mesh.details,{5.98f,2.15f,1.8f},{0.7f,1.2f,0.42f});
     // Support legs.
     b.supports(-4.2f,4.1f,2.65f,0.78f);
     b.supports(-4.2f,4.1f,-2.65f,0.78f);
-    b.mesh.entrances.push_back({{7.00f,1.18f,0.0f},{1.0f,0.0f,0.0f}});
 }
 
 } // namespace game::habitats

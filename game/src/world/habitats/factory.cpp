@@ -2,14 +2,6 @@
 #include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
-namespace {
-HabitatEntranceAccess stairs(float x){
-    Builder b;
-    for(int i=0;i<4;++i) b.box(b.mesh.details,{x+0.40f*(float)i,0.75f-0.17f*(float)i,0},{0.72f,0.15f,2.25f});
-    return {std::move(b.mesh.details),std::move(b.mesh.edges)};
-}
-}
-
 void build_factory_outer(Builder& b){
     b.mesh.footprint_x=18.0f; b.mesh.footprint_z=12.0f; b.mesh.height=9.0f;
     b.box(b.mesh.foundation,{0,0.55f,0},{12.8f,1.10f,8.4f});
@@ -40,13 +32,6 @@ void build_factory_outer(Builder& b){
     b.box(b.mesh.details,{3.7f,7.0f,-1.3f},{2.0f,1.9f,0.65f});
     for(int i=0;i<8;++i) b.line({2.85f+0.23f*i,6.25f,-1.67f},{2.85f+0.23f*i,7.75f,-1.67f});
     b.cylinder_between(b.mesh.details,{-1.8f,8.25f,1.5f},{3.0f,7.75f,0.8f},0.11f,8,true,true);
-
-    // Pressure vestibule.
-    b.box(b.mesh.shell,{6.45f,3.05f,0},{1.65f,4.3f,3.55f});
-    b.torus_x(b.mesh.details,{7.32f,3.05f,0},0.65f,0.10f,18,6);
-    b.cylinder_x(b.mesh.details,{7.38f,3.05f,0},0.14f,0.55f,16,true);
-    b.mesh.entrances.push_back({{7.47f,1.18f,0},{1,0,0}});
-    b.mesh.entrance_access.push_back(stairs(7.5f));
 
     b.supports(-5.3f,4.7f,3.0f,0.95f);
     b.supports(-5.3f,4.7f,-3.0f,0.95f);

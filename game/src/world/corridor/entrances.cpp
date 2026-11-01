@@ -215,6 +215,13 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
     local_normal=flat_normal(local_normal);
     if(length(local_normal)<0.01f) local_normal=local_outward;
     if(dot(local_normal,local_outward)<0.0f) local_normal=local_normal*-1.0f;
+    // A cursor ray can strike a narrow chamfer whose triangle normal points far
+    // away from the intended docking direction.  Such a collar leaves too
+    // little shoulder clearance beside the adjacent hull.  Reject that exact
+    // facet and let the face-slot fallback choose the nearest safe pressure
+    // surface instead.  This changes only discretionary placement, never the
+    // actual door/body clearance contract.
+    if(dot(local_normal,local_outward)<0.78f) return std::nullopt;
 
     CorridorDoor d;
     d.wall_position=habitat.position+rotate_y(local_hit,habitat.rotation_degrees);
@@ -225,6 +232,11 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
     d.generated=true;
     d.entrance_index=-1;
     if(!attach_surface_profile(d,habitat,mesh)) return std::nullopt;
+    // wall_profile retains the actual curved/faceted surface points. The door
+    // controller's logical threshold, however, belongs at walking-floor level
+    // just like every corridor endpoint; keeping it at the geometry slice made
+    // proximity/interlock checks miss newly generated hatches.
+    d.wall_position.y=d.position.y;
     if(!entrance_slot_clear(habitat_index,d,habitat,mesh,existing)) return std::nullopt;
     return d;
 }
@@ -283,6 +295,7 @@ std::optional<CorridorDoor> generated_face_door(std::size_t habitat_index,
             d.generated=true;
             d.entrance_index=-1;
             if(!attach_surface_profile(d,habitat,mesh)) continue;
+            d.wall_position.y=d.position.y;
             if(!entrance_slot_clear(habitat_index,d,habitat,mesh,existing)) continue;
             const float score=distance_xz(d.position,target)+facing_penalty+std::abs(factor)*0.4f;
             if(score<best){ best=score; result=d; found=true; }
@@ -463,92 +476,41 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     const auto& habitat=habitats[anchor.index];
     const auto& mesh=library.mesh(habitat);
 
+    // Air Locks accept a base connection only through one of their longitudinal
+    // end zones.  The exact hatch location is still generated from the selected
+    // hull point; no authored entrance is involved.
     if(habitat.kind==HabitatKind::AirLock &&
-       !airlock_connections::allows(anchor.index,anchor.position,habitats,existing))return std::nullopt;
+       !airlock_connections::allows(anchor.index,anchor.position,habitats,existing)) return std::nullopt;
 
-    // An already-used entrance remains a valid build source. Additional
-    // corridors merge into the existing sealed trunk just outside that door
-    // instead of creating another overlapping entrance/vestibule.
+    // Selecting an existing generated hatch reuses its sealed trunk. Further
+    // corridors branch outside the structure instead of cutting another hole.
     if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,anchor.position,existing,1.15f))
         return branch_from_existing_door(*used,other,existing);
 
-    // Magnetize only the local region around an authored hatch. Away from
-    // that region, preserve the cursor-selected pressure-hull attachment.
-    constexpr float BUILTIN_SNAP_RADIUS=1.75f;
-    bool found_builtin=false;
-    float best_cursor_distance=habitat.kind==HabitatKind::AirLock?std::numeric_limits<float>::max():BUILTIN_SNAP_RADIUS;
-    CorridorDoor d{};
-    for(std::size_t i=0;i<mesh.entrances.size();++i){
-        CorridorDoor candidate=transformed_builtin_door(habitat,mesh,i);
-        const float cursor_distance=distance_xz(anchor.position,candidate.wall_position);
-        if(cursor_distance<best_cursor_distance){
-            best_cursor_distance=cursor_distance;
-            d=candidate;
-            found_builtin=true;
-        }
-    }
-
-    if(habitat.kind==HabitatKind::AirLock &&
-       (!found_builtin || !airlock_connections::allows(anchor.index,d.wall_position,habitats,existing)))return std::nullopt;
-
-    if(found_builtin){
-        if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,d.wall_position,existing,0.55f))
+    auto generated=generated_cursor_door(anchor.index,habitat,mesh,anchor.position,existing);
+    // Faceted/curved pressure skins can miss a ray on a triangle seam. Fall
+    // back to the nearest real hull face, still producing a generated entrance.
+    if(!generated) generated=generated_face_door(anchor.index,habitat,mesh,anchor.position,existing);
+    if(!generated){
+        // Crowded hull: reuse the nearest already-created entrance if one exists.
+        if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,anchor.position,existing,
+                                            std::numeric_limits<float>::max()))
             return branch_from_existing_door(*used,other,existing);
+        return std::nullopt;
     }
+    CorridorDoor d=*generated;
+    if(habitat.kind==HabitatKind::AirLock &&
+       !airlock_connections::allows(anchor.index,d.wall_position,habitats,existing)) return std::nullopt;
 
-    if(!found_builtin){
-        auto generated=generated_cursor_door(anchor.index,habitat,mesh,anchor.position,existing);
-        // Domed/faceted habitats can present a cursor ray through a seam or
-        // through non-pressure exterior geometry. Fall back to the nearest real
-        // pressure-hull face instead of dropping the blueprint entrance. This
-        // is especially important for the Bio Dome size variants.
-        if(!generated) generated=generated_face_door(anchor.index,habitat,mesh,anchor.position,existing);
-        if(!generated){
-            // A crowded/faceted hull must never make a habitat unreachable. If
-            // no new generated opening fits, reuse an existing pressure entrance
-            // first. For a previously unconnected habitat, fall back to its
-            // nearest authored entrance even when the cursor was not directly on
-            // the hatch. This preserves "any structure can be connected" while
-            // still preferring the exact cursor-selected hull point whenever it
-            // is physically possible.
-            if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,anchor.position,existing,
-                                                std::numeric_limits<float>::max()))
-                return branch_from_existing_door(*used,other,existing);
-            if(!mesh.entrances.empty()){
-                float best_dist=std::numeric_limits<float>::max();
-                CorridorDoor fallback{};
-                for(std::size_t i=0;i<mesh.entrances.size();++i){
-                    CorridorDoor candidate=transformed_builtin_door(habitat,mesh,i);
-                    const float dist=distance_xz(candidate.wall_position,anchor.position);
-                    if(dist<best_dist){ best_dist=dist; fallback=candidate; }
-                }
-                d=fallback;
-                found_builtin=true;
-            }else{
-                return std::nullopt;
-            }
-        }else{
-            d=*generated;
-        }
-    }
-
-    // The route tangent must follow the actual door normal. The opposite point
-    // only influences routing after the airtight structure-to-corridor sleeve.
+    // The route tangent follows the generated pressure-door normal. The route
+    // beyond the sealed docking sleeve is free to bend toward the other anchor.
     CorridorEndpoint out;
     out.kind=CorridorEndpointKind::Habitat;
     out.index=anchor.index;
     out.door=d;
     out.tangent=d.normal;
-
-    // Fit the structure docking sleeve to the available gap when the selected
-    // destination is an already-existing corridor.  A fixed 1.75 m sleeve can
-    // otherwise extend through a corridor that runs directly past the entrance.
-    // Stopping just before the target pressure shell lets the corridor junction
-    // adapter own the final seam, so even very close doors merge without any
-    // coincident tube geometry.
     const float minimum_run=std::max(DOCK_RUN,(d.position.y-geometry::kCorridorDeckY)/0.60f+0.30f);
-    float dock_run=minimum_run;
-    out.position=d.position+d.normal*dock_run;
+    out.position=d.position+d.normal*minimum_run;
     out.position.y=0;
     return out;
 }

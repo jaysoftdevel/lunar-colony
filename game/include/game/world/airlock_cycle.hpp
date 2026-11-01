@@ -14,7 +14,11 @@ struct Cycle {
 };
 struct DoorSample {PressureDoorState* state{};float x{};bool internal{false};};
 inline bool internal(const CorridorDoor& door){return door.entrance_index==-2 || door.entrance_index==-3;}
-inline float partition_x(const HabitatMesh& mesh){return std::abs(mesh.entrances.front().local_position.x)*kPartitionRatio;}
+inline float partition_x(const HabitatMesh& mesh){
+    // The three-chamber geometry is structural, not tied to a predefined hatch.
+    // Standard Air Lock: 10 m long -> partitions at +/-1.6 m. Small scales in X/Z.
+    return mesh.footprint_x*0.16f;
+}
 inline std::array<CorridorDoor,2> partitions(const PlacedHabitat& habitat,const HabitatMesh& mesh){
     std::array<CorridorDoor,2> result{};
     for(int i=0;i<2;++i){

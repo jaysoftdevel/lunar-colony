@@ -14,7 +14,8 @@ bool GameApp::corridor_gate_layout_clear(const CorridorConnection& connection) c
         if(e->kind!=CorridorEndpointKind::Habitat && e->kind!=CorridorEndpointKind::Resource)continue;
         const auto pad=gate_area::beside(e->door.wall_position,e->door.normal);const auto box=pad.bounds();
         const float half=playfield_.size()*0.5f;
-        for(float x:{-box.half_x,box.half_x})for(float z:{-box.half_z,box.half_z})if(std::abs(box.center.x+box.axis_x.x*x+box.axis_z.x*z)>half || std::abs(box.center.y+box.axis_x.y*x+box.axis_z.y*z)>half)return false;
+        const float build_limit=half-geometry::kPlayfieldRobotPerimeterLane;
+        for(float x:{-box.half_x,box.half_x})for(float z:{-box.half_z,box.half_z})if(std::abs(box.center.x+box.axis_x.x*x+box.axis_z.x*z)>build_limit || std::abs(box.center.y+box.axis_x.y*x+box.axis_z.y*z)>build_limit)return false;
         for(std::size_t i=0;i<placed_habitats_.size();++i){if(e->kind==CorridorEndpointKind::Habitat && e->index==i)continue;
             const auto& h=placed_habitats_[i];const auto& m=habitat_models_.mesh(h);if(world_math::overlaps(box,world_math::footprint(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z),0.2f))return false;}
         for(std::size_t i=0;i<placed_resources_.size();++i){if(e->kind==CorridorEndpointKind::Resource && e->index==i)continue;
@@ -43,8 +44,9 @@ bool GameApp::gate_layout_clear(const PlacedHabitat* habitat,const PlacedResourc
     }
     for(const auto& a:existing){if(world_math::overlaps(body,a.bounds(),0.2f))return false;for(const auto& b:proposed)if(world_math::overlaps(a.bounds(),b.bounds(),0.2f))return false;}
     const float half=playfield_.size()*0.5f;
+    const float build_limit=half-geometry::kPlayfieldRobotPerimeterLane;
     for(const auto& a:proposed){
-        const auto box=a.bounds();for(float x:{-box.half_x,box.half_x})for(float z:{-box.half_z,box.half_z})if(std::abs(box.center.x+box.axis_x.x*x+box.axis_z.x*z)>half || std::abs(box.center.y+box.axis_x.y*x+box.axis_z.y*z)>half)return false;
+        const auto box=a.bounds();for(float x:{-box.half_x,box.half_x})for(float z:{-box.half_z,box.half_z})if(std::abs(box.center.x+box.axis_x.x*x+box.axis_z.x*z)>build_limit || std::abs(box.center.y+box.axis_x.y*x+box.axis_z.y*z)>build_limit)return false;
         for(const auto& c:corridors)for(std::size_t j=1;j<c.path.size();++j)if(a.hits(c.path[j-1],c.path[j],geometry::kCorridorHalfWidth+0.2f))return false;
         for(const auto& u:utility_network_.connections())for(std::size_t j=1;j<u.path.size();++j)if(a.hits(u.path[j-1],u.path[j],geometry::kSupplyTrayWidth*0.5f+0.2f))return false;
         for(const auto& w:walkway_network_.connections())for(std::size_t j=1;j<w.path.size();++j)if(a.hits(w.path[j-1],w.path[j],geometry::kWalkwayHalfWidth+0.2f))return false;

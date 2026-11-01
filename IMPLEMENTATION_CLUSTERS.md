@@ -111,3 +111,21 @@ The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; i
 
 - `game/src/systems/builder_robot.cpp`: adaptive route-tier selection. Preferred 1.00 m structure halo -> physical-only direct probe -> wide/coarse 0.30 m -> fine/local physical-only -> wide/fine 0.80 m physical-only final fallback.
 - `game/tests/navigation_regression.cpp`: `clearance-save <path>` regression mode validates that the supplied blocked-builder save publishes a route and escapes without a safety fault or replan thrash.
+
+
+## v0.43.17 generated entrances and robot batteries
+
+- `game_cluster_world`: `habitat_mesh.cpp` strips legacy authored entrance metadata before size variants are produced; `corridor/entrances.cpp` resolves only generated hull doors for habitats. Air-lock connection/cycle code derives end zones and chamber partitions from hull dimensions instead of entrance arrays.
+- `game_cluster_navigation`: `builder_robot.hpp/.cpp` owns persistent role-sized battery state and integrates distance-based traction plus auxiliary/work loads from authoritative committed movement. Low-charge idle/unloaded robots release work and return to an operational workshop.
+- `game_cluster_supply`: `supply_simulation.cpp` adds docked workshop chargers as real network loads and transfers energy to rover packs using the component power fraction.
+- `game_cluster_persistence`: save schema 21 appends rover battery capacity/charge and migrates older saves to full role packs.
+- `game_cluster_ui`: robot selection exposes kWh, percentage, draw/charging state and low/empty warnings.
+- `navigation_regression battery-bootstrap` constructs the complete Stage-1/Stage-2 bootstrap with one constructor and one carrier, forbids charging, and requires both roles to retain at least 10% charge. Geometry/Air Lock tests require empty authored entrance arrays and connection-created generated hatches.
+
+
+## v0.43.18 perimeter lane / debug render mode
+
+- `game/world/geometry_standards.hpp` owns the canonical 2.25 m `kPlayfieldRobotPerimeterLane` placement reserve.
+- `features/habitat_placement.cpp`, `features/resource_placement.cpp`, `systems/storage_extensions.cpp` and `systems/gate_areas.cpp` keep structure bodies and reserved service/access geometry inside the lane boundary.
+- `playfield/playfield_view.cpp` renders the inner lane guide; navigation itself still uses the full playfield and therefore may use the reserved band as a bypass.
+- `GameApp::WorldLayoutMode` plus `ui/debug_frame.cpp` expose the future MESH/TEXTURED render dispatch. Current textured mode intentionally falls back to the same procedural mesh renderer because no texture asset/material pipeline exists yet.

@@ -413,3 +413,18 @@ v0.40.9
 - Fixed a builder deadlock reproduced by 0-43-14.gmsave: the route was physically valid, but v0.43.15 searched the wide detour only on a coarse 1.70 m grid and searched physical-only clearance only inside a narrower corridor. The required narrow exit vanished on the coarse grid while the narrow fine search could not see the later wide detour.
 - Added a precision-passage fallback that reduces only the discretionary structure halo to 0.00 m extra clearance while retaining the full circumscribed rover hull and final motion-contract collision authority.
 - Only after the existing direct/dogleg, wide/coarse and fine/local tiers fail does routing run the wide 0.80 m physical-only precision search. Normal construction/service routes therefore keep their established route choices and CPU profile.
+
+
+0.43.17 - on-demand habitat entrances and rover battery energy
+- Remove predefined crew entrances/stair metadata from every habitat template. Corridor connections create generated pressure hatches at the selected hull point; saved legacy authored doors migrate in place as generated physical hatches.
+- Keep the Air Lock one-side rule without authored doors: only longitudinal end zones are valid for the base connection, chamber partitions derive from hull dimensions, and the exterior hatch/stairs are synthesized opposite the first completed base connection.
+- Add persistent 48 kWh BR-02 / 76 kWh CR-01 traction batteries. Travel, auxiliary electronics and active work consume charge; depleted packs cannot move or advance work. Robot details show kWh, %, draw, charging and low/empty state.
+- Powered Robot Workshop bays recharge docked robots at 8 kW input / 92% pack efficiency as a real component-local electrical load. Low-charge idle/unloaded robots return for service and stay until substantially recharged.
+- Save schema 21 persists rover battery capacity/charge; older saves receive full role-sized batteries.
+- Calibrate the uninterrupted Stage-1/Stage-2 path with one builder and one carrier: no recharge occurs, Stage 2 completes with 15.7% / 13.9% charge remaining, exceeding the requested 10% reserve. Full optimized CTest passes 24/24 groups.
+
+0.43.18 - permanent perimeter rover lane and debug render-layout switch
+- Reserves a 2.25 m circulation band inside every playfield edge. New habitat/resource footprints, Robot Workshop approach zones, Storage Dome cargo aprons and generated corridor gate pads may not consume this band, preserving a rover bypass around edge-side construction.
+- Existing saves remain loadable without relocating structures; the perimeter rule applies to new placement and newly generated access/service areas.
+- Draws the inner edge of the reserved lane as a subtle world-space guide.
+- Adds a MESH/TEXTURED layout selector directly to the debug frame. The current renderer has no texture/material asset pipeline, so TEXTURED intentionally falls back to the same procedural mesh rendering until such a backend exists; the game-side mode/state is ready for that future dispatch.

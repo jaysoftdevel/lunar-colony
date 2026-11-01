@@ -224,6 +224,11 @@ void GameApp::render_selection_panel(Renderer& r){
         if(robot.workshop_parked) state<<" / PARKED IN WORKSHOP BAY "<<robot.workshop_bay+1;
         else if(robot.workshop_returning) state<<" / RETURNING TO WORKSHOP";
         if(robot.action!=BuilderRobotAction::None) state<<" / "<<builder_robot_action_name(robot.action);
+        const float charge_fraction=robot.battery_capacity_kwh>0.001f?
+            std::clamp(robot.battery_charge_kwh/robot.battery_capacity_kwh,0.0f,1.0f):0.0f;
+        if(robot.battery_charging) state<<" / CHARGING";
+        else if(charge_fraction<=kRobotBatteryCriticalFraction) state<<" / BATTERY EMPTY";
+        else if(charge_fraction<=kRobotBatteryReserveFraction) state<<" / LOW CHARGE";
 
         if(robot.action!=BuilderRobotAction::None){
             operation<<"OPERATION  "<<builder_robot_action_name(robot.action);
@@ -331,8 +336,12 @@ void GameApp::render_selection_panel(Renderer& r){
 
         const int condition_pct=(int)std::lround(std::clamp(robot.condition,0.0f,1.0f)*100.0f);
         const char* condition_grade=condition_pct>=90?"NOMINAL":(condition_pct>=70?"SERVICE DUE":"DEGRADED");
-        std::ostringstream condition;
+        std::ostringstream condition,power;
         condition<<"CONDITION  "<<condition_pct<<"% / "<<condition_grade;
+        power<<"BATTERY  "<<std::fixed<<std::setprecision(1)<<robot.battery_charge_kwh<<" / "
+             <<robot.battery_capacity_kwh<<" KWH / "<<(int)std::lround(charge_fraction*100.0f)<<"%";
+        if(robot.battery_charging) power<<" / CHARGING";
+        else power<<" / DRAW "<<std::setprecision(2)<<robot.battery_last_draw_kw<<" KW";
 
 
         game_label(r,{x,p.y+10},title,0.66f,theme_,true);
@@ -360,7 +369,8 @@ void GameApp::render_selection_panel(Renderer& r){
         }
 
         game_label(r,{x,p.y+300},recovery.str(),0.40f,theme_,true);
-        game_label(r,{x,p.y+322},condition.str(),0.42f,theme_,true);
+        game_label(r,{x,p.y+322},power.str(),0.42f,theme_,true);
+        game_label(r,{x,p.y+344},condition.str(),0.42f,theme_,true);
         if(debug_frame_enabled_){
             const bool picking=debug_move_pick_robot_==(int)robot_index;
             const char* label=picking?"CANCEL DESTINATION PICK":robot.debug_move_active?"CANCEL DEBUG MOVE":"DEBUG MOVE / PICK DESTINATION";

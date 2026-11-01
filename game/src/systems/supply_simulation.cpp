@@ -46,8 +46,26 @@ double path_length(const std::vector<eng::Vec3>& path){double n=0;for(std::size_
 
 UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     auto services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
-    struct Component {std::vector<std::size_t> tanks,batteries,drillers,hydrogen_generators,habitats,resources;double solar_kw=0,load_kw=0,power=0;};
+    struct Component {std::vector<std::size_t> tanks,batteries,drillers,hydrogen_generators,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;};
     std::map<std::size_t,Component> groups;
+    // Charging is a real network load. Clear transient telemetry before this
+    // dispatch pass; powered workshop bays set it again only when energy is
+    // actually transferred into a rover pack.
+    for(auto& robot:builder_robots_) robot.battery_charging=false;
+    const double tick_hours=std::max(0.0f,dt)/10.0;
+    const auto workshop_charge_request_kw=[&](std::size_t resource_index){
+        double kw=0.0;
+        for(const auto& robot:builder_robots_){
+            if(!robot.workshop_parked || robot.workshop_index!=resource_index) continue;
+            const double deficit=std::max(0.0,(double)robot.battery_capacity_kwh-(double)robot.battery_charge_kwh);
+            if(deficit<=1e-6) continue;
+            const double input_needed=deficit/(double)kRobotWorkshopChargeEfficiency;
+            const double cap=tick_hours>1e-9?input_needed/tick_hours:(double)kRobotWorkshopChargePowerKw;
+            kw+=std::min((double)kRobotWorkshopChargePowerKw,cap);
+        }
+        return kw;
+    };
+
     std::vector<SupplyState*> nodes;
     std::vector<eng::Vec3> positions;
     std::vector<double> runs,initial_oxygen;
@@ -81,7 +99,13 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         if(!r.construction.complete())continue;
         // A standalone battery/tank/solar plant is its own component, never a global pool.
         const auto key=services.resources[i].connected?services.resources[i].component:nodes.size()+1000000;
-        auto& g=groups[key];r.supply.power_demand_kw=load_kw(r);g.resources.push_back(i);g.load_kw+=r.supply.power_demand_kw;
+        auto& g=groups[key];
+        r.supply.power_demand_kw=load_kw(r);
+        if(r.kind==ResourceKind::RobotWorkshop){
+            g.workshops.push_back(i);
+            r.supply.power_demand_kw+=workshop_charge_request_kw(i);
+        }
+        g.resources.push_back(i);g.load_kw+=r.supply.power_demand_kw;
         if(r.kind==ResourceKind::PowerStorage){r.supply.energy_kwh=std::clamp(r.supply.energy_kwh,0.0,battery_capacity(r));g.batteries.push_back(i);}
         if(r.kind==ResourceKind::WaterStorage){r.supply.water_litres=std::clamp(r.supply.water_litres,0.0,tank_capacity(r));g.tanks.push_back(i);}
         if(r.kind==ResourceKind::WaterDriller)g.drillers.push_back(i);
@@ -167,6 +191,22 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
             double supplied=std::min(generation,demand);generation-=supplied;
             for(auto i:g.batteries){auto& r=placed_resources_[i];const double q=std::min({r.supply.energy_kwh,demand-supplied,10.0*scale(r)*hours});r.supply.energy_kwh-=q;supplied+=q;}
             g.power=demand>0?std::clamp(supplied/demand,0.0,1.0):1.0;
+
+            // Workshop chargers are ordinary consumers inside the dispatched
+            // component. They receive the same brown-out fraction as every
+            // other load and transfer only 92% of input energy into the pack.
+            for(auto workshop_index:g.workshops){
+                for(auto& robot:builder_robots_){
+                    if(!robot.workshop_parked || robot.workshop_index!=workshop_index) continue;
+                    const double deficit=std::max(0.0,(double)robot.battery_capacity_kwh-(double)robot.battery_charge_kwh);
+                    if(deficit<=1e-9) continue;
+                    const double delivered=std::min(deficit,(double)kRobotWorkshopChargePowerKw*hours*g.power*(double)kRobotWorkshopChargeEfficiency);
+                    if(delivered>1e-10){
+                        robot.battery_charge_kwh=(float)std::min((double)robot.battery_capacity_kwh,(double)robot.battery_charge_kwh+delivered);
+                        robot.battery_charging=true;
+                    }
+                }
+            }
             for(auto i:g.batteries){auto& r=placed_resources_[i];const double q=std::min({generation,(battery_capacity(r)-r.supply.energy_kwh)/0.95,10.0*scale(r)*hours});r.supply.energy_kwh+=q*0.95;generation-=q;}
             for(auto i:g.drillers){
                 const double produced=500.0*scale(placed_resources_[i])*days*g.power;

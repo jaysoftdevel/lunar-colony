@@ -27,10 +27,6 @@ void build_cantine_dome_outer(Builder& b){
             b.cylinder_between(b.mesh.details,p0,p1,0.075f,6,true,false); b.line(p0,p1);
         }
     }
-    // Entry connector.
-    b.box(b.mesh.shell,{4.85f,2.0f,0},{2.0f,3.35f,3.15f});
-    b.torus_x(b.mesh.details,{5.9f,2.0f,0},0.62f,0.09f,16,6);
-    b.cylinder_x(b.mesh.details,{5.95f,2.0f,0},0.12f,0.52f,14,true);
     b.cylinder_y(b.mesh.details,{0,5.50f,0},0.8f,0.55f,14,true);
     // Landing supports.
     for(float a:{0.45f,2.1f,3.65f,5.25f}){
@@ -39,7 +35,6 @@ void build_cantine_dome_outer(Builder& b){
         b.cylinder_between(b.mesh.details,top,foot,0.13f,8,true,true);
         b.cylinder_y(b.mesh.details,{foot.x,0.09f,foot.z},0.18f,0.34f,10,true);
     }
-    b.mesh.entrances.push_back({{6.00f,1.18f,0.0f},{1.0f,0.0f,0.0f}});
 }
 
 } // namespace game::habitats

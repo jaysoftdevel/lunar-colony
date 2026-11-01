@@ -100,6 +100,9 @@ void start_action(BuilderRobotState& robot,BuilderRobotAction action,float durat
 
 bool tick_action(BuilderRobotState& robot,float dt){
     if(robot.action==BuilderRobotAction::None) return true;
+    // No traction/work operation can progress with an exhausted pack. Charging
+    // at a powered workshop will resume the same latched operation afterwards.
+    if(robot.battery_charge_kwh<=0.0001f) return false;
     // Work animations/actions may be selected while the rover is finishing its
     // certified stop, but physical work time advances only after the safety
     // authority has actually brought the chassis to rest.
@@ -602,6 +605,8 @@ void GameApp::reset_builder_robot_and_starter_stash(){
         robot.visual_initialized=true;
         robot.move_speed_mps=kBuilderRobotTransitSpeedMps;
         robot.payload_capacity_kg=2400;
+        robot.battery_capacity_kwh=kBuilderRobotBatteryCapacityKwh;
+        robot.battery_charge_kwh=robot.battery_capacity_kwh;
     }
     for(int i=0;i<carrier_count;++i,++spawn_ordinal){
         auto& carrier=builder_robots_[(std::size_t)constructor_count+(std::size_t)i];
@@ -613,6 +618,8 @@ void GameApp::reset_builder_robot_and_starter_stash(){
         carrier.visual_initialized=true;
         carrier.move_speed_mps=kCarrierRobotTransitSpeedMps;
         carrier.payload_capacity_kg=3600;
+        carrier.battery_capacity_kwh=kCarrierRobotBatteryCapacityKwh;
+        carrier.battery_charge_kwh=carrier.battery_capacity_kwh;
     }
 
     const ResourceBundle reserve=starter_resource_reserve();
@@ -1411,6 +1418,27 @@ void GameApp::update_builder_robot(float dt){
     bool has_workshop=false;
     for(std::size_t i=0;i<placed_resources_.size();++i) if(workshop_operational(i)){has_workshop=true;break;}
     if(dt<=0.0f || builder_robots_.empty()) return;
+
+    // Battery use is accounted from authoritative before/after poses, not from
+    // requested routes, so waiting/rejected safety proposals never consume fake
+    // traction energy. Work/auxiliary loads are integrated in game-time hours.
+    std::vector<Vec3> battery_start_positions;
+    battery_start_positions.reserve(builder_robots_.size());
+    for(auto& robot:builder_robots_){
+        battery_start_positions.push_back(robot.position);
+        robot.battery_capacity_kwh=robot_battery_capacity_kwh(robot.role);
+        robot.battery_charge_kwh=std::clamp(robot.battery_charge_kwh,0.0f,robot.battery_capacity_kwh);
+        robot.battery_last_draw_kw=0.0f;
+    }
+    const auto battery_service_required=[&](const BuilderRobotState& robot){
+        if(!has_workshop || robot.battery_capacity_kwh<=0.001f) return false;
+        const float fraction=robot.battery_charge_kwh/robot.battery_capacity_kwh;
+        // Ten percent is the dispatch reserve. Once a rover has entered a bay,
+        // keep it there until the pack is substantially restored instead of
+        // oscillating across the threshold every simulation tick.
+        return fraction<=kRobotBatteryReserveFraction ||
+               (robot.workshop_parked && fraction<0.95f);
+    };
 
     // A completed depot-exit latch belongs to one physical load only. Once the
     // cargo is gone, the next pickup starts a fresh outbound transaction.
@@ -4442,6 +4470,19 @@ void GameApp::update_builder_robot(float dt){
             robot.mode=BuilderRobotMode::Idle;
         }
 
+        // A constructor that reaches its reserve between physical operations
+        // releases the site and returns to an operational workshop. Never
+        // interrupt a latched welding/build-up action or a stage commit: those
+        // complete atomically before the charging trip begins.
+        if(battery_service_required(robot) && robot.action==BuilderRobotAction::None &&
+           !robot.stage_commit_pending && robot.cargo.empty()){
+            robot.target={};robot.support_robot_index=kNoRobotIndex;robot.site_buffer={};
+            robot.logistics_reservation={};robot.cargo_committed_to_build=false;
+            robot.stage_materials_picked=false;robot.interaction_position_valid=false;
+            robot.mode=BuilderRobotMode::Idle;clear_route(robot);
+            continue;
+        }
+
         // Existing saves may already have a BR-02 assigned to a blueprint that
         // is only partly supplied. Keep the robot exactly where it is and drop
         // the assignment; it becomes eligible again only after the carrier has
@@ -5016,6 +5057,18 @@ void GameApp::update_builder_robot(float dt){
         auto& carrier=builder_robots_[robot_index];
         if(carrier.role!=RobotRole::Carrier) continue;
         if(safety_repositioning[robot_index]) continue;
+
+        // A CR-01 finishes any load already on its deck, but an empty rover at
+        // the reserve threshold releases its lease and returns to a powered
+        // workshop before accepting another trip. Ten percent therefore remains
+        // available for the homeward journey instead of being treated as usable
+        // construction energy.
+        if(battery_service_required(carrier) && carrier.cargo.empty() &&
+           carrier.action==BuilderRobotAction::None && !carrier.drop_exit_pending){
+            clear_logistics_assignment(carrier);carrier.target={};carrier.support_robot_index=kNoRobotIndex;
+            carrier.mode=BuilderRobotMode::Idle;clear_route(carrier);
+            continue;
+        }
 
         // A reservation is a lease, not a permanent lock. If an empty CR-01
         // cannot make route progress for several seconds, release the trip so
@@ -5713,7 +5766,7 @@ void GameApp::update_builder_robot(float dt){
         agent.heading_degrees=robot.heading_degrees;
         agent.speed_mps=robot.current_speed_mps;
         agent.radius_m=robot_safety_corridor_radius(robot.role);
-        agent.max_speed_mps=robot.move_speed_mps;
+        agent.max_speed_mps=robot.battery_charge_kwh>0.0001f?robot.move_speed_mps:0.0f;
         agent.acceleration_mps2=kRobotAccelerationMps2;
         agent.braking_mps2=kRobotBrakingMps2;
         agent.turn_rate_degrees_per_second=kRobotTurnRateDegreesPerSecond;
@@ -5967,6 +6020,24 @@ void GameApp::update_builder_robot(float dt){
     // The safety coordinator is the only fleet-overlap authority. An overlap
     // detected at initialization or by the final continuous sweep becomes a
     // safety fault; no post-step nudge is allowed to hide or repair it.
+
+    // Consume real stored electrical energy. One simulation hour equals ten
+    // seconds of the existing colony clock; traction is distance-based while
+    // onboard electronics and tools use kW x game-hours. This keeps energy
+    // accounting stable across FPS and QUICK/FAST time scales.
+    const float game_hours=std::max(0.0f,dt)/10.0f;
+    for(std::size_t i=0;i<builder_robots_.size();++i){
+        auto& robot=builder_robots_[i];
+        const float travelled=dist_xz(battery_start_positions[i],robot.position);
+        const float traction_kwh=travelled*robot_drive_energy_kwh_per_meter(robot.role);
+        float power_kw=robot_auxiliary_power_kw(robot.role);
+        if(robot.action!=BuilderRobotAction::None)
+            power_kw+=robot_work_power_kw(robot.role);
+        const float draw_kwh=traction_kwh+power_kw*game_hours;
+        robot.battery_charge_kwh=std::max(0.0f,robot.battery_charge_kwh-draw_kwh);
+        robot.battery_last_draw_kw=game_hours>0.000001f?power_kw+traction_kwh/game_hours:power_kw;
+        if(robot.battery_charge_kwh<=0.0001f) robot.current_speed_mps=0.0f;
+    }
 
     // The navigator now advances the authoritative pose continuously, so a
     // second damped render spring would only add lag and can create visible

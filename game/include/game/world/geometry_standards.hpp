@@ -51,6 +51,13 @@ inline constexpr float kGeneratedEntranceHalfWidth = 1.16f;
 inline constexpr float kGeneratedEntranceHeight = 2.68f;
 inline constexpr float kRouteClearance = 0.55f;
 
+// Permanent perimeter circulation lane. New structures and their reserved
+// service aprons stay outside this band so the largest rover can always route
+// around the colony instead of a building sealing the playfield edge. 2.25 m
+// exceeds twice the current largest hard rover safety radius plus numeric/
+// obstacle margin, while remaining modest on the smallest 64 m field.
+inline constexpr float kPlayfieldRobotPerimeterLane = 2.25f;
+
 // Exposed corridor endpoints are hard-sealed pressure bulkheads.  Exterior
 // crew access to the pressurised structural network is intentionally provided
 // only by the dedicated Air Lock habitat.

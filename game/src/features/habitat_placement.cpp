@@ -27,7 +27,9 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
     const float a=radians(rotation_degrees);
     const float hx=std::abs(std::cos(a))*candidate.footprint_x*0.5f+std::abs(std::sin(a))*candidate.footprint_z*0.5f;
     const float hz=std::abs(std::sin(a))*candidate.footprint_x*0.5f+std::abs(std::cos(a))*candidate.footprint_z*0.5f;
-    if(position.x-hx<-half_field || position.x+hx>half_field || position.z-hz<-half_field || position.z+hz>half_field) return false;
+    const float build_limit=half_field-geometry::kPlayfieldRobotPerimeterLane;
+    if(position.x-hx<-build_limit || position.x+hx>build_limit ||
+       position.z-hz<-build_limit || position.z+hz>build_limit) return false;
 
     const auto candidate_box=footprint(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z);
     constexpr float clearance=0.45f;

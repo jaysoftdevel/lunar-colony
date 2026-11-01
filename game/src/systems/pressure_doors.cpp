@@ -51,7 +51,7 @@ void GameApp::update_pressure_doors(float dt){
         const auto local=world_math::rotate_y(first_person_.feet_position()-habitat.position,-habitat.rotation_degrees);
         const auto& mesh=habitat_models_.mesh(habitat);
         const bool present=first_person_mode_==FirstPersonMode::Active &&
-            std::abs(local.x)<std::abs(mesh.entrances.front().local_position.x)+airlock::kApproach+0.5f &&
+            std::abs(local.x)<mesh.footprint_x*0.5f+airlock::kApproach+0.5f &&
             std::abs(local.z)<geometry::kDoorClearWidth*0.5f+first_person_.body_radius()+0.2f &&
             local.y>=mesh.walkable_floor_y-0.2f && local.y<mesh.walkable_floor_y+geometry::kDoorClearHeight;
         auto forward=first_person_.look_direction();forward.y=0;forward=eng::normalize(forward);

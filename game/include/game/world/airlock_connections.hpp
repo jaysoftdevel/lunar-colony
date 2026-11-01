@@ -1,14 +1,19 @@
 #pragma once
 #include "game/world/walkway_network.hpp"
 #include "game/util/world_math.hpp"
+#include <cmath>
 
 namespace game::airlock_connections {
 
-// The two authored hatches are at opposite ends of the local X axis. Reserve
-// the opposite end even while a connection is only a construction blueprint.
+// Air Locks have no authored hatches any more.  Their first connection may
+// create an entrance on either longitudinal end, but never on a side wall; the
+// chosen end is then reserved for all base-side utility/corridor connections.
 inline int side(const PlacedHabitat& habitat,eng::Vec3 point){
-    const float x=world_math::rotate_y(point-habitat.position,-habitat.rotation_degrees).x;
-    return x>0.01f?1:x<-0.01f?-1:0;
+    const auto local=world_math::rotate_y(point-habitat.position,-habitat.rotation_degrees);
+    const float scale=habitat.size==HabitatSizeTier::Small?0.76f:1.0f;
+    const float end_zone=5.0f*scale*0.68f;
+    if(std::abs(local.x)<end_zone) return 0;
+    return local.x>0.0f?1:-1;
 }
 
 inline bool allows(std::size_t index,eng::Vec3 point,const std::vector<PlacedHabitat>& habitats,

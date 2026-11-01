@@ -3,11 +3,6 @@
 
 namespace game::habitats {
 namespace {
-HabitatEntranceAccess stairs(float x){
-    Builder b;
-    for(int i=0;i<4;++i) b.box(b.mesh.details,{x+0.40f*i,0.74f-0.17f*i,0},{0.72f,0.14f,2.2f});
-    return {std::move(b.mesh.details),std::move(b.mesh.edges)};
-}
 void mast(Builder& b,eng::Vec3 p,float h){
     b.cylinder_y(b.mesh.details,{p.x,p.y+h*0.5f,p.z},h,0.09f,8,true);
     b.box(b.mesh.details,{p.x,p.y+h,p.z},{0.42f,0.35f,0.42f});
@@ -47,12 +42,6 @@ void build_laboratory_outer(Builder& b){
     for(float z:{-1.7f,0.0f,1.7f}) b.cylinder_y(b.mesh.details,{4.35f,2.5f,z},2.7f,0.42f,12,true);
     b.box(b.mesh.details,{3.85f,1.5f,-2.55f},{1.5f,1.1f,0.55f});
 
-    // Airlock at the right end.
-    b.box(b.mesh.shell,{5.85f,2.55f,0},{1.55f,4.0f,3.45f});
-    b.torus_x(b.mesh.details,{6.68f,2.55f,0},0.64f,0.10f,18,6);
-    b.cylinder_x(b.mesh.details,{6.74f,2.55f,0},0.15f,0.54f,16,true);
-    b.mesh.entrances.push_back({{6.84f,1.18f,0},{1,0,0}});
-    b.mesh.entrance_access.push_back(stairs(6.87f));
     b.supports(-4.4f,4.5f,2.2f,0.9f);
     b.supports(-4.4f,4.5f,-2.2f,0.9f);
 }

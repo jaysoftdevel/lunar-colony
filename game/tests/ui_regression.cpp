@@ -109,6 +109,16 @@ struct UiRegression {
             bool marker=false;for(const auto& draw:r.draws)marker|=draw.text.find("PRIO 1")!=std::string::npos;require(marker,"promoted blueprint overhead marker missing");r.check_bounds("priority marker");
             app.input_.left_pressed=true;app.render(r);require(app.construction_priority_rank(t)==kNoRobotIndex,"remove priority button failed");++cases;
         }
+        {
+            GameApp debug(engine);setup(debug,7,2);debug.debug_frame_enabled_=true;debug.selection_kind_=GameApp::SelectionKind::None;
+            Recorder debug_r;debug_r.resize(1920,1080);debug.render(debug_r);debug_r.check_bounds("debug layout switch");
+            const auto layout_button=debug_r.button("MESH");
+            debug.input_.mouse_x=(int)((layout_button.x+layout_button.w/2)*debug_r.scale);
+            debug.input_.mouse_y=(int)((layout_button.y+layout_button.h/2)*debug_r.scale);
+            debug.input_.left_pressed=true;debug.render(debug_r);
+            require(debug.world_layout_mode_==GameApp::WorldLayoutMode::Textured,"debug layout switch did not select textured mode");
+            debug.input_.left_pressed=false;debug.render(debug_r);debug_r.button("TEXTURED");
+        }
         GameApp app(engine);setup(app,7,2);app.debug_frame_enabled_=true;app.selection_kind_=GameApp::SelectionKind::Robot;app.selected_robot_=0;
         Recorder r;app.render(r);r.check_bounds("debug robot inspector");const auto button=r.button("DEBUG MOVE / PICK DESTINATION");
         app.input_.mouse_x=(int)((button.x+button.w/2)*r.scale);app.input_.mouse_y=(int)((button.y+button.h/2)*r.scale);app.input_.left_pressed=true;app.render(r);require(app.debug_move_pick_robot_==0,"debug move button did not arm destination picker");

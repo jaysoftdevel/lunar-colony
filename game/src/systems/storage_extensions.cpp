@@ -132,9 +132,10 @@ bool GameApp::storage_gate_face_clear(const PlacedResource& owner,int face,std::
     const float half=(float)playfield_.size()*0.5f;
     constexpr float clearance=0.45f;
 
+    const float build_limit=half-geometry::kPlayfieldRobotPerimeterLane;
     for(float x:{-bay.half_x,bay.half_x}) for(float z:{-bay.half_z,bay.half_z})
-        if(std::abs(bay.center.x+bay.axis_x.x*x+bay.axis_z.x*z)>half-0.10f ||
-           std::abs(bay.center.y+bay.axis_x.y*x+bay.axis_z.y*z)>half-0.10f) return false;
+        if(std::abs(bay.center.x+bay.axis_x.x*x+bay.axis_z.x*z)>build_limit ||
+           std::abs(bay.center.y+bay.axis_x.y*x+bay.axis_z.y*z)>build_limit) return false;
 
     for(const auto& h:placed_habitats_){
         const auto& m=habitat_models_.mesh(h);

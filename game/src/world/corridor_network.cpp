@@ -558,15 +558,16 @@ void CorridorNetwork::synchronize_structure_interfaces(const std::vector<PlacedH
     for(auto& c:connections_) for(CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
         if(ep->kind==CorridorEndpointKind::Habitat && ep->index<habitats.size()){
             const auto& h=habitats[ep->index];const auto& mesh=library.mesh(h);
-            if(!ep->door.generated && ep->door.entrance_index>=0 && (std::size_t)ep->door.entrance_index<mesh.entrances.size())
-                ep->door=transformed_builtin_door(h,mesh,(std::size_t)ep->door.entrance_index);
-            else {
-                ep->door.position.y=h.position.y+mesh.walkable_floor_y;
-                ep->door.wall_position.y=ep->door.position.y;
-                // Legacy generated entrances remain installed physical hatches.
-                // Refresh their conformal skin at the corrected deck height.
-                attach_surface_profile(ep->door,h,mesh);
+            // v0.43.17 removes authored entrances. Existing saves that used a
+            // former built-in hatch keep that physical opening, but it becomes
+            // an ordinary connection-created/generated entrance from now on.
+            if(!ep->door.generated && ep->door.entrance_index>=0){
+                ep->door.generated=true;
+                ep->door.entrance_index=-1;
             }
+            ep->door.position.y=h.position.y+mesh.walkable_floor_y;
+            ep->door.wall_position.y=ep->door.position.y;
+            attach_surface_profile(ep->door,h,mesh);
         }else if(ep->kind==CorridorEndpointKind::Resource && ep->index<resources.size()){
             const auto& resource=resources[ep->index];const auto& mesh=resource_library.mesh(resource);
             Vec3 wall=resource.position+ep->door.normal*(mesh.footprint_x*(5.35f/13.0f));

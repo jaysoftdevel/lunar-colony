@@ -201,6 +201,21 @@ void draw_pressure_box(Renderer& r,Vec3 center,Vec3 side,Vec3 normal,Vec3 size,C
     mesh_wireframe::draw_layer(r,b.mesh.body,color,2.35f);
     r.draw_lines_3d(b.mesh.edges,color,2.1f);
 }
+void draw_generated_airlock_access(Renderer& r,const CorridorDoor& door,float deck_y,Color color){
+    if(door.entrance_index!=-4) return;
+    Vec3 n=door.normal;n.y=0;n=normalize(n);if(length(n)<0.001f)return;
+    const Vec3 side{-n.z,0,n.x};
+    const int steps=std::max(1,(int)std::ceil(deck_y/0.16f));
+    const float tread=0.32f,rise=deck_y/(float)steps;
+    resources::Builder b;
+    for(int i=0;i<steps;++i){
+        const float top=deck_y-rise*(float)i;
+        const Vec3 center=door.wall_position+n*(tread*((float)i+0.5f))+Vec3{0,top-0.05f-door.wall_position.y,0};
+        b.oriented_box(b.mesh.body,center,side,{0,1,0},n,{1.76f,0.10f,tread});
+    }
+    mesh_wireframe::draw_layer(r,b.mesh.body,color,2.35f);
+    r.draw_lines_3d(b.mesh.edges,color,2.1f);
+}
 const ResourceMesh& cargo_port_mesh(const ResourceMesh& source,const PlacedResource& owner){
     struct Entry {const ResourceMesh* source;std::array<int,3> faces;std::array<float,3> angles;ResourceMesh mesh;};
     static std::vector<Entry> cache;
@@ -646,9 +661,13 @@ void GameApp::render_habitats(Renderer& r){
             fpv_ptr=&fpv_doors;
         }
         render_habitat_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
-        if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
+        if(fpv_ptr) for(const auto& door:fpv_doors){
+            draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
+            if(instance.kind==HabitatKind::AirLock && door.entrance_index==-4)
+                draw_generated_airlock_access(r,door,mesh.walkable_floor_y,selected?theme_.accent:Color{0.24f,0.96f,0.42f,1.0f});
+        }
 
-        // Exterior stairs/ramps exist only on the dedicated Air Lock and only
+        // Legacy authored access arrays are normally empty from v0.43.17 onward.
         // for an authored hatch that is currently the surface side of a
         // completed pressure network.  Ordinary structures never expose unused
         // entrances directly to the lunar surface.

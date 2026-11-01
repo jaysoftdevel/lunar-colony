@@ -23,10 +23,6 @@ void build_oxygen_dome_outer(Builder& b){
     // Piping from processing bank into dome.
     b.cylinder_between(b.mesh.details,{-4.05f,3.35f,1.05f},{-2.75f,4.05f,0.65f},0.10f,8,true,true);
     b.cylinder_between(b.mesh.details,{-2.75f,4.05f,0.65f},{-1.35f,4.7f,0.35f},0.10f,8,true,true);
-    // Entry module.
-    b.box(b.mesh.shell,{4.55f,2.0f,0},{1.9f,3.4f,3.15f});
-    b.torus_x(b.mesh.details,{5.55f,2.0f,0},0.64f,0.09f,16,6);
-    b.cylinder_x(b.mesh.details,{5.60f,2.0f,0},0.12f,0.54f,14,true);
     // Roof scrubber tower and vents.
     b.cylinder_y(b.mesh.details,{0,5.45f,0},1.45f,0.72f,16,true);
     b.cylinder_y(b.mesh.details,{2.2f,4.72f,-1.25f},0.75f,0.36f,12,true);
@@ -38,7 +34,6 @@ void build_oxygen_dome_outer(Builder& b){
         b.cylinder_between(b.mesh.details,top,foot,0.13f,8,true,true);
         b.cylinder_y(b.mesh.details,{foot.x,0.09f,foot.z},0.18f,0.36f,10,true);
     }
-    b.mesh.entrances.push_back({{5.70f,1.18f,0.0f},{1.0f,0.0f,0.0f}});
 }
 
 } // namespace game::habitats

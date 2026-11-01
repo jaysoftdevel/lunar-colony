@@ -22,6 +22,15 @@ void GameApp::render_playfield(Renderer& r){
 
     r.draw_triangles_3d(playfield_.floor_triangles(),{0.055f,0.075f,0.088f,1});
     r.draw_lines_3d(playfield_.grid_lines(),{0.22f,0.43f,0.47f,1},1.0f);
+    // Mark the inner edge of the permanent rover perimeter lane. This is a
+    // placement reserve only; robots remain free to use the entire band.
+    const float lane_half=(float)playfield_.size()*0.5f-geometry::kPlayfieldRobotPerimeterLane;
+    const std::vector<Vec3> perimeter_lane{
+        {-lane_half,0.018f,-lane_half},{ lane_half,0.018f,-lane_half},
+        { lane_half,0.018f,-lane_half},{ lane_half,0.018f, lane_half},
+        { lane_half,0.018f, lane_half},{-lane_half,0.018f, lane_half},
+        {-lane_half,0.018f, lane_half},{-lane_half,0.018f,-lane_half}};
+    r.draw_lines_3d(perimeter_lane,{0.72f,0.52f,0.18f,0.72f},1.35f);
     render_ground_resources(r);
     render_corridors(r);
     render_utilities(r);
@@ -145,7 +154,7 @@ void GameApp::render_first_person_hud(Renderer& r){
         for(std::size_t i=0;i<placed_habitats_.size();++i){
             const auto& h=placed_habitats_[i];if(h.kind!=HabitatKind::AirLock || !h.construction.complete())continue;
             const auto& mesh=habitat_models_.mesh(h);const auto local=rotate_y(feet-h.position,-h.rotation_degrees);
-            if(std::abs(local.x)>std::abs(mesh.entrances.front().local_position.x)+0.2f || std::abs(local.z)>mesh.footprint_z*0.5f)continue;
+            if(std::abs(local.x)>mesh.footprint_x*0.5f+0.2f || std::abs(local.z)>mesh.footprint_z*0.5f)continue;
             const airlock::Cycle idle{};const auto& cycle=i<airlock_cycles_.size()?airlock_cycles_[i]:idle;
             Rect status{env.x,env.y+env.h,env.w,44};r.draw_rect(status,{0.035f,0.075f,0.085f,0.92f});
             std::ostringstream text;text<<"CENTER "<<std::fixed<<std::setprecision(0)<<cycle.pressure*100<<"% OF INSIDE / "<<airlock::phase(cycle);

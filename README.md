@@ -328,3 +328,19 @@ Static navigation now separates hard occupancy from a soft inflated cost field. 
 The Oxygen Generator now keeps hydrogen produced by water electrolysis instead of treating it as an unused by-product. Build an outdoor **Hydrogen Generator** and connect it to the Oxygen Generator through completed Supply Channels to convert that stored H2 into electricity. Generated electricity serves the connected utility component and can charge its batteries when generation exceeds the current load; hydrogen is not consumed when there is nowhere useful to send the power.
 
 The day/night clock also drives a nonvisualized 3D star position. The reference star rises in the east, crosses the southern sky and sets in the west. Completed Solar Panels use two-axis tracking so the collector head follows the star for maximum incidence while the support pedestal remains fixed. The star itself is intentionally not rendered yet.
+
+
+### v0.43.17 - On-demand entrances and robot batteries
+
+Habitat structures no longer ship with predefined crew entrances or stair sets. Place a corridor against the pressure hull and that connection creates the hatch at the selected location. Further corridors can reuse the same sealed trunk. The Air Lock keeps its one-base-side rule, but its inside and outside hatches are now derived from the first actual connection instead of two authored door positions.
+
+BR-02 and CR-01 now consume stored electrical charge while travelling, running onboard systems and performing work. Their charge is persistent and visible in the robot details panel. A completed Robot Workshop connected to live power recharges parked robots; charger demand is included in the same physical utility-network power balance as other consumers. Low-charge unloaded robots return to an operational workshop automatically.
+
+The starter packs are calibrated against a full uninterrupted Stage-1/Stage-2 bootstrap: BR-02 starts with 48 kWh and CR-01 with 76 kWh. The regression reaches Stage 2 without recharging and retains about 15.7% and 13.9% respectively, leaving more than the requested 10% reserve.
+
+
+### v0.43.18 perimeter circulation and render-layout debug switch
+
+A permanent 2.25 m rover circulation band is reserved inside the playfield boundary. New structures and their non-crossable service/access clearances cannot occupy it, so edge-side construction cannot eliminate the last route around the colony. A subtle line marks the inner edge of the reserved band. Existing saves are not repositioned.
+
+When the debug frame is enabled it now includes a `MESH` / `TEXTURED` layout switch. The project currently has no texture/material asset pipeline, so textured mode deliberately uses the same procedural mesh renderer for now; the mode exists as the stable hook for future textured rendering.

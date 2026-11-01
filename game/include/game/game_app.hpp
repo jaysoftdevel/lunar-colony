@@ -44,6 +44,7 @@ private:
     friend struct UiRegression;
     enum class Screen { MainMenu, NewGame, SaveGame, LoadGame, Settings, Credits, Playfield };
     enum class HabitatViewMode { Default, Full };
+    enum class WorldLayoutMode { Mesh, Textured };
     enum class GameSpeed { Normal = 0, Quick, Fast, Pause };
     enum class FirstPersonMode { Off, DropPending, Active };
     enum class SelectionKind { None, Habitat, Corridor, Resource, GroundResource, Utility, Walkway, Robot };
@@ -67,6 +68,7 @@ private:
     float supply_warning_time_=0.0f;
     float ui_scale_=1.0f;
     bool debug_frame_enabled_=true;
+    WorldLayoutMode world_layout_mode_{WorldLayoutMode::Mesh};
     bool game_session_active_=false;
     bool debug_start_template_enabled_=false;
     std::string new_game_status_message_{};

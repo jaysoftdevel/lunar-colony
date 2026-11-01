@@ -14,11 +14,6 @@ void crane_arm(Builder& b,eng::Vec3 root,float side){
     b.cylinder_y(b.mesh.details,c,0.42f,0.38f,12,true);
     b.box(b.mesh.details,d,{0.85f,0.55f,1.4f});
 }
-HabitatEntranceAccess stairs(float x){
-    Builder b;
-    for(int i=0;i<5;++i) b.box(b.mesh.details,{x+0.38f*i,0.82f-0.15f*i,0},{0.7f,0.14f,2.35f});
-    return {std::move(b.mesh.details),std::move(b.mesh.edges)};
-}
 }
 
 void build_manufactory_outer(Builder& b){
@@ -49,13 +44,6 @@ void build_manufactory_outer(Builder& b){
         b.cylinder_between(b.mesh.details,{0.3f,6.2f,z},{5.8f,6.45f,z},0.09f,8,true,true);
     }
     b.box(b.mesh.details,{6.6f,7.65f,2.4f},{1.8f,1.8f,0.65f});
-
-    // Pressure access on the right production module.
-    b.box(b.mesh.shell,{8.75f,3.05f,0},{1.65f,4.35f,3.65f});
-    b.torus_x(b.mesh.details,{9.62f,3.05f,0},0.66f,0.10f,18,6);
-    b.cylinder_x(b.mesh.details,{9.69f,3.05f,0},0.15f,0.56f,16,true);
-    b.mesh.entrances.push_back({{9.78f,1.18f,0},{1,0,0}});
-    b.mesh.entrance_access.push_back(stairs(9.81f));
 
     b.supports(-6.4f,6.9f,3.4f,1.05f);
     b.supports(-6.4f,6.9f,-3.4f,1.05f);

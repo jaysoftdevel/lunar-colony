@@ -25,8 +25,8 @@
 ## Structures and crew access
 
 - Each habitat module declares its real `walkable_floor_y`; storage meshes declare theirs as well. Entrance anchors, frames, stairs, corridor collars and crew floor queries use that exact threshold.
-- Human-scale frames and exterior access steps are rebuilt after horizontal size scaling. Steps end at the threshold and are oriented in the entrance's own basis. Air-lock access renders at actual construction completion.
-- New structure corridors snap to authored entrances. Additional branches reuse the existing sealed trunk. Legacy generated hatches remain installed physical entrances; loaded collars and floors are synchronized with current models.
+- Habitat templates no longer contain predefined crew entrances or exterior stair sets. A completed corridor connection creates its pressure hatch at the selected hull point on demand; additional branches reuse the existing sealed trunk.
+- Generated hatch collars, pressure-door thresholds, docking ramps and crew floor queries use each habitat's real `walkable_floor_y`. The Air Lock creates its exterior access on the opposite end only after its first real base connection defines the inside side.
 - Dock sleeves contain a continuous ramp and an interior threshold deck. Storage ports sit on the outer pressure wall. Interior circulation aisles retain crew head/shoulder clearance across size tiers.
 - `mesh_portals.hpp` exactly clips triangles and lines around a doorway. The renderer caches local clipped layers, preserving wall material around the aperture and cutting an approach through tall foundations. Connected door openings are visible in both normal and POV views.
 - Only the connected Air Lock permits exterior access; open corridor ends remain sealed. Outdoor machinery remains solid, while habitats, storage and the pressure corridor network are crew traversable.
@@ -49,7 +49,7 @@
 
 - Robot Workshop is a fixed-size outdoor structure in the Structures palette, independent of the habitat/corridor chain. Its procedural barrel-roof model has four independent charging/cargo/service docks, a wide automatic sliding gate and a continuous 0.4 m deck reached by a 5 m boarding ramp.
 - Each completed workshop assigns four unique home bays. Idle constructors/carriers with no active task or cargo return through a staged approach; inbound ramp admission is serialized, actual work exits take priority, and new tasks immediately preempt parking. Extra fleet members require additional workshops.
-- Parked robots hold their own bays without repeated route invalidation. Service restores mechanical condition at 1 percentage point per simulation second; charging hardware is provided for a future energy model.
+- Parked robots hold their own bays without repeated route invalidation. Service restores mechanical condition at 1 percentage point per simulation second; powered bays now recharge persistent rover traction batteries and the charging load is part of the connected utility component.
 - Workshop walls, dock cabinets, gate plane and ramp curbs use exact swept disc/box tests in the existing motion authority. Rover/POV floors follow the shared ramp and deck geometry. No pose nudges or teleportation are added.
 - A visible, rotated approach reservation covers the boarding ramp and waiting/turning area. Placement checks bounds, structures, ground piles, corridors and walkways; a cached static path search rejects an enclosed approach with no route to the fleet. Later structure/corridor/walkway placement also respects the reservation.
 - Save schema 15 adds the new persisted structure kind; schemas 1-14 remain readable. Parking assignments and gate animation are transient and reconstructed from saved robot poses. A gate occupied on load restores open before collision certification.
@@ -77,3 +77,18 @@
 - Rover structure clearance has two distinct layers: the hard circumscribed chassis envelope is never reduced, while the preferred extra structure halo is discretionary. Normal travel keeps the 1.00 m comfort halo; recovery may reduce only that extra halo to physical-only clearance.
 - A wide 0.80 m precision grid with physical-only clearance runs only after the normal direct/dogleg, wide/coarse and fine/local attempts all fail. This keeps ordinary construction/service routing on the established fast tiers.
 - This specifically fixes layouts where a rover must pass through a narrow but valid gap before making a wide detour. Do not replace this with a globally smaller robot radius; fleet and structure collision certification remains based on the full visible rover hull.
+
+## v0.43.17 generated entrances and rover battery energy
+
+- All habitat size variants expose zero predefined crew entrances and zero predefined entrance-access stair meshes. Corridor placement creates a generated pressure hatch at the player-selected pressure-hull point; the Air Lock accepts only its selected longitudinal base side and synthesizes the opposite exterior hatch from that real connection.
+- Existing saved authored corridor doors migrate in place to generated physical hatches so old colonies keep their established openings without reintroducing template entrances.
+- BR-02 and CR-01 now carry persistent traction batteries. Distance travelled consumes traction energy; onboard electronics and active work consume time-based electrical energy. Empty packs stop rover motion/work.
+- Completed powered Robot Workshops recharge docked rovers at 8 kW input with 92% pack efficiency, and charger demand participates in the normal component-local power dispatch/brownout model. At or below 10% charge, an idle/unloaded rover returns to an operational workshop and remains until at least 95% charge.
+- Starter packs are 48 kWh for BR-02 and 76 kWh for CR-01. The uninterrupted Stage-1/Stage-2 calibration run reaches Stage 2 without any recharge and finishes with 15.7% constructor / 13.9% carrier charge remaining, exceeding the requested 10% reserve. Save schema 21 persists battery capacity/charge; older saves load with full role-appropriate packs.
+
+
+## v0.43.18 playfield perimeter circulation
+
+New structures may no longer consume the final 2.25 m along any playfield edge. Habitat/resource footprints, Robot Workshop approach clearance, Storage Dome cargo aprons and generated corridor gate pads all respect the same reserved band, leaving the largest current rover enough hard-clearance space to route around edge-side colonies. Existing loaded structures are not moved; only new placement/access creation is constrained. The inner edge is rendered as a subtle guide.
+
+The debug frame now owns a `WorldLayoutMode` selector (`MESH` / `TEXTURED`). No texture/material asset path exists yet, so both modes currently render through the procedural mesh backend; future texture work can dispatch on the stored mode without changing gameplay/UI contracts.

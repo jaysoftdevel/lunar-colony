@@ -352,16 +352,10 @@ bool GameApp::habitat_has_complete_corridor_connection(std::size_t habitat_index
 }
 
 bool GameApp::habitat_exterior_access_enabled(std::size_t habitat_index,std::size_t entrance_index) const {
-    if(habitat_index>=placed_habitats_.size()) return false;
-    const auto& h=placed_habitats_[habitat_index];
-    if(!h.construction.complete() || h.kind!=HabitatKind::AirLock) return false;
-
-    // The dedicated Air Lock is the only structure permitted to expose a hatch
-    // to the exterior, and only after it actually belongs to a completed
-    // pressure/corridor network.  A hatch reserved by any corridor (including
-    // one still under construction) is never simultaneously an exterior exit.
-    if(!habitat_has_complete_corridor_connection(habitat_index)) return false;
-    return !corridor_network_.habitat_entrance_connected(habitat_index,entrance_index);
+    (void)habitat_index; (void)entrance_index;
+    // There are no authored structure entrances/stairs after v0.43.17. Any
+    // exterior access geometry is derived from a real connection-created door.
+    return false;
 }
 
 std::vector<CorridorDoor> GameApp::habitat_doors(std::size_t habitat_index) const {
@@ -376,32 +370,42 @@ std::vector<CorridorDoor> GameApp::habitat_doors(std::size_t habitat_index) cons
         doors.push_back(door);
     };
 
-    // Ordinary structures expose no standalone exits.  Only a completed
-    // pressure connection carves/opens a hatch into their shell.
+    std::optional<CorridorDoor> airlock_base_door;
+    // A structure has a crew door only where a completed pressure connection
+    // actually created one. Blueprint-only connections do not prematurely cut
+    // the pressure shell.
     for(const auto& c:corridor_network_.connections()){
         if(!c.construction.complete()) continue;
         for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
             if(ep->kind!=CorridorEndpointKind::Habitat || ep->index!=habitat_index) continue;
             add_unique(ep->door);
+            if(h.kind==HabitatKind::AirLock && !airlock_base_door) airlock_base_door=ep->door;
         }
     }
 
-    // A connected Air Lock is the sole legal exterior gateway.  Its unused
-    // authored hatch(es) remain surface-facing access points; all other habitat
-    // types keep unused authored hatches sealed as part of the pressure hull.
-    if(h.kind==HabitatKind::AirLock && habitat_has_complete_corridor_connection(habitat_index)){
-        for(std::size_t i=0;i<mesh.entrances.size();++i){
-            if(!habitat_exterior_access_enabled(habitat_index,i)) continue;
-            const auto& e=mesh.entrances[i];
-            CorridorDoor d;
-            d.wall_position=h.position+rotate_y(e.local_position,h.rotation_degrees);
-            d.wall_position.y=h.position.y+mesh.walkable_floor_y;
-            d.position=d.wall_position;
-            d.position.y=h.position.y+mesh.walkable_floor_y;
-            d.normal=normalize(rotate_y(e.local_normal,h.rotation_degrees));
-            d.entrance_index=(int)i;
-            add_unique(d);
-        }
+    if(h.kind==HabitatKind::AirLock && airlock_base_door){
+        // The first real base connection defines which longitudinal cabin is
+        // "inside". Its opposite exterior seal is created at that moment, so
+        // the Air Lock still has a usable outside entrance without carrying two
+        // predefined hatch locations in its structure template.
+        const auto& inside=*airlock_base_door;
+        const Vec3 local_wall=rotate_y(inside.wall_position-h.position,-h.rotation_degrees);
+        const Vec3 local_normal=rotate_y(inside.normal,-h.rotation_degrees);
+        CorridorDoor outside=inside;
+        const Vec3 mirrored_wall{-local_wall.x,local_wall.y,local_wall.z};
+        const Vec3 mirrored_normal=normalize(Vec3{-local_normal.x,local_normal.y,local_normal.z});
+        outside.wall_position=h.position+rotate_y(mirrored_wall,h.rotation_degrees);
+        outside.normal=normalize(rotate_y(mirrored_normal,h.rotation_degrees));
+        outside.position=outside.wall_position;
+        outside.position.y=h.position.y+mesh.walkable_floor_y;
+        outside.wall_position.y=outside.position.y;
+        outside.generated=true;
+        // -2 is transient: this synthesized door is the exterior Air Lock
+        // access created by the first real base connection, not an authored
+        // entrance and not a serialized corridor endpoint.
+        outside.entrance_index=-4;
+        outside.wall_profile.clear();
+        add_unique(outside);
     }
     if(h.kind==HabitatKind::AirLock && h.construction.complete())
         for(const auto& d:airlock::partitions(h,mesh))add_unique(d);
@@ -521,6 +525,49 @@ float GameApp::first_person_floor_height(Vec3 p) const {
     for(const auto& item:placed_resources_) if(item.kind==ResourceKind::RobotWorkshop && item.construction.complete()){
         const float y=workshop::floor(item,p);if(y>0) return y;
     }
+    // A connection-created entrance owns its complete docking ramp all the way
+    // from the corridor deck to the newly cut hull threshold. Resolve that
+    // ramp before projected habitat foundations, otherwise a low apron can make
+    // the floor jump to the interior deck before the avatar reaches the hatch.
+    for(const auto& c:corridor_network_.connections()){
+        if(!c.construction.complete()) continue;
+        for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
+            if(ep->kind!=CorridorEndpointKind::Habitat && ep->kind!=CorridorEndpointKind::Resource) continue;
+            const Vec3 a=ep->position,b=ep->door.wall_position;
+            const float dx=b.x-a.x,dz=b.z-a.z,den=dx*dx+dz*dz;
+            if(den<0.00001f) continue;
+            const float raw=((p.x-a.x)*dx+(p.z-a.z)*dz)/den;
+            if(raw<0.0f || raw>1.0f) continue;
+            const Vec3 q{a.x+dx*raw,a.y+(b.y-a.y)*raw,a.z+dz*raw};
+            const float sleeve_limit=std::max(0.20f,geometry::kDockSleeveHalfWidth-first_person_.body_radius());
+            if(dist_xz_local(p,q)>sleeve_limit) continue;
+            const float outside=ep->position.y+geometry::kCorridorDeckY;
+            return outside+(ep->door.position.y-outside)*raw;
+        }
+    }
+    // The first real Air Lock connection also creates its opposite exterior
+    // hatch and access stair. Nothing is authored into the structure template;
+    // the stair exists only after that connection establishes the outside end.
+    for(std::size_t hi=0;hi<placed_habitats_.size();++hi){
+        const auto& h=placed_habitats_[hi];
+        if(h.kind!=HabitatKind::AirLock || !h.construction.complete()) continue;
+        const auto& mesh=habitat_models_.mesh(h);
+        for(const auto& door:habitat_doors(hi)){
+            if(door.entrance_index!=-4) continue;
+            Vec3 n=door.normal;n.y=0;n=normalize(n);if(length(n)<0.001f) continue;
+            const Vec3 side{-n.z,0,n.x};const Vec3 delta=p-door.wall_position;
+            const float along=dot(Vec3{delta.x,0,delta.z},n);
+            const float lateral=std::abs(dot(Vec3{delta.x,0,delta.z},side));
+            const float deck=h.position.y+habitat_basement_height(mesh);
+            const int steps=std::max(1,(int)std::ceil(deck/0.16f));
+            const float run=0.32f*(float)steps;
+            if(along>=0.0f && along<=run && lateral<=0.98f){
+                const float progress=1.0f-along/run;
+                return deck*std::clamp(progress,0.0f,1.0f);
+            }
+        }
+    }
+
     // A click inside a completed structure belongs to that structure first.
     // The old implementation tested corridors first and used one hard-coded
     // 0.20 m floor for every habitat, which could spawn the character below the
@@ -663,7 +710,7 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
         if(!placed_habitats_[i].construction.complete()) continue;
         for(const auto& d:habitat_doors(i)){
             const float fraction=first_person_door_open_fraction(d.wall_position);
-            if(airlock::internal(d)?airlock::bulkhead_blocks(d,fraction,from,to,radius,first_person_.body_height(),std::abs(habitat_models_.mesh(placed_habitats_[i]).entrances[0].local_position.x)/5.25f):
+            if(airlock::internal(d)?airlock::bulkhead_blocks(d,fraction,from,to,radius,first_person_.body_height(),habitat_models_.mesh(placed_habitats_[i]).footprint_x/10.0f):
                pressure_door::blocks(d,fraction,from,to,radius))return false;
         }
     }
@@ -747,6 +794,23 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
         return false;
     };
 
+    // A generated hatch may sit behind a low foundation/apron whose projected
+    // footprint extends farther out than the pressure wall. The completed
+    // docking sleeve is itself a certified walkable pressure volume, so treat
+    // its full width as entrance clearance instead of requiring the avatar to
+    // reach the narrow wall-plane portal first.
+    auto point_in_habitat_dock=[&](Vec3 p,std::size_t habitat_index){
+        for(const auto& c:corridor_network_.connections()){
+            if(!c.construction.complete()) continue;
+            for(const CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
+                if(ep->kind!=CorridorEndpointKind::Habitat || ep->index!=habitat_index) continue;
+                float t=0.0f;const Vec3 q=closest_point_segment_xz(p,ep->position,ep->door.wall_position,&t);
+                if(t>=0.0f && t<=1.0f && dist_xz_local(p,q)<=std::max(0.05f,geometry::kDockSleeveHalfWidth-radius)) return true;
+            }
+        }
+        return false;
+    };
+
     // Validate short samples along every requested movement.  This prevents a
     // fast diagonal/Shift step from tunnelling through a thin shell and makes
     // the exact same door rule apply when entering and when leaving.
@@ -787,7 +851,7 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
             const auto doors=habitat_doors(i);
             const bool was_inside=inside_habitat_hull(previous,h,mesh,0.0f);
             const bool is_inside=inside_habitat_hull(current,h,mesh,0.0f);
-            const bool doorway=point_in_any_doorway_clearance(current,doors,radius);
+            const bool doorway=point_in_any_doorway_clearance(current,doors,radius) || point_in_habitat_dock(current,i);
 
             if(is_inside){
                 if(!inside_habitat_hull(current,h,mesh,radius) && !doorway) return false;
@@ -797,7 +861,8 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
                 return false;
             }
 
-            if(was_inside!=is_inside && !movement_uses_any_doorway(previous,current,doors,radius))
+            if(was_inside!=is_inside && !movement_uses_any_doorway(previous,current,doors,radius) &&
+               !point_in_habitat_dock(previous,i) && !point_in_habitat_dock(current,i))
                 return false;
         }
 

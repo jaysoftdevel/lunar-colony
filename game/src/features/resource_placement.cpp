@@ -37,7 +37,9 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
     const float a=radians(rotation_degrees);
     const float hx=std::abs(std::cos(a))*candidate.footprint_x*0.5f+std::abs(std::sin(a))*candidate.footprint_z*0.5f;
     const float hz=std::abs(std::sin(a))*candidate.footprint_x*0.5f+std::abs(std::cos(a))*candidate.footprint_z*0.5f;
-    if(position.x-hx<-half_field || position.x+hx>half_field || position.z-hz<-half_field || position.z+hz>half_field) return false;
+    const float build_limit=half_field-geometry::kPlayfieldRobotPerimeterLane;
+    if(position.x-hx<-build_limit || position.x+hx>build_limit ||
+       position.z-hz<-build_limit || position.z+hz>build_limit) return false;
 
     const auto candidate_box=footprint(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z);
     constexpr float clearance=0.45f;
@@ -72,7 +74,7 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
         const auto apron=workshop::approach(item);
         for(float x:{-apron.half_x,apron.half_x}) for(float z:{-apron.half_z,apron.half_z}){
             const Vec2 q{apron.center.x+apron.axis_x.x*x+apron.axis_z.x*z,apron.center.y+apron.axis_x.y*x+apron.axis_z.y*z};
-            if(std::abs(q.x)>half_field-0.20f || std::abs(q.y)>half_field-0.20f) return false;
+            if(std::abs(q.x)>build_limit || std::abs(q.y)>build_limit) return false;
         }
         for(const auto& h:placed_habitats_){const auto& m=habitat_models_.mesh(h);
             if(overlaps(apron,footprint(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;}
