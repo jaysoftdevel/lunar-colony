@@ -1,4 +1,5 @@
 #include "engine/engine.hpp"
+#include "engine/ui_metrics.hpp"
 
 namespace eng::ui {
 void panel(Renderer& r, Rect rect, const Theme& t){
@@ -10,7 +11,7 @@ void panel(Renderer& r, Rect rect, const Theme& t){
 }
 
 void label(Renderer& r,Vec2 pos,const std::string& text,float scale,const Theme& t,bool muted){
-    r.draw_text(pos,text,scale*t.font_scale,muted?t.muted:t.text);
+    r.draw_text(pos,text,font_scale(scale,t),muted?t.muted:t.text);
 }
 
 void title(Renderer& r,Vec2 pos,const std::string& text,const Theme& t){
@@ -27,9 +28,11 @@ bool button(Renderer& r,const InputState& input,Rect rect,const std::string& lab
     r.draw_line({rect.x+rect.w,rect.y+rect.h},{rect.x,rect.y+rect.h},border,2);
     r.draw_line({rect.x,rect.y+rect.h},{rect.x,rect.y},border,2);
 
-    const float scale=2.0f*t.font_scale;
-    const float tw=(float)label_text.size()*6.0f*scale;
-    r.draw_text({rect.x+(rect.w-tw)*0.5f,rect.y+(rect.h-7.0f*scale)*0.5f},label_text,scale,enabled?t.text:t.muted);
+    const float padding_x=rect.w<60.0f?kCompactControlPaddingX:kControlPaddingX;
+    const float scale=fit_text(label_text,kButtonTextScale*t.font_scale,
+        {std::max(0.0f,rect.w-2*padding_x),std::max(0.0f,rect.h-2*kControlPaddingY)});
+    const auto extent=text_extent(label_text,scale);
+    if(scale>0)r.draw_text({rect.x+(rect.w-extent.x)*0.5f,rect.y+(rect.h-extent.y)*0.5f},label_text,scale,enabled?t.text:t.muted);
     return enabled&&hover&&input.left_pressed;
 }
 }

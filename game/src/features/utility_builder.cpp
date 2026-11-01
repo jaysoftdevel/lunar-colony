@@ -4,8 +4,6 @@
 #include "game/util/mesh_wireframe.hpp"
 #include "game/util/world_math.hpp"
 #include <optional>
-#include <array>
-#include <limits>
 
 namespace game {
 using namespace eng;
@@ -87,17 +85,12 @@ void GameApp::render_utility_placement(Renderer& r){
             source_endpoint=utility_network_.preview_anchor(selected->utility_kind,*hover,hover->hit+Vec3{1,0,0},
                                                             placed_habitats_,habitat_models_,placed_resources_,resource_models_);
             const Vec3 base=source_endpoint?source_endpoint->position:hover->hit;
-            constexpr std::array<Vec3,4> dirs{{Vec3{1,0,0},Vec3{-1,0,0},Vec3{0,0,1},Vec3{0,0,-1}}};
-            float best=std::numeric_limits<float>::max();
-            for(const Vec3 dir:dirs){
-                UtilityBuildAnchor end{UtilityEndpointKind::Open,0,base+dir*2.35f};
-                auto candidate=utility_network_.preview_connection(selected->utility_kind,*hover,end,
-                                                                    placed_habitats_,habitat_models_,placed_resources_,resource_models_);
-                if(!candidate) continue;
-                float n=0.0f;
-                for(std::size_t i=0;i+1<candidate->path.size();++i) n+=length(candidate->path[i+1]-candidate->path[i]);
-                if(n<best){ best=n; sample=std::move(candidate); }
-            }
+            Vec3 dir=source_endpoint?source_endpoint->normal:Vec3{1,0,0};
+            dir.y=0.0f;
+            if(length(dir)<0.001f) dir={1,0,0}; else dir=normalize(dir);
+            UtilityBuildAnchor end{UtilityEndpointKind::Open,0,base+dir*2.35f};
+            sample=utility_network_.preview_connection(selected->utility_kind,*hover,end,
+                                                        placed_habitats_,habitat_models_,placed_resources_,resource_models_);
         }
         const bool sample_valid=sample.has_value() && can_start_construction(supply_plan(*sample));
         if(sample){
@@ -143,7 +136,7 @@ void GameApp::render_utility_placement(Renderer& r){
                                                      placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     }
 
-    const bool affordable=preview && can_start_construction(supply_plan(*preview));
+    const bool affordable=preview && (can_start_construction(supply_plan(*preview)) && gate_route_clear(preview->path,geometry::kSupplyTrayWidth*0.5f+0.2f));
     if(preview){
         const Color shell=affordable?Color{0.68f,0.86f,0.98f,0.95f}:Color{1.00f,0.24f,0.18f,0.86f};
         const Color detail=affordable?Color{0.93f,0.72f,0.28f,0.90f}:Color{1.00f,0.34f,0.24f,0.82f};

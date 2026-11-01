@@ -539,6 +539,7 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
             }
         }
         auto now=std::chrono::steady_clock::now(); float dt=std::chrono::duration<float>(now-prev).count(); prev=now; if(dt>0.1f)dt=0.1f;
+        game->on_resize(p.width,p.height);
         game->update(dt,p.input); game->render(*p.renderer);
         if(frame_limit_fps>0){
             const auto frame_budget=std::chrono::duration<double>(1.0/(double)frame_limit_fps);

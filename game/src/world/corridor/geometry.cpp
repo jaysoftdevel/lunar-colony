@@ -145,19 +145,23 @@ void append_detail_tube(CorridorMesh& mesh,Vec3 a,Vec3 b,float radius,int segmen
 
 void append_pressure_services(CorridorMesh& mesh,const std::vector<Vec3>& path){
     if(path.size()<2) return;
-    // Redundant service/lighting trunks are routed in the dead space between
-    // the crew deck and pressure shell. They follow the exact swept path, so a
-    // bend/junction remains visually continuous instead of exposing loose ends.
+    // Corridors are part of the colony utility backbone.  A dedicated water
+    // pipe and redundant power conduits run continuously through the pressure
+    // shell and follow the exact swept corridor path through bends/junctions.
     for(std::size_t i=0;i+1<path.size();++i){
         const Vec3 t0=path_tangent(path,i),t1=path_tangent(path,i+1);
         const Vec3 s0=perp_xz(t0),s1=perp_xz(t1);
         const Vec3 a=path[i],b=path[i+1];
-        for(float sign:{-1.0f,1.0f}){
-            append_detail_tube(mesh,a+s0*(1.19f*sign)+Vec3{0,0.48f,0},
-                                    b+s1*(1.19f*sign)+Vec3{0,0.48f,0},0.038f,6);
-            append_detail_tube(mesh,a+s0*(0.88f*sign)+Vec3{0,2.22f,0},
-                                    b+s1*(0.88f*sign)+Vec3{0,2.22f,0},0.028f,6);
-        }
+
+        // Water main: deliberately larger and low in the service void.
+        append_detail_tube(mesh,a+s0*(-1.15f)+Vec3{0,0.48f,0},
+                                b+s1*(-1.15f)+Vec3{0,0.48f,0},0.058f,8);
+
+        // Power backbone: two smaller redundant conduits on the opposite side.
+        append_detail_tube(mesh,a+s0*(1.15f)+Vec3{0,0.48f,0},
+                                b+s1*(1.15f)+Vec3{0,0.48f,0},0.033f,6);
+        append_detail_tube(mesh,a+s0*(0.88f)+Vec3{0,2.22f,0},
+                                b+s1*(0.88f)+Vec3{0,2.22f,0},0.026f,6);
     }
 }
 

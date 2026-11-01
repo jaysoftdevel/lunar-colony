@@ -34,10 +34,12 @@ struct GroundResourcePile {
 class GameApp final : public eng::GameDelegate {
 public:
     explicit GameApp(eng::Application& app):app_(app){}
+    void on_resize(int width,int height) override;
     void update(float dt,const eng::InputState& input) override;
     void render(eng::Renderer& r) override;
 private:
     friend struct NavigationRegression;
+    friend struct UiRegression;
     enum class Screen { MainMenu, NewGame, SaveGame, LoadGame, Settings, Credits, Playfield };
     enum class HabitatViewMode { Default, Full };
     enum class GameSpeed { Normal = 0, Quick, Fast, Pause };
@@ -60,6 +62,7 @@ private:
     int viewport_width_=1600;
     int viewport_height_=900;
     float fps_=0.0f;
+    float supply_warning_time_=0.0f;
     float ui_scale_=1.5f;
     bool debug_frame_enabled_=true;
     bool game_session_active_=false;
@@ -87,6 +90,7 @@ private:
     std::array<double,kMaterialResourceCount> production_fraction_{};
     double life_support_fraction_seconds_{0.0};
     BuildCatalog build_catalog_{};
+    int build_catalog_scroll_=0;
     HabitatModelLibrary habitat_models_{};
     ResourceModelLibrary resource_models_{};
     std::vector<PlacedHabitat> placed_habitats_{};
@@ -107,13 +111,12 @@ private:
     HabitatSizeTier placement_habitat_size_{HabitatSizeTier::Small};
     ResourceSizeTier placement_resource_size_{ResourceSizeTier::Small};
     StorageDomeSize placement_storage_size_{StorageDomeSize::Small};
-    // Storage placement is deliberately two-phase.  The first click freezes
-    // the dome footprint/size; the second click chooses one of the free cargo
-    // sectors between the four crew pressure entrances.
+    // Optional Storage Dome gates are placed as independent structure
+    // extensions after the dome blueprint exists. This mode stores only the
+    // owning dome; the hovered cargo sector is derived continuously from the
+    // cursor and validated before a gate blueprint is created.
     bool storage_gate_placement_active_{false};
-    eng::Vec3 storage_gate_pending_position_{};
-    float storage_gate_pending_rotation_degrees_{0.0f};
-    StorageDomeSize storage_gate_pending_size_{StorageDomeSize::Small};
+    std::size_t storage_gate_placement_owner_{std::numeric_limits<std::size_t>::max()};
     HabitatViewMode habitat_view_mode_=HabitatViewMode::Default;
     GameSpeed game_speed_=GameSpeed::Normal;
     SelectionKind selection_kind_=SelectionKind::None;
@@ -197,6 +200,12 @@ private:
     void update_builder_robot(float dt);
     float game_speed_multiplier() const;
     void update_resource_economy(float dt);
+    UtilityServiceSnapshot update_supply_simulation(float dt);
+    void render_supply_indicators(eng::Renderer& r);
+    void render_gate_areas(eng::Renderer& r) const;
+    bool gate_route_clear(const std::vector<eng::Vec3>& path,float margin) const;
+    bool corridor_gate_layout_clear(const CorridorConnection& connection) const;
+    bool gate_layout_clear(const PlacedHabitat* habitat,const PlacedResource* resource) const;
     ResourceBundle starter_resource_reserve() const;
     eng::Vec3 construction_target_position(const ConstructionTargetRef& target) const;
     eng::Vec3 construction_drop_position(const ConstructionTargetRef& target) const;
@@ -235,6 +244,7 @@ private:
     void render_workshop_gate(eng::Renderer& r,const PlacedResource& item,bool preview=false,bool valid=true) const;
     void assign_storage_loading_faces();
     void synchronize_storage_gates();
+    bool add_storage_gate_at(std::size_t owner,float local_angle);
     bool storage_gate_face_clear(const PlacedResource& owner,int face,std::optional<std::size_t> owner_index=std::nullopt) const;
     int available_storage_gate_face(std::size_t owner,int requested_face=-1) const;
     bool add_storage_gate(std::size_t owner,int requested_face=-1);

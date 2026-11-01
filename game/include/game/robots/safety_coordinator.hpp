@@ -21,6 +21,7 @@ inline constexpr float kPlannerReplanSeconds = 0.10f;
 inline constexpr float kPlannerHorizonSeconds = 1.00f;
 inline constexpr float kSafetyNumericMarginM = 0.025f;
 inline constexpr float kBlockingWaitTimeoutSeconds = 0.85f;
+inline constexpr float kFaultRecoveryMaxWaitSeconds = 3.0f;
 inline constexpr float kNeighborAwarenessRadiusM = 8.0f;
 // Personal rover safety zone beyond the hard physical hull. Every rover owns
 // this buffer and every other rover must respect it. The pairwise desired gap
@@ -211,6 +212,9 @@ struct SafetyRuntime {
     float best_route_remaining{std::numeric_limits<float>::infinity()};
     float route_progress_elapsed{0.0f};
     std::uint8_t fault_phase{0};
+    // Transient simulation-time deadline, independent of ordinary route backoff.
+    float fault_recovery_deadline{-1.0f};
+    std::uint32_t fault_recovery_attempts{0};
 };
 
 struct SafetyAgent {

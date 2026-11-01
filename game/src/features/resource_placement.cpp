@@ -1,6 +1,7 @@
 #include "game/world/robot_workshop.hpp"
 #include "game/game_app.hpp"
 #include "game/world/storage_loading_gate.hpp"
+#include "game/world/gate_area.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
@@ -77,7 +78,8 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
             if(overlaps(apron,footprint(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;}
         for(const auto& r:placed_resources_){const auto& m=resource_models_.mesh(r);
             if(overlaps(apron,footprint(r.position,r.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;
-            if(r.kind==ResourceKind::StorageDome && overlaps(apron,storage_loading::apron(r),clearance)) return false;}
+            if(r.kind==ResourceKind::StorageDome) for(int face:storage_loading::faces(r))
+                if(face>=0 && overlaps(apron,storage_loading::apron(r,face),clearance)) return false;}
         for(const auto& pile:ground_resource_piles_)
             if(overlaps(apron,footprint(pile.position,0,2*pile.radius,2*pile.radius),1.12f)) return false;
         for(const auto& c:corridor_network_.connections()) for(std::size_t j=1;j<c.path.size();++j)
@@ -92,19 +94,9 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
         const float radius=std::max(candidate.footprint_x,candidate.footprint_z)*0.5f;
         for(const auto& u:utility_network_.connections()) for(std::size_t i=0;i+1<u.path.size();++i)
             if(point_segment_distance_xz(position,u.path[i],u.path[i+1])<radius+0.45f) return false;
-
-        // Step 1 is still only the dome shell, but it must leave at least one
-        // legal inter-door sector for step 2.  This prevents a player from
-        // freezing a footprint that can never receive its mandatory cargo gate.
-        PlacedResource pending;pending.kind=ResourceKind::StorageDome;pending.storage_size=storage_size;
-        pending.position=position;pending.rotation_degrees=rotation_degrees;
-        bool has_gate_sector=false;
-        for(int face:storage_loading::kCargoFaces){
-            pending.storage_loading_face=(std::int8_t)face;
-            if(storage_gate_face_clear(pending,face)){has_gate_sector=true;break;}
-        }
-        if(!has_gate_sector) return false;
     }
+    PlacedResource candidate_item;candidate_item.kind=kind;candidate_item.size=size;candidate_item.storage_size=storage_size;candidate_item.position=position;candidate_item.rotation_degrees=rotation_degrees;
+    if(!gate_layout_clear(nullptr,&candidate_item))return false;
     return true;
 }
 
@@ -141,46 +133,53 @@ Vec3 GameApp::snap_storage_dome(Vec3 hit,StorageDomeSize size,float& rotation_de
 }
 
 void GameApp::render_resource_placement(Renderer& r){
-    const BuildObjectDefinition* selected=build_catalog_.selected();
-    if(!selected || selected->kind!=BuildObjectKind::Resource) return;
-
     const float top_px=STATUS_BAR_H*ui_scale_;
     const float bottom_px=(ui_height(r)-BUILD_BAR_H)*ui_scale_;
-    if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px) return;
 
-    Vec3 hit{};
-    if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
+    // Optional Storage Dome gate extension placement. This is deliberately
+    // independent of the normal build catalog: the dome already exists as a
+    // blueprint or completed structure, and each accepted gate becomes its own
+    // StorageGate construction task.
+    if(storage_gate_placement_active_){
+        if(storage_gate_placement_owner_>=placed_resources_.size() ||
+           placed_resources_[storage_gate_placement_owner_].kind!=ResourceKind::StorageDome){
+            storage_gate_placement_active_=false;
+            storage_gate_placement_owner_=kNoRobotIndex;
+            return;
+        }
+        if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px) return;
+        Vec3 hit{};
+        if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
 
-    // Storage placement step 2: the dome footprint is already frozen.  Move
-    // the pointer around the shell to select the nearest free inter-door cargo
-    // sector.  No storage gate exists before this second click is accepted.
-    if(selected->resource_kind==ResourceKind::StorageDome && storage_gate_placement_active_){
-        PlacedResource pending;
-        pending.kind=ResourceKind::StorageDome;
-        pending.position=storage_gate_pending_position_;
-        pending.rotation_degrees=storage_gate_pending_rotation_degrees_;
-        pending.storage_size=storage_gate_pending_size_;
-        pending.storage_loading_face=-1;
-
-        Vec3 local=rotate_y(hit-pending.position,-pending.rotation_degrees); local.y=0.0f;
+        auto owner=placed_resources_[storage_gate_placement_owner_];
+        Vec3 local=rotate_y(hit-owner.position,-owner.rotation_degrees);local.y=0.0f;
         if(length(local)<0.001f) local={1,0,1};
         local=normalize(local);
-        int selected_face=storage_loading::kCargoFaces[0];
-        float best_dot=-2.0f;
-        for(int face:storage_loading::kCargoFaces){
-            const float score=dot(local,storage_loading::local_normal(face));
-            if(score>best_dot){best_dot=score;selected_face=face;}
-        }
-        pending.storage_loading_face=(std::int8_t)selected_face;
+        // Continuous cursor placement, with a small magnetic region around the
+        // predefined cargo sectors. Crew-door sectors remain reserved.
+        float angle=std::atan2(local.x,local.z)*180.0f/3.14159265358979323846f;
+        for(int face:storage_loading::kCargoFaces){const auto n=storage_loading::local_normal(face);if(dot(local,n)>0.9962f){angle=std::atan2(n.x,n.z)*180.0f/3.14159265358979323846f;break;}}
+        int selected_face=8;for(;selected_face<=10;++selected_face){bool used=false;for(int f:storage_loading::faces(owner))if(f==selected_face)used=true;if(!used)break;}
+        if(selected_face>10)return;
+        storage_loading::set_angle(owner,selected_face,angle);
 
-        const auto& mesh=resource_models_.mesh(ResourceKind::StorageDome,pending.storage_size);
-        const auto plan=construction_costs::structure(ResourceKind::StorageDome,mesh);
-        const bool gate_clear=storage_gate_face_clear(pending,selected_face);
-        const bool valid=gate_clear && can_start_construction(plan);
-        render_resource_mesh(r,mesh,pending.position,pending.rotation_degrees,true,true);
-        render_storage_loading_gate(r,pending,0,true);
+        const auto gate_plan=construction_costs::structure(ResourceKind::StorageGate,
+            resource_models_.mesh(ResourceKind::StorageGate,owner.storage_size));
+        const bool valid=storage_loading::gate_count(placed_resources_[storage_gate_placement_owner_])<3 && storage_gate_face_clear(owner,selected_face,storage_gate_placement_owner_) &&
+                         can_start_construction(gate_plan);
+        const Vec3 n=storage_loading::normal(owner,selected_face);
+        const Vec3 gate_position=(storage_loading::wall(owner,selected_face)+storage_loading::mouth(owner,selected_face))*0.5f;
+        const float gate_rotation=std::atan2(-n.z,n.x)*180.0f/3.14159265358979323846f;
+        auto gate_mesh=resource_models_.mesh(ResourceKind::StorageGate,owner.storage_size);
+        const float desired=length(storage_loading::mouth(owner,selected_face)-storage_loading::wall(owner,selected_face));
+        const float ratio=desired/std::max(0.01f,gate_mesh.footprint_x-0.20f);
+        for(auto* layer:{&gate_mesh.body,&gate_mesh.foundation,&gate_mesh.details,&gate_mesh.edges})for(auto& v:*layer)v.x*=ratio;
+        gate_mesh.footprint_x*=ratio;
+        render_resource_mesh(r,gate_mesh,gate_position,gate_rotation,true,valid);
+        render_storage_gate_shutters(r,owner,selected_face,0.0f,0.0f,true);
+        gate_area::draw(r,{storage_loading::service(owner,selected_face),n,1.0f,0.75f},valid);
 
-        const auto bay=storage_loading::apron(pending,selected_face);
+        const auto bay=storage_loading::apron(owner,selected_face);
         auto corner=[&](float x,float z){
             return Vec3{bay.center.x+bay.axis_x.x*x+bay.axis_z.x*z,0.055f,
                         bay.center.y+bay.axis_x.y*x+bay.axis_z.y*z};
@@ -190,24 +189,20 @@ void GameApp::render_resource_placement(Renderer& r){
         r.draw_lines_3d({a,b,b,c,c,d,d,a},valid?Color{0.22f,1.0f,0.48f,1}:Color{1.0f,0.22f,0.12f,1},2.8f);
 
         if(valid && input_.left_pressed){
-            std::uint32_t serial=1;
-            for(const auto& existing:placed_resources_)
-                if(existing.kind==ResourceKind::StorageDome && existing.storage_size==pending.storage_size)
-                    serial=std::max(serial,existing.instance_serial+1);
-            pending.instance_serial=serial;
-            pending.placement_sequence=next_blueprint_placement_sequence_++;
-            pending.size=ResourceSizeTier::Standard;
-            pending.resource_plan=plan;
-            placed_resources_.push_back(std::move(pending));
-            storage_gate_placement_active_=false;
-            build_catalog_.clear_selection();
-            placement_rotation_degrees_=0.0f;
-            placement_resource_size_=ResourceSizeTier::Small;
-            placement_storage_size_=StorageDomeSize::Small;
-            corridor_build_start_.reset();
+            if(add_storage_gate_at(storage_gate_placement_owner_,angle)){
+                storage_gate_placement_active_=false;
+                storage_gate_placement_owner_=kNoRobotIndex;
+            }
         }
         return;
     }
+
+    const BuildObjectDefinition* selected=build_catalog_.selected();
+    if(!selected || selected->kind!=BuildObjectKind::Resource) return;
+    if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px) return;
+
+    Vec3 hit{};
+    if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
 
     const StorageDomeSize storage_size=selected->resource_kind==ResourceKind::StorageDome?placement_storage_size_:StorageDomeSize::Small;
     const ResourceSizeTier resource_size=(selected->resource_kind==ResourceKind::StorageDome || selected->resource_kind==ResourceKind::RobotWorkshop)?ResourceSizeTier::Standard:placement_resource_size_;
@@ -218,26 +213,23 @@ void GameApp::render_resource_placement(Renderer& r){
     const auto plan=construction_costs::structure(selected->resource_kind,mesh);
     const bool valid=resource_placement_valid(selected->resource_kind,resource_size,storage_size,snapped,rotation) && can_start_construction(plan);
     render_resource_mesh(r,mesh,snapped,rotation,true,valid);
+    if(selected->resource_kind==ResourceKind::StorageDome){PlacedResource preview;preview.kind=ResourceKind::StorageDome;preview.storage_size=storage_size;preview.position=snapped;preview.rotation_degrees=rotation;
+        for(const auto& a:gate_area::storage(preview,mesh,kNoRobotIndex,{}))gate_area::draw(r,a,valid);}
+
     if(selected->resource_kind==ResourceKind::RobotWorkshop){
         PlacedResource item;item.kind=ResourceKind::RobotWorkshop;item.position=snapped;item.rotation_degrees=rotation;
         render_workshop_gate(r,item,true,valid);
     }
 
     if(valid && input_.left_pressed){
-        if(selected->resource_kind==ResourceKind::StorageDome){
-            storage_gate_pending_position_=snapped;
-            storage_gate_pending_rotation_degrees_=rotation;
-            storage_gate_pending_size_=storage_size;
-            storage_gate_placement_active_=true;
-            return;
-        }
-
         PlacedResource placed;
         placed.kind=selected->resource_kind;
         std::uint32_t serial=1;
         for(const auto& existing:placed_resources_){
             if(existing.kind!=placed.kind) continue;
-            if(existing.size==resource_size) serial=std::max(serial,existing.instance_serial+1);
+            const bool same_size=placed.kind==ResourceKind::StorageDome?
+                existing.storage_size==storage_size:existing.size==resource_size;
+            if(same_size) serial=std::max(serial,existing.instance_serial+1);
         }
         placed.instance_serial=serial;
         placed.placement_sequence=next_blueprint_placement_sequence_++;

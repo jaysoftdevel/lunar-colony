@@ -37,6 +37,7 @@ struct NetworkSnap {
     bool found{false};
     std::size_t index{0};
     Vec3 point{};
+    Vec3 tangent{1.0f,0.0f,0.0f};
     float distance{std::numeric_limits<float>::max()};
 };
 
@@ -49,7 +50,9 @@ NetworkSnap nearest_network_snap(Vec3 hit,const ConnectionList& links,float radi
         for(std::size_t p=0;p+1<path.size();++p){
             const Vec3 q=closest_point_segment_xz(hit,path[p],path[p+1]);
             const float d=point_segment_distance_xz(hit,path[p],path[p+1]);
-            if(d<best.distance){ best={true,i,q,d}; }
+            Vec3 tangent=path[p+1]-path[p]; tangent.y=0.0f;
+            if(length(tangent)<0.001f) tangent={1.0f,0.0f,0.0f}; else tangent=normalize(tangent);
+            if(d<best.distance){ best={true,i,q,tangent,d}; }
         }
     }
     return best;
@@ -129,12 +132,17 @@ Vec3 point_along_path(const std::vector<Vec3>& path,float fraction,Vec3* tangent
 
 Rect GameApp::selection_panel_rect() const {
     if(selection_kind_==SelectionKind::Robot)
-        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN+68.0f,485.0f,390.0f};
+        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,485.0f,390.0f};
+    if(selection_kind_==SelectionKind::Habitat){
+        const bool generator=selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size() && placed_habitats_[(std::size_t)selected_habitat_].kind==HabitatKind::OxygenGeneratorDome;
+        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,generator?344.0f:306.0f};
+    }
+    if(selection_kind_==SelectionKind::Corridor)return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,344.0f};
     if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 && (std::size_t)selected_resource_<placed_resources_.size() &&
        placed_resources_[(std::size_t)selected_resource_].kind==ResourceKind::StorageDome){
-        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN+68.0f,485.0f,360.0f};
+        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,485.0f,388.0f};
     }
-    return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN+68.0f,410.0f,280.0f};
+    return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,280.0f};
 }
 
 Rect GameApp::ground_resource_panel_rect() const {
@@ -310,9 +318,20 @@ std::optional<UtilityBuildAnchor> GameApp::utility_anchor_at(Vec3 hit,UtilityKin
         if(snapped) return snapped;
     }
 
-    // Existing supply runs are valid manifold starts/ends. Snap the open anchor
-    // to the actual tray centerline so a new branch creates a true junction.
+    // Existing supply runs and pressurized corridors are both valid service
+    // manifold starts/ends. A corridor carries the same water/power backbone
+    // internally; attach on the cursor-selected side of its swept shell instead
+    // of quantizing the connection to a cardinal/90-degree direction.
     const auto utility_snap=nearest_network_snap(hit,utility_network_.connections(),1.35f);
+    const auto corridor_snap=nearest_network_snap(hit,corridor_network_.connections(),geometry::kCorridorHalfWidth+0.85f);
+    if(corridor_snap.found && (!utility_snap.found || corridor_snap.distance<=utility_snap.distance)){
+        Vec3 side{-corridor_snap.tangent.z,0.0f,corridor_snap.tangent.x};
+        if(dot(hit-corridor_snap.point,side)<0.0f) side=side*-1.0f;
+        if(length(side)<0.001f) side={1.0f,0.0f,0.0f}; else side=normalize(side);
+        Vec3 attach=corridor_snap.point+side*(geometry::kCorridorHalfWidth+0.04f);
+        attach.y=geometry::kSupplyChannelY;
+        return UtilityBuildAnchor{UtilityEndpointKind::Corridor,corridor_snap.index,attach,side};
+    }
     if(utility_snap.found) return UtilityBuildAnchor{UtilityEndpointKind::Open,0,utility_snap.point};
 
     // Free endpoints are supported as deliberate capped service stubs. This
@@ -831,6 +850,7 @@ void GameApp::delete_selected_world_object(){
                 const auto removed=corridor_network_.connections()[index];
                 const ResourceBundle used=bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer);
                 walkway_network_.remove_corridor(index);
+                utility_network_.remove_corridor(index);
                 corridor_network_.remove_corridor(index);
                 // Routed construction is recovered where it physically existed.
                 // Even in debug mode these boxes remain on the deleted corridor

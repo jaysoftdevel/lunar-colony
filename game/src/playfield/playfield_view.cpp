@@ -29,10 +29,12 @@ void GameApp::render_playfield(Renderer& r){
     render_habitats(r);
     render_resources(r);
     render_builder_robot(r);
+    render_gate_areas(r);
 
     if(first_person_mode_==FirstPersonMode::Active){
         r.set_2d(ui_scale_);
         render_construction_status_frames(r);
+    render_supply_indicators(r);
         render_status_bar(r);
         render_first_person_hud(r);
         return;
@@ -48,31 +50,31 @@ void GameApp::render_playfield(Renderer& r){
 
     r.set_2d(ui_scale_);
     render_construction_status_frames(r);
+    render_supply_indicators(r);
     render_status_bar(r);
     render_build_bar(r);
     render_selection_marquee(r);
     if(debug_frame_enabled_) render_debug_frame(r);
     if(selection_kind_!=SelectionKind::None) render_selection_panel(r);
 
-    Rect info={PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,430,56};
-    r.draw_rect(info,{0.025f,0.035f,0.045f,0.88f});
-    std::ostringstream a;
-    a<<"PLAYFIELD "<<playfield_.size()<<" X "<<playfield_.size();
-    game_label(r,{info.x+12,info.y+8},a.str(),0.78f,theme_);
+    if(selection_kind_==SelectionKind::None){
     const BuildObjectDefinition* active_build=build_catalog_.selected();
-    const char* controls=corridor_link_source_>=0?"LMB TARGET CORRIDOR / ESC CANCEL":
+    const char* controls=storage_gate_placement_active_?"STORAGE GATE / MOVE AROUND DOME / LMB PLACE EXTENSION / ESC CANCEL":
+        corridor_link_source_>=0?"LMB TARGET CORRIDOR / ESC CANCEL":
         (active_build && active_build->kind==BuildObjectKind::Corridor?
             (corridor_build_start_?"LMB SET CORRIDOR END / ESC CANCEL":"LMB SET CORRIDOR START / ESC CANCEL"):
         (active_build && active_build->kind==BuildObjectKind::Utility?
             (utility_build_start_?"MOVE TARGET TO ADJUST PORT / LMB CONNECT / ESC CANCEL":"LMB SELECT SUPPLY SOURCE / ESC CANCEL"):
         (active_build && active_build->kind==BuildObjectKind::Walkway?
             (walkway_build_start_?"MOVE TO ADJUST WALKWAY BLUEPRINT / LMB BUILD / ESC CANCEL":"LMB SET WALKWAY START / ESC CANCEL"):
-        (active_build && active_build->kind==BuildObjectKind::Resource && active_build->resource_kind==ResourceKind::StorageDome && storage_gate_placement_active_?
-            "STORAGE STEP 2 / MOVE AROUND DOME / LMB PLACE CARGO GATE / ESC BACK":
         (active_build && (active_build->kind==BuildObjectKind::Habitat || active_build->kind==BuildObjectKind::Resource)?
             "LMB PLACE / WHEEL SIZE / N-M ROTATE / ESC CANCEL":
-        (active_build?"LMB PLACE / N-M ROTATE / ESC CANCEL":"LMB SELECT / DRAG SELECT RESOURCE BOXES / WHEEL ZOOM / MMB ORBIT / RMB PAN / V FPV / ESC MENU"))))));
-    game_label(r,{info.x+12,info.y+31},controls,0.52f,theme_,true);
+        (active_build?"LMB PLACE / N-M ROTATE / ESC CANCEL":"LMB SELECT / DRAG SELECT RESOURCE BOXES / WHEEL ZOOM / MMB ORBIT / RMB PAN / V FPV / ESC MENU")))));
+    const auto control_lines=ui::wrap_text(controls,406,ui::font_scale(0.52f*GAME_FONT_BOOST,theme_));
+    Rect info={PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,430,34.0f+13.0f*(float)control_lines.size()};
+    r.draw_rect(info,{0.025f,0.035f,0.045f,0.88f});
+    game_label(r,{info.x+12,info.y+8},"PLAYFIELD "+std::to_string(playfield_.size())+" X "+std::to_string(playfield_.size()),0.78f,theme_);
+    for(std::size_t i=0;i<control_lines.size();++i)game_label(r,{info.x+12,info.y+28+13*(float)i},control_lines[i],0.52f,theme_,true);
 
     Rect robot_info={info.x,info.y+info.h+6.0f,560,40};
     r.draw_rect(robot_info,{0.025f,0.035f,0.045f,0.88f});
@@ -94,7 +96,8 @@ void GameApp::render_playfield(Renderer& r){
             break;
         }
     }
-    game_label(r,{robot_info.x+12,robot_info.y+11},robot_line.str(),0.47f,theme_);
+    game_label_fitted(r,{robot_info.x+12,robot_info.y+11,robot_info.w-24,16},robot_line.str(),0.47f,theme_);
+    }
 }
 
 void GameApp::render_selection_marquee(Renderer& r){
@@ -189,7 +192,7 @@ void GameApp::render_first_person_hud(Renderer& r){
 void GameApp::render_playfield_crosshair(Renderer& r){
     const float top_px=STATUS_BAR_H*ui_scale_;
     const float bottom_px=(ui_height(r)-BUILD_BAR_H)*ui_scale_;
-    if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px){
+    if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px || mouse_over_selection_panel(input_)){
         app_.set_cursor_visible(true);
         return;
     }
@@ -201,7 +204,7 @@ void GameApp::render_playfield_crosshair(Renderer& r){
     }
 
     app_.set_cursor_visible(false);
-    const float arm=std::clamp(camera_.distance()*0.030f,1.35f,5.0f);
+    const float arm=std::clamp(camera_.distance()*0.030f,1.35f,5.0f)*UI_SCALES[ui_scale_index_]/UI_SCALES[2];
     const float gap=arm*0.24f;
     const float y=0.055f;
     std::vector<Vec3> lines={
@@ -210,7 +213,7 @@ void GameApp::render_playfield_crosshair(Renderer& r){
         {hit.x,y,hit.z-arm},{hit.x,y,hit.z-gap},
         {hit.x,y,hit.z+gap},{hit.x,y,hit.z+arm}
     };
-    r.draw_lines_3d(lines,theme_.accent,2.8f);
+    r.draw_lines_3d(lines,theme_.accent,2.8f*ui_scale_/UI_SCALES[2]);
 }
 
 } // namespace game

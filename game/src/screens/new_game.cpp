@@ -17,8 +17,9 @@ using namespace world_labels;
 
 void GameApp::render_new_game(Renderer& r){
     ui::title(r,{32,26},"NEW GAME",theme_);
-    const float w=std::min(560.0f,ui_width(r)-2.0f*SCREEN_MARGIN);
-    Rect p={(ui_width(r)-w)*0.5f,66,w,530};
+    const bool compact=ui_height(r)<640.0f;
+    const float w=std::min(compact?760.0f:560.0f,ui_width(r)-2.0f*SCREEN_MARGIN);
+    Rect p={(ui_width(r)-w)*0.5f,66,w,std::min(530.0f,ui_height(r)-88.0f)};
     ui::panel(r,p,theme_);
 
     const float left=p.x+PANEL_PADDING;
@@ -38,33 +39,33 @@ void GameApp::render_new_game(Renderer& r){
         ui::label(r,{left,p.y+101},"DEBUG TEMPLATE REQUIRES 64 X 64",0.61f,theme_,true);
     }
 
-    auto count_selector=[&](float y,const char* title,int& value,const char* suffix){
-        ui::label(r,{left,y},title,1.00f,theme_);
+    auto count_selector=[&](float y,const char* title,int& value,const char* suffix,float column_left,float column_right){
+        ui::label(r,{column_left,y},title,1.00f,theme_);
         const std::string text=std::to_string(value)+(value==1?" ROBOT":" ROBOTS");
         const float scale=1.28f;
         const float tw=text_width(text,scale,theme_);
-        ui::label(r,{p.x+(p.w-tw)*0.5f,y+40},text,scale,theme_);
-        if(ui::button(r,ui_input_,{left,y+29,58,42},"<",theme_)) value=std::max(1,value-1);
-        if(ui::button(r,ui_input_,{right-58,y+29,58,42},">",theme_)) value=std::min(6,value+1);
-        ui::label(r,{left,y+80},suffix,0.64f,theme_,true);
+        ui::label(r,{column_left+(column_right-column_left-tw)*0.5f,y+40},text,scale,theme_);
+        if(ui::button(r,ui_input_,{column_left,y+29,58,42},"<",theme_)) value=std::max(1,value-1);
+        if(ui::button(r,ui_input_,{column_right-58,y+29,58,42},">",theme_)) value=std::min(6,value+1);
+        ui::label_fitted(r,{column_left,y+80,column_right-column_left,14},suffix,0.64f,theme_,true);
     };
 
-    count_selector(p.y+122,"BR-02 BUILDER BOTS SHIPPED",starting_robot_count_,"PRIMARY: CONSTRUCTION   FALLBACK: RESOURCE HAULING");
-    count_selector(p.y+230,"CR-01 CARRIER BOTS SHIPPED",starting_carrier_count_,"PRIMARY: RESOURCE PILE / DEPOT -> CONSTRUCTION SITE");
+    count_selector(p.y+122,"BR-02 BUILDER BOTS SHIPPED",starting_robot_count_,"PRIMARY: CONSTRUCTION   FALLBACK: RESOURCE HAULING",left,compact?p.x+p.w*0.5f-12:right);
+    count_selector(p.y+(compact?122:230),"CR-01 CARRIER BOTS SHIPPED",starting_carrier_count_,"PRIMARY: RESOURCE PILE / DEPOT -> CONSTRUCTION SITE",compact?p.x+p.w*0.5f+12:left,right);
 
-    ui::label(r,{left,p.y+340},"ROBOT ROUTES ARE SAFETY-CERTIFIED BEFORE TRAVEL",0.61f,theme_,true);
+    ui::label(r,{left,p.y+(compact?230:340)},"ROBOT ROUTES ARE SAFETY-CERTIFIED BEFORE TRAVEL",0.61f,theme_,true);
 
-    ui::label(r,{left,p.y+374},"DEBUG START TEMPLATE",0.96f,theme_);
+    ui::label(r,{left,p.y+(compact?264:374)},"DEBUG START TEMPLATE",0.96f,theme_);
     const std::string debug_template_label=debug_start_template_enabled_?"ON":"OFF";
-    if(ui::button(r,ui_input_,{right-82,p.y+360,82,34},debug_template_label,theme_)){
+    if(ui::button(r,ui_input_,{right-82,p.y+(compact?250:360),82,34},debug_template_label,theme_)){
         debug_start_template_enabled_=!debug_start_template_enabled_;
         new_game_status_message_.clear();
         if(debug_start_template_enabled_) playfield_size_=64;
     }
-    ui::label(r,{left,p.y+412},"AUTOLOAD ATTACHED CONSTRUCTION BLUEPRINT SETUP",0.61f,theme_,true);
-    ui::label(r,{left,p.y+434},"STARTS THE SIMULATION PAUSED; ROBOT COUNTS ABOVE STILL APPLY",0.61f,theme_,true);
+    ui::label(r,{left,p.y+(compact?302:412)},"AUTOLOAD ATTACHED CONSTRUCTION BLUEPRINT SETUP",0.61f,theme_,true);
+    ui::label(r,{left,p.y+(compact?324:434)},"STARTS THE SIMULATION PAUSED; ROBOT COUNTS ABOVE STILL APPLY",0.61f,theme_,true);
     if(!new_game_status_message_.empty())
-        ui::label(r,{left,p.y+460},new_game_status_message_,0.61f,theme_,true);
+        ui::label(r,{left,p.y+(compact?350:448)},new_game_status_message_,0.61f,theme_,true);
 
     constexpr float action_w=160.0f;
     constexpr float action_h=42.0f;
@@ -111,6 +112,7 @@ void GameApp::render_new_game(Renderer& r){
         placement_resource_size_=ResourceSizeTier::Small;
         placement_storage_size_=StorageDomeSize::Small;
         storage_gate_placement_active_=false;
+        storage_gate_placement_owner_=kNoRobotIndex;
         habitat_view_mode_=HabitatViewMode::Default;
         game_speed_=debug_start_template_enabled_?GameSpeed::Pause:GameSpeed::Normal;
         clear_world_selection();

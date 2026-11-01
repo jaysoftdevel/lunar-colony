@@ -1,4 +1,5 @@
 #pragma once
+#include "game/world/supply_state.hpp"
 #include "engine/engine.hpp"
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
@@ -85,6 +86,7 @@ struct HabitatMesh {
 };
 
 struct PlacedHabitat {
+    SupplyState supply{};
     HabitatKind kind{HabitatKind::AirLock};
     // Stable serial within this exact habitat type/size. It is assigned when
     // the blueprint is placed and remains unchanged after construction.

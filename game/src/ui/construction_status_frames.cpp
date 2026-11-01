@@ -216,7 +216,12 @@ void GameApp::render_construction_status_frames(Renderer& r){
     const float logical_w=ui_width(r),logical_h=ui_height(r);
     const float bottom_guard=first_person_mode_==FirstPersonMode::Active?8.0f:BUILD_BAR_H+8.0f;
     std::vector<Rect> occupied;
-    occupied.reserve(visible.size());
+    occupied.reserve(visible.size()+3);
+    if(first_person_mode_!=FirstPersonMode::Active){
+        if(selection_kind_!=SelectionKind::None)occupied.push_back(selection_kind_==SelectionKind::GroundResource && selected_ground_resources_.size()<=1?ground_resource_panel_rect():selection_panel_rect());
+        else occupied.push_back({PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,560,130});
+        if(debug_frame_enabled_)occupied.push_back({logical_w-360-PLAYFIELD_MARGIN,logical_h-BUILD_BAR_H-198-PLAYFIELD_MARGIN,360,198});
+    }
     for(auto& frame:visible){
         const auto needed_lines=frame.selected?resource_lines("NEEDED",frame.needed,"NONE"):std::vector<std::string>{};
         const auto shipped_lines=frame.selected?resource_lines("SHIPPED",frame.shipped,"NONE"):std::vector<std::string>{};
@@ -257,12 +262,12 @@ void GameApp::render_construction_status_frames(Renderer& r){
         const Color border{0.31f,0.79f,0.93f,0.95f};
         const Color fill{0.020f,0.032f,0.041f,0.93f};
         r.draw_rect(candidate,fill);
-        r.draw_line({candidate.x,candidate.y},{candidate.x+candidate.w,candidate.y},border,1.5f*ui_scale_);
+        r.draw_line({candidate.x,candidate.y},{candidate.x+candidate.w,candidate.y},border,1.5f);
 
         std::ostringstream title;
         title<<frame.title<<"   STEP "<<(int)frame.step<<"/"<<(int)frame.total_steps
              <<"   "<<(int)std::lround(frame.progress*100.0f)<<"%";
-        game_label(r,{candidate.x+8.0f,candidate.y+6.0f},title.str(),0.43f,theme_);
+        game_label_fitted(r,{candidate.x+8.0f,candidate.y+6.0f,candidate.w-16.0f,13.0f},title.str(),0.43f,theme_);
 
         const Rect progress_track{candidate.x+8.0f,candidate.y+23.0f,candidate.w-16.0f,7.0f};
         r.draw_rect(progress_track,track);
@@ -270,14 +275,35 @@ void GameApp::render_construction_status_frames(Renderer& r){
 
         float text_y=candidate.y+36.0f;
         for(const std::string& line:needed_lines){
-            game_label(r,{candidate.x+8.0f,text_y},line,0.36f,theme_,true);
+            game_label_fitted(r,{candidate.x+8.0f,text_y,candidate.w-16.0f,14.0f},line,0.36f,theme_,true);
             text_y+=18.0f;
         }
         for(const std::string& line:shipped_lines){
-            game_label(r,{candidate.x+8.0f,text_y},line,0.36f,theme_,true);
+            game_label_fitted(r,{candidate.x+8.0f,text_y,candidate.w-16.0f,14.0f},line,0.36f,theme_,true);
             text_y+=18.0f;
         }
     }
+}
+
+void GameApp::render_supply_indicators(Renderer& r){
+    const float aspect=(float)r.width()/std::max(1,r.height());
+    const Mat4 vp=first_person_mode_==FirstPersonMode::Active?first_person_.view_projection(aspect):camera_.view_projection(aspect);
+    const float pulse=0.48f+0.52f*(0.5f+0.5f*std::sin(supply_warning_time_*2.0943951f));
+    const auto draw=[&](Vec3 position,float height,const SupplyState& supply,bool inside){
+        float x=0,y=0;if(!project_world_to_logical(vp,position+Vec3{0,height+1.0f,0},r.width(),r.height(),ui_scale_,x,y))return;
+        if(supply.warnings){
+            const Color color{1.0f,0.68f,0.10f,pulse};
+            r.draw_line({x,y-16},{x-10,y+3},color,2.5f);r.draw_line({x-10,y+3},{x+10,y+3},color,2.5f);r.draw_line({x+10,y+3},{x,y-16},color,2.5f);
+            r.draw_line({x,y-10},{x,y-4},color,2.5f);r.draw_line({x,y-1},{x,y},color,2.5f);
+        }
+        if(inside){
+            const std::string label="AIR "+std::to_string((int)std::lround(supply.breathability()))+"%";
+            r.draw_rect({x-30,y+7,65,15},{0.02f,0.03f,0.04f,0.90f});
+            game_label(r,{x-26,y+8},label,0.40f,theme_);
+        }
+    };
+    for(const auto& h:placed_habitats_)if(h.construction.complete())draw(h.position,habitat_models_.mesh(h).height,h.supply,true);
+    for(const auto& q:placed_resources_)if(q.construction.complete())draw(q.position,resource_models_.mesh(q).height,q.supply,q.kind==ResourceKind::StorageDome);
 }
 
 } // namespace game

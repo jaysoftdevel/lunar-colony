@@ -61,7 +61,7 @@ void GameApp::render_view_selector(Renderer& r,float y,float logical_w){
     r.draw_line({speed_box.x+speed_box.w,speed_box.y+speed_box.h},{speed_box.x,speed_box.y+speed_box.h},theme_.border,1.0f);
     r.draw_line({speed_box.x,speed_box.y+speed_box.h},{speed_box.x,speed_box.y},theme_.border,1.0f);
     std::string speed_label=std::string(speed_name)+"  "+speed_mult;
-    const float sw=text_width(speed_label,0.42f*GAME_FONT_BOOST,theme_);
+    const float sw=game_text_width(speed_label,0.42f,theme_);
     game_label(r,{speed_box.x+(speed_box.w-sw)*0.5f,speed_box.y+7.0f},speed_label,0.42f,theme_);
 
     const float view_x=x+speed_group_w+between_groups;
@@ -84,7 +84,7 @@ void GameApp::render_view_selector(Renderer& r,float y,float logical_w){
         r.draw_line({rect.x+rect.w,rect.y+rect.h},{rect.x,rect.y+rect.h},border,active?2.0f:1.0f);
         r.draw_line({rect.x,rect.y+rect.h},{rect.x,rect.y},border,active?2.0f:1.0f);
         const float label_scale=0.43f;
-        const float label_w=text_width(b.label,label_scale*GAME_FONT_BOOST,theme_);
+        const float label_w=game_text_width(b.label,label_scale,theme_);
         game_label(r,{rect.x+(rect.w-label_w)*0.5f,rect.y+7.0f},b.label,label_scale,theme_,!active);
         if(hover && ui_input_.left_pressed) habitat_view_mode_=b.mode;
         bx+=b.width+gap;

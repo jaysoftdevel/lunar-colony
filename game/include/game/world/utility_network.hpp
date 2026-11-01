@@ -1,11 +1,14 @@
 #pragma once
+#include "game/world/supply_state.hpp"
 #include "engine/engine.hpp"
 #include "game/world/habitat_mesh.hpp"
 #include "game/world/resource_mesh.hpp"
+#include "game/world/corridor_network.hpp"
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
 #include <algorithm>
 #include <optional>
+#include <limits>
 #include <vector>
 #include <utility>
 
@@ -21,13 +24,20 @@ enum class UtilityKind {
 enum class UtilityEndpointKind {
     Habitat = 0,
     Resource,
-    Open
+    Open,
+    // Appended to preserve the serialized values used by existing saves. A
+    // supply channel may terminate on a corridor wall and feed the service
+    // pipes carried inside the pressurized corridor network.
+    Corridor
 };
 
 struct UtilityBuildAnchor {
     UtilityEndpointKind kind{UtilityEndpointKind::Habitat};
     std::size_t index{0};
     eng::Vec3 hit{};
+    // Optional outward surface normal supplied by network-to-network snapping.
+    // Structure anchors derive their normal from the actual mesh surface.
+    eng::Vec3 normal_hint{};
 };
 
 struct UtilityEndpoint {
@@ -43,7 +53,27 @@ struct UtilityMesh {
     std::vector<eng::Vec3> edges;
 };
 
+
+inline constexpr std::size_t kNoUtilityComponent=std::numeric_limits<std::size_t>::max();
+
+struct UtilityServiceState {
+    bool connected{false};
+    bool power{false};
+    bool water{false};
+    // Runtime-only topology identity. Structures with the same component id can
+    // exchange utility-fed resources without any global/teleporting shortcut.
+    std::size_t component{kNoUtilityComponent};
+};
+
+struct UtilityServiceSnapshot {
+    std::vector<UtilityServiceState> habitats{};
+    std::vector<UtilityServiceState> resources{};
+    // Live graph in habitat/resource/channel/corridor order, including junctions.
+    std::vector<std::pair<std::size_t,std::size_t>> links{};
+};
+
 struct UtilityConnection {
+    SupplyState supply{};
     UtilityKind kind{UtilityKind::SupplyChannel};
     std::uint64_t placement_sequence{0};
     UtilityEndpoint endpoint_a{};
@@ -95,6 +125,16 @@ public:
     void remove_connection(std::size_t index);
     void remove_habitat(std::size_t habitat_index);
     void remove_resource(std::size_t resource_index);
+    void remove_corridor(std::size_t corridor_index);
+
+    // Build the live water/power topology from completed supply channels and
+    // completed corridors. No extra save data is needed: service availability
+    // is derived from the physical network every time topology changes.
+    UtilityServiceSnapshot evaluate_services(
+        const CorridorNetwork& corridors,
+        const std::vector<PlacedHabitat>& habitats,
+        const std::vector<PlacedResource>& resources) const;
+
     void update_construction(float dt,ResourceManagement& resources,bool allow_negative);
 
 private:

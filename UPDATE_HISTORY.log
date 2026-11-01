@@ -1,3 +1,44 @@
+0.43.5 - water-to-oxygen processing and breathable-air telemetry
+- Report BREATHABLE AIR percentage and interior volume in habitat, storage-dome and corridor details. Show signed percentage-point change per game day; habitats/corridors also show net oxygen change.
+- Oxygen generator details show measured oxygen output and actual connected-tank water intake, plus processing, paused, missing-input and full-network status. Displayed rates reflect actual simulated production/transfer/consumption, including power, water and capacity limits.
+- Retain tank-fed electrolysis (1.125 L water per kg O2) and gradual, conservative distribution through completed pipes/corridors. Capture actual tank debit as the production source; no disconnected or global water inventory is used.
+- Refresh derived cabin volumes/percentages and supply availability on save load without consuming resources or advancing time. Pause masks rate telemetry; transient measured rates are recomputed rather than persisted. Save schema remains 17.
+- Add dedicated electrolysis/air-rate regression and expand resolution/zoom UI coverage from 325 to 400 cases, including filling and depleting interiors and generator details.
+
+0.43.4 - one resolution-independent UI layout
+- Fit a 1920 x 1080 reference canvas to the actual viewport, then apply the saved UI-size preference. At the same aspect ratio, 720p/900p/1080p/1440p/4K use identical logical layout, text, icon and control proportions.
+- Update viewport/scale before input processing on both platforms and at render boundaries; resolution changes, saved UI preferences and mouse hitboxes use the same transform. UI-size changes take effect on the following frame.
+- Shared font metrics and glyph atlas for OpenGL and Direct3D, including missing UI punctuation. Use a common readable caption floor and button typography; fitted captions respect shared padding and panel/cell bounds.
+- Draw 2D strokes as logical-width triangle quads, avoiding fixed pixel-width borders and driver wide-line differences. Remove the construction callout border's duplicate scale multiplication.
+- Render procedural icons from fixed design grids. Crowded catalogs page/scroll with fixed-size icons, instead of shrinking the artwork independently of the UI-size preference.
+- Fit long status/debug/selection/callout text to its own bounds; wrap gameplay help; put contextual selection in a shared top inset; reserve HUD space for construction callouts; use a two-column new-game form at larger UI-size settings.
+- Scale world cursor arms/thickness with UI size and resolution, keep the desktop cursor over selection controls, and consume catalog wheel input before it can zoom the world.
+- Add UI regressions covering 325 screen/zoom/resolution combinations, aspect ratios, button/selection hitboxes, frame-boundary preference changes, catalog paging/wheel input, text metrics and bounds. Save schema remains 17.
+
+0.43.3 - automatic safety-fault route recovery
+- Each fault schedules a fresh route attempt within three simulation seconds. Persistent geometry/bounds faults retry on the same maximum interval; repeated fault detection does not move the deadline.
+- Discard cached routes, D* search state, motion proposals, temporary retreats, stationary detours and steering history; plan from the measured position to the latest active scheduled destination.
+- Recovery planning runs before the invariant-fault early return and does not wait behind ordinary route-search priority. Searches remain bounded and independent jobs run through the task pool.
+- Resume through a new stationary hold and normal certified motion only if current geometry, motion bounds and fleet separation are safe. Idle/work holds do not invent a destination.
+- Preserve task/cargo/reservation state while fault recovery runs; ordinary work/traffic logic cannot silently downgrade Fault. Display the retry countdown and attempt count in robot status.
+- Save schema remains 17; the fault deadline/search state are transient, as before.
+
+0.43.2 - gate placing pads and connected colony supplies
+- Highlight cargo transfer pads beside the gate and crew placing pads beside each authored/generated door, including blueprint previews; reject structure, corridor, walkway and supply-channel overlap with reserved pads.
+- Restore continuous cursor-driven habitat and storage corridor attachment with local magnetic snapping to authored doors. Cargo gates support continuous yaw with local snapping to predefined cargo sectors; keep three separately constructed gates per warehouse.
+- Extend the cargo transfer sleeve to the existing rover-safe approach envelope and keep the placing pad 1.55 m from its outer gate; retain shared-gate logistics and safety coordination.
+- Solar generation feeds local loads and charges connected batteries; night loads discharge them. Water drillers fill connected tanks directly. Both inventories are finite and never shared across disconnected networks.
+- Design ratings (standard): solar 8 kW peak, battery 60 kWh/10 kW charge-discharge, tank 2,000 L, driller 500 L/day at 4 kW, electrolyzer 9 kg O2/day at 2.8 kW. Small outdoor equipment uses half capacity/rate; battery charge efficiency is 95%.
+- Production rebalance per plant/day: iron 40 kg, copper 4 kg, silicon 4 kg, aluminum 8 kg; plastics 10 kg; edible food 18 kg per bio-dome capacity unit; medical supplies 0.30 kg. These are explicit game design ratings, not validated equipment specifications.
+- Crew per day: 0.84 kg O2, 4 L make-up water, 0.85 kg food, 0.03 kg medical reserve. Water comes from the connected tanks. Food and medical use the existing physical package inventory. Indoor production requires at least 95% target air.
+- Cabin target: 70 kPa, 293 K, 30% O2 with assumed reserve buffer gas. Compute oxygen from the interior cubic envelope (65% of mesh envelope after floor height), and electrolysis water at 1.125 L/kg O2. This is an estimated usable volume, not mesh-volume integration or a full fluid/composition solver.
+- Pressure-driven, simultaneous, mass-conserving oxygen transfer across completed pipes, corridors and their junctions. Link conductance decreases with route length; downstream structures fill later. Unfinished structures/links do not transmit services.
+- Display AIR percentage, volume and remaining water to fill per interior; habitat panel includes connected-network water deficit. Display producer rates and actual battery/tank quantities, with slowly pulsing warning triangles and specific missing inputs.
+- Save schema 17 persists battery energy, tank water, oxygen in structures/pipes/corridors, and continuous cargo gate yaw. Older saves remain readable; previously fictional colony counters do not seed new physical inventories.
+- Oxygen reference: https://www.nasa.gov/reference/environmental-control-and-life-support-systems-eclss/
+- Crew oxygen planning reference: https://ntrs.nasa.gov/api/citations/20200001090/downloads/20200001090.pdf
+- Generator capacity reference: https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/Node-3_Cupola/Oxygen_Generation_System_Rack
+
 0.40.51 - corner-safe D* smoothing and longer look-ahead
 - D* line-of-sight smoothing now preserves soft structure-clearance cost classes; it may not shortcut a safe route back through a higher-cost corner halo.
 - Sharp route corners are mandatory waypoints with a 0.20 m acceptance radius; visibility following cannot skip across them.
@@ -267,3 +308,22 @@ v0.40.9
 0.42.1: Linux-focused gameplay update: Storage Dome placement is now two-stage (shell/size first, then a cargo gate in a free inter-door sector); Robot Workshops require a completed Supply Channel to become operational; workshop hall reduced to an 11 x 10 m footprint while retaining four service bays, gate/ramp access, and a protected maneuvering apron.
 
 0.42.2: Robot path-negotiation performance pass (no gameplay/feature changes). Rover clearance queries use a per-tick structure snapshot (precomputed rotations, pending-target bounds, cached wall triangles per construction stage); one exact swept test replaces per-0.18 m structure samples; robot-vs-robot contract arbitration skips non-neighbouring contracts; pull-out/detour candidate A* searches run across the worker pool and pick the same winner; light planner batches no longer wake helper threads; TaskPool::parallel_for dispatch is allocation-light; the concurrent heavy route-search cap is fixed at two so fleet behaviour no longer depends on core count (6+ lane hosts livelocked the construction fleet).
+0.42.3: Robot Workshop maneuvering clearance is now placement-only. The protected approach/apron remains enforced while placing workshop and neighboring blueprints, but unfinished-workshop robot construction/navigation processing now uses the same normal structure footprint clearance as other resource structures. Physical workshop walls, ramp, gate collision, parking access, and supply-channel operation are unchanged.
+
+0.43.0: Connected pipe-network utilities and seamless Storage Dome service attachment.
+- Completed Supply Channels and completed pressure Corridors now form one physical utility topology; corridors carry embedded water and power service lines through bends and junctions.
+- Power and water availability are evaluated independently per connected network component. Separate networks cannot borrow generation or water treatment from each other, and unfinished links do not carry service.
+- Resource/inside-base production dependencies are component-local, preventing ore/water/industrial feedstock from implicitly teleporting between disconnected utility networks.
+- Robot Workshops still require a completed direct Supply Channel and now additionally require actual power to be available on that connected network before parking/maintenance becomes operational.
+- Supply Channels can branch directly onto completed corridor sides, and corridor removal safely detaches any utility endpoints that referenced it.
+- Storage Dome corridor and Supply Channel attachment is cursor-driven around the free hull surface. Cargo-gate sectors remain protected, but ordinary connections are no longer quantized to four 90-degree/cardinal faces; routed supply channels use free-angle smoothed curves.
+- Linux build summary again prints the final executable size in KB and bytes.
+- Added a utility-network regression covering component isolation, corridor-carried utilities, unfinished-corridor isolation, and free-angle Storage Dome corridor/supply attachment.
+
+0.43.1: Optional independent Storage Dome cargo-gate extensions.
+- Storage Dome placement now creates only the dome blueprint; the mandatory second placement step has been removed.
+- A Storage Dome blueprint or completed dome can receive one to three optional Storage Gate extensions, added one at a time from the structure action.
+- Every Storage Gate is its own construction task with its own material plan, placement sequence, construction progress, rendering state, and robot work target.
+- Gate placement validates and reserves the complete loading apron against map bounds, structures, workshop placement clearance, corridors, walkways, Supply Channels, and resource piles before accepting the extension blueprint.
+- Gate-less dome hulls remain fully available for normal seamless/free-angle corridor and Supply Channel attachment; only explicitly placed gate sectors are reserved.
+- Existing saves with the former integrated primary cargo gate migrate it into an equivalent child Storage Gate task without changing the save schema.

@@ -1,4 +1,5 @@
 #pragma once
+#include "game/world/supply_state.hpp"
 #include "engine/engine.hpp"
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
@@ -115,6 +116,7 @@ struct StoredResourceBox {
 };
 
 struct PlacedResource {
+    SupplyState supply{};
     ResourceKind kind{ResourceKind::SolarPanel};
     // Stable serial within this exact structure type/size. It is assigned when
     // the blueprint is placed and remains unchanged after construction.
@@ -129,13 +131,20 @@ struct PlacedResource {
     ResourceBundle stored_resources{};
     std::vector<StoredResourceBox> stored_boxes{};
     StorageDomeSize storage_size{StorageDomeSize::Small};
-    // Fixed cargo hatch; -1 is a legacy save awaiting free-face assignment.
-    // 0..3 are legacy cardinal faces; 4..7 are the four inter-door cargo
-    // sectors used by current placement.
+    // Storage gates are optional child construction tasks. The owning dome
+    // keeps a derived three-slot view for routing/rendering compatibility:
+    // storage_loading_face is slot 1, storage_extra_faces are slots 2/3.
+    // Legacy saves may still persist a built-in primary face; loading migrates
+    // that face to a StorageGate child and synchronization derives these fields.
     std::int8_t storage_loading_face{-1};
+    // Faces 8..10 are freely positioned gate slots, with continuous local yaw.
+    float storage_gate_angle_degrees{0};
+    std::array<float,2> storage_extra_angles{}; // derived from child gates
+    bool storage_loading_ready{false}; // derived from first StorageGate child
+    std::size_t storage_loading_index{std::numeric_limits<std::size_t>::max()}; // derived
     std::uint64_t storage_parent_sequence{0}; // StorageGate -> owning dome
     std::size_t storage_parent_index{std::numeric_limits<std::size_t>::max()}; // derived
-    std::array<std::int8_t,2> storage_extra_faces{{-1,-1}}; // derived from extensions
+    std::array<std::int8_t,2> storage_extra_faces{{-1,-1}}; // derived from child slots 2/3
     std::array<bool,2> storage_extra_ready{};
     std::array<std::size_t,2> storage_extra_indices{{std::numeric_limits<std::size_t>::max(),std::numeric_limits<std::size_t>::max()}};
     float storage_extension_open{0.0f}; // transient shutter animation
@@ -165,9 +174,7 @@ public:
     ResourceModelLibrary();
     const ResourceMesh& mesh(ResourceKind kind,ResourceSizeTier size=ResourceSizeTier::Standard) const;
     const ResourceMesh& mesh(ResourceKind kind,StorageDomeSize storage_size) const;
-    const ResourceMesh& mesh(const PlacedResource& placed) const {
-        return (placed.kind==ResourceKind::StorageDome || placed.kind==ResourceKind::StorageGate)?mesh(placed.kind,placed.storage_size):mesh(placed.kind,placed.size);
-    }
+    const ResourceMesh& mesh(const PlacedResource& placed) const;
 private:
     std::array<ResourceMesh,(size_t)ResourceKind::Count> meshes_{};
     std::array<ResourceMesh,(size_t)ResourceKind::Count> small_meshes_{};

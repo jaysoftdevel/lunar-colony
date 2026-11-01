@@ -139,15 +139,16 @@ void draw_pressure_box(Renderer& r,Vec3 center,Vec3 side,Vec3 normal,Vec3 size,C
     r.draw_lines_3d(b.mesh.edges,color,2.1f);
 }
 const ResourceMesh& cargo_port_mesh(const ResourceMesh& source,const PlacedResource& owner){
-    struct Entry {const ResourceMesh* source;std::array<int,3> faces;ResourceMesh mesh;};
+    struct Entry {const ResourceMesh* source;std::array<int,3> faces;std::array<float,3> angles;ResourceMesh mesh;};
     static std::vector<Entry> cache;
-    const auto faces=storage_loading::faces(owner);
-    for(const auto& entry:cache) if(entry.source==&source && entry.faces==faces) return entry.mesh;
+    const auto faces=storage_loading::faces(owner,true);
+    const std::array<float,3> angles{{owner.storage_gate_angle_degrees,owner.storage_extra_angles[0],owner.storage_extra_angles[1]}};
+    for(const auto& entry:cache) if(entry.source==&source && entry.faces==faces && entry.angles==angles) return entry.mesh;
     if(cache.size()>128) cache.clear();
-    Entry entry{&source,faces,source};
+    Entry entry{&source,faces,angles,source};
     for(int face:faces){
         if(face<0) continue;
-        const auto normal=storage_loading::local_normal(face);
+        const auto normal=storage_loading::local_normal(owner,face);
         const auto center=normal*(storage_dome_diameter_m(owner.storage_size)*(5.35f/13.0f));
         const mesh_portals::Aperture opening{center,normal,0.95f,storage_loading::kHalfWidth+0.02f,0.05f,
             source.walkable_floor_y+geometry::kDoorFrameHeight+0.20f};
@@ -428,10 +429,6 @@ void GameApp::render_resources(Renderer& r){
         }
         render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
-        if(instance.kind==ResourceKind::StorageDome){
-            const float opening=i<storage_gate_open_.size()?storage_gate_open_[i]:0;
-            draw_loading_gate(r,instance,opening);
-        }
         if(instance.kind==ResourceKind::RobotWorkshop) render_workshop_gate(r,instance,!instance.construction.complete());
         if(instance.kind==ResourceKind::StorageGate && instance.storage_parent_index<placed_resources_.size()){
             const auto& owner=placed_resources_[instance.storage_parent_index];

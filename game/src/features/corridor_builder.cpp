@@ -186,7 +186,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     if(target<0 || target==corridor_link_source_) return;
     auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     if(!preview) return;
-    const bool affordable=can_start_construction(corridor_plan(*preview));
+    const bool affordable=(can_start_construction(corridor_plan(*preview)) && corridor_gate_layout_clear(*preview));
     draw_compact_corridor_blueprint(r,*preview,affordable);
     render_endpoint_highlight(r,preview->endpoint_a,affordable?theme_.accent:Color{1.00f,0.28f,0.22f,1.0f},2.8f);
     render_endpoint_highlight(r,preview->endpoint_b,affordable?Color{0.42f,1.00f,0.66f,1.0f}:Color{1.00f,0.28f,0.22f,1.0f},2.8f);
@@ -194,8 +194,10 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     // Commit only after the full candidate connection has been submitted as a
     // blueprint in this frame. This keeps manual links consistent with corridor
     // build mode, utility channels and automatic habitat corridor previews.
+    const auto previous_corridors=corridor_network_.connections();
     if(input_.left_pressed && affordable &&
        corridor_network_.connect_corridors((std::size_t)corridor_link_source_,(std::size_t)target,placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
+        for(const auto& c:corridor_network_.connections())if(!gate_route_clear(c.path,geometry::kCorridorHalfWidth+0.2f)){corridor_network_.restore_connections(previous_corridors);return;}
         corridor_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
         selected_corridor_=(int)corridor_network_.connections().size()-1;
         selected_habitat_=-1;
@@ -296,7 +298,7 @@ void GameApp::render_corridor_placement(Renderer& r){
         if(preview){
             source_endpoint=preview->endpoint_a;
             destination_endpoint=preview->endpoint_b;
-            const bool affordable=can_start_construction(corridor_plan(*preview));
+            const bool affordable=(can_start_construction(corridor_plan(*preview)) && corridor_gate_layout_clear(*preview));
             draw_compact_corridor_blueprint(r,*preview,affordable);
         }else{
             // Even if the route is blocked, resolve both endpoint structures so
@@ -318,8 +320,10 @@ void GameApp::render_corridor_placement(Renderer& r){
 
     if(!input_.left_pressed) return;
 
-    const bool affordable=preview && can_start_construction(corridor_plan(*preview));
+    const bool affordable=preview && (can_start_construction(corridor_plan(*preview)) && corridor_gate_layout_clear(*preview));
+    const auto previous_corridors=corridor_network_.connections();
     if(preview && affordable && corridor_network_.build_corridor(*corridor_build_start_,hover,placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
+        for(const auto& c:corridor_network_.connections())if(!gate_route_clear(c.path,geometry::kCorridorHalfWidth+0.2f)){corridor_network_.restore_connections(previous_corridors);return;}
         corridor_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
         selected_corridor_=(int)corridor_network_.connections().size()-1;
         selected_habitat_=-1;

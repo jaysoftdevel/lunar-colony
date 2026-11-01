@@ -1,6 +1,7 @@
 #include "game/world/robot_workshop.hpp"
 #include "game/world/corridor/detail.hpp"
 #include "game/world/storage_loading_gate.hpp"
+#include "game/world/gate_area.hpp"
 #include <array>
 #include <cstdint>
 #include <queue>
@@ -132,6 +133,8 @@ bool point_overlaps_structures(Vec3 p,
                                const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                                const CorridorEndpoint& a,const CorridorEndpoint& b){
     const float clearance=CORRIDOR_HALF_WIDTH+ROUTE_CLEARANCE;
+    for(std::size_t i=0;i<habitats.size();++i)for(const auto& pad:gate_area::habitat(habitats[i],library.mesh(habitats[i]),i,{}))if(pad.hits(p,p,clearance))return true;
+    for(std::size_t i=0;i<resources.size();++i)for(const auto& pad:gate_area::storage(resources[i],resource_library.mesh(resources[i]),i,{}))if(pad.hits(p,p,clearance))return true;
     for(std::size_t hi=0;hi<habitats.size();++hi){
         if(endpoint_dock_exception(p,a,CorridorEndpointKind::Habitat,hi) ||
            endpoint_dock_exception(p,b,CorridorEndpointKind::Habitat,hi)) continue;

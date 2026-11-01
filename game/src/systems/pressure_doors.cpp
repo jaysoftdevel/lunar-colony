@@ -3,23 +3,6 @@
 #include "game/util/world_math.hpp"
 
 namespace game {
-void GameApp::assign_storage_loading_faces(){
-    for(std::size_t i=0;i<placed_resources_.size();++i){
-        auto& item=placed_resources_[i];
-        if(item.kind!=ResourceKind::StorageDome || item.storage_loading_face>=0) continue;
-        // Keep every installed legacy corridor. Once selected the gate face is
-        // persisted, so building/removing other connections cannot move it.
-        item.storage_loading_face=4;
-        for(int face:{1,0,2,3}){
-            const auto n=world_math::rotate_y(storage_loading::local_normal(face),item.rotation_degrees);
-            bool used=false;
-            for(const auto& c:corridor_network_.connections()) for(const auto* ep:{&c.endpoint_a,&c.endpoint_b})
-                if(ep->kind==CorridorEndpointKind::Resource && ep->index==i && eng::dot(ep->door.normal,n)>0.70f) used=true;
-            if(!used){item.storage_loading_face=(std::int8_t)face;break;}
-        }
-    }
-}
-
 void GameApp::update_pressure_doors(float dt){
     update_workshop_gates(dt);
     for(auto& state:pressure_doors_) state.seen=false;
@@ -67,24 +50,20 @@ void GameApp::update_pressure_doors(float dt){
         if(placed_resources_[i].construction.complete()) for(const auto& d:storage_dome_doors(i)) register_door(d);
     std::erase_if(pressure_doors_,[](const auto& state){return !state.seen;});
 
-    storage_gate_open_.resize(placed_resources_.size(),0);
+    // Every cargo gate is now an independent StorageGate construction object.
+    // Animate only completed child gates; a dome with zero gates has no hidden
+    // or implicit loading hatch.
+    storage_gate_open_.clear();
     for(std::size_t i=0;i<placed_resources_.size();++i){
-        const auto& item=placed_resources_[i];bool operating=false;
-        if(item.kind==ResourceKind::StorageDome && item.construction.complete())
-            for(const auto& robot:builder_robots_)
-                if(storage_loading::at_service_face(item,robot.position,storage_loading::face(item)) &&
-                   (robot.action==BuilderRobotAction::Pickup || robot.action==BuilderRobotAction::PutDown)) operating=true;
-        // Outer cargo shutters expose a sealed transfer buffer, never the
-        // warehouse atmosphere or an exterior crew doorway.
-        storage_gate_open_[i]=std::clamp(storage_gate_open_[i]+(operating?3.2f:-2.0f)*std::clamp(dt,0.0f,0.10f),0.0f,1.0f);
-        if(item.kind==ResourceKind::StorageGate && item.construction.complete() && item.storage_parent_index<placed_resources_.size()){
-            const auto& owner=placed_resources_[item.storage_parent_index];bool using_gate=false;
-            if(owner.construction.complete()) for(const auto& robot:builder_robots_)
-                if(storage_loading::at_service_face(owner,robot.position,item.storage_loading_face) &&
-                   (robot.action==BuilderRobotAction::Pickup || robot.action==BuilderRobotAction::PutDown)) using_gate=true;
-            auto& opening=placed_resources_[i].storage_extension_open;
-            opening=std::clamp(opening+(using_gate?3.2f:-2.0f)*std::clamp(dt,0.0f,0.10f),0.0f,1.0f);
-        }
+        const auto& item=placed_resources_[i];
+        if(item.kind!=ResourceKind::StorageGate || !item.construction.complete() ||
+           item.storage_parent_index>=placed_resources_.size()) continue;
+        const auto& owner=placed_resources_[item.storage_parent_index];bool using_gate=false;
+        if(owner.construction.complete()) for(const auto& robot:builder_robots_)
+            if(storage_loading::at_service_face(owner,robot.position,item.storage_loading_face) &&
+               (robot.action==BuilderRobotAction::Pickup || robot.action==BuilderRobotAction::PutDown)) using_gate=true;
+        auto& opening=placed_resources_[i].storage_extension_open;
+        opening=std::clamp(opening+(using_gate?3.2f:-2.0f)*std::clamp(dt,0.0f,0.10f),0.0f,1.0f);
     }
 }
 }

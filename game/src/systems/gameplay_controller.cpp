@@ -27,6 +27,7 @@ float GameApp::game_speed_multiplier() const {
 
 void GameApp::update(float dt,const InputState& in){
     input_=in;
+    supply_warning_time_+=std::max(0.0f,dt);
     if(dt>0.000001f){
         const float instant=1.0f/dt;
         fps_=fps_<=0.0f?instant:(fps_*0.90f+instant*0.10f);
@@ -78,13 +79,16 @@ void GameApp::update(float dt,const InputState& in){
 
         // RMB is a fast cancel for every active build/placement tool. Consume
         // the click before camera panning so cancelling never nudges the view.
+        if(in.right_pressed && storage_gate_placement_active_){
+            selection_marquee_active_=false;
+            selection_marquee_dragged_=false;
+            storage_gate_placement_active_=false;
+            storage_gate_placement_owner_=kNoRobotIndex;
+            return;
+        }
         if(in.right_pressed && build_catalog_.selected()!=nullptr){
             selection_marquee_active_=false;
             selection_marquee_dragged_=false;
-            if(storage_gate_placement_active_){
-                storage_gate_placement_active_=false;
-                return;
-            }
             build_catalog_.clear_selection();
             placement_rotation_degrees_=0.0f;
             placement_habitat_size_=HabitatSizeTier::Small;
@@ -102,11 +106,12 @@ void GameApp::update(float dt,const InputState& in){
             selection_marquee_active_=false;
             selection_marquee_dragged_=false;
             // ESC cancels the most specific active gameplay operation first.
+            if(storage_gate_placement_active_){
+                storage_gate_placement_active_=false;
+                storage_gate_placement_owner_=kNoRobotIndex;
+                return;
+            }
             if(build_catalog_.selected()!=nullptr){
-                if(storage_gate_placement_active_){
-                    storage_gate_placement_active_=false;
-                    return;
-                }
                 build_catalog_.clear_selection();
                 placement_rotation_degrees_=0.0f;
                 placement_habitat_size_=HabitatSizeTier::Small;
@@ -126,7 +131,7 @@ void GameApp::update(float dt,const InputState& in){
             return;
         }
 
-        if(in.delete_pressed && build_catalog_.selected()==nullptr && corridor_link_source_<0 && !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_){
+        if(in.delete_pressed && !storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 && !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_){
             delete_selected_world_object();
             return;
         }
@@ -149,7 +154,7 @@ void GameApp::update(float dt,const InputState& in){
                 if(in.wheel>0.0f) cycle_habitat(+1);
                 if(in.wheel<0.0f) cycle_habitat(-1);
                 camera_input.wheel=0.0f;
-            }else if(selected->resource_kind==ResourceKind::StorageDome && !storage_gate_placement_active_){
+            }else if(selected->resource_kind==ResourceKind::StorageDome){
                 auto cycle_storage=[&](int delta){
                     int v=(int)placement_storage_size_;
                     v=(v+delta+4)%4;
@@ -170,13 +175,11 @@ void GameApp::update(float dt,const InputState& in){
             }
             // Mouse wheel is exclusively a structure-size control while a
             // structure is being placed. Rotation is keyboard-only (N/M).
-            const bool freeze_storage=selected->kind==BuildObjectKind::Resource &&
-                selected->resource_kind==ResourceKind::StorageDome && storage_gate_placement_active_;
-            if(!freeze_storage){
-                if(in.key_n_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
-                if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
-            }
+            if(in.key_n_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
+            if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
         }
+        const float pointer_y=(float)in.mouse_y/ui_scale_;
+        if(pointer_y<STATUS_BAR_H || pointer_y>=(float)viewport_height_/ui_scale_-BUILD_BAR_H || mouse_over_selection_panel(in))camera_input.wheel=0;
         camera_.update(camera_input,playfield_.size(),viewport_height_);
         status_.update(sim_dt);
         update_construction(sim_dt);
@@ -187,7 +190,7 @@ void GameApp::update(float dt,const InputState& in){
         // package whose projected center lies inside it.
         const float logical_y=(float)in.mouse_y/ui_scale_;
         const bool over_world=logical_y>=STATUS_BAR_H && logical_y<((float)viewport_height_/ui_scale_-BUILD_BAR_H);
-        const bool selection_idle=build_catalog_.selected()==nullptr && corridor_link_source_<0 &&
+        const bool selection_idle=!storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 &&
                                   !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_;
         if(selection_idle && in.left_pressed && over_world && !mouse_over_selection_panel(in)){
             Vec3 hit{};

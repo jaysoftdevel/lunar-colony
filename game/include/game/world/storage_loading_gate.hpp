@@ -28,17 +28,40 @@ inline eng::Vec3 local_normal(int face){
         default:return {1,0,0};
     }
 }
-inline int face(const PlacedResource& item,int selected=-1){return selected<0?(item.storage_loading_face<0?1:item.storage_loading_face):selected;}
+inline int face(const PlacedResource& item,int selected=-1){return selected<0?item.storage_loading_face:selected;}
 inline std::array<int,3> faces(const PlacedResource& item,bool only_ready=false){
-    return {face(item),(!only_ready || item.storage_extra_ready[0])?item.storage_extra_faces[0]:-1,(!only_ready || item.storage_extra_ready[1])?item.storage_extra_faces[1]:-1};
+    return {(!only_ready || item.storage_loading_ready)?item.storage_loading_face:-1,
+            (!only_ready || item.storage_extra_ready[0])?item.storage_extra_faces[0]:-1,
+            (!only_ready || item.storage_extra_ready[1])?item.storage_extra_faces[1]:-1};
+}
+inline int gate_count(const PlacedResource& item){
+    int count=0;for(int f:faces(item)) if(f>=0) ++count;return count;
+}
+inline bool has_ready_gate(const PlacedResource& item){
+    for(int f:faces(item,true)) if(f>=0) return true;
+    return false;
+}
+inline eng::Vec3 local_normal(const PlacedResource& item,int selected=-1){
+    const int f=face(item,selected);
+    if(f<8)return local_normal(f);
+    float angle=item.storage_gate_angle_degrees;
+    for(std::size_t i=0;i<item.storage_extra_faces.size();++i)if(item.storage_extra_faces[i]==f)angle=item.storage_extra_angles[i];
+    const float a=angle*3.14159265358979323846f/180.0f;return {std::sin(a),0,std::cos(a)};
+}
+inline void set_angle(PlacedResource& owner,int f,float angle){
+    if(owner.storage_loading_face<0 || owner.storage_loading_face==f){owner.storage_loading_face=(std::int8_t)f;owner.storage_gate_angle_degrees=angle;return;}
+    for(std::size_t i=0;i<owner.storage_extra_faces.size();++i)if(owner.storage_extra_faces[i]<0 || owner.storage_extra_faces[i]==f){owner.storage_extra_faces[i]=(std::int8_t)f;owner.storage_extra_angles[i]=angle;return;}
 }
 inline eng::Vec3 normal(const PlacedResource& item,int selected=-1){
-    return world_math::rotate_y(local_normal(face(item,selected)),item.rotation_degrees);
+    return world_math::rotate_y(local_normal(item,selected),item.rotation_degrees);
 }
 inline float outer_radius(const PlacedResource& item,int selected=-1){
-    const auto n=local_normal(face(item,selected));
+    const auto n=local_normal(item,selected);
     const float half=storage_dome_diameter_m(item.storage_size)*0.5f;
-    return (half-(face(item,selected)>=4?1.10f:0.0f))/std::max(std::abs(n.x),std::abs(n.z));
+    // Extend the physical loading sleeve out to the rover-safe envelope.
+    // Its pad is then immediately beside the real gate, with no route through
+    // the warehouse collision footprint.
+    return half/std::max(std::abs(n.x),std::abs(n.z))+(face(item,selected)>=4?0.50f:0.20f);
 }
 inline eng::Vec3 wall(const PlacedResource& item,int selected=-1){
     return item.position+normal(item,selected)*(storage_dome_diameter_m(item.storage_size)*(5.35f/13.0f));
@@ -47,10 +70,7 @@ inline eng::Vec3 mouth(const PlacedResource& item,int selected=-1){
     return item.position+normal(item,selected)*(outer_radius(item,selected)-0.20f);
 }
 inline eng::Vec3 service(const PlacedResource& item,int selected=-1){
-    const float radius=face(item,selected)>=4?
-        storage_dome_diameter_m(item.storage_size)*0.5f/0.70710678f+1.85f:
-        outer_radius(item,selected)+kServiceOffset;
-    return item.position+normal(item,selected)*radius;
+    return mouth(item,selected)+normal(item,selected)*kServiceOffset;
 }
 // The complete approach bay is forbidden to pressure tubes, including routes
 // passing a different structure. Call before an own-dock clearance exception.

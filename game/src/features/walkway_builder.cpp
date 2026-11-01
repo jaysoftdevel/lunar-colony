@@ -134,7 +134,7 @@ void GameApp::render_walkway_placement(Renderer& r){
                                                     placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     }
 
-    const bool affordable=preview && can_start_construction(construction_costs::walkway(preview_length(*preview)));
+    const bool affordable=preview && (can_start_construction(construction_costs::walkway(preview_length(*preview))) && gate_route_clear(preview->path,geometry::kWalkwayHalfWidth+0.2f));
     if(preview){
         // Valid geometry is still shown red when the colony cannot reserve the
         // complete staged material plan for this walkway.

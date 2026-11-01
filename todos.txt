@@ -10,20 +10,47 @@ Integrate the robot workshop into the game as buildable outside structure
 when a storage blueprint is placed or build add an option to add max two more storage gates that will be added (they shall need resources too)
 display add newly added structure extension (doors and storage gates) also as meshes
 
-
-*** ToDo:
-
 rework the storage structure placement and make it two steps:
 1. the general build side and size setting
 2. let the user seamlessly decide in the not occupied (by entry gates) areas around the dome where to place the storage-access-gate
 also require the robot workshop to be connected with a supply channel to function propperly
 - reduce the size of the robot workshop but still keep it realistic for enter/park/leave for robots
 
-when a storage blueprint is placed or build add an option to add max two more storage gates that will be added (they shall need resources too)
-
-implement a pipe network that enables the the passing of resources between resource structures (and the inside base structures)
+implement a pipe network (represented as supply channels) that enables the the passing of resources between resource structures (and the inside base structures)
 - the pipenetwork transports water and power to all connected structures (if available within the network)
 - corridors shall have the pipe network be included
+
+- for the storage dome, put the placing area right next to the gate and highlight it. All gate neet to have a placing area with a clearance that does not overlap with other structures/corridors/pipes
+-- also keep the freedom to place any corridor or gate seamless, but snap close to the predefined doors of the structure
+--- apply this behavior to all inside structures, they shall give a common handling/feeling from player perspective
+
+- store collected resources from the water-driller/solar-panel to their storage counter part:
+-- solar panel stores to battery
+-- water driller stores to water tank
+- apply realistic amounts of production/gathering and consumption rates
+
+-calculate the amount of water needed to fill the qubic inside of the connected structures with "breathable air"
+-- show the breathyness in % per struction
+-- apply an air-flow calculation feature, not all structures receive breathable air at the same time via the pipe network
+
+- if any structure (inside and outside!) are running out of any supply resource, then place a warning triagle obove the structure (slowly flashing)
+
+if any robot goes to safey-fault mode, wait up to 3sec max and recalculate a recovery path/route from scratch
+
+revise the UI and fonts scaling for all display element 
+- all displayed elements (status frames, display fonts, icons, buttons and all other UI elements) shall follow the same layout and sizing.
+- they shall be congruent regardless of the screen resoltion. So 4K resolution has the same scale as a HD display!
+
+the oxygen generator shall process water to oxygen and fill the inside structures. The rate of "breathable air" shall be shown in the structures details panel
+
+*** ToDo:
+
+
+
+- the storage-gates of the storage dome are "squeezing" or stretching when placing around the base structure. Make it of minimal size and regardless of the angle it is placed (consider the dropoff/pickup area right infront of it!, add minimal clearence!")
+- remove unneded placements (oranges squares...)
+- add a POV jump feature "space"
+- add the reason for any warning icon in the details frame for all structrures
 
 add a game progress tree (when not in debugging mode) and display as checkpoint list at the screen border (no overlaps!)
 Stage 1:
@@ -39,9 +66,10 @@ Stage 2:
 - connect one resource structure to one of the insde structures)
 	- all resource structures can exchange resources via a pipe netnetwork. In order to connect a resource structure there must be pipe a path available.
 
-add a priority shift for all not yet built structures to prior them in the building/processing queue
+add a priority shift option button to the detailed status box for all not yet built structures to prior them in the building/processing queue
 
-
+- create a hydrogen power generator as outdoor structure
+	- it shall process the produced hydrogen from the oxygen generator into electricity/energy that can be stored or used
 
 to the day/night cycle add a (not yet visualized) movement of a star (sun-like) accross the playfield following a realistic position above the playfield:
 - the solar panel shall follow it orientation for maximum photovoltic collection of energy
@@ -53,3 +81,25 @@ generate astronauts, the shall look like future astronauts and move like humans
   - jumping
   - running
 dont integrate into the game yet, just show me sampled drafts
+
+
+
+
+
+in case textures ever become relevant add a switch to swap between mesh/textured layout...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

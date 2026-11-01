@@ -23,6 +23,10 @@ cmake -S "$GAME_ROOT" -B "$GAME_BUILD_DIR" \
 cmake --build "$GAME_BUILD_DIR" --parallel "$(cpu_jobs)"
 
 echo
+size_bytes="$(stat -c '%s' "$GAME_BIN" 2>/dev/null || wc -c < "$GAME_BIN")"
+size_kb=$(( (size_bytes + 1023) / 1024 ))
+
 echo "Linux build complete: $GAME_BIN"
+echo "Size: ${size_kb} KB (${size_bytes} bytes)"
 echo "Backend: X11 + OpenGL"
 echo "Run: ./run.sh"

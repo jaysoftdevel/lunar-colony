@@ -15,8 +15,9 @@ using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
-void GameApp::render_build_icon(Renderer& r,BuildIcon icon,Rect q,Color c) const {
-    const float x=q.x,y=q.y,w=q.w,h=q.h;
+void GameApp::render_build_icon(Renderer& renderer,BuildIcon icon,Rect q,Color c) const {
+    const eng::ui::IconCanvas r(renderer,q,{50,50});
+    const float x=0,y=0,w=50,h=50;
     const float cx=x+w*0.5f;
     const float cy=y+h*0.5f;
     switch(icon){

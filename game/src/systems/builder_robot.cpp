@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -727,6 +728,9 @@ bool GameApp::construction_target_dependencies_ready(const ConstructionTargetRef
                     return endpoint.index<placed_resources_.size() && placed_resources_[endpoint.index].construction.complete();
                 case UtilityEndpointKind::Open:
                     return true;
+                case UtilityEndpointKind::Corridor:
+                    return endpoint.index<corridor_network_.connections().size() &&
+                           corridor_network_.connections()[endpoint.index].construction.complete();
             }
             return false;
         };
@@ -1202,15 +1206,22 @@ bool GameApp::robot_load_needed_resources(BuilderRobotState& robot,const Resourc
     // newly produced or starter resources into storage.
     for(std::size_t ri=0;ri<placed_resources_.size();++ri){
         const auto& structure=placed_resources_[ri];
-        if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
+        if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete() ||
+           !storage_loading::has_ready_gate(structure)) continue;
         for(std::size_t bi=0;bi<structure.stored_boxes.size();++bi){
             const auto& box=structure.stored_boxes[bi];
             if(box.amount<=0 || need.amount(box.resource)<=0) continue;
-            const Vec3 service=storage_loading::service(structure);
-            const float d=dist_xz(robot.position,service);
-            // Storage boxes are accessed through the dome service face. Multiple
-            // robots may occupy neighboring service lanes, so use a tolerant
-            // manipulator reach instead of requiring one exact center point.
+            Vec3 service=structure.position;
+            float d=std::numeric_limits<float>::max();
+            for(int face:storage_loading::faces(structure,true)){
+                if(face<0) continue;
+                const Vec3 candidate=storage_loading::service(structure,face);
+                const float candidate_d=dist_xz(robot.position,candidate);
+                if(candidate_d<d){d=candidate_d;service=candidate;}
+            }
+            // Storage boxes are accessed only through completed gate tasks.
+            // Multiple robots may occupy neighboring service lanes, so use a
+            // tolerant manipulator reach instead of one exact center point.
             if(storage_loading::at_service(structure,robot.position) && d<best_storage.distance) best_storage={true,false,ri,bi,box.resource,service,d};
         }
     }
@@ -1651,7 +1662,6 @@ void GameApp::update_builder_robot(float dt){
             const auto v=construction_sequence::resource_visibility((float)item.construction.step);
             const bool visible=v.foundation>0.0f || v.body>0.0f || v.details>0.0f;
             if(!visible) return false;
-            if(item.kind==ResourceKind::RobotWorkshop && workshop::approach_hits(item,candidate,candidate,radius)) return true;
             if(nav.valid){
                 const auto& rect=nav.resource_geo[i].rect;
                 const Vec3 local=nav_rect_local(rect,candidate);
@@ -1846,14 +1856,6 @@ void GameApp::update_builder_robot(float dt){
         // movement obstacle during ordinary construction; it is only a short
         // pre-commit evacuation envelope that guarantees the new mesh can
         // never close around a robot.
-        if(target.kind==ConstructionTargetKind::Resource && target.index<placed_resources_.size()){
-            const auto& item=placed_resources_[target.index];
-            if(item.kind==ResourceKind::RobotWorkshop){
-                const auto p=workshop::local(item,candidate);const float margin=radius+0.30f;
-                return (std::abs(p.x)<workshop::kHalfX+margin && std::abs(p.z)<workshop::kHalfZ+margin) ||
-                    workshop::approach_hits(item,candidate,candidate,margin);
-            }
-        }
         if(next_step<2) return false;
         if(target.kind==ConstructionTargetKind::Habitat && target.index<placed_habitats_.size()){
             const auto& h=placed_habitats_[target.index];
@@ -1867,7 +1869,6 @@ void GameApp::update_builder_robot(float dt){
             const auto& mesh=resource_models_.mesh(item);
             const Vec3 local=world_math::rotate_y(candidate-item.position,-item.rotation_degrees);
             const float margin=radius+0.30f;
-            if(item.kind==ResourceKind::RobotWorkshop && workshop::approach_hits(item,candidate,candidate,margin)) return true;
             return std::abs(local.x)<mesh.footprint_x*0.5f+margin && std::abs(local.z)<mesh.footprint_z*0.5f+margin;
         }
 
@@ -2057,10 +2058,11 @@ void GameApp::update_builder_robot(float dt){
             if(item.construction.complete()){ wall_cache.erase(wall_key(ConstructionTargetKind::Resource,i)); continue; }
             nav.pending_resources.push_back(i);
             const auto& mesh=resource_models_.mesh(item);
-            // The workshop approach apron reaches ~16 m in front of the hall.
-            const float extra=item.kind==ResourceKind::RobotWorkshop?18.0f:0.0f;
+            // Runtime robot processing uses the same construction envelope for
+            // the workshop as for every other resource structure. The larger
+            // maneuvering apron is a blueprint-placement reservation only.
             nav.resource_bounds[i]=circle_bounds(item.position,
-                std::sqrt(mesh.footprint_x*mesh.footprint_x+mesh.footprint_z*mesh.footprint_z)*0.5f+extra);
+                std::sqrt(mesh.footprint_x*mesh.footprint_x+mesh.footprint_z*mesh.footprint_z)*0.5f);
             const ConstructionTargetRef ref{ConstructionTargetKind::Resource,i};
             const std::uint8_t current=construction_target_step(ref);
             const std::uint8_t total=construction_target_total_steps(ref);
@@ -3800,8 +3802,12 @@ void GameApp::update_builder_robot(float dt){
     auto storage_service=[&](std::size_t index,std::size_t robot_index){
         if(index>=placed_resources_.size()) return Vec3{};
         const auto& item=placed_resources_[index];
-        Vec3 best=storage_loading::service(item);float score=std::numeric_limits<float>::max();
-        if(robot_index>=builder_robots_.size()) return best;
+        Vec3 best=item.position;float score=std::numeric_limits<float>::max();
+        bool found=false;
+        if(robot_index>=builder_robots_.size()){
+            for(int face:storage_loading::faces(item,true)) if(face>=0) return storage_loading::service(item,face);
+            return best;
+        }
         const auto& robot=builder_robots_[robot_index];
         for(int face:storage_loading::faces(item,true)){
             if(face<0) continue;
@@ -3814,9 +3820,9 @@ void GameApp::update_builder_robot(float dt){
                 if(other.interaction_position_valid && dist_xz(other.interaction_focus_position,point)<0.10f &&
                    (other.mode==BuilderRobotMode::Fetching || (other.mode==BuilderRobotMode::DepotTransfer && !other.cargo.empty()))) cost+=75.0f;
             }
-            if(cost<score){score=cost;best=point;}
+            if(cost<score){score=cost;best=point;found=true;}
         }
-        return best;
+        return found?best:item.position;
     };
 
     // Both pickup and deposit share one physical gate. The closest assigned
@@ -3861,7 +3867,8 @@ void GameApp::update_builder_robot(float dt){
         const auto& robot=builder_robots_[robot_index];
         for(std::size_t ri=0;ri<placed_resources_.size();++ri){
             const auto& structure=placed_resources_[ri];
-            if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
+            if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete() ||
+               !storage_loading::has_ready_gate(structure)) continue;
             for(std::size_t bi=0;bi<structure.stored_boxes.size();++bi){
                 const auto& box=structure.stored_boxes[bi];
                 if(box.amount<=0 || need.amount(box.resource)<=0) continue;
@@ -3893,10 +3900,16 @@ void GameApp::update_builder_robot(float dt){
         auto& robot=builder_robots_[robot_index];
         if(robot.interaction_position_valid && need.amount(robot.interaction_material)>0){
             for(const auto& item:placed_resources_){
-                if(item.kind==ResourceKind::StorageDome && dist_xz(robot.interaction_focus_position,item.position)<0.10f){
-                    robot.interaction_position=storage_loading::service(item);
-                    robot.interaction_focus_position=robot.interaction_position;
+                if(item.kind!=ResourceKind::StorageDome || !storage_loading::has_ready_gate(item) ||
+                   dist_xz(robot.interaction_focus_position,item.position)>=0.10f) continue;
+                float best=std::numeric_limits<float>::max();
+                for(int face:storage_loading::faces(item,true)){
+                    if(face<0) continue;
+                    const Vec3 candidate=storage_loading::service(item,face);
+                    const float d=dist_xz(robot.position,candidate);
+                    if(d<best){best=d;robot.interaction_position=candidate;}
                 }
+                robot.interaction_focus_position=robot.interaction_position;
             }
             return true;
         }
@@ -4295,7 +4308,8 @@ void GameApp::update_builder_robot(float dt){
         float best_d=std::numeric_limits<float>::max();
         for(std::size_t i=0;i<placed_resources_.size();++i){
             auto& structure=placed_resources_[i];
-            if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
+            if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete() ||
+               !storage_loading::has_ready_gate(structure)) continue;
             sync_stored_resource_totals(structure);
             const std::int64_t free=storage_dome_capacity_kg(structure.storage_size)-structure.stored_resources.total_amount();
             if(free<=0 || (amount>0 && free<std::min<std::int64_t>(amount,1))) continue;
@@ -5762,6 +5776,13 @@ void GameApp::update_builder_robot(float dt){
     // released back to the site ledger when appropriate.
     for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
         auto& robot=builder_robots_[robot_index];
+        if(robot.safety.mode==robots::SafetyMode::Fault){
+            // Fault recovery owns the next route attempt within three seconds.
+            // Preserve this operation, cargo and reservation while it retries.
+            robot.watchdog_elapsed=0.0f;robot.watchdog_position=robot.position;
+            robot.watchdog_mode=robot.mode;robot.watchdog_action=robot.action;
+            continue;
+        }
         if(robot.route_waiting_for_clearance){
             // Coordinated route waiting is intentional, not a deadlock. Keep
             // the operation watchdog disarmed until the reservation is clear.
@@ -5988,76 +6009,129 @@ void GameApp::update_resource_economy(float dt){
     if(dt<=0.0f) return;
     // One in-game day is 240 real seconds. Production figures below are kg per
     // in-game day and represent a mature automated lunar pilot plant rather
-    // than present-day terrestrial equipment.
+    // than present-day terrestrial equipment. Power/water availability is no
+    // longer global: it is derived from the completed physical supply/corridor
+    // network component that each structure actually belongs to.
     constexpr double day_seconds=240.0;
-    std::array<double,kMaterialResourceCount> rate_per_day{};
-    std::array<Vec3,kMaterialResourceCount> source{};
-    std::array<bool,kMaterialResourceCount> have_source{};
+    struct NetworkEconomy {
+        int ore_drillers{0};
+        int water_drillers{0};
+        int water_purifiers{0};
+        bool processing{false};
+        bool factory{false};
+        bool manufactory{false};
+        bool laboratory{false};
+        bool sick_bay{false};
+        float bio_capacity{0.0f};
+        Vec3 industrial{};
+        Vec3 water_source{};
+        Vec3 food_source{};
+        Vec3 medical_source{};
+        std::array<double,kMaterialResourceCount> rate_per_day{};
+        std::array<Vec3,kMaterialResourceCount> output{};
+        std::array<bool,kMaterialResourceCount> has_output{};
+    };
 
-    int solar=0,power_storage=0,ore_drillers=0,water_drillers=0,water_purifiers=0;
-    Vec3 ore_source{},water_source{};
-    for(const auto& item:placed_resources_){
+    const auto services=update_supply_simulation(dt);
+    std::map<std::size_t,NetworkEconomy> networks;
+    auto network_for=[&](const UtilityServiceState& service)->NetworkEconomy*{
+        if(!service.connected || service.component==kNoUtilityComponent) return nullptr;
+        return &networks[service.component];
+    };
+
+    for(std::size_t i=0;i<placed_resources_.size();++i){
+        const auto& item=placed_resources_[i];
         if(!item.construction.complete()) continue;
+        const UtilityServiceState service=i<services.resources.size()?services.resources[i]:UtilityServiceState{};
+        auto* network=network_for(service);
+        if(!network) continue;
         switch(item.kind){
-            case ResourceKind::SolarPanel: ++solar; break;
-            case ResourceKind::PowerStorage: ++power_storage; break;
-            case ResourceKind::OreDriller: ++ore_drillers; ore_source=item.position; break;
-            case ResourceKind::WaterDriller: ++water_drillers; water_source=item.position; break;
-            case ResourceKind::WaterPurifier: ++water_purifiers; water_source=item.position; break;
-            default: break;
+            case ResourceKind::OreDriller:
+                if(service.power){ ++network->ore_drillers; }
+                break;
+            case ResourceKind::WaterDriller:
+                // Water availability means this driller shares one powered
+                // component with at least one purifier. Raw water can therefore
+                // move through the physical network instead of a global pool.
+                if(service.water){ ++network->water_drillers; network->water_source=item.position; }
+                break;
+            case ResourceKind::WaterPurifier:
+                if(service.water){ ++network->water_purifiers; network->water_source=item.position; }
+                break;
+            default:
+                break;
         }
     }
-    const bool stable_power=solar>=2 && power_storage>=1;
-    bool processing=false,factory=false,manufactory=false,lab=false,sick=false;
-    Vec3 industrial{},food_source{},medical_source{};
-    float bio_capacity=0.0f;
-    for(const auto& h:placed_habitats_){
+
+    for(std::size_t i=0;i<placed_habitats_.size();++i){
+        const auto& h=placed_habitats_[i];
         if(!h.construction.complete()) continue;
+        const UtilityServiceState service=i<services.habitats.size()?services.habitats[i]:UtilityServiceState{};
+        auto* network=network_for(service);
+        if(!network || h.supply.breathability()<95.0) continue;
         switch(h.kind){
-            case HabitatKind::ProcessingFacility: processing=true; industrial=h.position; break;
-            case HabitatKind::Factory: factory=true; industrial=h.position; break;
-            case HabitatKind::Manufactory: manufactory=true; industrial=h.position; break;
-            case HabitatKind::Laboratory: lab=true; medical_source=h.position; break;
-            case HabitatKind::SickBay: sick=true; medical_source=h.position; break;
-            case HabitatKind::BioDome: bio_capacity+=size_multiplier(h.size); food_source=h.position; break;
-            default: break;
+            case HabitatKind::ProcessingFacility:
+                if(service.power){ network->processing=true; network->industrial=h.position; }
+                break;
+            case HabitatKind::Factory:
+                if(service.power){ network->factory=true; network->industrial=h.position; }
+                break;
+            case HabitatKind::Manufactory:
+                if(service.power){ network->manufactory=true; network->industrial=h.position; }
+                break;
+            case HabitatKind::Laboratory:
+                if(service.power){ network->laboratory=true; network->medical_source=h.position; }
+                break;
+            case HabitatKind::SickBay:
+                if(service.power){ network->sick_bay=true; network->medical_source=h.position; }
+                break;
+            case HabitatKind::BioDome:
+                if(service.power && service.water){
+                    network->bio_capacity+=size_multiplier(h.size);
+                    network->food_source=h.position;
+                }
+                break;
+            default:
+                break;
         }
     }
 
-    if(stable_power && processing && ore_drillers>0){
-        rate_per_day[(size_t)MaterialResource::Iron]=11000.0*ore_drillers;
-        rate_per_day[(size_t)MaterialResource::Copper]=1200.0*ore_drillers;
-        rate_per_day[(size_t)MaterialResource::Silicon]=2100.0*ore_drillers;
-        // Aluminum is a major lunar structural feedstock in this game balance:
-        // ore extraction + processing separates it from regolith alongside Fe/Si.
-        rate_per_day[(size_t)MaterialResource::Aluminum]=5200.0*ore_drillers;
-        source[(size_t)MaterialResource::Iron]=source[(size_t)MaterialResource::Copper]=source[(size_t)MaterialResource::Silicon]=source[(size_t)MaterialResource::Aluminum]=industrial;
-        have_source[(size_t)MaterialResource::Iron]=have_source[(size_t)MaterialResource::Copper]=have_source[(size_t)MaterialResource::Silicon]=have_source[(size_t)MaterialResource::Aluminum]=true;
-    }
-    if(stable_power && processing && factory && manufactory){
-        rate_per_day[(size_t)MaterialResource::Plastic]=1800.0;
-        source[(size_t)MaterialResource::Plastic]=industrial; have_source[(size_t)MaterialResource::Plastic]=true;
-    }
-    if(stable_power && water_drillers>0 && water_purifiers>0){
-        rate_per_day[(size_t)MaterialResource::Water]=5200.0*std::min(water_drillers,water_purifiers);
-        source[(size_t)MaterialResource::Water]=water_source; have_source[(size_t)MaterialResource::Water]=true;
-    }
-    if(stable_power && water_purifiers>0 && bio_capacity>0.0f){
-        rate_per_day[(size_t)MaterialResource::Food]=420.0*(double)bio_capacity;
-        source[(size_t)MaterialResource::Food]=food_source; have_source[(size_t)MaterialResource::Food]=true;
-    }
-    if(stable_power && lab && sick && factory){
-        rate_per_day[(size_t)MaterialResource::Medical]=55.0;
-        source[(size_t)MaterialResource::Medical]=medical_source; have_source[(size_t)MaterialResource::Medical]=true;
+    const auto set_rate=[](NetworkEconomy& network,MaterialResource material,double rate,Vec3 output){
+        const std::size_t i=(std::size_t)material;
+        network.rate_per_day[i]+=rate;
+        network.output[i]=output;
+        network.has_output[i]=true;
+    };
+    for(auto& [component,network]:networks){
+        (void)component;
+        // Every multi-stage production dependency below is deliberately
+        // component-local. Two separately powered pipe systems cannot exchange
+        // ore, water, food or medical feedstock without a physical connection.
+        if(network.processing && network.ore_drillers>0){
+            set_rate(network,MaterialResource::Iron,40.0*network.ore_drillers,network.industrial);
+            set_rate(network,MaterialResource::Copper,4.0*network.ore_drillers,network.industrial);
+            set_rate(network,MaterialResource::Silicon,4.0*network.ore_drillers,network.industrial);
+            set_rate(network,MaterialResource::Aluminum,8.0*network.ore_drillers,network.industrial);
+        }
+        if(network.processing && network.factory && network.manufactory)
+            set_rate(network,MaterialResource::Plastic,10.0,network.industrial);
+        // Water is delivered directly into connected tanks by supply_simulation.
+        if(network.water_purifiers>0 && network.bio_capacity>0.0f)
+            set_rate(network,MaterialResource::Food,18.0*(double)network.bio_capacity,network.food_source);
+        if(network.laboratory && network.sick_bay && network.factory)
+            set_rate(network,MaterialResource::Medical,0.30,network.medical_source);
     }
 
-    for(std::size_t i=0;i<kMaterialResourceCount;++i){
-        if(rate_per_day[i]<=0.0 || !have_source[i]) continue;
-        production_fraction_[i]+=rate_per_day[i]*(double)dt/day_seconds;
-        const auto whole=(std::int64_t)std::floor(production_fraction_[i]);
-        if(whole>0){
-            production_fraction_[i]-=(double)whole;
-            spawn_produced_resource((MaterialResource)i,whole,source[i]);
+    for(auto& [component,network]:networks){
+        (void)component;
+        for(std::size_t i=0;i<kMaterialResourceCount;++i){
+            if(network.rate_per_day[i]<=0.0 || !network.has_output[i]) continue;
+            production_fraction_[i]+=network.rate_per_day[i]*(double)dt/day_seconds;
+            const auto whole=(std::int64_t)std::floor(production_fraction_[i]);
+            if(whole>0){
+                production_fraction_[i]-=(double)whole;
+                spawn_produced_resource((MaterialResource)i,whole,network.output[i]);
+            }
         }
     }
 
@@ -6075,7 +6149,7 @@ void GameApp::update_resource_economy(float dt){
         // The per-second quantities are often fractional; accumulate them in
         // the same precision buckets used by production.
         const std::array<std::pair<MaterialResource,double>,3> demand{{
-            {MaterialResource::Water,(double)crew*4.0*seconds/day_seconds},
+            {MaterialResource::Water,0.0}, // water draw is component-local tank inventory
             {MaterialResource::Food,(double)crew*0.85*seconds/day_seconds},
             {MaterialResource::Medical,(double)crew*0.03*seconds/day_seconds}}};
         for(const auto& [material,value]:demand){

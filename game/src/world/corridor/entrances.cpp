@@ -468,13 +468,9 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,anchor.position,existing,1.15f))
         return branch_from_existing_door(*used,other,existing);
 
-    // Reuse a built-in hatch only when the cursor explicitly targets it. This
-    // keeps established entrances convenient while making all other hull points
-    // freely adjustable like supply-channel ports.
-    // Structure connections always terminate at an authored crew entrance.
-    // The cursor selects the closest hatch rather than creating a door through
-    // arbitrary machinery, glazing or an inaccessible side of a foundation.
-    constexpr float BUILTIN_SNAP_RADIUS=std::numeric_limits<float>::max();
+    // Magnetize only the local region around an authored hatch. Away from
+    // that region, preserve the cursor-selected pressure-hull attachment.
+    constexpr float BUILTIN_SNAP_RADIUS=1.75f;
     bool found_builtin=false;
     float best_cursor_distance=BUILTIN_SNAP_RADIUS;
     CorridorDoor d{};
@@ -558,48 +554,40 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
     const auto& placed=resources[anchor.index];
     if(placed.kind!=ResourceKind::StorageDome) return std::nullopt;
 
-    // Cargo sectors live between the four crew entrances.  A click inside a
-    // reserved loading apron must therefore remain a cargo-area click instead
-    // of being silently redirected to the nearest cardinal pressure door.
+    // Cargo sectors remain exclusive, but every other point on the dome hull is
+    // a valid crew-corridor attachment. Do not quantize the selected point to
+    // one of four cardinal faces: the cursor controls the exact radial normal.
     for(int face:storage_loading::faces(placed))
         if(face>=0 && storage_loading::reserved_face(placed,anchor.position,0.10f,face)) return std::nullopt;
 
     const auto& mesh=library.mesh(placed);
     const float wall_radius=std::min(mesh.footprint_x,mesh.footprint_z)*(5.35f/13.0f);
-    const Vec3 local_normals[4]={{0,0,-1},{1,0,0},{0,0,1},{-1,0,0}};
-    float best=std::numeric_limits<float>::max();
-    Vec3 normal{0,0,-1},wall{};
-    for(Vec3 ln:local_normals){
-        const Vec3 n=flat_normal(rotate_y(ln,placed.rotation_degrees));
-        const Vec3 w=placed.position+n*wall_radius;
-        const float d=distance_xz(anchor.position,w);
-        if(d<best){ best=d; normal=n; wall=w; }
-    }
-    // If the pointer is near the center, choose the port facing the target.
-    if(distance_xz(anchor.position,placed.position)<0.40f){
-        Vec3 desired=flat_normal(other-placed.position);
-        float best_dot=-2.0f;
-        for(Vec3 ln:local_normals){
-            const Vec3 n=flat_normal(rotate_y(ln,placed.rotation_degrees));
-            const float score=dot(n,desired);
-            if(score>best_dot){ best_dot=score; normal=n; wall=placed.position+n*wall_radius; }
-        }
+    Vec3 normal=anchor.position-placed.position;
+    normal.y=0.0f;
+    if(length(normal)<0.08f){ normal=other-placed.position; normal.y=0.0f; }
+    if(length(normal)<0.001f) normal={0,0,-1};
+    normal=flat_normal(normal);
+    Vec3 wall=placed.position+normal*wall_radius;
+    for(int face=0;face<4;++face){
+        const auto n=rotate_y(storage_loading::local_normal(face),placed.rotation_degrees);
+        const auto door=placed.position+n*wall_radius;
+        if(distance_xz(anchor.position,door)<1.75f){normal=n;wall=door;break;}
     }
 
-    // The fixed cargo face can never become a crew pressure connection.
+    // The actual fixed/extra cargo gate aperture may not become a crew pressure
+    // connection even when the cursor sits just outside its reservation apron.
     for(int face:storage_loading::faces(placed))
         if(face>=0 && dot(normal,storage_loading::normal(placed,face))>0.92f) return std::nullopt;
 
-    // Storage-dome service doors are reusable pressure entrances too.  If the
-    // selected face already owns a corridor, branch from its common trunk
-    // rather than laying a second corridor through the same docking sleeve.
+    // Reuse an existing pressure entrance when the player selects the same hull
+    // region; further corridors branch from the common sealed trunk.
     if(auto used=existing_door_use_near(CorridorEndpointKind::Resource,anchor.index,wall,existing,0.85f))
         return branch_from_existing_door(*used,other,existing);
 
     CorridorEndpoint out;
     out.kind=CorridorEndpointKind::Resource;
     out.index=anchor.index;
-    out.door.generated=false;
+    out.door.generated=true;
     out.door.entrance_index=-1;
     out.door.normal=normal;
     out.door.wall_position=wall+Vec3{0,mesh.walkable_floor_y,0};

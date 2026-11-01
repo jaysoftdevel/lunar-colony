@@ -565,6 +565,67 @@ void ensure_route(SafetyAgent& a,std::uint64_t world_epoch,const SafetyWorldCall
     }
 }
 
+void enter_fault(SafetyAgent& a,BlockReason reason,std::uint8_t phase,float now){
+    auto& rt=*a.runtime;
+    // A persistent overlap or bounds failure is detected again every tick. It
+    // must never postpone the first attempt or the following three-second retry.
+    if(rt.mode!=SafetyMode::Fault || rt.fault_recovery_deadline<0.0f)
+        rt.fault_recovery_deadline=now+kFaultRecoveryMaxWaitSeconds;
+    rt.mode=SafetyMode::Fault;rt.block_reason=reason;rt.fault_phase=phase;
+    a.speed_mps=0.0f;
+}
+
+void recover_faulted_agents(float dt,float now,std::uint64_t world_epoch,
+                            std::vector<SafetyAgent>& agents,
+                            const std::vector<NavigationRequest>& requests,
+                            const SafetyWorldCallbacks& world){
+    std::vector<std::size_t> due;
+    for(auto& a:agents){
+        auto& rt=*a.runtime;
+        if(rt.mode!=SafetyMode::Fault){rt.fault_recovery_deadline=-1.0f;continue;}
+        a.speed_mps=0.0f;
+        if(rt.fault_recovery_deadline<0.0f)rt.fault_recovery_deadline=now+kFaultRecoveryMaxWaitSeconds;
+        // Start in the frame containing the deadline, never one frame later.
+        if(now+dt+1.0e-5f<rt.fault_recovery_deadline)continue;
+        rt.fault_recovery_deadline=now+dt+kFaultRecoveryMaxWaitSeconds;
+        ++rt.fault_recovery_attempts;
+        const auto& req=requests[a.id];
+        rt.goal_valid=req.active;rt.goal=req.goal;
+        rt.stop_radius=std::max(0.02f,req.stop_radius);
+        rt.speed_scale=std::clamp(req.speed_scale,0.10f,1.0f);
+        ++rt.goal_revision;
+        rt.temporary_goal_valid=false;rt.stationary_detour_active=false;
+        rt.stationary_detour_blocker=kNoSafetyRobot;rt.yielding_for_traffic=false;
+        rt.blocker_robot_id=kNoSafetyRobot;
+        invalidate_route(rt); // discards the entire D* search, coarse path and proposals
+        rt.route_world_epoch=0;rt.route_goal_revision=0;rt.route_origin=a.position;
+        rt.avoidance_velocity={};rt.avoidance_velocity_valid=false;rt.avoidance_elapsed=0;
+        rt.steering_side=0;rt.recovery_cooldown=0;rt.blocked_elapsed=0;rt.wait_age=0;
+        rt.best_route_remaining=std::numeric_limits<float>::infinity();rt.route_progress_elapsed=0;
+        rt.last_progress_position=a.position;rt.last_progress_time=0;
+        rt.motion_intent=req.active?MotionIntent::Navigate:MotionIntent::Wait;
+        if(contract_valid_bounds(a))due.push_back(a.id);
+    }
+    // Due fault recovery is not queued behind ordinary work/traffic replans.
+    // Each search is still expansion-bounded and all read the same frozen world.
+    eng::TaskPool::shared().parallel_for(due.size(),[&](std::size_t job){
+        ensure_route(agents[due[job]],world_epoch,world,true);
+    });
+    for(const auto i:due){
+        auto& a=agents[i];auto& rt=*a.runtime;
+        bool safe=world.point_clear(i,a.position) && world.segment_clear(i,a.position,a.position);
+        for(const auto& other:agents)if(other.id!=i &&
+            dist_xz(a.position,other.position)<=a.radius_m+other.radius_m+2*kSafetyNumericMarginM)safe=false;
+        if(!safe)continue; // a computed route never authorizes escape through an overlap
+        rt.initialized=true;rt.active_contract=stationary_contract(a,now);
+        rt.fault_phase=0;rt.fault_recovery_deadline=-1;
+        rt.planner_elapsed=kPlannerReplanSeconds;
+        rt.mode=rt.goal_valid?(rt.route_failed?SafetyMode::Blocked:SafetyMode::Waiting):
+            (requests[i].work_target?SafetyMode::Working:SafetyMode::Idle);
+        rt.block_reason=rt.route_failed?BlockReason::NoRoute:BlockReason::None;
+    }
+}
+
 void update_reciprocal_velocities(std::vector<SafetyAgent>& agents,const SafetyWorldCallbacks& world,float dt){
     bool due=false;
     for(auto& a:agents){
@@ -1289,7 +1350,7 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
     auto request_idle_yield=[&](std::size_t blocked,std::size_t blocker){
         if(blocker>=agents.size() || blocker>=requests.size() || requests[blocker].active || requests[blocker].work_target) return false;
         auto& a=agents[blocker];auto& idle=*a.runtime;
-        if(idle.temporary_goal_valid) return false;
+        if(idle.mode==SafetyMode::Fault || idle.temporary_goal_valid) return false;
         const Vec3 goal=agents[blocked].runtime->goal;
         const float angle=std::atan2(a.position.z-goal.z,a.position.x-goal.x);
         for(float radius:{3.0f,4.2f,5.4f}) for(float offset:{0.0f,0.6f,-0.6f,1.2f,-1.2f,1.57f,-1.57f}){
@@ -1309,6 +1370,7 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
     // First update progress and blocked timers.
     for(auto& a:agents){
         auto& rt=*a.runtime;
+        if(rt.mode==SafetyMode::Fault)continue;
         if((rt.goal_valid || rt.temporary_goal_valid) && !rt.cached_route.empty()){
             const float remaining=corridor_steering(a,{a.position,a.heading_degrees,a.speed_mps},world).remaining;
             if(remaining+0.06f<rt.best_route_remaining){rt.best_route_remaining=remaining;rt.route_progress_elapsed=0.0f;}
@@ -1352,7 +1414,7 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
         stack.push_back(u);
         const auto& rt=*agents[u].runtime;
         const std::size_t v=rt.blocker_robot_id;
-        if(rt.blocked_elapsed>=kBlockingWaitTimeoutSeconds && v<agents.size()){
+        if(rt.mode!=SafetyMode::Fault && rt.blocked_elapsed>=kBlockingWaitTimeoutSeconds && v<agents.size() && agents[v].runtime->mode!=SafetyMode::Fault){
             if(state[v]==0) dfs(v);
             else if(state[v]==1){
                 auto it=std::find(stack.begin(),stack.end(),v);
@@ -1392,6 +1454,7 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
         }
         auto& a=agents[chosen];
         auto& rt=*a.runtime;
+        if(rt.mode==SafetyMode::Fault)continue;
         const Vec3 pullout=find_pullout(a,world,agents,rt.blocker_robot_id);
         if(dist_xz(pullout,a.position)>0.20f){
             rt.temporary_goal=pullout;
@@ -1416,6 +1479,7 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
     // reservation.
     for(std::size_t i=0;i<agents.size();++i){
         auto& rt=*agents[i].runtime;
+        if(rt.mode==SafetyMode::Fault)continue;
         if(retreat_assigned.count(i)) continue;
         if(rt.blocked_elapsed<kBlockingWaitTimeoutSeconds || rt.recovery_cooldown>0.0f) continue;
         rt.recovery_cooldown=1.25f;
@@ -1459,7 +1523,7 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
                     const std::size_t yielding=own_priority<other_priority?i:
                         (own_priority>other_priority?blocker:std::max(i,blocker));
                     auto& give_way=agents[yielding];auto& yield=*give_way.runtime;
-                    if(yield.motion_intent!=MotionIntent::Retreat){
+                    if(yield.mode!=SafetyMode::Fault && yield.motion_intent!=MotionIntent::Retreat){
                         const Vec3 pocket=find_pullout(give_way,world,agents,yielding==i?blocker:i);
                         if(dist_xz(pocket,give_way.position)>0.5f){
                             yield.temporary_goal=pocket;yield.temporary_goal_valid=true;
@@ -1514,6 +1578,7 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
 
     for(auto& a:agents){
         auto& rt=*a.runtime;
+        if(rt.mode==SafetyMode::Fault)continue;
         if(rt.temporary_goal_valid && dist_xz(a.position,rt.temporary_goal)<=std::max(0.08f,rt.stop_radius) && std::abs(a.speed_mps)<0.04f){
             rt.temporary_goal_valid=false;
             if(rt.goal_valid) rt.yielding_for_traffic=false;
@@ -1667,13 +1732,15 @@ SafetyTickStats safety_tick(float dt,
         if(!agents[i].runtime || agents[i].id!=i){stats.invariant_fault=true;return stats;}
     }
 
+    // Runs even when initial-geometry checks below must stop the shared epoch.
+    recover_faulted_agents(dt,absolute_time,world_epoch,agents,requests,world);
+
     // Initialize only from a mutually clear stopped/held state. Existing overlap
     // is an assumption failure, not something the safety layer hides by nudging.
     for(auto& a:agents){
         if(!contract_valid_bounds(a)){
             a.runtime->initialized=true;
-            a.runtime->mode=SafetyMode::Fault;
-            a.runtime->block_reason=BlockReason::InvalidMotionBounds;
+            enter_fault(a,BlockReason::InvalidMotionBounds,0,absolute_time);
             stats.invariant_fault=true;
             continue;
         }
@@ -1684,8 +1751,7 @@ SafetyTickStats safety_tick(float dt,
             // INITIAL GEOMETRY every rendered frame caused false BR-02 faults.
             if(!world.point_clear(a.id,a.position)){
                 a.runtime->initialized=true;
-                a.runtime->mode=SafetyMode::Fault;
-                a.runtime->block_reason=BlockReason::UnsafeInitialGeometry;
+                enter_fault(a,BlockReason::UnsafeInitialGeometry,0,absolute_time);
                 stats.invariant_fault=true;
                 continue;
             }
@@ -1698,10 +1764,8 @@ SafetyTickStats safety_tick(float dt,
     for(std::size_t i=0;i<agents.size();++i){
         for(std::size_t j=i+1;j<agents.size();++j){
             if(dist_xz(agents[i].position,agents[j].position)<=agents[i].radius_m+agents[j].radius_m+2.0f*kSafetyNumericMarginM){
-                agents[i].runtime->mode=SafetyMode::Fault;
-                agents[j].runtime->mode=SafetyMode::Fault;
-                agents[i].runtime->block_reason=BlockReason::UnsafeInitialGeometry;
-                agents[j].runtime->block_reason=BlockReason::UnsafeInitialGeometry;
+                enter_fault(agents[i],BlockReason::UnsafeInitialGeometry,0,absolute_time);
+                enter_fault(agents[j],BlockReason::UnsafeInitialGeometry,0,absolute_time);
                 stats.invariant_fault=true;
             }
         }
@@ -1733,7 +1797,7 @@ SafetyTickStats safety_tick(float dt,
             invalidate_route(rt);
         }
         rt.motion_intent=rt.temporary_goal_valid?MotionIntent::Retreat:(rt.goal_valid?MotionIntent::Navigate:MotionIntent::Wait);
-        if(req.work_target && !req.active && std::abs(a.speed_mps)<0.03f) rt.mode=SafetyMode::Working;
+        if(rt.mode!=SafetyMode::Fault && req.work_target && !req.active && std::abs(a.speed_mps)<0.03f) rt.mode=SafetyMode::Working;
     }
 
     // Refresh local fleet awareness for every rover, including idle ones. The
@@ -1781,9 +1845,7 @@ SafetyTickStats safety_tick(float dt,
                 continue;
             }
 
-            a.runtime->mode=SafetyMode::Fault;
-            a.runtime->block_reason=BlockReason::ContractViolation;
-            a.runtime->fault_phase=1;
+            enter_fault(a,BlockReason::ContractViolation,1,now);
             prior_contract_violation=true;
         }
         if(prior_contract_violation){
@@ -2058,9 +2120,8 @@ SafetyTickStats safety_tick(float dt,
                     const bool certified=follow_certified_brake_branch(a,now,tick,p,next_speed);
                     commands[a.id]={p,a.heading_degrees,next_speed,false,true};
                     if(!certified){
-                        rt.mode=SafetyMode::Fault;
-                        rt.block_reason=BlockReason::ContractViolation;
-                        rt.fault_phase=2;
+                        enter_fault(a,BlockReason::ContractViolation,2,now);
+                        commands[a.id]={a.position,a.heading_degrees,0.0f,false,false};
                         stats.invariant_fault=true;
                     }else{
                         rt.block_reason=effective_reason;
@@ -2129,6 +2190,7 @@ SafetyTickStats safety_tick(float dt,
             // navigation contract; the task-level watchdog can then replan it.
             commands[i]={agents[i].position,agents[i].heading_degrees,0.0f,false,false};
             agents[i].runtime->active_contract=stationary_contract(agents[i],now);
+            if(agents[i].runtime->mode==SafetyMode::Fault)continue;
             agents[i].runtime->mode=SafetyMode::Blocked;
             agents[i].runtime->block_reason=BlockReason::ContractViolation;
             agents[i].runtime->route_replan_required=true;
@@ -2139,10 +2201,7 @@ SafetyTickStats safety_tick(float dt,
             stats.invariant_fault=true;
             for(std::size_t i=0;i<agents.size();++i){
                 if(!local_fault[i]) continue;
-                agents[i].speed_mps=0.0f;
-                agents[i].runtime->mode=SafetyMode::Fault;
-                agents[i].runtime->block_reason=BlockReason::ContractViolation;
-                agents[i].runtime->fault_phase=3;
+                enter_fault(agents[i],BlockReason::ContractViolation,3,now);
             }
             break;
         }

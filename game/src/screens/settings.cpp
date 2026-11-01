@@ -75,14 +75,14 @@ void GameApp::render_settings(Renderer& r){
     const float control_right=left_x+column_w;
     if(ui::button(r,ui_input_,{control_right-150,inner_y+66,small_button,34},"<",theme_) && ui_scale_index_>0){
         --ui_scale_index_;
-        ui_scale_=UI_SCALES[ui_scale_index_];
+        // Apply the new zoom at the next frame boundary with matching input/drawing.
     }
     std::ostringstream scale;
     scale<<(int)std::lround(UI_SCALES[ui_scale_index_]*100.0f)<<"%";
     ui::label(r,{control_right-99,inner_y+78},scale.str(),0.94f,theme_);
     if(ui::button(r,ui_input_,{control_right-small_button,inner_y+66,small_button,34},">",theme_) && ui_scale_index_<UI_SCALE_COUNT-1){
         ++ui_scale_index_;
-        ui_scale_=UI_SCALES[ui_scale_index_];
+        // Apply the new zoom at the next frame boundary with matching input/drawing.
     }
 
     ui::label(r,{left_x,inner_y+119},"RESOLUTION",0.92f,theme_);
@@ -114,7 +114,7 @@ void GameApp::render_settings(Renderer& r){
     if(ui::button(r,ui_input_,{right_x+column_w-82,inner_y+27,82,34},debug_label,theme_)){
         debug_frame_enabled_=!debug_frame_enabled_;
     }
-    ui::label(r,{right_x,inner_y+82},"UI SCALE APPLIES TO ALL HUD",0.76f,theme_,true);
+    ui::label(r,{right_x,inner_y+82},"SAME UI PROPORTIONS AT HD AND 4K",0.76f,theme_,true);
     ui::label(r,{right_x,inner_y+109},"CROSSHAIR ONLY OVER PLAYFIELD",0.76f,theme_,true);
 
     constexpr float back_w=130.0f;

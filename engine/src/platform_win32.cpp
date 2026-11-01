@@ -471,6 +471,7 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
         float dt=std::chrono::duration<float>(now-prev).count();
         prev=now;
         if(dt>0.1f) dt=0.1f;
+        game->on_resize(p.width,p.height);
         game->update(dt,p.input);
         game->render(*p.renderer);
 

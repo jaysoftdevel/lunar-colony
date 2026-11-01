@@ -15,13 +15,17 @@ using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
+void GameApp::on_resize(int width,int height){
+    viewport_width_=std::max(1,width);viewport_height_=std::max(1,height);
+    ui_scale_=resolution_scale(viewport_width_,viewport_height_,UI_SCALES[std::clamp(ui_scale_index_,0,UI_SCALE_COUNT-1)]);
+}
+
 Rect GameApp::centered_button(Renderer& r,float y,float w,float h) const {
     return {(ui_width(r)-w)*0.5f,y,w,h};
 }
 
 void GameApp::render(Renderer& r){
-    viewport_width_=r.width();
-    viewport_height_=r.height();
+    on_resize(r.width(),r.height());
     ui_input_=input_;
     ui_input_.mouse_x=(int)std::lround((float)input_.mouse_x/ui_scale_);
     ui_input_.mouse_y=(int)std::lround((float)input_.mouse_y/ui_scale_);

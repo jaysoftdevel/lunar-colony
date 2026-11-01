@@ -58,6 +58,7 @@ game/include/game/world/construction_sequence.hpp
 game/include/game/world/corridor/corridor_module.hpp
 game/include/game/world/corridor/detail.hpp
 game/include/game/world/corridor_network.hpp
+game/include/game/world/gate_area.hpp
 game/include/game/world/geometry_standards.hpp
 game/include/game/world/habitat_builder.hpp
 game/include/game/world/habitat_mesh.hpp
@@ -72,6 +73,7 @@ game/include/game/world/resources/resource_generators.hpp
 game/include/game/world/robot_workshop.hpp
 game/include/game/world/storage_loading_gate.hpp
 game/include/game/world/structure_module.hpp
+game/include/game/world/supply_state.hpp
 game/include/game/world/utility_network.hpp
 game/include/game/world/walkway_network.hpp
 game/include/game/world/world_labels.hpp
@@ -103,11 +105,13 @@ game/src/systems/construction_system.cpp
 game/src/systems/first_person_controller.cpp
 game/src/systems/first_person_mode.cpp
 game/src/systems/gameplay_controller.cpp
+game/src/systems/gate_areas.cpp
 game/src/systems/pressure_doors.cpp
 game/src/systems/resource_management.cpp
 game/src/systems/robot_workshop.cpp
 game/src/systems/save_game.cpp
 game/src/systems/storage_extensions.cpp
+game/src/systems/supply_simulation.cpp
 game/src/systems/world_selection.cpp
 game/src/ui/build_bar.cpp
 game/src/ui/build_icons.cpp
@@ -189,3 +193,6 @@ third_party/rvo2/src/RVOSimulator.h
 third_party/rvo2/src/Vector2.cc
 third_party/rvo2/src/Vector2.h
 todos.txt
+engine/include/engine/ui_metrics.hpp
+engine/include/engine/ui_font.hpp
+game/tests/ui_regression.cpp

@@ -35,6 +35,7 @@ add_library(game_cluster_interaction OBJECT
     src/systems/pressure_doors.cpp
     src/systems/robot_workshop.cpp
     src/systems/storage_extensions.cpp
+    src/systems/gate_areas.cpp
 )
 configure_game_cluster(game_cluster_interaction)
 
@@ -84,6 +85,7 @@ target_link_libraries(game_cluster_pathfinding PRIVATE rvo2)
 
 add_library(game_cluster_simulation OBJECT
     src/systems/colony_status.cpp
+    src/systems/supply_simulation.cpp
     src/systems/save_game.cpp
 )
 configure_game_cluster(game_cluster_simulation)

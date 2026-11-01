@@ -1,5 +1,6 @@
 #include "game/world/robot_workshop.hpp"
 #include "game/game_app.hpp"
+#include "game/systems/construction_costs.hpp"
 #include "game/robots/safety_coordinator.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/mesh_portals.hpp"
@@ -33,7 +34,7 @@ bool segment_hits_mesh(Vec3 from,Vec3 to,const std::vector<Vec3>& mesh){
 }
 struct GeometryRecorder final:eng::Renderer {
     std::vector<Vec3> triangles;
-    bool initialize(void*,unsigned long,int,int) override{return true;}
+    bool initialize(void*,std::uintptr_t,int,int) override{return true;}
     void resize(int,int) override{} void begin_frame(eng::Color) override{} void end_frame() override{}
     void set_3d(const eng::Mat4&) override{} void set_2d(float) override{}
     std::size_t wire_vertices{0},filled_vertices{0};
@@ -166,6 +167,94 @@ void fleet_case(const std::string& name,std::vector<Vec3> starts,std::vector<Vec
     const auto ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();
     std::cout<<name<<": completed in "<<t<<" s, "<<ms<<" ms CPU/wall\n";
 }
+void fault_recovery_case(const std::string& name,std::size_t count,bool unsafe_origin=false,bool idle=false,bool pending=false){
+    std::vector<SafetyRuntime> runtime(count);
+    std::vector<SafetyAgent> agents(count);
+    std::vector<NavigationRequest> requests(count);
+    std::vector<unsigned> calls(count,0),fresh(count,0);
+    std::vector<Vec3> planned_start(count),planned_goal(count);
+    bool blocked=unsafe_origin;
+    SafetyWorldCallbacks world;
+    world.floor_height=[](Vec3){return 0.0f;};
+    world.point_clear=[&](std::size_t,Vec3){return !blocked;};
+    world.segment_clear=[&](std::size_t,Vec3,Vec3){return !blocked;};
+    world.incremental_route=[&](std::size_t id,Vec3 start,Vec3 goal,float,std::uint64_t,IncrementalPathPlannerState& state,std::vector<Vec3>& out){
+        ++calls[id];planned_start[id]=start;planned_goal[id]=goal;
+        if(!state.initialized && state.g.empty() && state.rhs.empty() && state.open_heap.empty())++fresh[id];
+        state.initialized=true;state.g={7};state.rhs={7};
+        if(blocked)return IncrementalPathResult::NoPath;
+        if(pending && calls[id]<6)return IncrementalPathResult::Pending;
+        out={goal};return IncrementalPathResult::Success;
+    };
+    for(std::size_t i=0;i<count;++i){
+        agents[i]={i,{-8,0,(float)i*8},90,0,0.99f,6,4.8f,6.4f,250,&runtime[i]};
+        requests[i]={!idle,{8,0,(float)i*8},0.18f,1,idle,1};
+        auto& rt=runtime[i];rt.mode=SafetyMode::Fault;rt.initialized=true;rt.fault_phase=1;
+        rt.block_reason=BlockReason::ContractViolation;rt.goal_valid=!idle;rt.goal=requests[i].goal;
+        rt.stop_radius=requests[i].stop_radius;rt.cached_route={{-40,0,-40}};
+        rt.incremental_path.initialized=true;rt.incremental_path.g={999};rt.incremental_path.rhs={999};
+        rt.temporary_goal_valid=true;rt.temporary_goal={-40,0,-40};rt.stationary_detour_active=true;
+        rt.blocked_elapsed=100;rt.wait_age=100;rt.blocker_robot_id=i;
+    }
+    const auto starts=agents;
+    unsigned first_attempt_frame=0;const int frames=unsafe_origin?1000:600;
+    for(int frame=0;frame<frames;++frame){
+        const float now=frame*0.01f;
+        if(unsafe_origin && frame==610)blocked=false;
+        if(frame==150 && !idle)for(auto& req:requests)req.goal.x=10; // use the current scheduled destination
+        const auto previous=agents;
+        safety_tick(0.01f,now,1,agents,requests,world);
+        for(std::size_t i=0;i<count;++i){
+            const auto& rt=runtime[i];
+            if(rt.fault_recovery_attempts && first_attempt_frame==0)first_attempt_frame=(unsigned)frame;
+            if(frame<298){require(rt.mode==SafetyMode::Fault,name+": fault was cleared before its scheduled retry");require(calls[i]==0,name+": expensive search repeated during fault wait");}
+            if(rt.mode==SafetyMode::Fault){
+                require(distance(agents[i].position,starts[i].position)<1e-6f,name+": fault hold moved");
+                require(agents[i].speed_mps==0,name+": fault retained motion");
+            }
+            if(blocked){require(rt.mode==SafetyMode::Fault,name+": unsafe origin was admitted");require(distance(agents[i].position,starts[i].position)<1e-6f,name+": positional repair bypassed collision checks");}
+            else require(world.segment_clear(i,previous[i].position,agents[i].position),name+": static collision");
+            require(distance(previous[i].position,agents[i].position)<=agents[i].max_speed_mps*0.01f+0.002f,name+": pose jump");
+            if(calls[i])require(distance(planned_goal[i],requests[i].goal)<0.001f,name+": recovery used stale/temporary destination");
+            for(std::size_t j=i+1;j<count;++j){
+                TubePiece a{0,0.01f,previous[i].position,agents[i].position,agents[i].radius_m};
+                TubePiece b{0,0.01f,previous[j].position,agents[j].position,agents[j].radius_m};
+                require(!moving_discs_overlap(a,b,0,0.01f),name+": recovery fleet collision");
+            }
+        }
+    }
+    require(first_attempt_frame>0 && first_attempt_frame<=300,name+": recovery waited longer than 3 seconds");
+    for(std::size_t i=0;i<count;++i){
+        const auto& rt=runtime[i];require(rt.mode!=SafetyMode::Fault,name+": never recovered");
+        require(!rt.temporary_goal_valid && !rt.stationary_detour_active,name+": stale detour survived recovery");
+        if(idle){require(calls[i]==0,name+": invented an idle destination");require(distance(agents[i].position,starts[i].position)<1e-6f,name+": idle robot moved");}
+        else {
+            require(calls[i]>0 && fresh[i]>0,name+": search state was reused instead of starting from scratch");
+            require(distance(planned_start[i],starts[i].position)<0.001f,name+": search started from stale route origin");
+            require(distance(agents[i].position,starts[i].position)>0.5f,name+": no certified progress after recovery");
+        }
+        if(unsafe_origin)require(rt.fault_recovery_attempts==3 && fresh[i]==3,name+": persistent geometry reset/starved retry deadline");
+        if(pending)require(calls[i]>=6 && fresh[i]==1,name+": bounded search was discarded instead of continued");
+    }
+    std::cout<<name<<": fresh recovery within 3 seconds, safe hold and certified continuation passed\n";
+}
+
+void fault_bounds_case(){
+    SafetyRuntime rt;std::vector<SafetyAgent> agents{{0,{-4,0,0},90,0,0.99f,6,0,6.4f,250,&rt}};
+    std::vector<NavigationRequest> requests{{true,{4,0,0},0.18f,1,false,1}};
+    SafetyWorldCallbacks world;world.point_clear=[](std::size_t,Vec3){return true;};
+    world.segment_clear=[](std::size_t,Vec3,Vec3){return true;};unsigned calls=0;
+    world.coarse_route=[&](std::size_t,Vec3,Vec3 goal,float,std::vector<Vec3>& out){++calls;out={goal};return true;};
+    safety_tick(0.01f,0,1,agents,requests,world);
+    require(rt.mode==SafetyMode::Fault && rt.block_reason==BlockReason::InvalidMotionBounds,"invalid bounds not faulted");
+    for(int frame=1;frame<310;++frame)safety_tick(0.01f,frame*0.01f,1,agents,requests,world);
+    require(rt.mode==SafetyMode::Fault && calls==0 && rt.fault_recovery_attempts==1,"invalid bounds recovery admitted unsafe motion or postponed retry");
+    agents[0].acceleration_mps2=4.8f;
+    for(int frame=310;frame<650;++frame)safety_tick(0.01f,frame*0.01f,1,agents,requests,world);
+    require(calls>0 && rt.mode!=SafetyMode::Fault && agents[0].position.x>-3.9f,"fixed bounds did not recover on next three-second retry");
+    std::cout<<"Invalid motion bounds remain stopped, then recover when corrected\n";
+}
+
 }
 
 namespace game {
@@ -192,7 +281,7 @@ struct NavigationRegression {
         }
         std::cout<<"saved scene continued 20 s\n";
     }
-    static void construction(const std::string& path,bool late_corridor=false){
+    static void construction(const std::string& path,bool late_corridor=false,bool inject_fault=false){
         eng::Application engine;GameApp app(engine);
         app.playfield_.rebuild(64);app.starting_robot_count_=3;app.starting_carrier_count_=3;
         app.reset_builder_robot_and_starter_stash();
@@ -221,9 +310,22 @@ struct NavigationRegression {
         const auto expected=app.placed_habitats_.size()+app.placed_resources_.size()+app.corridor_network_.connections().size();
         auto start=std::chrono::steady_clock::now();
         double worst=0;float t=0;
+        std::size_t injected=game::kNoRobotIndex;float injected_at=0;std::int64_t held_cargo=0;
         for(int frame=0;t<1800.0f;++frame,t+=1.0f/60){
             const auto begin=std::chrono::steady_clock::now();
             app.update_construction(1.0f/60);
+            if(inject_fault && injected==game::kNoRobotIndex && t>(late_corridor?0.5f:5.0f)){
+                for(std::size_t i=3;i<app.builder_robots_.size();++i){auto& r=app.builder_robots_[i];
+                    if(r.mode!=BuilderRobotMode::Delivering || r.cargo.empty() || !r.safety.goal_valid || distance(r.position,r.safety.goal)<3)continue;
+                    injected=i;injected_at=t;held_cargo=r.cargo.total_amount();
+                    r.safety.mode=SafetyMode::Fault;r.safety.block_reason=BlockReason::ContractViolation;r.safety.fault_phase=1;r.safety.fault_recovery_deadline=-1;
+                    r.current_speed_mps=0;break;
+                }
+            }
+            if(inject_fault && injected!=game::kNoRobotIndex){const auto& r=app.builder_robots_[injected];
+                if(r.safety.mode==SafetyMode::Fault){require(t-injected_at<=3.04f,"carrier fault exceeded recovery deadline");require(r.cargo.total_amount()==held_cargo,"fault recovery lost scheduled cargo");}
+                if(t-injected_at>3.04f)require(r.safety.fault_recovery_attempts>0,"carrier did not attempt fresh fault recovery");
+            }
             if(frame%(late_corridor?600:7200)==0){
                 std::cout<<"t="<<t<<" complete="<<completed()<<"\n";
                 for(std::size_t i=3;i<app.builder_robots_.size();++i){const auto& r=app.builder_robots_[i];
@@ -236,13 +338,14 @@ struct NavigationRegression {
             worst=std::max(worst,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count());
             for(std::size_t i=0;i<app.builder_robots_.size();++i){
                 const auto& r=app.builder_robots_[i];
-                if(r.safety.mode==SafetyMode::Fault){
+                const bool expected_fault=inject_fault && i==injected && t-injected_at<=3.04f;
+                if(r.safety.mode==SafetyMode::Fault && !expected_fault){
                     std::string save_error;app.save_game_to_name("navigation-regression-fault",save_error);
                     for(std::size_t k=0;k<app.builder_robots_.size();++k){const auto& bot=app.builder_robots_[k];
                         std::cerr<<"fault state "<<k<<" "<<bot.position.x<<","<<bot.position.z<<" heading="<<bot.heading_degrees<<" speed="<<bot.current_speed_mps<<" phase="<<(int)bot.safety.fault_phase<<" mode="<<(int)bot.mode<<" target="<<(int)bot.target.kind<<":"<<bot.target.index<<" at "<<t<<"\n";
                     }
                 }
-                require(r.safety.mode!=SafetyMode::Fault,"construction robot "+std::to_string(i)+": "+block_reason_name(r.safety.block_reason)+" phase "+std::to_string(r.safety.fault_phase));
+                require(expected_fault || r.safety.mode!=SafetyMode::Fault,"construction robot "+std::to_string(i)+": "+block_reason_name(r.safety.block_reason)+" phase "+std::to_string(r.safety.fault_phase));
                 for(std::size_t j=i+1;j<app.builder_robots_.size();++j)
                     require(distance(r.position,app.builder_robots_[j].position)>1.88f,"construction fleet overlap");
             }
@@ -256,150 +359,119 @@ struct NavigationRegression {
         std::cout<<"construction "<<completed()<<"/"<<expected<<" after "<<t<<" sim s; "<<std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<<" wall s; worst frame "<<worst<<" ms\n";
         if(completed()!=expected){std::string save_error;app.save_game_to_name("navigation-regression-stalled",save_error);}
         require(completed()==expected,"construction tasks did not finish");
+        if(inject_fault)require(injected!=game::kNoRobotIndex && app.builder_robots_[injected].safety.fault_recovery_attempts>0,"fault was not injected/recovered during construction");
     }
     static void storage_extensions(){
         eng::Application engine;
-        auto tick=[](GameApp& app){app.update_pressure_doors(1.0f/60);app.update_construction(1.0f/60);};
-        auto verify=[](const GameApp& app){
-            for(std::size_t i=0;i<app.builder_robots_.size();++i){
-                require(app.builder_robots_[i].safety.mode!=SafetyMode::Fault,"gate upgrade rover safety fault "+std::to_string(i));
-                for(std::size_t j=i+1;j<app.builder_robots_.size();++j)
-                    require(distance(app.builder_robots_[i].position,app.builder_robots_[j].position)>1.88f,"gate upgrade rover collision");
-            }
-        };
-        // Both dome blueprints and existing domes accept exactly two upgrades.
-        for(bool completed:{false,true}){
-            GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=2;app.starting_carrier_count_=2;
-            app.reset_builder_robot_and_starter_stash();
-            PlacedResource parent;parent.kind=ResourceKind::StorageDome;parent.storage_loading_face=1;
-            parent.rotation_degrees=37;parent.placement_sequence=1;
-            parent.construction.step=completed?kConstructionSteps:0;
-            parent.resource_plan.total_steps=kConstructionSteps;
-            for(auto& step:parent.resource_plan.steps) step.amount(MaterialResource::Iron)=10;
-            app.placed_resources_={parent};app.next_blueprint_placement_sequence_=2;
-            const auto initial=app.resources_.amounts();
-            app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;
-            const auto panel=app.selection_panel_rect();GeometryRecorder ui;
-            app.ui_input_.mouse_x=(int)(panel.x+panel.w-94);app.ui_input_.mouse_y=(int)(panel.y+139);app.ui_input_.left_pressed=true;
-            app.render_selection_panel(ui);require(app.placed_resources_.size()==2,"first storage upgrade button failed");
-            app.render_selection_panel(ui);require(app.placed_resources_.size()==3,"second storage upgrade button failed");
-            app.render_selection_panel(ui);app.ui_input_={};
-            require(!app.add_storage_gate(0) && app.placed_resources_.size()==3,"more than two storage upgrades accepted");
-            for(std::size_t i=0;i<kMaterialResourceCount;++i)
-                require(app.resources_.amount((MaterialResource)i)==initial.amount((MaterialResource)i),"requesting blueprint charged twice");
-            ResourceBundle needed;
-            if(!completed) needed=parent.resource_plan.total();
-            for(std::size_t i=1;i<3;++i){
-                const auto& child=app.placed_resources_[i];
-                require(child.kind==ResourceKind::StorageGate && child.resource_plan.total().total_amount()>0,"gate upgrade is free or missing");
-                for(std::size_t r=0;r<kMaterialResourceCount;++r) needed.amount((MaterialResource)r)+=child.resource_plan.total().amount((MaterialResource)r);
-                const auto gate=storage_loading::service(app.placed_resources_[0],child.storage_loading_face);
-                require(storage_loading::reserved(app.placed_resources_[0],gate),"planned gate apron not reserved");
-                CorridorBuildAnchor anchor{CorridorEndpointKind::Resource,0,storage_loading::wall(app.placed_resources_[0],child.storage_loading_face)};
-                require(!app.corridor_network_.preview_anchor(anchor,gate,{},app.habitat_models_,app.placed_resources_,app.resource_models_),"corridor stole an upgrade face");
-            }
-            GeometryRecorder blueprint;app.render_resources(blueprint);
-            require(blueprint.blue && blueprint.wire_vertices>0 && blueprint.filled_vertices==0,"gate blueprint is not a wireframe mesh");
-            std::string error;require(app.save_game_to_name("storage-upgrade-blueprint",error),error);
-            const auto saved=std::filesystem::path(app.save_game_directory())/"storage-upgrade-blueprint.gmsave";
-            GameApp restored(engine);require(restored.load_game_from_file(saved.string(),error),error);
-            require(restored.placed_resources_.size()==3 && restored.placed_resources_[0].storage_extra_faces[0]>=0 &&
-                restored.placed_resources_[0].storage_extra_faces[1]>=0,"pending gate upgrades lost on load");
-            std::filesystem::remove(saved);
-            int frame=0;
-            for(;frame<36000 && (!app.placed_resources_[1].construction.complete() || !app.placed_resources_[2].construction.complete());++frame){
-                const bool parent_ready=app.placed_resources_[0].construction.complete();
-                tick(app);verify(app);
-                if(!parent_ready && !app.placed_resources_[0].construction.complete())
-                    require(app.placed_resources_[1].construction.step==0 && app.placed_resources_[2].construction.step==0,"gate built before its parent dome");
-            }
-            if(!app.placed_resources_[2].construction.complete()){
-                for(std::size_t i=0;i<app.placed_resources_.size();++i){const auto& v=app.placed_resources_[i];const auto drop=app.construction_drop_position({ConstructionTargetKind::Resource,i});
-                    std::cerr<<"upgrade "<<i<<" stage="<<(int)v.construction.step<<" buffer="<<v.site_buffer.total_amount()<<" need="<<v.resource_plan.remaining(v.construction.step).total_amount()<<" drop="<<drop.x<<","<<drop.z<<"\n";}
-                for(const auto& r:app.builder_robots_) std::cerr<<"upgrade state p="<<r.position.x<<","<<r.position.z<<" mode="<<(int)r.mode<<" target="<<(int)r.target.kind<<":"<<r.target.index<<" reason="<<block_reason_name(r.safety.block_reason)<<" goal="<<r.safety.goal.x<<","<<r.safety.goal.z<<"\n";
-            }
-            require(app.placed_resources_[1].construction.complete() && app.placed_resources_[2].construction.complete(),"gate upgrades did not finish");
-            for(auto material:{MaterialResource::Iron,MaterialResource::Copper,MaterialResource::Silicon,MaterialResource::Plastic,MaterialResource::Aluminum})
-                require(app.resources_.amount(material)==initial.amount(material)-needed.amount(material),"gate construction material ledger mismatch");
-            require(app.placed_resources_[0].storage_extra_ready[0] && app.placed_resources_[0].storage_extra_ready[1],"completed gates not usable");
-            // Isolate extension rendering from the separately filled cargo boxes.
-            for(auto& item:restored.placed_resources_) item.stored_boxes.clear();
-            restored.placed_resources_[0].construction.step=kConstructionSteps;
-            restored.placed_resources_[1].construction.step=3;
-            restored.synchronize_storage_gates();
-            GeometryRecorder progress;restored.render_resources(progress);
-            require(progress.blue && progress.yellow && progress.filled_vertices==0,"gate upgrade construction mesh colors missing");
-            std::cout<<(completed?"built dome":"dome blueprint")<<": two resource-built upgrades after "<<(float)frame/60<<" s\n";std::cout.flush();
+
+        // A newly placed dome is only the dome. It has no implicit gate and
+        // selecting PLACE GATE enters extension-placement mode without creating
+        // or charging a construction task yet.
+        GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();
+        PlacedResource parent;parent.kind=ResourceKind::StorageDome;parent.storage_size=StorageDomeSize::Small;
+        parent.rotation_degrees=37;parent.placement_sequence=1;parent.construction.step=0;
+        parent.resource_plan=construction_costs::structure(parent.kind,app.resource_models_.mesh(parent));
+        app.placed_resources_={parent};app.next_blueprint_placement_sequence_=2;
+        app.synchronize_storage_gates();
+        require(storage_loading::gate_count(app.placed_resources_[0])==0,"new dome unexpectedly has an implicit storage gate");
+        for(int face:storage_loading::faces(app.placed_resources_[0])) require(face<0,"new dome exposes an implicit cargo face");
+
+        app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;
+        const auto panel=app.selection_panel_rect();GeometryRecorder ui;
+        app.ui_input_.mouse_x=(int)(panel.x+panel.w-94);app.ui_input_.mouse_y=(int)(panel.y+139);app.ui_input_.left_pressed=true;
+        app.render_selection_panel(ui);
+        require(app.storage_gate_placement_active_ && app.storage_gate_placement_owner_==0,"PLACE GATE did not enter extension placement mode");
+        require(app.placed_resources_.size()==1,"PLACE GATE created a task before a world position was accepted");
+        app.storage_gate_placement_active_=false;app.storage_gate_placement_owner_=kNoRobotIndex;app.ui_input_={};
+
+        // Gates can be attached to a dome blueprint, one after another, and
+        // each one is a fully independent construction task. Exactly three are
+        // allowed; a fourth request is rejected even if another cargo sector is free.
+        for(int face:{4,5,6}) require(app.add_storage_gate(0,face),"storage gate extension was rejected");
+        require(app.placed_resources_.size()==4,"three gate tasks were not created");
+        require(storage_loading::gate_count(app.placed_resources_[0])==3,"dome does not expose all three planned gates");
+        require(!app.add_storage_gate(0,7),"a fourth storage gate was accepted");
+        std::uint64_t previous_sequence=app.placed_resources_[0].placement_sequence;
+        for(std::size_t i=1;i<4;++i){
+            const auto& gate=app.placed_resources_[i];
+            require(gate.kind==ResourceKind::StorageGate,"gate extension is not a StorageGate task");
+            require(gate.storage_parent_sequence==app.placed_resources_[0].placement_sequence,"gate lost its dome parent");
+            require(gate.resource_plan.total().total_amount()>0,"gate task has no construction material cost");
+            require(gate.construction.step==0,"new gate task was pre-built");
+            require(gate.placement_sequence>previous_sequence,"gate tasks are not ordered after their parent/previous gate");
+            previous_sequence=gate.placement_sequence;
+            require(storage_loading::reserved(app.placed_resources_[0],storage_loading::service(app.placed_resources_[0],gate.storage_loading_face)),
+                    "gate blueprint did not reserve its loading apron");
         }
-        // Inspect the emitted meshes at every storage size and rotated pose.
-        GameApp geometry(engine);geometry.playfield_.rebuild(256);
-        // New primary gates use only the four sectors between the fixed crew
-        // entrances, so all four cardinal corridor doors remain selectable.
-        for(int cargo_face:storage_loading::kCargoFaces){
-            PlacedResource owner;owner.kind=ResourceKind::StorageDome;owner.storage_loading_face=(std::int8_t)cargo_face;
-            owner.storage_size=StorageDomeSize::Small;owner.construction.step=kConstructionSteps;
-            geometry.placed_resources_={owner};geometry.corridor_network_.clear();
-            for(int crew_face:{0,1,2,3}){
-                const auto n=storage_loading::normal(owner,crew_face);
-                CorridorBuildAnchor anchor{CorridorEndpointKind::Resource,0,owner.position+n*4.0f};
-                require(geometry.corridor_network_.preview_anchor(anchor,owner.position+n*12.0f,{},geometry.habitat_models_,geometry.placed_resources_,geometry.resource_models_).has_value(),
-                        "inter-door cargo gate blocked a crew entrance");
-            }
-        }
-        for(int size=0;size<4;++size) for(float rotation:{0.0f,37.0f,90.0f,135.0f,270.0f}){
-            PlacedResource owner;owner.kind=ResourceKind::StorageDome;owner.storage_size=(StorageDomeSize)size;
-            owner.storage_loading_face=1;owner.rotation_degrees=rotation;owner.placement_sequence=1;owner.construction.step=kConstructionSteps;
-            geometry.placed_resources_={owner};geometry.next_blueprint_placement_sequence_=2;
-            require(geometry.add_storage_gate(0) && geometry.add_storage_gate(0),"rotated storage upgrade rejected");
-            for(auto& item:geometry.placed_resources_) item.construction.step=kConstructionSteps;
-            geometry.synchronize_storage_gates();
-            for(std::size_t child=1;child<3;++child){
-                const auto& parent=geometry.placed_resources_[0];const int face=geometry.placed_resources_[child].storage_loading_face;
-                const auto n=storage_loading::normal(parent,face),mouth=storage_loading::mouth(parent,face)+Vec3{0,0.8f,0};
-                const auto back=storage_loading::wall(parent,face)+Vec3{0,0.8f,0};
-                GeometryRecorder closed;geometry.render_resources(closed);
-                require(closed.green && closed.filled_vertices==0 && segment_hits_mesh(mouth-n*0.25f,mouth+n*0.25f,closed.triangles),"extra gate closed mesh is missing");
-                geometry.placed_resources_[child].storage_extension_open=1;
-                GeometryRecorder open;geometry.render_resources(open);
-                require(!segment_hits_mesh(mouth-n*0.25f,mouth+n*0.25f,open.triangles),"extra gate leaves or crew-port furniture obstruct opening");
-                require(segment_hits_mesh(back-n*0.2f,back+n*0.2f,open.triangles),"extra gate has no sealed rear bulkhead");
-            }
-        }
-        // Three carriers can use different completed gates concurrently.
-        GameApp traffic(engine);traffic.playfield_.rebuild(128);traffic.starting_robot_count_=1;traffic.starting_carrier_count_=3;
-        traffic.reset_builder_robot_and_starter_stash();traffic.ground_resource_piles_.clear();
-        PlacedResource owner;owner.kind=ResourceKind::StorageDome;owner.storage_loading_face=1;owner.construction.step=kConstructionSteps;
-        owner.rotation_degrees=37;owner.placement_sequence=1;
-        traffic.placed_resources_={owner};traffic.next_blueprint_placement_sequence_=2;
-        require(traffic.add_storage_gate(0) && traffic.add_storage_gate(0),"traffic upgrades rejected");
-        traffic.placed_resources_[1].construction.step=kConstructionSteps;traffic.placed_resources_[2].construction.step=kConstructionSteps;
-        traffic.synchronize_storage_gates();
-        traffic.builder_robots_[0].position={-30,0,-30};
-        const auto faces=storage_loading::faces(traffic.placed_resources_[0],true);
-        for(std::size_t i=1;i<4;++i){auto& r=traffic.builder_robots_[i];
-            r.position=storage_loading::service(traffic.placed_resources_[0],faces[i-1])+storage_loading::normal(traffic.placed_resources_[0],faces[i-1])*3;
-            r.mode=BuilderRobotMode::DepotTransfer;r.cargo.amount(MaterialResource::Iron)=30;r.starter_exit_completed=true;
-        }
-        ResourceBundle inventory;inventory.amount(MaterialResource::Iron)=90;traffic.resources_.restore(inventory);
-        int parallel=0;
-        for(int frame=0;frame<12000 && traffic.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)<90;++frame){
-            tick(traffic);verify(traffic);int actions=0;
-            for(const auto& r:traffic.builder_robots_) actions+=r.action==BuilderRobotAction::PutDown;
-            parallel=std::max(parallel,actions);
-        }
-        require(traffic.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)==90 && parallel>=2,"independent gate traffic did not operate concurrently");
-        BuilderRobotState bot;bot.role=RobotRole::Carrier;
-        ResourceBundle need;need.amount(MaterialResource::Iron)=10;
-        traffic.placed_resources_[1].construction.step=0;traffic.synchronize_storage_gates();
-        const auto extra_face=traffic.placed_resources_[1].storage_loading_face;
-        bot.position=storage_loading::service(traffic.placed_resources_[0],extra_face);
-        require(!traffic.robot_load_needed_resources(bot,need),"unfinished gate allowed pickup");
-        traffic.placed_resources_[1].construction.step=kConstructionSteps;traffic.synchronize_storage_gates();
-        require(traffic.robot_load_needed_resources(bot,need),"finished extra gate could not withdraw inventory");
-        traffic.builder_robots_.clear();traffic.selection_kind_=GameApp::SelectionKind::Resource;traffic.selected_resource_=0;
-        traffic.delete_selected_world_object();
-        require(traffic.placed_resources_.empty(),"removing a dome orphaned its gate upgrades");
-        std::cout<<"Two-gate limit, construction resources/dependencies, staged meshes, persistence and parallel loading passed\n";
+
+        // A completed dome uses the same optional extension path; completion of
+        // the owner never auto-creates a gate.
+        GameApp built(engine);built.playfield_.rebuild(128);
+        parent.construction.step=kConstructionSteps;parent.storage_loading_face=-1;parent.placement_sequence=1;
+        built.placed_resources_={parent};built.next_blueprint_placement_sequence_=2;built.synchronize_storage_gates();
+        require(storage_loading::gate_count(built.placed_resources_[0])==0,"completed dome auto-created a gate");
+        require(built.add_storage_gate(0,4) && built.placed_resources_[1].construction.step==0,"completed dome could not add a new gate blueprint");
+
+        // Gate placement respects the usable build area. Structure occupation
+        // and a supply-channel crossing each invalidate only the affected face.
+        GameApp blocked(engine);blocked.playfield_.rebuild(128);
+        PlacedResource blocked_parent=parent;blocked_parent.construction.step=kConstructionSteps;blocked_parent.storage_loading_face=-1;
+        PlacedResource obstacle;obstacle.kind=ResourceKind::SolarPanel;obstacle.position=storage_loading::service(blocked_parent,4);
+        obstacle.construction.step=kConstructionSteps;
+        blocked.placed_resources_={blocked_parent,obstacle};blocked.next_blueprint_placement_sequence_=3;blocked.synchronize_storage_gates();
+        require(blocked.available_storage_gate_face(0,4)<0,"gate was allowed through an occupied build area");
+        require(blocked.available_storage_gate_face(0,6)==6,"an unrelated free gate sector was rejected");
+        GameApp piped(engine);piped.playfield_.rebuild(128);piped.placed_resources_={blocked_parent};piped.next_blueprint_placement_sequence_=2;
+        UtilityConnection pipe;pipe.kind=UtilityKind::SupplyChannel;
+        const Vec3 n=storage_loading::normal(blocked_parent,4);
+        pipe.path={storage_loading::wall(blocked_parent,4)-n*0.4f,storage_loading::service(blocked_parent,4)+n*1.0f};
+        piped.utility_network_.mutable_connections().push_back(pipe);
+        require(piped.available_storage_gate_face(0,4)<0,"gate was allowed through an existing supply channel");
+
+        // Planned gates reserve geometry immediately, but only completed gate
+        // tasks become robot-accessible loading interfaces.
+        app.placed_resources_[0].construction.step=kConstructionSteps;
+        app.placed_resources_[1].construction.step=0;
+        app.placed_resources_[2].construction.step=kConstructionSteps;
+        app.placed_resources_[3].construction.step=kConstructionSteps;
+        app.synchronize_storage_gates();
+        int ready=0;for(int face:storage_loading::faces(app.placed_resources_[0],true)) ready+=face>=0;
+        require(ready==2,"unfinished gate became operational");
+        app.placed_resources_[1].construction.step=kConstructionSteps;app.synchronize_storage_gates();
+        ready=0;for(int face:storage_loading::faces(app.placed_resources_[0],true)) ready+=face>=0;
+        require(ready==3,"completed gate task did not become operational");
+        GeometryRecorder rendered;app.render_resources(rendered);
+        require(rendered.green && rendered.filled_vertices==0,"completed storage gate extension mesh is missing");
+        app.placed_resources_[1].construction.step=0;app.synchronize_storage_gates();
+        GeometryRecorder blueprint;app.render_resources(blueprint);
+        require(blueprint.blue && blueprint.wire_vertices>0 && blueprint.filled_vertices==0,"gate blueprint is not rendered as a construction mesh");
+        app.placed_resources_[1].construction.step=kConstructionSteps;app.synchronize_storage_gates();
+
+        // Save/load keeps all three child tasks and the derived gate slots.
+        std::string error;require(app.save_game_to_name("storage-three-gates",error),error);
+        const auto saved=std::filesystem::path(app.save_game_directory())/"storage-three-gates.gmsave";
+        GameApp restored(engine);require(restored.load_game_from_file(saved.string(),error),error);
+        require(restored.placed_resources_.size()==4,"storage gate tasks were lost on save/load");
+        require(storage_loading::gate_count(restored.placed_resources_[0])==3,"derived three-gate state was not restored");
+        std::filesystem::remove(saved);
+
+        // Pre-0.43.1 saves stored the first gate directly on the dome. The
+        // compatibility pass converts it into a child task instead of dropping it.
+        GameApp legacy(engine);legacy.playfield_.rebuild(128);
+        PlacedResource old=parent;old.storage_loading_face=4;old.placement_sequence=1;old.construction.step=kConstructionSteps;
+        legacy.placed_resources_={old};legacy.next_blueprint_placement_sequence_=2;
+        legacy.assign_storage_loading_faces();legacy.synchronize_storage_gates();
+        require(legacy.placed_resources_.size()==2 && legacy.placed_resources_[1].kind==ResourceKind::StorageGate,
+                "legacy integrated gate was not migrated to an extension task");
+        require(legacy.placed_resources_[1].construction.complete() && storage_loading::gate_count(legacy.placed_resources_[0])==1,
+                "legacy gate migration changed completion/availability");
+
+        // Removing the dome removes all of its independent gate tasks as well.
+        restored.selection_kind_=GameApp::SelectionKind::Resource;restored.selected_resource_=0;
+        restored.delete_selected_world_object();
+        require(restored.placed_resources_.empty(),"removing a storage dome orphaned gate extension tasks");
+
+        std::cout<<"Optional 0-3 storage gates, independent build tasks, placement clearance, persistence and legacy migration passed\n";
     }
     static void workshops(){
         eng::Application engine;
@@ -410,6 +482,24 @@ struct NavigationRegression {
             link.endpoint_b.kind=UtilityEndpointKind::Open;
             link.construction.step=link.construction.total_steps;
             app.utility_network_.mutable_connections().push_back(std::move(link));
+        };
+        auto power_network=[](GameApp& app,const std::vector<std::size_t>& consumers){
+            const std::size_t solar_a=app.placed_resources_.size();
+            PlacedResource a;a.kind=ResourceKind::SolarPanel;a.position={42,0,42};a.construction.step=kConstructionSteps;
+            const std::size_t solar_b=solar_a+1;
+            PlacedResource b=a;b.position={49,0,42};
+            const std::size_t battery=solar_a+2;
+            PlacedResource p;p.kind=ResourceKind::PowerStorage;p.position={56,0,42};p.construction.step=kConstructionSteps;
+            app.placed_resources_.push_back(a);app.placed_resources_.push_back(b);app.placed_resources_.push_back(p);
+            auto join=[&](std::size_t x,std::size_t y){
+                UtilityConnection link;link.kind=UtilityKind::SupplyChannel;
+                link.endpoint_a.kind=UtilityEndpointKind::Resource;link.endpoint_a.index=x;
+                link.endpoint_b.kind=UtilityEndpointKind::Resource;link.endpoint_b.index=y;
+                link.construction.step=link.construction.total_steps;
+                app.utility_network_.mutable_connections().push_back(std::move(link));
+            };
+            join(solar_a,solar_b);join(solar_b,battery);
+            for(std::size_t consumer:consumers) join(consumer,solar_a);
         };
         auto parked=[](const GameApp& app){return std::all_of(app.builder_robots_.begin(),app.builder_robots_.end(),[](const auto& r){return r.workshop_parked;});};
         auto verify=[](const GameApp& app){
@@ -449,6 +539,7 @@ struct NavigationRegression {
             PlacedResource w;w.kind=ResourceKind::RobotWorkshop;w.rotation_degrees=rotation;
             w.construction.step=kConstructionSteps;app.placed_resources_={w};
             connect_supply(app,0);
+            power_network(app,{0});
             for(std::size_t i=0;i<4;++i){auto& r=app.builder_robots_[i];
                 r.position=workshop::world(w,{-7.5f+5.0f*(float)i,0,-20.0f});r.heading_degrees=rotation;
                 r.mode=BuilderRobotMode::Idle;r.target={};r.condition=0.50f;}
@@ -461,15 +552,16 @@ struct NavigationRegression {
             PlacedResource target;target.kind=ResourceKind::SolarPanel;target.position={27,0,15};target.placement_sequence=1;
             target.resource_plan.total_steps=kConstructionSteps;
             for(auto& step:target.resource_plan.steps) step.amount(MaterialResource::Iron)=5;
+            const std::size_t target_index=app.placed_resources_.size();
             app.placed_resources_.push_back(target);
             GroundResourcePile pile;pile.position={22,0,-16};pile.amount=30;pile.resource=MaterialResource::Iron;pile.radius=0.4f;
             app.ground_resource_piles_={pile};ResourceBundle inventory;inventory.amount(MaterialResource::Iron)=30;app.resources_.restore(inventory);
             bool exited=false;
-            for(int frame=0;frame<30000 && !app.placed_resources_[1].construction.complete();++frame){
+            for(int frame=0;frame<30000 && !app.placed_resources_[target_index].construction.complete();++frame){
                 tick(app);verify(app);
                 for(const auto& r:app.builder_robots_) if(r.target.valid() && !workshop::inside(app.placed_resources_[0],r.position)) exited=true;
             }
-            require(exited && app.placed_resources_[1].construction.complete(),"parked fleet did not dispatch and complete new work");
+            require(exited && app.placed_resources_[target_index].construction.complete(),"parked fleet did not dispatch and complete new work");
             wait_parking(app,"return after task "+std::to_string(rotation));
             std::string error;require(app.save_game_to_name("workshop-regression",error),error);
             const auto saved=std::filesystem::path(app.save_game_directory())/"workshop-regression.gmsave";
@@ -509,7 +601,7 @@ struct NavigationRegression {
         fleet.reset_builder_robot_and_starter_stash();fleet.ground_resource_piles_.clear();
         w.position={-18,0,0};PlacedResource other=w;other.position={18,0,0};other.rotation_degrees=180;
         fleet.placed_resources_={w,other};
-        connect_supply(fleet,0);connect_supply(fleet,1);
+        connect_supply(fleet,0);connect_supply(fleet,1);power_network(fleet,{0,1});
         for(std::size_t i=0;i<8;++i){auto& r=fleet.builder_robots_[i];const auto& home=fleet.placed_resources_[i/4];
             r.position=workshop::world(home,{-7.5f+5*(float)(i%4),0,-20});r.mode=BuilderRobotMode::Idle;r.target={};}
         wait_parking(fleet,"eight robots / two workshops");
@@ -521,7 +613,7 @@ struct NavigationRegression {
         blueprint.resource_plan.total_steps=kConstructionSteps;
         for(auto& step:blueprint.resource_plan.steps) step.amount(MaterialResource::Iron)=10;
         construction.placed_resources_={blueprint};
-        connect_supply(construction,0);
+        connect_supply(construction,0);power_network(construction,{0});
         for(int frame=0;frame<36000 && !construction.placed_resources_[0].construction.complete();++frame){
             tick(construction);
             for(const auto& r:construction.builder_robots_){
@@ -542,10 +634,235 @@ struct NavigationRegression {
         require(!offline.workshop_supplied(0) && !offline.workshop_operational(0),"unconnected workshop reported online");
         for(const auto& r:offline.builder_robots_) require(!r.workshop_parked && r.workshop_index==kNoRobotIndex,"robot used an unpowered workshop");
         connect_supply(offline,0);
-        require(offline.workshop_operational(0),"completed supply channel did not enable workshop");
-        wait_parking(offline,"supply-enabled workshop");
+        require(offline.workshop_supplied(0) && !offline.workshop_operational(0),"unpowered pipe network incorrectly enabled workshop");
+        power_network(offline,{0});
+        require(offline.workshop_operational(0),"powered supply network did not enable workshop");
+        wait_parking(offline,"supply-and-power-enabled workshop");
         std::cout<<"Workshop supply gating, compact parking, task dispatch, ramp clearance, reachability, save/load and multi-workshop allocation passed\n";
     }
+    static void oxygen(){
+        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(192);
+        app.status_.reset();auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
+        const auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
+        app.placed_resources_={resource(ResourceKind::SolarPanel,{-40,0,-20}),resource(ResourceKind::WaterStorage,{-20,0,-20}),resource(ResourceKind::WaterStorage,{60,0,60}),resource(ResourceKind::StorageDome,{0,0,20})};
+        app.placed_resources_[1].supply.water_litres=20;app.placed_resources_[2].supply.water_litres=100;
+        const auto habitat=[](HabitatKind kind,Vec3 p){PlacedHabitat h;h.kind=kind;h.position=p;h.construction.step=kConstructionSteps;return h;};
+        app.placed_habitats_={habitat(HabitatKind::OxygenGeneratorDome,{-20,0,0}),habitat(HabitatKind::CrewQuarters,{-20,0,20}),habitat(HabitatKind::Factory,{50,0,0})};
+        UtilityConnection power;power.endpoint_a.kind=power.endpoint_b.kind=UtilityEndpointKind::Resource;power.endpoint_a.index=0;power.endpoint_b.index=1;power.path={{-40,0,-20},{-20,0,-20}};power.construction.step=power.construction.total_steps;
+        UtilityConnection feed;feed.endpoint_a.kind=UtilityEndpointKind::Resource;feed.endpoint_a.index=1;feed.endpoint_b.kind=UtilityEndpointKind::Habitat;feed.endpoint_b.index=0;feed.path={{-20,0,-20},{-20,0,0}};feed.construction.step=feed.construction.total_steps;
+        app.utility_network_.restore_connections({power,feed});
+        CorridorConnection hall;hall.endpoint_a.kind=hall.endpoint_b.kind=CorridorEndpointKind::Habitat;hall.endpoint_a.index=0;hall.endpoint_b.index=1;hall.path={{-20,0,0},{-20,0,20}};hall.construction.step=hall.construction.total_steps;
+        CorridorConnection storage;storage.endpoint_a.kind=CorridorEndpointKind::Habitat;storage.endpoint_a.index=1;storage.endpoint_b.kind=CorridorEndpointKind::Resource;storage.endpoint_b.index=3;storage.path={{-20,0,20},{0,0,20}};storage.construction.step=storage.construction.total_steps;
+        app.corridor_network_.restore_connections({hall,storage});
+        const auto each=[&](auto fn){for(auto& h:app.placed_habitats_)fn(h.supply);for(auto& r:app.placed_resources_)fn(r.supply);for(auto& u:app.utility_network_.mutable_connections())fn(u.supply);for(auto& c:app.corridor_network_.mutable_connections())fn(c.supply);};
+        const auto mass=[&](){double total=0;each([&](const SupplyState& s){total+=s.oxygen_kg;});return total;};
+        app.update_supply_simulation(0);
+        require(app.placed_habitats_[0].supply.volume_m3>0 && mass()==0,"zero-time air metadata refresh advanced the simulation");
+        app.update_supply_simulation(0.1f);
+        const auto& gen=app.placed_habitats_[0].supply;
+        require(gen.oxygen_produced_kg_per_day>8.99 && gen.oxygen_produced_kg_per_day<=9.00001,"generator does not report actual oxygen output");
+        require(std::abs(gen.water_processed_litres_per_day-gen.oxygen_produced_kg_per_day*kWaterPerOxygen)<1e-9,"water processing and oxygen rate disagree");
+        require(app.placed_habitats_[1].supply.oxygen_kg==0 && app.placed_resources_[3].supply.oxygen_kg==0,"generator instantaneously filled downstream interiors");
+        app.update_supply_simulation(60);
+        require(std::abs((20-app.placed_resources_[1].supply.water_litres)-mass()*kWaterPerOxygen)<1e-7,"water-to-oxygen network mass balance failed");
+        require(app.placed_habitats_[1].supply.oxygen_kg>0 && app.placed_resources_[3].supply.oxygen_kg>0,"connected indoor room or storage did not receive oxygen");
+        require(app.placed_habitats_[2].supply.oxygen_kg==0 && app.placed_resources_[2].supply.water_litres==100,"disconnected supply teleported into the network");
+        const auto& room=app.placed_habitats_[1].supply;
+        require(room.air_change_percentage_points_per_day>0 && room.oxygen_net_kg_per_day>0,"filling room has no measured air-change rate");
+        require(std::abs(room.air_change_percentage_points_per_day-100*room.oxygen_net_kg_per_day/(room.volume_m3*kOxygenKgPerM3))<1e-9,"air percentage rate is inconsistent with volume/mass");
+        app.placed_resources_[1].supply.water_litres=0;const double before_dry=mass();app.update_supply_simulation(1);
+        require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && (gen.warnings&NoWater),"dry generator produced oxygen or reported a false running rate");
+        require(std::abs(mass()-before_dry)<1e-8,"dry network created/lost oxygen without crew consumption");
+        app.placed_resources_[1].supply.water_litres=100;clock.hour=0;app.status_.restore(clock);const double before_unpowered=app.placed_resources_[1].supply.water_litres;app.update_supply_simulation(1);
+        require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && (gen.warnings&NoPower) && app.placed_resources_[1].supply.water_litres==before_unpowered,"unpowered generator processed water");
+        clock.hour=12;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=s.volume_m3*kOxygenKgPerM3;});app.update_supply_simulation(1);
+        require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && app.placed_resources_[1].supply.water_litres==100,"full interiors overproduced oxygen or wasted water");
+        clock.hour=0;clock.crew_current=6;app.status_.restore(clock);app.update_supply_simulation(1);
+        require(app.placed_habitats_[2].supply.air_change_percentage_points_per_day<0,"depleting isolated interior did not report falling air");
+        clock.hour=12;clock.crew_current=0;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=0;});app.placed_resources_[1].supply.water_litres=0.01;app.update_supply_simulation(10);
+        require(std::abs(mass()*kWaterPerOxygen-0.01)<1e-9 && app.placed_resources_[1].supply.water_litres>=0 && gen.oxygen_produced_kg_per_day<9,"nearly empty tank was overdrawn or reported nominal output");
+        const double saved_mass=mass();app.update_supply_simulation(0);
+        require(mass()==saved_mass && gen.oxygen_produced_kg_per_day==0 && gen.oxygen_net_kg_per_day==0,"zero-time refresh consumed water or retained a stale rate");
+        std::cout<<"Water electrolysis, measured output/intake and air-change rates, room/storage distribution, depletion, isolation and input/capacity limits passed\n";
+    }
+
+    static void supply(){
+        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(192);app.builder_robots_.resize(1);app.builder_robots_[0].position={-80,0,80};
+        auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
+        app.status_.reset();auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
+        app.placed_resources_={resource(ResourceKind::SolarPanel,{0,0,-30}),resource(ResourceKind::PowerStorage,{10,0,-30}),resource(ResourceKind::WaterDriller,{20,0,-30}),resource(ResourceKind::WaterStorage,{30,0,-30}),resource(ResourceKind::WaterStorage,{70,0,60})};
+        const auto rr=[&](std::size_t a,std::size_t b){UtilityConnection u;u.endpoint_a.kind=u.endpoint_b.kind=UtilityEndpointKind::Resource;u.endpoint_a.index=a;u.endpoint_b.index=b;u.path={app.placed_resources_[a].position,app.placed_resources_[b].position};u.construction.step=u.construction.total_steps;app.utility_network_.mutable_connections().push_back(u);};
+        rr(0,1);rr(1,2);rr(2,3);
+        app.update_supply_simulation(10);
+        require(app.placed_resources_[1].supply.energy_kwh>0,"solar did not charge connected battery");
+        require(app.placed_resources_[3].supply.water_litres>0,"driller did not fill connected tank");
+        require(app.placed_resources_[4].supply.water_litres==0,"water teleported into disconnected tank");
+        require(app.ground_resource_piles_.empty(),"water appeared as a ground pallet");
+        const double charged=app.placed_resources_[1].supply.energy_kwh;
+        clock.hour=0;app.status_.restore(clock);app.update_supply_simulation(1);
+        require(app.placed_resources_[1].supply.energy_kwh<charged,"night load did not discharge battery");
+        app.placed_resources_[1].supply.energy_kwh=0;app.update_supply_simulation(1);
+        require(app.placed_resources_[2].supply.warnings&NoPower,"unpowered outdoor consumer has no warning");
+        clock.hour=12;app.status_.restore(clock);
+        for(auto& q:app.placed_resources_)if(q.kind==ResourceKind::WaterStorage)q.supply.water_litres=2000;
+        app.update_supply_simulation(2);require(app.placed_resources_[3].supply.water_litres<=2000,"tank overflow");
+        app.placed_resources_[4].supply.water_litres=0;
+        PlacedHabitat oxygen;oxygen.kind=HabitatKind::OxygenGeneratorDome;oxygen.position={30,0,0};oxygen.construction.step=kConstructionSteps;
+        PlacedHabitat crew;crew.kind=HabitatKind::CrewQuarters;crew.position={30,0,25};crew.construction.step=kConstructionSteps;
+        app.placed_habitats_={oxygen,crew};
+        UtilityConnection feed;feed.endpoint_a.kind=UtilityEndpointKind::Resource;feed.endpoint_a.index=3;feed.endpoint_b.kind=UtilityEndpointKind::Habitat;feed.endpoint_b.index=0;feed.path={{30,0,-30},{30,0,0}};feed.construction.step=feed.construction.total_steps;app.utility_network_.mutable_connections().push_back(feed);
+        CorridorConnection c;c.endpoint_a.kind=c.endpoint_b.kind=CorridorEndpointKind::Habitat;c.endpoint_a.index=0;c.endpoint_b.index=1;c.path={{30,0,0},{30,0,25}};c.construction.step=c.construction.total_steps;app.corridor_network_.restore_connections({c});
+        const double water_before=app.placed_resources_[3].supply.water_litres;
+        app.placed_resources_[2].construction.step=0; // isolate electrolysis mass balance
+        app.update_supply_simulation(0.1f);
+        require(app.placed_habitats_[0].supply.oxygen_kg>0,"electrolyzer did not produce oxygen");
+        require(app.placed_habitats_[1].supply.oxygen_kg==0,"air teleported across corridor in first substep");
+        require(app.placed_habitats_[0].supply.breathability()>app.placed_habitats_[1].supply.breathability(),"all rooms filled simultaneously");
+        app.update_supply_simulation(60);
+        double mass=0;for(const auto& h:app.placed_habitats_)mass+=h.supply.oxygen_kg;for(const auto& q:app.placed_resources_)mass+=q.supply.oxygen_kg;for(const auto& u:app.utility_network_.connections())mass+=u.supply.oxygen_kg;for(const auto& q:app.corridor_network_.connections())mass+=q.supply.oxygen_kg;
+        require(std::abs((water_before-app.placed_resources_[3].supply.water_litres)-mass*kWaterPerOxygen)<1e-7,"air flow/electrolysis lost mass");
+        require(app.placed_habitats_[1].supply.oxygen_kg>0,"air never reached downstream room");
+        require(app.placed_habitats_[1].supply.warnings&LowAir,"low-air indoor consumer has no warning");
+        for(const auto& h:app.placed_habitats_)require(h.supply.breathability()>=0 && h.supply.breathability()<=100,"air percentage outside bounds");
+        const double saved_air=app.placed_habitats_[1].supply.oxygen_kg,saved_energy=app.placed_resources_[1].supply.energy_kwh,saved_water=app.placed_resources_[3].supply.water_litres;
+        std::string error;require(app.save_game_to_name("supply-regression",error),"save failed: "+error);app.refresh_save_games();
+        std::string path;for(const auto& e:app.save_games_)if(e.name=="supply-regression")path=e.path;
+        require(!path.empty(),"saved supply state not listed");GameApp restored(engine);require(restored.load_game_from_file(path,error),"load failed: "+error);
+        require(restored.placed_habitats_[1].supply.breathability()>0,"loaded interior did not display saved air without an unpause tick");
+        require(restored.placed_habitats_[1].supply.oxygen_kg==saved_air && restored.placed_resources_[1].supply.energy_kwh==saved_energy && restored.placed_resources_[3].supply.water_litres==saved_water,"saved inventories changed on load");
+        GameApp gate(engine);gate.playfield_.rebuild(192);gate.builder_robots_.resize(1);gate.builder_robots_[0].position={-80,0,80};PlacedResource dome=resource(ResourceKind::StorageDome,{0,0,0});dome.placement_sequence=1;gate.placed_resources_={dome};gate.next_blueprint_placement_sequence_=2;
+        require(gate.add_storage_gate_at(0,53.25f),"free-angle gate rejected");
+        const auto& owner=gate.placed_resources_[0];const auto n=storage_loading::normal(owner);
+        require(std::abs(std::atan2(n.x,n.z)*180.0/3.141592653589793-53.25)<1e-4,"continuous gate angle quantized");
+        const auto service=storage_loading::service(owner);require(distance(service,storage_loading::mouth(owner))<1.6f,"cargo placing area remains too far from gate");
+        UtilityConnection blocked;blocked.path={service-Vec3{4,0,0},service+Vec3{4,0,0}};gate.utility_network_.mutable_connections().push_back(blocked);
+        require(!gate.gate_route_clear(blocked.path,0.35f),"pipe crosses reserved placing pad");
+        require(!gate.resource_placement_valid(ResourceKind::Antenna,ResourceSizeTier::Small,StorageDomeSize::Small,service,0),"structure overlaps gate pad");
+        GeometryRecorder recorder;gate.render_gate_areas(recorder);require(recorder.filled_vertices>0 && recorder.wire_vertices>0,"placing pads not highlighted");
+        require(gate.save_game_to_name("supply-gate-regression",error),"gate save failed");gate.refresh_save_games();for(const auto& e:gate.save_games_)if(e.name=="supply-gate-regression")path=e.path;
+        require(restored.load_game_from_file(path,error),"free-angle gate load failed: "+error);
+        require(std::abs(restored.placed_resources_[0].storage_gate_angle_degrees-53.25f)<1e-6,"gate angle changed on load");
+        std::cout<<"Connected storage, day/night dispatch, tank limits, air delay/conservation, warnings, gate pads and save roundtrip passed\n";
+    }
+
+    static void utilities(){
+        eng::Application engine;
+        GameApp app(engine);app.playfield_.rebuild(192);
+        auto complete_resource=[](ResourceKind kind,Vec3 p){
+            PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;
+        };
+        auto complete_habitat=[](HabitatKind kind,Vec3 p){
+            PlacedHabitat h;h.kind=kind;h.position=p;h.construction.step=kConstructionSteps;return h;
+        };
+        app.placed_resources_={
+            complete_resource(ResourceKind::SolarPanel,{-30,0,-20}),
+            complete_resource(ResourceKind::SolarPanel,{-22,0,-20}),
+            complete_resource(ResourceKind::PowerStorage,{-14,0,-20}),
+            complete_resource(ResourceKind::WaterDriller,{-6,0,-20}),
+            complete_resource(ResourceKind::WaterPurifier,{2,0,-20}),
+            complete_resource(ResourceKind::SolarPanel,{30,0,-20}),
+            complete_resource(ResourceKind::PowerStorage,{38,0,-20})
+        };
+        app.placed_habitats_={
+            complete_habitat(HabitatKind::ProcessingFacility,{-10,0,10}),
+            complete_habitat(HabitatKind::BioDome,{0,0,10}),
+            complete_habitat(HabitatKind::Factory,{12,0,10})
+        };
+        auto utility_rr=[&](std::size_t a,std::size_t b){
+            UtilityConnection c;c.endpoint_a.kind=UtilityEndpointKind::Resource;c.endpoint_a.index=a;
+            c.endpoint_b.kind=UtilityEndpointKind::Resource;c.endpoint_b.index=b;
+            c.construction.step=c.construction.total_steps;
+            c.path={app.placed_resources_[a].position,app.placed_resources_[b].position};
+            app.utility_network_.mutable_connections().push_back(std::move(c));
+        };
+        utility_rr(0,1);utility_rr(1,2);utility_rr(2,3);utility_rr(3,4);
+        // Deliberately separate component: connected physically, but it has only
+        // one solar source and therefore must not acquire stable power from the
+        // other network by global accounting.
+        utility_rr(5,6);
+
+        CorridorConnection pipe_corridor;
+        pipe_corridor.endpoint_a.kind=CorridorEndpointKind::Habitat;pipe_corridor.endpoint_a.index=0;
+        pipe_corridor.endpoint_b.kind=CorridorEndpointKind::Habitat;pipe_corridor.endpoint_b.index=1;
+        pipe_corridor.construction.step=pipe_corridor.construction.total_steps;
+        pipe_corridor.path={{-10,0,10},{0,0,10}};
+        CorridorConnection unfinished;
+        unfinished.endpoint_a.kind=CorridorEndpointKind::Habitat;unfinished.endpoint_a.index=1;
+        unfinished.endpoint_b.kind=CorridorEndpointKind::Habitat;unfinished.endpoint_b.index=2;
+        unfinished.construction.step=0;unfinished.path={{0,0,10},{12,0,10}};
+        app.corridor_network_.restore_connections({pipe_corridor,unfinished});
+
+        UtilityConnection feed;
+        feed.endpoint_a.kind=UtilityEndpointKind::Resource;feed.endpoint_a.index=2;
+        feed.endpoint_b.kind=UtilityEndpointKind::Corridor;feed.endpoint_b.index=0;
+        feed.construction.step=feed.construction.total_steps;
+        feed.path={{-14,0,-20},{-8,0,2}};
+        app.utility_network_.mutable_connections().push_back(feed);
+
+        auto services=app.utility_network_.evaluate_services(app.corridor_network_,app.placed_habitats_,app.placed_resources_);
+        require(services.resources[0].power && services.resources[4].power,"powered supply component did not distribute power");
+        require(services.resources[3].water && services.resources[4].water,"water source/purifier component did not distribute water");
+        require(services.habitats[0].power && services.habitats[0].water && services.habitats[1].power && services.habitats[1].water,
+                "completed corridor did not carry the embedded pipe network");
+        require(!services.habitats[2].connected && !services.habitats[2].power && !services.habitats[2].water,
+                "unfinished corridor transported utilities");
+        require(services.resources[5].connected && services.resources[5].power,
+                "standalone solar/battery component failed potential power topology");
+        require(services.habitats[0].component==services.resources[0].component &&
+                services.habitats[0].component!=services.resources[5].component,
+                "utility component identity is not topology-local");
+
+        app.corridor_network_.mutable_connections()[1].construction.step=kCorridorConstructionSteps;
+        services=app.utility_network_.evaluate_services(app.corridor_network_,app.placed_habitats_,app.placed_resources_);
+        require(services.habitats[2].power && services.habitats[2].water && services.habitats[2].component==services.habitats[0].component,
+                "completed corridor extension did not join the utility component");
+
+        // Storage dome corridor and supply connections are free-angle. Cargo
+        // apertures remain reserved, but there is no cardinal/90-degree snap on
+        // the rest of the circular hull.
+        GameApp storage(engine);storage.playfield_.rebuild(192);
+        PlacedResource dome;dome.kind=ResourceKind::StorageDome;dome.storage_size=StorageDomeSize::Mid;
+        dome.rotation_degrees=31.0f;dome.construction.step=kConstructionSteps;dome.placement_sequence=1;
+        storage.placed_resources_={dome};storage.next_blueprint_placement_sequence_=2;
+        require(storage.add_storage_gate(0,4),"explicit cargo gate extension could not be added");
+        storage.placed_resources_[1].construction.step=kConstructionSteps;
+        storage.synchronize_storage_gates();
+        dome=storage.placed_resources_[0];
+        constexpr float PI_F=3.14159265358979323846f;
+        const float angle=23.0f*PI_F/180.0f;
+        Vec3 local{std::sin(angle),0.0f,-std::cos(angle)};
+        const Vec3 dir=world_math::rotate_y(local,dome.rotation_degrees);
+        const float wall_r=storage_dome_diameter_m(dome.storage_size)*(5.35f/13.0f);
+        const Vec3 hit=dome.position+dir*wall_r;
+        CorridorBuildAnchor corridor_anchor{CorridorEndpointKind::Resource,0,hit};
+        auto corridor_ep=storage.corridor_network_.preview_anchor(corridor_anchor,hit+dir*18.0f,{},storage.habitat_models_,storage.placed_resources_,storage.resource_models_);
+        require(corridor_ep.has_value(),"free-angle storage corridor anchor rejected");
+        require(eng::dot(corridor_ep->door.normal,dir)>0.995f,"storage corridor anchor snapped away from cursor-selected hull angle");
+        require(std::abs(corridor_ep->door.normal.x)>0.12f && std::abs(corridor_ep->door.normal.z)>0.12f,
+                "storage corridor anchor quantized to a cardinal axis");
+
+        UtilityBuildAnchor utility_anchor{UtilityEndpointKind::Resource,0,hit};
+        auto utility_ep=storage.utility_network_.preview_anchor(UtilityKind::SupplyChannel,utility_anchor,hit+dir*18.0f,
+            {},storage.habitat_models_,storage.placed_resources_,storage.resource_models_);
+        require(utility_ep.has_value(),"free-angle storage supply anchor rejected");
+        require(eng::dot(utility_ep->normal,dir)>0.995f,"storage supply anchor snapped away from cursor-selected hull angle");
+        UtilityBuildAnchor open{UtilityEndpointKind::Open,0,hit+dir*18.0f+Vec3{5,0,4}};
+        auto route=storage.utility_network_.preview_connection(UtilityKind::SupplyChannel,utility_anchor,open,
+            {},storage.habitat_models_,storage.placed_resources_,storage.resource_models_);
+        require(route.has_value() && route->path.size()>=3,"free-angle storage supply route was not generated");
+        Vec3 first{};bool found_first=false;
+        for(std::size_t i=1;i<route->path.size();++i){
+            Vec3 step=route->path[i]-route->path[0];step.y=0;
+            if(eng::length(step)>0.15f){first=eng::normalize(step);found_first=true;break;}
+        }
+        require(found_first && eng::dot(first,dir)>0.70f,"storage supply route did not leave the dome smoothly along its selected tangent");
+        UtilityBuildAnchor cargo{UtilityEndpointKind::Resource,0,storage_loading::wall(dome)};
+        require(!storage.utility_network_.preview_anchor(UtilityKind::SupplyChannel,cargo,storage_loading::service(dome),
+            {},storage.habitat_models_,storage.placed_resources_,storage.resource_models_),"supply channel occupied a storage cargo gate sector");
+
+        std::cout<<"Pipe components, corridor-carried utilities, independent power/water availability and free-angle storage attachments passed\n";
+    }
+
     static void gates(){
         eng::Application engine;GameApp app(engine);app.playfield_.rebuild(256);
         for(float rotation:{0.0f,37.0f,90.0f,135.0f,270.0f}){
@@ -565,45 +882,46 @@ struct NavigationRegression {
             require(pressure_door::sealed(state.open_fraction),"door failed to reseal");
             for(int size=0;size<4;++size){
                 PlacedResource storage;storage.kind=ResourceKind::StorageDome;storage.storage_size=(StorageDomeSize)size;
-                storage.rotation_degrees=rotation;storage.storage_loading_face=1;storage.construction.step=kConstructionSteps;
+                storage.rotation_degrees=rotation;storage.placement_sequence=1;storage.construction.step=kConstructionSteps;
                 storage.stored_boxes={{MaterialResource::Iron,100,1}};sync_stored_resource_totals(storage);
-                app.placed_resources_={storage};app.placed_habitats_.clear();app.corridor_network_.clear();
-                const auto service=storage_loading::service(storage);const auto n=storage_loading::normal(storage);
-                require(storage_loading::reserved(storage,service),"gate service outside reservation");
-                require(storage_loading::segment_reserved(storage,service-side*10,service+side*10,geometry::kCorridorHalfWidth),"crossing misses loading reservation");
-                CorridorBuildAnchor cargo{CorridorEndpointKind::Resource,0,storage_loading::wall(storage)};
-                CorridorBuildAnchor end{CorridorEndpointKind::OpenDoor,0,service+n*12};
-                require(!app.corridor_network_.preview_anchor(cargo,end.position,{},app.habitat_models_,app.placed_resources_,app.resource_models_),"cargo face preview allowed");
-                require(!app.corridor_network_.build_corridor(cargo,end,{},app.habitat_models_,app.placed_resources_,app.resource_models_),"cargo face build allowed");
-                for(int face:{0,2,3}){
+                app.placed_resources_={storage};app.placed_habitats_.clear();app.corridor_network_.clear();app.utility_network_.clear();app.walkway_network_.clear();
+                app.next_blueprint_placement_sequence_=2;
+                // A gate-less dome keeps its normal hull available for smooth
+                // corridor attachment. Optional cargo extensions reserve only
+                // geometry that is explicitly placed afterwards.
+                for(int face:{0,1,2,3}){
                     const auto direction=world_math::rotate_y(storage_loading::local_normal(face),rotation);
                     const auto wall=storage.position+direction*(storage_dome_diameter_m(storage.storage_size)*(5.35f/13.0f));
                     const CorridorBuildAnchor crew{CorridorEndpointKind::Resource,0,wall};
                     const CorridorBuildAnchor far{CorridorEndpointKind::OpenDoor,0,wall+direction*14};
                     app.corridor_network_.clear();
-                    require(app.corridor_network_.build_corridor(crew,far,{},app.habitat_models_,app.placed_resources_,app.resource_models_),"crew port build rejected");
+                    require(app.corridor_network_.build_corridor(crew,far,{},app.habitat_models_,app.placed_resources_,app.resource_models_),"gate-less crew port build rejected");
                 }
                 app.corridor_network_.clear();
-                CorridorBuildAnchor cross_a{CorridorEndpointKind::OpenDoor,0,service-side*12},cross_b{CorridorEndpointKind::OpenDoor,0,service+side*12};
+                require(app.add_storage_gate(0,4),"cargo gate task rejected");
+                app.placed_resources_[1].construction.step=kConstructionSteps;app.synchronize_storage_gates();
+                const auto& owner=app.placed_resources_[0];
+                const int gate_face=app.placed_resources_[1].storage_loading_face;
+                const auto service=storage_loading::service(owner,gate_face);const auto n=storage_loading::normal(owner,gate_face);
+                const Vec3 gate_side{-n.z,0,n.x};
+                require(storage_loading::reserved(owner,service),"gate service outside reservation");
+                require(storage_loading::segment_reserved(owner,service-gate_side*10,service+gate_side*10,geometry::kCorridorHalfWidth),"crossing misses loading reservation");
+                CorridorBuildAnchor cargo{CorridorEndpointKind::Resource,0,storage_loading::wall(owner,gate_face)};
+                CorridorBuildAnchor end{CorridorEndpointKind::OpenDoor,0,service+n*12};
+                require(!app.corridor_network_.preview_anchor(cargo,end.position,{},app.habitat_models_,app.placed_resources_,app.resource_models_),"cargo face preview allowed");
+                require(!app.corridor_network_.build_corridor(cargo,end,{},app.habitat_models_,app.placed_resources_,app.resource_models_),"cargo face build allowed");
+                app.corridor_network_.clear();
+                CorridorBuildAnchor cross_a{CorridorEndpointKind::OpenDoor,0,service-gate_side*12},cross_b{CorridorEndpointKind::OpenDoor,0,service+gate_side*12};
                 auto route=app.corridor_network_.preview_built_corridor(cross_a,cross_b,{},app.habitat_models_,app.placed_resources_,app.resource_models_);
                 if(route) for(std::size_t j=1;j<route->path.size();++j)
-                    require(!storage_loading::segment_reserved(storage,route->path[j-1],route->path[j],geometry::kCorridorHalfWidth),"bypass clips cargo bay");
+                    require(!storage_loading::segment_reserved(owner,route->path[j-1],route->path[j],geometry::kCorridorHalfWidth),"bypass clips cargo bay");
                 BuilderRobotState bot;bot.role=RobotRole::Carrier;
                 ResourceBundle need;need.amount(MaterialResource::Iron)=20;
-                bot.position=storage.position-n*(storage_dome_diameter_m(storage.storage_size)*0.5f+1.55f);
+                bot.position=owner.position-n*(storage_dome_diameter_m(owner.storage_size)*0.5f+1.55f);
                 require(!app.robot_load_needed_resources(bot,need),"pickup through wrong storage wall");
                 bot.position=service;
                 require(app.robot_load_needed_resources(bot,need),"cargo gate pickup failed");
                 require(bot.cargo.amount(MaterialResource::Iron)==20 && app.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)==80,"pickup changed inventory incorrectly");
-                // An installed legacy +X corridor moves the new gate to a free
-                // face once, and further synchronization never moves it again.
-                app.placed_resources_[0].storage_loading_face=-1;
-                CorridorConnection legacy;legacy.endpoint_a.kind=CorridorEndpointKind::Resource;legacy.endpoint_a.index=0;legacy.endpoint_a.door.normal=n;
-                app.corridor_network_.restore_connections({legacy});app.assign_storage_loading_faces();
-                const int chosen=app.placed_resources_[0].storage_loading_face;
-                require(chosen!=1,"legacy corridor overwritten by cargo hatch");
-                app.corridor_network_.clear();app.assign_storage_loading_faces();
-                require(app.placed_resources_[0].storage_loading_face==chosen,"cargo hatch changed face");
             }
         }
         // Trace the actual triangles submitted by the world renderer. Closed
@@ -639,22 +957,29 @@ struct NavigationRegression {
         }
         require(app.first_person_door_open_fraction(outer.wall_position)==1,"Air Lock did not release next door after sealing");
         app.first_person_mode_=GameApp::FirstPersonMode::Off;
+        app.placed_habitats_.clear();app.corridor_network_.clear();
         // Cargo openings expose only a buffer: its inner pressure wall remains
         // solid with the outer shutters fully retracted.
-        PlacedResource lock;lock.kind=ResourceKind::StorageDome;lock.storage_loading_face=1;lock.construction.step=kConstructionSteps;
-        app.placed_resources_={lock};app.storage_gate_open_={1};draw.triangles.clear();app.render_resources(draw);
-        const auto mouth=storage_loading::mouth(lock)+Vec3{0,0.8f,0};
-        const auto back=storage_loading::wall(lock)+Vec3{0,0.8f,0};
-        require(!segment_hits_mesh(mouth-Vec3{0.25f,0,0},mouth+Vec3{0.25f,0,0},draw.triangles),"open cargo shutter obstructed");
-        require(segment_hits_mesh(back-Vec3{0.2f,0,0},back+Vec3{0.2f,0,0},draw.triangles),"cargo gate exposes warehouse atmosphere");
+        PlacedResource lock;lock.kind=ResourceKind::StorageDome;lock.placement_sequence=1;lock.construction.step=kConstructionSteps;
+        app.placed_resources_={lock};app.next_blueprint_placement_sequence_=2;require(app.add_storage_gate(0,4),"render cargo gate task rejected");
+        app.placed_resources_[1].construction.step=kConstructionSteps;app.synchronize_storage_gates();app.placed_resources_[1].storage_extension_open=1;
+        draw.triangles.clear();app.render_resources(draw);
+        const int lock_face=app.placed_resources_[1].storage_loading_face;
+        const auto lock_n=storage_loading::normal(app.placed_resources_[0],lock_face);
+        const auto mouth=storage_loading::mouth(app.placed_resources_[0],lock_face)+Vec3{0,0.8f,0};
+        const auto back=storage_loading::wall(app.placed_resources_[0],lock_face)+Vec3{0,0.8f,0};
+        require(!segment_hits_mesh(mouth-lock_n*0.25f,mouth+lock_n*0.25f,draw.triangles),"open cargo shutter obstructed");
+        require(segment_hits_mesh(back-lock_n*0.2f,back+lock_n*0.2f,draw.triangles),"cargo gate exposes warehouse atmosphere");
 
         // Two real CR-01s must deposit through the same loading bay without
         // colliding, parking at another wall, or losing/duplicating material.
         app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=2;
         app.reset_builder_robot_and_starter_stash();app.ground_resource_piles_.clear();
-        PlacedResource storage;storage.kind=ResourceKind::StorageDome;storage.storage_loading_face=1;storage.construction.step=kConstructionSteps;
-        app.placed_resources_={storage};app.placed_habitats_.clear();app.corridor_network_.clear();
-        const auto gate=storage_loading::service(storage);
+        PlacedResource storage;storage.kind=ResourceKind::StorageDome;storage.placement_sequence=1;storage.construction.step=kConstructionSteps;
+        app.placed_resources_={storage};app.placed_habitats_.clear();app.corridor_network_.clear();app.utility_network_.clear();app.walkway_network_.clear();
+        app.next_blueprint_placement_sequence_=2;require(app.add_storage_gate(0,4),"fleet cargo gate task rejected");
+        app.placed_resources_[1].construction.step=kConstructionSteps;app.synchronize_storage_gates();
+        const auto gate=storage_loading::service(app.placed_resources_[0],app.placed_resources_[1].storage_loading_face);
         app.builder_robots_[0].position={-25,0,-20};
         for(std::size_t i=1;i<3;++i){auto& bot=app.builder_robots_[i];
             bot.position=gate+Vec3{3.0f+(float)i*2,0,(float)(i-1)*4};bot.mode=BuilderRobotMode::DepotTransfer;
@@ -665,18 +990,19 @@ struct NavigationRegression {
             require(distance(app.builder_robots_[1].position,app.builder_robots_[2].position)>1.88f,"cargo fleet collision");
         }
         require(app.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)==60,"shared gate deposits did not finish");
-        app.placed_resources_[0].storage_loading_face=3;
         std::string error;require(app.save_game_to_name("gate-regression",error),error);
         const auto saved=std::filesystem::path(app.save_game_directory())/"gate-regression.gmsave";
         GameApp restored(engine);require(restored.load_game_from_file(saved.string(),error),error);
-        require(restored.placed_resources_[0].storage_loading_face==3 && restored.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)==60,"gate save round trip failed");
+        require(restored.placed_resources_.size()==2 && storage_loading::gate_count(restored.placed_resources_[0])==1 &&
+                restored.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)==60,"gate save round trip failed");
         std::filesystem::remove(saved);
-        PlacedResource panel;panel.kind=ResourceKind::SolarPanel;panel.position={20,0,10};panel.placement_sequence=1;
+        PlacedResource panel;panel.kind=ResourceKind::SolarPanel;panel.position={20,0,10};panel.placement_sequence=restored.next_blueprint_placement_sequence_++;
         panel.resource_plan.total_steps=kConstructionSteps;
         for(auto& step:panel.resource_plan.steps) step.amount(MaterialResource::Iron)=5;
         restored.placed_resources_.push_back(panel);
         ResourceBundle physical;physical.amount(MaterialResource::Iron)=60;restored.resources_.restore(physical);
-        for(int frame=0;frame<18000 && !restored.placed_resources_[1].construction.complete();++frame){
+        const std::size_t panel_index=restored.placed_resources_.size()-1;
+        for(int frame=0;frame<18000 && !restored.placed_resources_[panel_index].construction.complete();++frame){
             const auto before=restored.placed_resources_[0].stored_resources.amount(MaterialResource::Iron);
             restored.update_construction(1.0f/60);
             if(restored.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)<before){
@@ -686,7 +1012,7 @@ struct NavigationRegression {
             }
             for(const auto& bot:restored.builder_robots_) require(bot.safety.mode!=SafetyMode::Fault,"storage construction safety fault");
         }
-        require(restored.placed_resources_[1].construction.complete(),"construction could not withdraw through cargo gate");
+        require(restored.placed_resources_[panel_index].construction.complete(),"construction could not withdraw through cargo gate");
         require(restored.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)==30,"construction cargo ledger mismatch");
         std::cout<<"Pressure seals, swept door collision, 20 rotated loading gates, reserved routing, shared deposits/withdrawals, construction and save round trip passed\n";
     }
@@ -717,8 +1043,9 @@ struct NavigationRegression {
             app.placed_habitats_={a,b};
             const auto& mesh=app.habitat_models_.mesh(b);
             for(const auto& e:mesh.entrances) require(std::abs(e.local_position.y-mesh.walkable_floor_y)<0.001f,"hatch floor");
-            const CorridorBuildAnchor ca{CorridorEndpointKind::Habitat,0,{-16,0,4}};
-            const CorridorBuildAnchor cb{CorridorEndpointKind::Habitat,1,{16,0,4}};
+            const auto nearest=[&](const PlacedHabitat& h,Vec3 toward){const auto& hm=app.habitat_models_.mesh(h);Vec3 result{};float best=1e9f;for(const auto& e:hm.entrances){auto q=h.position+world_math::rotate_y(e.local_position,h.rotation_degrees);const auto d=distance(q,toward);if(d<best){best=d;result=q;}}return result;};
+            const CorridorBuildAnchor ca{CorridorEndpointKind::Habitat,0,nearest(a,b.position)};
+            const CorridorBuildAnchor cb{CorridorEndpointKind::Habitat,1,nearest(b,a.position)};
             auto c=app.corridor_network_.preview_built_corridor(ca,cb,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
             require(c.has_value(),"corridor unavailable kind "+std::to_string(kind));
             require(!c->endpoint_a.door.generated && !c->endpoint_b.door.generated,"corridor not on authored entrance");
@@ -753,23 +1080,34 @@ struct NavigationRegression {
             const Vec3 normal=world_math::rotate_y({std::sin(angle),0,-std::cos(angle)},storage.rotation_degrees);
             const CorridorBuildAnchor a{CorridorEndpointKind::Habitat,0,{-16,0,0}},b{CorridorEndpointKind::Resource,0,storage.position+normal*mesh.footprint_x};
             auto c=app.corridor_network_.preview_built_corridor(a,b,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
-            if(port==1){require(!c.has_value(),"cargo face accepted a corridor");continue;}
-            require(c.has_value(),"storage corridor");c->construction.step=kCorridorConstructionSteps;app.corridor_network_.restore_connections({*c});
+            require(c.has_value(),"gate-less storage dome rejected a normal hull corridor");c->construction.step=kCorridorConstructionSteps;app.corridor_network_.restore_connections({*c});
             check_walk(c->endpoint_b.position,c->endpoint_b.door.position,"storage ramp "+std::to_string(size)+":"+std::to_string(port));
             check_walk(c->endpoint_b.door.position,storage.position,"storage interior");
             check_walk(storage.position,c->endpoint_b.position,"storage return");
         }
-        std::cout<<"120 habitat rotation/size cases, 12 crew storage ports + 4 reserved cargo ports, exact apertures and interior headroom passed\n";
+        std::cout<<"120 habitat rotation/size cases, 16 gate-less storage connection approaches, exact apertures and interior headroom passed\n";
     }
 };
 }
 
 int main(int argc,char** argv){
     try{
-        if(argc>1 && std::string(argv[1])=="extensions") game::NavigationRegression::storage_extensions();
+        if(argc>1 && std::string(argv[1])=="fault-recovery"){
+            fault_recovery_case("single fault",1);
+            fault_recovery_case("simultaneous fleet faults",12);
+            fault_recovery_case("persistent geometry fault",1,true);
+            fault_recovery_case("working hold fault",1,false,true);
+            fault_recovery_case("bounded recovery search",1,false,false,true);
+            fault_bounds_case();
+        }
+        else if(argc>1 && std::string(argv[1])=="oxygen") game::NavigationRegression::oxygen();
+        else if(argc>1 && std::string(argv[1])=="supply") game::NavigationRegression::supply();
+        else if(argc>1 && std::string(argv[1])=="extensions") game::NavigationRegression::storage_extensions();
         else if(argc>1 && std::string(argv[1])=="workshops") game::NavigationRegression::workshops();
+        else if(argc>1 && std::string(argv[1])=="utilities") game::NavigationRegression::utilities();
         else if(argc>1 && std::string(argv[1])=="gates") game::NavigationRegression::gates();
         else if(argc>1 && std::string(argv[1])=="geometry") game::NavigationRegression::geometry();
+        else if(argc>2 && std::string(argv[1])=="fault-construction") game::NavigationRegression::construction(argv[2],true,true);
         else if(argc>2 && std::string(argv[1])=="construction") game::NavigationRegression::construction(argv[2]);
         else if(argc>2 && std::string(argv[1])=="inspect") game::NavigationRegression::inspect(argv[2]);
         else if(argc>2 && std::string(argv[1])=="late") game::NavigationRegression::construction(argv[2],true);

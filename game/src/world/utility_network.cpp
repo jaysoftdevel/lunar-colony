@@ -1,5 +1,7 @@
 #include "game/world/utility_network.hpp"
 #include "game/world/geometry_standards.hpp"
+#include "game/world/storage_loading_gate.hpp"
+#include "game/world/gate_area.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/util/world_math.hpp"
 #include <algorithm>
@@ -74,6 +76,12 @@ struct Builder {
 };
 
 float channel_y(UtilityKind){ return geometry::kSupplyChannelY; }
+
+Vec3 flat_dir(Vec3 v){
+    v.y=0.0f;
+    if(length(v)<0.001f) return {1.0f,0.0f,0.0f};
+    return normalize(v);
+}
 
 bool resource_supports(UtilityKind,ResourceKind){
     // A supply channel carries the common base services. Every external
@@ -167,6 +175,18 @@ std::optional<UtilityEndpoint> surface_endpoint(const UtilityBuildAnchor& anchor
         out.normal=normalize(n);
         return out;
     }
+    if(anchor.kind==UtilityEndpointKind::Corridor){
+        UtilityEndpoint out;
+        out.kind=UtilityEndpointKind::Corridor;
+        out.index=anchor.index;
+        out.position=anchor.hit;
+        out.position.y=channel_y(utility);
+        Vec3 n=anchor.normal_hint; n.y=0.0f;
+        if(length(n)<0.001f){ n=toward-anchor.hit; n.y=0.0f; }
+        if(length(n)<0.001f) n={1,0,0};
+        out.normal=normalize(n);
+        return out;
+    }
 
     Vec3 center{};
     float rotation=0.0f;
@@ -189,27 +209,15 @@ std::optional<UtilityEndpoint> surface_endpoint(const UtilityBuildAnchor& anchor
         radius=std::max(resource_mesh->footprint_x,resource_mesh->footprint_z)*0.75f+3.0f;
     }
 
-    // Storage domes have four explicit service faces shared with corridor
-    // docking. Snap supply channels to those ports instead of sliding freely
-    // around the dome shell, which keeps utility/corridor routing predictable.
+    // Storage domes deliberately use the same cursor-driven hull attachment
+    // as every other structure. The cargo apertures remain exclusive, but all
+    // other hull angles are valid; utility ports are never quantized to four
+    // cardinal faces.
     if(anchor.kind==UtilityEndpointKind::Resource && anchor.index<resources.size() &&
        resources[anchor.index].kind==ResourceKind::StorageDome){
-        const float port_radius=std::min(resource_mesh->footprint_x,resource_mesh->footprint_z)*0.40f;
-        const Vec3 local_normals[4]={{0,0,-1},{1,0,0},{0,0,1},{-1,0,0}};
-        float best=std::numeric_limits<float>::max();
-        Vec3 best_n{0,0,-1},best_p{};
-        for(Vec3 ln:local_normals){
-            Vec3 n=rotate_y(ln,rotation); n.y=0.0f; n=normalize(n);
-            Vec3 p=center+n*port_radius+Vec3{0,channel_y(utility),0};
-            const float d=distance_xz(anchor.hit,p);
-            if(d<best){ best=d; best_n=n; best_p=p; }
-        }
-        UtilityEndpoint out;
-        out.kind=anchor.kind;
-        out.index=anchor.index;
-        out.normal=best_n;
-        out.position=best_p;
-        return out;
+        const auto& placed=resources[anchor.index];
+        for(int face:storage_loading::faces(placed))
+            if(face>=0 && storage_loading::reserved_face(placed,anchor.hit,0.10f,face)) return std::nullopt;
     }
 
     // The cursor position controls the actual attachment location. This keeps
@@ -303,6 +311,11 @@ bool point_hits_structure(Vec3 p,UtilityEndpointKind skip_kind_a,std::size_t ski
                           const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
                           const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
     constexpr float CLEARANCE=0.42f;
+    for(std::size_t i=0;i<habitats.size();++i)for(const auto& a:gate_area::habitat(habitats[i],habitat_library.mesh(habitats[i]),i,{}))if(a.hits(p,p,CLEARANCE))return true;
+    for(std::size_t i=0;i<resources.size();++i){
+        if(storage_loading::reserved(resources[i],p,CLEARANCE))return true;
+        for(const auto& a:gate_area::storage(resources[i],resource_library.mesh(resources[i]),i,{}))if(a.hits(p,p,CLEARANCE))return true;
+    }
     for(std::size_t h=0;h<habitats.size();++h){
         if((skip_kind_a==UtilityEndpointKind::Habitat && h==skip_a) || (skip_kind_b==UtilityEndpointKind::Habitat && h==skip_b)) continue;
         const auto& placed=habitats[h];
@@ -371,6 +384,39 @@ std::vector<Vec3> compact_path(std::vector<Vec3> path){
         if(out.empty() || distance_xz(out.back(),p)>0.02f || std::abs(out.back().y-p.y)>0.02f) out.push_back(p);
     }
     return out;
+}
+
+std::vector<Vec3> smooth_polyline(std::vector<Vec3> points,int iterations){
+    if(points.size()<3) return points;
+    for(int it=0;it<iterations;++it){
+        std::vector<Vec3> out;
+        out.reserve(points.size()*2);
+        out.push_back(points.front());
+        for(std::size_t i=0;i+1<points.size();++i){
+            const Vec3 a=points[i],b=points[i+1];
+            out.push_back(a*0.75f+b*0.25f);
+            out.push_back(a*0.25f+b*0.75f);
+        }
+        out.push_back(points.back());
+        points=compact_path(std::move(out));
+    }
+    return points;
+}
+
+std::vector<Vec3> channel_candidate(const UtilityEndpoint& a,const UtilityEndpoint& b,
+                                    Vec3 start_drop,Vec3 end_drop,
+                                    std::vector<Vec3> ground_controls,int smooth_iterations){
+    if(ground_controls.size()<2) return {};
+    ground_controls=smooth_polyline(std::move(ground_controls),smooth_iterations);
+    std::vector<Vec3> path;
+    path.reserve(ground_controls.size()+4);
+    path.push_back(a.position);
+    if(distance_xz(a.position,start_drop)>0.02f || std::abs(a.position.y-start_drop.y)>0.02f) path.push_back(start_drop);
+    for(const Vec3 p:ground_controls)
+        if(path.empty() || distance_xz(path.back(),p)>0.02f || std::abs(path.back().y-p.y)>0.02f) path.push_back(p);
+    if(distance_xz(path.back(),end_drop)>0.02f || std::abs(path.back().y-end_drop.y)>0.02f) path.push_back(end_drop);
+    if(distance_xz(path.back(),b.position)>0.02f || std::abs(path.back().y-b.position.y)>0.02f) path.push_back(b.position);
+    return compact_path(std::move(path));
 }
 
 bool path_clear(const std::vector<Vec3>& path,const UtilityEndpoint& a,const UtilityEndpoint& b,
@@ -546,7 +592,9 @@ std::vector<Vec3> utility_grid_route(UtilityKind kind,const UtilityEndpoint& a,c
     auto h=[&](int idx){ return distance_xz(pos(idx),goal); };
     std::priority_queue<UtilityGridNode> open;
     g[(std::size_t)si]=0; open.push({si,h(si)});
-    constexpr std::array<std::array<int,2>,4> dirs{{{{1,0}},{{-1,0}},{{0,1}},{{0,-1}}}};
+    constexpr std::array<std::array<int,2>,8> dirs{{
+        {{1,0}},{{-1,0}},{{0,1}},{{0,-1}},{{1,1}},{{1,-1}},{{-1,1}},{{-1,-1}}
+    }};
     bool found=false;
     while(!open.empty()){
         const int cur=open.top().index; open.pop();
@@ -559,7 +607,12 @@ std::vector<Vec3> utility_grid_route(UtilityKind kind,const UtilityEndpoint& a,c
             if(x<0||x>=nx||z<0||z>=nz) continue;
             const int next=z*nx+x;
             if(closed[(std::size_t)next]||is_blocked(next)) continue;
-            const float ng=g[(std::size_t)cur]+STEP+penalty[(std::size_t)next];
+            if(d[0]!=0 && d[1]!=0){
+                const int side_a=cz*nx+x;
+                const int side_b=z*nx+cx;
+                if(is_blocked(side_a) || is_blocked(side_b)) continue;
+            }
+            const float ng=g[(std::size_t)cur]+distance_xz(pos(cur),pos(next))+penalty[(std::size_t)next];
             if(ng>=g[(std::size_t)next]) continue;
             g[(std::size_t)next]=ng; parent[(std::size_t)next]=cur;
             open.push({next,ng+h(next)});
@@ -574,69 +627,93 @@ std::vector<Vec3> utility_grid_route(UtilityKind kind,const UtilityEndpoint& a,c
     if(raw.empty() || distance_xz(raw.back(),start)>0.05f) return {};
     std::reverse(raw.begin(),raw.end());
 
-    // Keep only actual Manhattan corners. Do not visibility-shortcut across a
-    // channel: the local A* penalty deliberately chose where to cross it.
-    std::vector<Vec3> corners;
-    corners.reserve(raw.size());
-    for(std::size_t i=0;i<raw.size();++i){
-        if(i==0 || i+1==raw.size()){ corners.push_back(raw[i]); continue; }
-        Vec3 d0=raw[i]-raw[i-1]; d0.y=0.0f; d0=normalize(d0);
-        Vec3 d1=raw[i+1]-raw[i]; d1.y=0.0f; d1=normalize(d1);
-        if(std::abs(dot(d0,d1))<0.999f) corners.push_back(raw[i]);
+    // Compress the grid route to meaningful free-angle controls, then round the
+    // controls. The A* grid only selects topology around obstacles; it must not
+    // leak a fixed 90-degree visual language into the final supply channel.
+    std::vector<Vec3> controls;
+    controls.reserve(raw.size());
+    for(std::size_t i=0;i<raw.size();){
+        controls.push_back(raw[i]);
+        if(i+1>=raw.size()) break;
+        std::size_t best=i+1;
+        for(std::size_t j=raw.size()-1;j>i+1;--j){
+            if(!segment_hits_structure(raw[i],raw[j],a.kind,a.index,b.kind,b.index,habitats,habitat_library,resources,resource_library)){
+                best=j;
+                break;
+            }
+        }
+        i=best;
     }
-    std::vector<Vec3> path;
-    path.push_back(a.position);
-    if(distance_xz(a.position,start_drop)>0.02f) path.push_back(start_drop);
-    if(distance_xz(path.back(),start)>0.02f) path.push_back(start);
-    for(std::size_t i=1;i+1<corners.size();++i) path.push_back(corners[i]);
-    if(distance_xz(path.back(),goal)>0.02f) path.push_back(goal);
-    if(distance_xz(path.back(),end_drop)>0.02f) path.push_back(end_drop);
-    if(distance_xz(path.back(),b.position)>0.02f || std::abs(path.back().y-b.position.y)>0.02f) path.push_back(b.position);
-    path=compact_path(std::move(path));
+    if(controls.empty() || distance_xz(controls.back(),goal)>0.02f) controls.push_back(goal);
+
+    Vec3 an=a.normal; an.y=0.0f; if(length(an)<0.001f) an=flat_dir(goal-start); else an=normalize(an);
+    Vec3 bn=b.normal; bn.y=0.0f; if(length(bn)<0.001f) bn=flat_dir(start-goal); else bn=normalize(bn);
+    const float tangent_lead=std::clamp(distance_xz(start,goal)*0.08f,0.35f,1.25f);
+    if(controls.size()>=2){
+        controls.insert(controls.begin()+1,start+an*tangent_lead);
+        controls.insert(controls.end()-1,goal+bn*tangent_lead);
+    }
+
+    for(int smooth:{3,2,1}){
+        auto path=channel_candidate(a,b,start_drop,end_drop,controls,smooth);
+        if(route_valid(kind,path,a,b,habitats,habitat_library,resources,resource_library,existing)) return path;
+    }
+    auto path=channel_candidate(a,b,start_drop,end_drop,controls,0);
     return route_valid(kind,path,a,b,habitats,habitat_library,resources,resource_library,existing)?path:std::vector<Vec3>{};
+
 }
 
 std::vector<Vec3> make_route(UtilityKind kind,const UtilityEndpoint& a,const UtilityEndpoint& b,
                              const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
                              const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                              const std::vector<UtilityConnection>& existing,float playfield_half_extent){
-    // Always leave a structure along the selected surface normal. This prevents
-    // the first cable segment from cutting back through the source/target mesh.
+    // Supply channels use the same free-angle, tangent-preserving connection
+    // language as corridors. Endpoint normals are authoritative; obstacle
+    // avoidance may move the middle of a run but never quantizes attachment to
+    // cardinal directions or Manhattan 90-degree corners.
     constexpr float LEAD=0.72f;
     const float y=channel_y(kind);
     const Vec3 start_drop{a.position.x,y,a.position.z};
     const Vec3 end_drop{b.position.x,y,b.position.z};
-    Vec3 start_lead=start_drop+a.normal*LEAD;
-    Vec3 end_lead=end_drop+b.normal*LEAD;
+    Vec3 an=a.normal; an.y=0.0f; if(length(an)<0.001f) an=flat_dir(end_drop-start_drop); else an=normalize(an);
+    Vec3 bn=b.normal; bn.y=0.0f; if(length(bn)<0.001f) bn=flat_dir(start_drop-end_drop); else bn=normalize(bn);
+    const Vec3 start_lead=start_drop+an*LEAD;
+    const Vec3 end_lead=end_drop+bn*LEAD;
+    const float d=distance_xz(start_lead,end_lead);
+    if(d<0.03f) return compact_path({a.position,start_drop,end_drop,b.position});
+
+    Vec3 forward=flat_dir(end_lead-start_lead);
+    if(length(forward)<0.001f) forward={1,0,0};
+    const Vec3 lateral{-forward.z,0,forward.x};
+    const float tangent_lead=std::clamp(d*0.18f,0.45f,2.6f);
 
     std::vector<std::vector<Vec3>> candidates;
-    candidates.push_back(compact_path({a.position,start_drop,start_lead,end_lead,end_drop,b.position}));
-    candidates.push_back(compact_path({a.position,start_drop,start_lead,{end_lead.x,y,start_lead.z},end_lead,end_drop,b.position}));
-    candidates.push_back(compact_path({a.position,start_drop,start_lead,{start_lead.x,y,end_lead.z},end_lead,end_drop,b.position}));
-
-    // Parallel/coincident cable runs are still avoided, but true crossings are
-    // valid and become shared junctions. Search deterministic offset lanes only
-    // when an obvious route would physically overlap an existing tray.
-    for(int step=1;step<=36;++step){
-        const float offset=(float)step*0.9f;
-        for(float lane_z:{std::min(start_lead.z,end_lead.z)-offset,std::max(start_lead.z,end_lead.z)+offset}){
-            candidates.push_back(compact_path({a.position,start_drop,start_lead,{start_lead.x,y,lane_z},{end_lead.x,y,lane_z},end_lead,end_drop,b.position}));
-        }
-        for(float lane_x:{std::min(start_lead.x,end_lead.x)-offset,std::max(start_lead.x,end_lead.x)+offset}){
-            candidates.push_back(compact_path({a.position,start_drop,start_lead,{lane_x,y,start_lead.z},{lane_x,y,end_lead.z},end_lead,end_drop,b.position}));
-        }
+    auto make_controls=[&](float offset_a,float offset_b){
+        const Vec3 q1=start_lead+(end_lead-start_lead)*0.34f+lateral*offset_a;
+        const Vec3 q2=start_lead+(end_lead-start_lead)*0.66f+lateral*offset_b;
+        return std::vector<Vec3>{start_lead,start_lead+an*tangent_lead,q1,q2,end_lead+bn*tangent_lead,end_lead};
+    };
+    candidates.push_back(make_controls(0.0f,0.0f));
+    for(float offset:{1.25f,-1.25f,2.4f,-2.4f,3.8f,-3.8f,5.6f,-5.6f,8.0f,-8.0f,11.0f,-11.0f,15.0f,-15.0f,20.0f,-20.0f})
+        candidates.push_back(make_controls(offset,offset));
+    for(float offset:{4.0f,7.0f,10.5f,15.0f,21.0f}){
+        candidates.push_back(make_controls(offset,-offset));
+        candidates.push_back(make_controls(-offset,offset));
     }
 
     std::vector<Vec3> best;
     float best_length=std::numeric_limits<float>::max();
-    for(const auto& candidate:candidates){
-        if(!route_valid(kind,candidate,a,b,habitats,habitat_library,resources,resource_library,existing)) continue;
-        const float len=path_length(candidate);
-        if(len<best_length){ best_length=len; best=candidate; }
+    for(const auto& controls:candidates){
+        for(int smooth:{3,2,1}){
+            auto candidate=channel_candidate(a,b,start_drop,end_drop,controls,smooth);
+            if(!route_valid(kind,candidate,a,b,habitats,habitat_library,resources,resource_library,existing)) continue;
+            const float len=path_length(candidate);
+            if(len<best_length){ best_length=len; best=std::move(candidate); }
+            break;
+        }
     }
     if(!best.empty()) return best;
 
-    const float d=distance_xz(a.position,b.position);
     const float primary=std::clamp(d*0.35f+8.0f,10.0f,34.0f);
     const float secondary=std::min(playfield_half_extent,std::max(primary+10.0f,48.0f));
     for(float margin:{primary,secondary}){
@@ -742,8 +819,8 @@ UtilityMesh make_mesh(UtilityKind /*kind*/,const UtilityEndpoint& a,const Utilit
         add_power_segment(builder,path[i],path[i+1]);
         add_water_segment(builder,path[i],path[i+1]);
     }
-    // Mark bends with a compact service joint so orthogonal routes read as one
-    // continuous channel instead of two unrelated line segments.
+    // Mark sampled bends with compact service joints so curved/free-angle
+    // routes read as one continuous maintainable channel.
     for(std::size_t i=1;i+1<path.size();++i){
         builder.box(builder.mesh.details,path[i],{geometry::kSupplyJunctionWidth*0.92f,0.060f,geometry::kSupplyJunctionWidth*0.92f},true);
         builder.cylinder_between(builder.mesh.details,path[i]+Vec3{-0.28f,0.030f,0},path[i]+Vec3{0.28f,0.030f,0},0.035f,10,true);
@@ -801,7 +878,7 @@ bool utility_anchors_already_connected(const UtilityBuildAnchor& a,const Utility
 bool UtilityNetwork::anchor_compatible(UtilityKind kind,const UtilityBuildAnchor& anchor,
                                        const std::vector<PlacedHabitat>& habitats,
                                        const std::vector<PlacedResource>& resources) const {
-    if(anchor.kind==UtilityEndpointKind::Open) return true;
+    if(anchor.kind==UtilityEndpointKind::Open || anchor.kind==UtilityEndpointKind::Corridor) return true;
     if(anchor.kind==UtilityEndpointKind::Habitat) return anchor.index<habitats.size();
     if(anchor.index>=resources.size()) return false;
     return resource_supports(kind,resources[anchor.index].kind);
@@ -933,6 +1010,167 @@ void UtilityNetwork::remove_resource(std::size_t resource_index){
     rebuild_supply_junctions();
 }
 
+void UtilityNetwork::remove_corridor(std::size_t corridor_index){
+    for(auto& connection:connections_){
+        for(UtilityEndpoint* endpoint:{&connection.endpoint_a,&connection.endpoint_b}){
+            if(endpoint->kind!=UtilityEndpointKind::Corridor) continue;
+            if(endpoint->index==corridor_index){
+                endpoint->kind=UtilityEndpointKind::Open;
+                endpoint->index=0;
+            }else if(endpoint->index>corridor_index){
+                --endpoint->index;
+            }
+        }
+    }
+    rebuild_supply_junctions();
+}
+
+UtilityServiceSnapshot UtilityNetwork::evaluate_services(
+    const CorridorNetwork& corridors,
+    const std::vector<PlacedHabitat>& habitats,
+    const std::vector<PlacedResource>& resources) const {
+    UtilityServiceSnapshot snapshot;
+    snapshot.habitats.resize(habitats.size());
+    snapshot.resources.resize(resources.size());
+
+    const std::size_t h_count=habitats.size();
+    const std::size_t r_count=resources.size();
+    const std::size_t u_count=connections_.size();
+    const std::size_t c_count=corridors.connections().size();
+    const std::size_t h_base=0;
+    const std::size_t r_base=h_base+h_count;
+    const std::size_t u_base=r_base+r_count;
+    const std::size_t c_base=u_base+u_count;
+    const std::size_t total=c_base+c_count;
+    if(total==0) return snapshot;
+
+    UtilityDisjointSets sets(total);
+    const auto join=[&](std::size_t a,std::size_t b){ sets.unite(a,b); snapshot.links.emplace_back(a,b); };
+    std::vector<bool> active_edge(total,false);
+    const auto h_node=[&](std::size_t i){ return h_base+i; };
+    const auto r_node=[&](std::size_t i){ return r_base+i; };
+    const auto u_node=[&](std::size_t i){ return u_base+i; };
+    const auto c_node=[&](std::size_t i){ return c_base+i; };
+    const auto corridor_complete=[&](std::size_t i){
+        return i<c_count && corridors.connections()[i].construction.complete();
+    };
+
+    const auto attach_utility_endpoint=[&](std::size_t ui,const UtilityEndpoint& endpoint){
+        switch(endpoint.kind){
+            case UtilityEndpointKind::Habitat:
+                if(endpoint.index<h_count && habitats[endpoint.index].construction.complete()) join(u_node(ui),h_node(endpoint.index));
+                break;
+            case UtilityEndpointKind::Resource:
+                if(endpoint.index<r_count && resources[endpoint.index].construction.complete()) join(u_node(ui),r_node(endpoint.index));
+                break;
+            case UtilityEndpointKind::Corridor:
+                if(corridor_complete(endpoint.index)) join(u_node(ui),c_node(endpoint.index));
+                break;
+            case UtilityEndpointKind::Open:
+                break;
+        }
+    };
+
+    for(std::size_t i=0;i<u_count;++i){
+        const auto& link=connections_[i];
+        if(!link.construction.complete()) continue;
+        active_edge[u_node(i)]=true;
+        attach_utility_endpoint(i,link.endpoint_a);
+        attach_utility_endpoint(i,link.endpoint_b);
+    }
+    // Supply-channel centerline crossings are real shared manifolds.
+    for(std::size_t i=0;i<u_count;++i){
+        if(!connections_[i].construction.complete()) continue;
+        for(std::size_t j=i+1;j<u_count;++j){
+            if(!connections_[j].construction.complete()) continue;
+            bool joined=false;
+            for(std::size_t a=0;a+1<connections_[i].path.size() && !joined;++a)
+                for(std::size_t b=0;b+1<connections_[j].path.size();++b)
+                    if(segments_intersect_xz(connections_[i].path[a],connections_[i].path[a+1],connections_[j].path[b],connections_[j].path[b+1])){
+                        joined=true; break;
+                    }
+            if(joined) join(u_node(i),u_node(j));
+        }
+    }
+
+    const auto attach_corridor_endpoint=[&](std::size_t ci,const CorridorEndpoint& endpoint){
+        switch(endpoint.kind){
+            case CorridorEndpointKind::Habitat:
+                if(endpoint.index<h_count && habitats[endpoint.index].construction.complete()) join(c_node(ci),h_node(endpoint.index));
+                break;
+            case CorridorEndpointKind::Resource:
+                if(endpoint.index<r_count && resources[endpoint.index].construction.complete()) join(c_node(ci),r_node(endpoint.index));
+                break;
+            case CorridorEndpointKind::Corridor:
+                if(corridor_complete(endpoint.index)) join(c_node(ci),c_node(endpoint.index));
+                break;
+            case CorridorEndpointKind::OpenDoor:
+                break;
+        }
+    };
+    for(std::size_t i=0;i<c_count;++i){
+        const auto& corridor=corridors.connections()[i];
+        if(!corridor.construction.complete()) continue;
+        active_edge[c_node(i)]=true;
+        attach_corridor_endpoint(i,corridor.endpoint_a);
+        attach_corridor_endpoint(i,corridor.endpoint_b);
+    }
+    // Automatic corridor crossings are pressure manifolds, therefore their
+    // embedded service pipes share the same component as well.
+    for(std::size_t i=0;i<c_count;++i){
+        if(!corridor_complete(i)) continue;
+        for(std::size_t j=i+1;j<c_count;++j){
+            if(!corridor_complete(j)) continue;
+            bool joined=false;
+            const auto& a=corridors.connections()[i].path;
+            const auto& b=corridors.connections()[j].path;
+            for(std::size_t ai=0;ai+1<a.size() && !joined;++ai)
+                for(std::size_t bi=0;bi+1<b.size();++bi)
+                    if(segments_intersect_xz(a[ai],a[ai+1],b[bi],b[bi+1])){ joined=true; break; }
+            if(joined) join(c_node(i),c_node(j));
+        }
+    }
+
+    struct Component {
+        bool network{false};
+        int solar{0};
+        int power_storage{0};
+        int water_driller{0};
+        int water_purifier{0};
+    };
+    std::vector<Component> components(total);
+    for(std::size_t n=0;n<total;++n)
+        if(active_edge[n]) components[sets.find(n)].network=true;
+
+    for(std::size_t i=0;i<r_count;++i){
+        if(!resources[i].construction.complete()) continue;
+        auto& component=components[sets.find(r_node(i))];
+        switch(resources[i].kind){
+            case ResourceKind::SolarPanel: ++component.solar; break;
+            case ResourceKind::PowerStorage: ++component.power_storage; break;
+            case ResourceKind::WaterDriller: ++component.water_driller; break;
+            case ResourceKind::WaterPurifier: ++component.water_purifier; break;
+            default: break;
+        }
+    }
+
+    const auto state_for=[&](std::size_t node){
+        const std::size_t root=sets.find(node);
+        const auto& component=components[root];
+        UtilityServiceState state;
+        state.connected=component.network;
+        state.component=component.network?root:kNoUtilityComponent;
+        // Topology describes potential service sources. The live supply solver
+        // subsequently replaces these flags with dispatched power/tank water.
+        state.power=component.network && (component.solar>0 || component.power_storage>0);
+        state.water=state.power && component.water_driller>=1;
+        return state;
+    };
+    for(std::size_t i=0;i<h_count;++i) snapshot.habitats[i]=state_for(h_node(i));
+    for(std::size_t i=0;i<r_count;++i) snapshot.resources[i]=state_for(r_node(i));
+    return snapshot;
+}
+
 void UtilityNetwork::rebuild_supply_junctions(){
     for(auto& c:connections_) c.junctions.clear();
     for(std::size_t i=0;i<connections_.size();++i){
@@ -953,6 +1191,7 @@ const char* utility_endpoint_name(UtilityEndpointKind kind){
         case UtilityEndpointKind::Habitat: return "HABITAT";
         case UtilityEndpointKind::Resource: return "RESOURCE";
         case UtilityEndpointKind::Open: return "OPEN END";
+        case UtilityEndpointKind::Corridor: return "CORRIDOR";
         default: return "ENDPOINT";
     }
 }

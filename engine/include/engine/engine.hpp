@@ -130,6 +130,7 @@ class GameDelegate {
 public:
     virtual ~GameDelegate()=default;
     virtual void on_start() {}
+    virtual void on_resize(int,int) {}
     virtual void update(float dt,const InputState& input)=0;
     virtual void render(Renderer& r)=0;
 };
@@ -170,10 +171,8 @@ struct Theme {
     Color accent{0.22f,0.72f,0.82f,1.0f};
     Color accent_hover{0.34f,0.83f,0.91f,1.0f};
     Color border{0.20f,0.25f,0.30f,1.0f};
-    // Independent from Renderer::set_2d() / UI geometry scaling.
-    // Base text size is 50% larger than the original prototype without
-    // changing panel/control geometry. Renderer::set_2d() remains the
-    // independent user-configurable UI geometry scale.
+    // Base typography multiplier in logical layout units. Resolution/user zoom
+    // is applied once by the shared UI transform, including to this text.
     float font_scale{1.50f};
 };
 void panel(Renderer& r, Rect rect, const Theme& t);

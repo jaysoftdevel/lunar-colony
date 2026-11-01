@@ -1,4 +1,5 @@
 #pragma once
+#include "game/world/supply_state.hpp"
 #include "game/world/habitat_mesh.hpp"
 #include "game/world/resource_mesh.hpp"
 #include "game/world/construction.hpp"
@@ -67,6 +68,7 @@ enum class CorridorConnectionKind {
 };
 
 struct CorridorConnection {
+    SupplyState supply{};
     CorridorConnectionKind kind{CorridorConnectionKind::Automatic};
     std::uint64_t placement_sequence{0};
     CorridorEndpoint endpoint_a{};

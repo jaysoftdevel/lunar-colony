@@ -28,6 +28,10 @@ void GameApp::render_debug_frame(Renderer& r){
     r.draw_line({frame.x+frame.w,frame.y+frame.h},{frame.x,frame.y+frame.h},theme_.border,1.0f);
     r.draw_line({frame.x,frame.y+frame.h},{frame.x,frame.y},theme_.border,1.0f);
 
+
+    const auto game_label=[&](Renderer& renderer,Vec2 pos,const std::string& text,float scale,const ui::Theme& theme,bool muted=false){
+        layout::game_label_fitted(renderer,{pos.x,pos.y,std::max(0.0f,frame.x+frame.w-pos.x-12.0f),14.0f},text,scale,theme,muted);
+    };
     std::ostringstream fps,playfield,camera_a,camera_b,cpu;
     fps<<"FPS "<<(int)std::round(fps_);
     playfield<<"PLAYFIELD "<<playfield_.size()<<" X "<<playfield_.size();

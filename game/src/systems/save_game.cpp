@@ -22,7 +22,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=16;
+constexpr std::uint32_t kSaveSchema=17;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -47,9 +47,9 @@ bool valid_storage_gate_links(const std::vector<PlacedResource>& items){
     std::unordered_map<std::uint64_t,std::vector<int>> used;
     for(const auto& item:items) if(item.kind==ResourceKind::StorageGate){
         const auto owner=owners.find(item.storage_parent_sequence);
-        if(owner==owners.end() || item.storage_loading_face<0 || item.storage_loading_face>7) return false;
+        if(owner==owners.end() || item.storage_loading_face<0 || item.storage_loading_face>10) return false;
         const auto& parent=items[owner->second];auto& faces=used[item.storage_parent_sequence];
-        if(item.storage_size!=parent.storage_size || item.storage_loading_face==parent.storage_loading_face || faces.size()>=2 ||
+        if(item.storage_size!=parent.storage_size || faces.size()>=3 ||
            std::find(faces.begin(),faces.end(),item.storage_loading_face)!=faces.end()) return false;
         faces.push_back(item.storage_loading_face);
     }
@@ -243,16 +243,24 @@ CorridorEndpoint read_corridor_endpoint(Reader& r){
 }
 void write_corridor_mesh(Writer& w,const CorridorMesh& m){ write_vec3s(w,m.shell); write_vec3s(w,m.details); write_vec3s(w,m.edges); }
 CorridorMesh read_corridor_mesh(Reader& r){ CorridorMesh m{}; m.shell=read_vec3s(r); m.details=read_vec3s(r); m.edges=read_vec3s(r); return m; }
+void write_supply(Writer& w,const SupplyState& s){w.pod(s.oxygen_kg);w.pod(s.energy_kwh);w.pod(s.water_litres);}
+SupplyState read_supply(Reader& r){
+    SupplyState s;s.oxygen_kg=r.pod<double>();s.energy_kwh=r.pod<double>();s.water_litres=r.pod<double>();
+    for(double v:{s.oxygen_kg,s.energy_kwh,s.water_litres})if(!std::isfinite(v) || v<0 || v>1e12)r.valid=false;
+    return s;
+}
 void write_corridor(Writer& w,const CorridorConnection& c){
     w.pod((std::uint8_t)c.kind); write_corridor_endpoint(w,c.endpoint_a); write_corridor_endpoint(w,c.endpoint_b); write_vec3s(w,c.path);
     write_corridor_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan); write_bundle(w,c.site_buffer);
     w.pod(c.placement_sequence);
+    write_supply(w,c.supply);
 }
-CorridorConnection read_corridor(Reader& r,bool with_site_buffer,bool with_placement_sequence=false){
+CorridorConnection read_corridor(Reader& r,bool with_site_buffer,bool with_placement_sequence=false,bool with_supply=false){
     CorridorConnection c{}; c.kind=(CorridorConnectionKind)r.pod<std::uint8_t>(); c.endpoint_a=read_corridor_endpoint(r); c.endpoint_b=read_corridor_endpoint(r);
     c.path=read_vec3s(r); c.mesh=read_corridor_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
     if(with_site_buffer) c.site_buffer=read_bundle(r);
     if(with_placement_sequence) c.placement_sequence=r.pod<std::uint64_t>();
+    if(with_supply)c.supply=read_supply(r);
     return c;
 }
 
@@ -264,12 +272,14 @@ void write_utility(Writer& w,const UtilityConnection& c){
     w.pod((std::uint8_t)c.kind); write_utility_endpoint(w,c.endpoint_a); write_utility_endpoint(w,c.endpoint_b); write_vec3s(w,c.path); write_vec3s(w,c.junctions);
     write_utility_mesh(w,c.mesh); write_staged(w,c.construction); write_plan(w,c.resource_plan); write_bundle(w,c.site_buffer);
     w.pod(c.placement_sequence);
+    write_supply(w,c.supply);
 }
-UtilityConnection read_utility(Reader& r,bool with_site_buffer,bool with_placement_sequence=false){
+UtilityConnection read_utility(Reader& r,bool with_site_buffer,bool with_placement_sequence=false,bool with_supply=false){
     UtilityConnection c{}; c.kind=(UtilityKind)r.pod<std::uint8_t>(); c.endpoint_a=read_utility_endpoint(r); c.endpoint_b=read_utility_endpoint(r);
     c.path=read_vec3s(r); c.junctions=read_vec3s(r); c.mesh=read_utility_mesh(r); c.construction=read_staged(r); c.resource_plan=read_plan(r);
     if(with_site_buffer) c.site_buffer=read_bundle(r);
     if(with_placement_sequence) c.placement_sequence=r.pod<std::uint64_t>();
+    if(with_supply)c.supply=read_supply(r);
     return c;
 }
 
@@ -490,6 +500,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         write_construction(out,h.construction); write_plan(out,h.resource_plan); write_bundle(out,h.site_buffer);
         out.pod(h.instance_serial);
         out.pod(h.placement_sequence);
+        write_supply(out,h.supply);
     });
     write_object_vector(w,placed_resources_,[](Writer& out,const PlacedResource& item){
         out.pod((std::uint8_t)item.kind); write_vec3(out,item.position); out.pod(item.rotation_degrees); write_construction(out,item.construction); write_plan(out,item.resource_plan); write_bundle(out,item.site_buffer);
@@ -501,6 +512,8 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         out.pod(item.placement_sequence);
         out.pod(item.storage_loading_face);
         out.pod(item.storage_parent_sequence);
+        write_supply(out,item.supply);
+        out.pod(item.storage_gate_angle_degrees);
     });
     write_object_vector(w,ground_resource_piles_,[](Writer& out,const GroundResourcePile& pile){
         out.pod((std::uint8_t)pile.resource); out.pod(pile.amount); write_vec3(out,pile.position); out.pod(pile.radius); out.pod(pile.condition);
@@ -599,6 +612,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         if(source_schema>=6) h.site_buffer=read_bundle(in);
         if(source_schema>=10) h.instance_serial=in.pod<std::uint32_t>();
         if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
+        if(source_schema>=17)h.supply=read_supply(in);
         return h;
     })){ error="Template habitat data is damaged."; return false; }
 
@@ -627,9 +641,10 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         if(source_schema>=13) item.placement_sequence=in.pod<std::uint64_t>();
         if(source_schema>=14){
             item.storage_loading_face=in.pod<std::int8_t>();
-            if(item.storage_loading_face < -1 || item.storage_loading_face > 7) in.valid=false;
+            if(item.storage_loading_face < -1 || item.storage_loading_face > 10) in.valid=false;
         }
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
+        if(source_schema>=17){item.supply=read_supply(in);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
         sync_stored_resource_totals(item);
         return item;
     })){ error="Template structure data is damaged."; return false; }
@@ -647,11 +662,11 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     })){ error="Template resource-pile data is damaged."; return false; }
 
     std::vector<CorridorConnection> corridors;
-    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13); })){
+    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13,source_schema>=17); })){
         error="Template corridor data is damaged."; return false;
     }
     std::vector<UtilityConnection> utilities;
-    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13); })){
+    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13,source_schema>=17); })){
         error="Template utility data is damaged."; return false;
     }
     std::vector<WalkwayConnection> walkways;
@@ -705,6 +720,10 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         c.site_buffer={};
     }
 
+    for(auto& h:habitats)h.supply={};
+    for(auto& r:structures)r.supply={};
+    for(auto& c:corridors)c.supply={};
+    for(auto& u:utilities)u.supply={};
     placed_habitats_=std::move(habitats);
     placed_resources_=std::move(structures);
     corridor_network_.restore_connections(std::move(corridors));
@@ -772,6 +791,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         h.construction=read_construction(in); h.resource_plan=read_plan(in); if(source_schema>=6) h.site_buffer=read_bundle(in);
         if(source_schema>=10) h.instance_serial=in.pod<std::uint32_t>();
         if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
+        if(source_schema>=17)h.supply=read_supply(in);
         return h;
     })){ error="Savegame habitat data is damaged."; return false; }
 
@@ -787,9 +807,10 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         if(source_schema>=13) item.placement_sequence=in.pod<std::uint64_t>();
         if(source_schema>=14){
             item.storage_loading_face=in.pod<std::int8_t>();
-            if(item.storage_loading_face < -1 || item.storage_loading_face > 7) in.valid=false;
+            if(item.storage_loading_face < -1 || item.storage_loading_face > 10) in.valid=false;
         }
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
+        if(source_schema>=17){item.supply=read_supply(in);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
         sync_stored_resource_totals(item); return item;
     })){ error="Savegame structure data is damaged."; return false; }
 
@@ -831,9 +852,9 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     })){ error="Savegame resource-box data is damaged."; return false; }
 
     std::vector<CorridorConnection> corridors;
-    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13); })){ error="Savegame corridor data is damaged."; return false; }
+    if(!read_object_vector(r,corridors,[&](Reader& in){ return read_corridor(in,source_schema>=6,source_schema>=13,source_schema>=17); })){ error="Savegame corridor data is damaged."; return false; }
     std::vector<UtilityConnection> utilities;
-    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13); })){ error="Savegame supply-channel data is damaged."; return false; }
+    if(!read_object_vector(r,utilities,[&](Reader& in){ return read_utility(in,source_schema>=6,source_schema>=13,source_schema>=17); })){ error="Savegame supply-channel data is damaged."; return false; }
     std::vector<WalkwayConnection> walkways;
     if(!read_object_vector(r,walkways,[&](Reader& in){ return read_walkway(in,source_schema>=6,source_schema>=13); })){ error="Savegame walkway data is damaged."; return false; }
 
@@ -1224,7 +1245,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     display_modes_.clear();
     display_mode_index_=-1;
     ui_scale_index_=std::clamp(saved_ui_scale,0,layout::UI_SCALE_COUNT-1);
-    ui_scale_=layout::UI_SCALES[ui_scale_index_];
+    on_resize(viewport_width_,viewport_height_);
     debug_frame_enabled_=saved_debug;
     habitat_view_mode_=saved_view;
     game_speed_=saved_game_speed;
@@ -1235,6 +1256,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     placement_storage_size_=saved_storage_size;
     placement_resource_size_=saved_resource_size;
     storage_gate_placement_active_=false;
+    storage_gate_placement_owner_=kNoRobotIndex;
 
     first_person_mode_=FirstPersonMode::Off;
     app_.set_relative_mouse_mode(false);
@@ -1249,6 +1271,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     corridor_build_start_.reset(); utility_build_start_.reset(); walkway_build_start_.reset(); walkway_build_target_.reset();
     game_session_active_=true;
     save_game_name_=save_name;
+    update_supply_simulation(0.0f);
     error.clear();
     return true;
 }

@@ -49,11 +49,13 @@ void GameApp::render_build_bar(Renderer& r){
         render_build_icon(r,CATEGORIES[i].icon,{box.x+7,box.y+7,box.w-14,box.h-14},selected?theme_.accent:theme_.text);
         if(hover && ui_input_.left_pressed){
             build_catalog_.set_category(CATEGORIES[i].category);
+            build_catalog_scroll_=0;
             placement_rotation_degrees_=0.0f;
             placement_habitat_size_=HabitatSizeTier::Small;
             placement_resource_size_=ResourceSizeTier::Small;
             placement_storage_size_=StorageDomeSize::Small;
             storage_gate_placement_active_=false;
+            storage_gate_placement_owner_=kNoRobotIndex;
             corridor_build_start_.reset();
             utility_build_start_.reset();
             walkway_build_start_.reset();
@@ -65,7 +67,7 @@ void GameApp::render_build_bar(Renderer& r){
 
     const float build_left=category_x+category_area_w;
     const float build_right=logical_w-view_area_w-18.0f;
-    const float build_area_w=std::max(260.0f,build_right-build_left);
+    const float build_area_w=std::max(0.0f,build_right-build_left);
 
     std::vector<int> visible;
     const auto& items=build_catalog_.items();
@@ -73,28 +75,32 @@ void GameApp::render_build_bar(Renderer& r){
         if(items[i].category==build_catalog_.category()) visible.push_back((int)i);
     }
 
-    // Keep large catalogs usable at lower resolutions / higher UI scales by
-    // shrinking only the build icons when needed. The normal 50 px size is
-    // retained whenever the category fits.
-    float icon_size=BUILD_ICON_SIZE;
-    float icon_gap=BUILD_ICON_GAP;
-    if(!visible.empty()){
-        const float natural=(float)visible.size()*icon_size+(float)(visible.size()-1)*icon_gap;
-        if(natural>build_area_w){
-            icon_gap=5.0f;
-            icon_size=std::max(20.0f,(build_area_w-icon_gap*(float)(visible.size()-1))/(float)visible.size());
-        }
+    const float icon_size=BUILD_ICON_SIZE,icon_gap=BUILD_ICON_GAP;
+    const float natural=visible.empty()?0:(float)visible.size()*icon_size+(float)(visible.size()-1)*icon_gap;
+    const bool paged=natural>build_area_w;
+    const float arrow_space=paged?30.0f:0.0f;
+    const float available=std::max(0.0f,build_area_w-2*arrow_space);
+    const int capacity=std::max(1,(int)((available+icon_gap)/(icon_size+icon_gap)));
+    const int maximum=std::max(0,(int)visible.size()-capacity);
+    build_catalog_scroll_=std::clamp(build_catalog_scroll_,0,maximum);
+    const bool over_catalog=Rect{build_left,y,build_area_w,BUILD_BAR_H}.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
+    if(paged && over_catalog && ui_input_.wheel!=0)build_catalog_scroll_=std::clamp(build_catalog_scroll_+(ui_input_.wheel<0?1:-1),0,maximum);
+    if(paged){
+        if(ui::button(r,ui_input_,{build_left,y+24,25,32},"<",theme_,build_catalog_scroll_>0))--build_catalog_scroll_;
+        if(ui::button(r,ui_input_,{build_right-25,y+24,25,32},">",theme_,build_catalog_scroll_<maximum))++build_catalog_scroll_;
     }
-    const float total=visible.empty()?0.0f:(float)visible.size()*icon_size+(float)(visible.size()-1)*icon_gap;
-    const float start_x=build_left+std::max(0.0f,(build_area_w-total)*0.5f);
+    const int first=paged?build_catalog_scroll_:0;
+    const int shown=std::min(capacity,(int)visible.size()-first);
+    const float total=shown>0?(float)shown*icon_size+(float)(shown-1)*icon_gap:0;
+    const float start_x=build_left+arrow_space+std::max(0.0f,(available-total)*0.5f);
     const float icon_y=y+(BUILD_BAR_H-icon_size)*0.5f;
 
     int hovered_item=-1;
-    for(size_t slot=0;slot<visible.size();++slot){
-        const int item_index=visible[slot];
+    for(int slot=0;slot<shown;++slot){
+        const int item_index=visible[(std::size_t)(first+slot)];
         const Rect box={start_x+(icon_size+icon_gap)*(float)slot,icon_y,icon_size,icon_size};
         const bool hover=box.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
-        const bool selected=hovered_item==build_catalog_.selected_index();
+        const bool selected=item_index==build_catalog_.selected_index();
         if(hover) hovered_item=item_index;
         r.draw_rect(box,hover?Color{0.12f,0.16f,0.19f,1.0f}:Color{0.065f,0.08f,0.10f,1.0f});
         const Color border=selected?theme_.accent:(hover?theme_.accent_hover:theme_.border);
@@ -113,6 +119,7 @@ void GameApp::render_build_bar(Renderer& r){
                 placement_resource_size_=ResourceSizeTier::Small;
                 placement_storage_size_=StorageDomeSize::Small;
                 storage_gate_placement_active_=false;
+            storage_gate_placement_owner_=kNoRobotIndex;
                 corridor_build_start_.reset();
                 utility_build_start_.reset();
                 walkway_build_start_.reset();
@@ -136,8 +143,8 @@ void GameApp::render_build_bar(Renderer& r){
             if(item.resource_kind==ResourceKind::RobotWorkshop)
                 line2 += " / FOUR SERVICE BAYS / SUPPLY REQUIRED";
             else if(item.resource_kind==ResourceKind::StorageDome)
-                line2 += storage_gate_placement_active_?" / STEP 2: CLICK FREE CARGO SECTOR":
-                    " / STEP 1: SIZE " + std::string(storage_dome_size_name(placement_storage_size_));
+                line2 += " / SIZE " + std::string(storage_dome_size_name(placement_storage_size_)) +
+                         " / 1-3 OPTIONAL GATES AFTER PLACEMENT";
             else
                 line2 += " / SIZE " + std::string(resource_size_name(placement_resource_size_));
         }
@@ -146,12 +153,12 @@ void GameApp::render_build_bar(Renderer& r){
         line2="BUILD SUBMENU";
     }
     if(!line1.empty()){
-        const float tw=std::max(168.0f,std::max(text_width(line1,0.78f*GAME_FONT_BOOST,theme_),text_width(line2,0.60f*GAME_FONT_BOOST,theme_))+22.0f);
+        const float tw=std::min(logical_w-16.0f,std::max(168.0f,std::max(game_text_width(line1,0.78f,theme_),game_text_width(line2,0.60f,theme_))+22.0f));
         const float tx=std::clamp((float)ui_input_.mouse_x-tw*0.5f,8.0f,logical_w-tw-8.0f);
         const Rect tip={tx,y-60.0f,tw,52.0f};
         ui::panel(r,tip,theme_);
-        game_label(r,{tip.x+10,tip.y+5},line1,0.78f,theme_);
-        game_label(r,{tip.x+10,tip.y+25},line2,0.60f,theme_,true);
+        game_label_fitted(r,{tip.x+10,tip.y+5,tip.w-20,16},line1,0.78f,theme_);
+        game_label_fitted(r,{tip.x+10,tip.y+25,tip.w-20,16},line2,0.60f,theme_,true);
     }
 }
 

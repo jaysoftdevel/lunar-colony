@@ -14,8 +14,9 @@ using namespace world_labels;
 
 namespace {
 
-void draw_resource_icon(Renderer& r,MaterialResource resource,Rect box,Color c){
-    const float x=box.x,y=box.y,w=box.w,h=box.h;
+void draw_resource_icon(Renderer& renderer,MaterialResource resource,Rect box,Color c){
+    const eng::ui::IconCanvas r(renderer,box,{22,28});
+    const float x=0,y=0,w=22,h=28;
     const float cx=x+w*0.5f,cy=y+h*0.5f;
     switch(resource){
         case MaterialResource::Iron:
@@ -123,8 +124,8 @@ void GameApp::render_status_bar(Renderer& r){
     const int minute=total_minutes%60;
     std::ostringstream day,power,water,crew;
     day<<"DAY "<<status_.day()<<"  "<<std::setfill('0')<<std::setw(2)<<hour<<":"<<std::setw(2)<<minute<<"  "<<(status_.is_daylight()?"LIGHT":"NIGHT");
-    power<<"POWER "<<status_.power_current()<<"/"<<status_.power_capacity();
-    water<<"WATER "<<status_.water_current()<<"/"<<status_.water_capacity();
+    power<<"POWER "<<status_.power_current()<<"/"<<status_.power_capacity()<<" KWH";
+    water<<"WATER "<<status_.water_current()<<"/"<<status_.water_capacity()<<" L";
     crew<<"CREW "<<status_.crew_current()<<"/"<<status_.crew_capacity();
 
     // Keep enough room for all inventory resources while retaining colony status.
@@ -138,10 +139,10 @@ void GameApp::render_status_bar(Renderer& r){
     const std::array<float,4> split={day_w,day_w+power_w,day_w+power_w+water_w,resource_start};
     for(float x:split) r.draw_line({x,8},{x,STATUS_BAR_H-8},theme_.border,1.0f);
 
-    game_label(r,{9,12},day.str(),0.66f,theme_);
-    game_label(r,{day_w+7,12},power.str(),0.58f,theme_);
-    game_label(r,{day_w+power_w+7,12},water.str(),0.58f,theme_);
-    game_label(r,{day_w+power_w+water_w+7,12},crew.str(),0.58f,theme_);
+    game_label_fitted(r,{9,12,day_w-16,20},day.str(),0.66f,theme_);
+    game_label_fitted(r,{day_w+7,12,power_w-14,20},power.str(),0.58f,theme_);
+    game_label_fitted(r,{day_w+power_w+7,12,water_w-14,20},water.str(),0.58f,theme_);
+    game_label_fitted(r,{day_w+power_w+water_w+7,12,crew_w-14,20},crew.str(),0.58f,theme_);
 
     const float mouse_x=(float)ui_input_.mouse_x;
     const float mouse_y=(float)ui_input_.mouse_y;
@@ -156,14 +157,14 @@ void GameApp::render_status_bar(Renderer& r){
         const bool negative=resources_.amount(resource)<0;
         const Color icon_color=negative?Color{1.0f,0.38f,0.30f,1.0f}:theme_.accent;
         draw_resource_icon(r,resource,icon,icon_color);
-        game_label(r,{x+29,13},amount_text(resources_.amount(resource)),0.57f,theme_);
+        game_label_fitted(r,{x+29,13,resource_w-33,20},amount_text(resources_.amount(resource)),0.57f,theme_);
         if(contains(cell,mouse_x,mouse_y)){ hovered=(int)i; hovered_rect=cell; }
     }
 
     if(hovered>=0){
         const auto resource=static_cast<MaterialResource>(hovered);
         const std::string name=material_resource_name(resource);
-        const float tooltip_w=std::max(72.0f,text_width(name,0.62f,theme_)+20.0f);
+        const float tooltip_w=std::max(72.0f,game_text_width(name,0.62f,theme_)+20.0f);
         const float tx=std::clamp(hovered_rect.x+(hovered_rect.w-tooltip_w)*0.5f,4.0f,logical_w-tooltip_w-4.0f);
         const Rect tooltip{tx,STATUS_BAR_H+4.0f,tooltip_w,28.0f};
         r.draw_rect(tooltip,{0.025f,0.035f,0.045f,0.96f});

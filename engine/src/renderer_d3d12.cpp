@@ -1,4 +1,6 @@
 #include "engine/engine.hpp"
+#include "engine/ui_metrics.hpp"
+#include "engine/ui_font.hpp"
 
 #ifndef _WIN32
 #error renderer_d3d12.cpp is Windows-only
@@ -667,7 +669,7 @@ public:
 
     void set_3d(const Mat4& view_proj) override { mvp_=view_proj; depth_enabled_=true; }
     void set_2d(float scale=1.0f) override {
-        scale=std::max(0.25f,scale);
+        scale=std::max(0.01f,scale);
         mvp_=ortho(0,(float)width_/scale,(float)height_/scale,0,-1,1);
         depth_enabled_=false;
     }
@@ -686,8 +688,8 @@ public:
         draw(v,18,false,c,1.0f);
     }
     void draw_line(Vec2 a,Vec2 b,Color c,float width=1.0f) override {
-        const float v[]={a.x,a.y,0,b.x,b.y,0};
-        draw(v,6,true,c,width);
+        const auto v=ui::line_quad(a,b,width);
+        draw(v.data(),v.size(),false,c,1.0f);
     }
     void draw_text(Vec2 p,const std::string& text,float scale,Color c) override;
 
@@ -699,11 +701,7 @@ public:
     std::string gpu_version() const override { return std::string("Direct3D 12 / Feature Level ")+feature_level_name(max_feature_level_); }
 };
 
-static const std::unordered_map<char,std::array<unsigned char,7>> FONT={
-{'A',{14,17,17,31,17,17,17}},{'B',{30,17,17,30,17,17,30}},{'C',{14,17,16,16,16,17,14}},{'D',{30,17,17,17,17,17,30}},{'E',{31,16,16,30,16,16,31}},{'F',{31,16,16,30,16,16,16}},{'G',{14,17,16,23,17,17,14}},{'H',{17,17,17,31,17,17,17}},{'I',{31,4,4,4,4,4,31}},{'J',{7,2,2,2,18,18,12}},{'K',{17,18,20,24,20,18,17}},{'L',{16,16,16,16,16,16,31}},{'M',{17,27,21,21,17,17,17}},{'N',{17,25,21,19,17,17,17}},{'O',{14,17,17,17,17,17,14}},{'P',{30,17,17,30,16,16,16}},{'Q',{14,17,17,17,21,18,13}},{'R',{30,17,17,30,20,18,17}},{'S',{15,16,16,14,1,1,30}},{'T',{31,4,4,4,4,4,4}},{'U',{17,17,17,17,17,17,14}},{'V',{17,17,17,17,17,10,4}},{'W',{17,17,17,21,21,21,10}},{'X',{17,17,10,4,10,17,17}},{'Y',{17,17,10,4,4,4,4}},{'Z',{31,1,2,4,8,16,31}},
-{'0',{14,17,19,21,25,17,14}},{'1',{4,12,4,4,4,4,14}},{'2',{14,17,1,2,4,8,31}},{'3',{30,1,1,14,1,1,30}},{'4',{2,6,10,18,31,2,2}},{'5',{31,16,16,30,1,1,30}},{'6',{14,16,16,30,17,17,14}},{'7',{31,1,2,4,8,8,8}},{'8',{14,17,17,14,17,17,14}},{'9',{14,17,17,15,1,1,14}},
-{'%',{17,2,4,4,8,16,17}},{'+',{0,4,4,31,4,4,0}},{'-',{0,0,0,31,0,0,0}},{'.',{0,0,0,0,0,12,12}},{':',{0,12,12,0,12,12,0}},{'/',{1,2,4,8,16,0,0}},{'x',{0,0,17,10,4,10,17}},{' ',{0,0,0,0,0,0,0}},{'<',{2,4,8,16,8,4,2}},{'>',{8,4,2,1,2,4,8}},{'=',{0,0,31,0,31,0,0}},{'(',{2,4,8,8,8,4,2}},{')',{8,4,2,2,2,4,8}}
-};
+
 
 void D3D12Renderer::draw_text(Vec2 p,const std::string& text,float scale,Color c){
     std::vector<float> vertices;
@@ -717,8 +715,8 @@ void D3D12Renderer::draw_text(Vec2 p,const std::string& text,float scale,Color c
     for(char raw:text){
         char ch=(raw>='a'&&raw<='z')?(char)(raw-'a'+'A'):raw;
         if(ch=='\n'){ p.y+=8*scale; p.x=origin_x; continue; }
-        auto it=FONT.find(ch);
-        if(it==FONT.end()){ p.x+=6*scale; continue; }
+        auto it=ui::kBitmapFont.find(ch);
+        if(it==ui::kBitmapFont.end()){ p.x+=6*scale; continue; }
         const auto& rows=it->second;
         for(int y=0;y<7;++y) for(int x=0;x<5;++x)
             if(rows[y]&(1<<(4-x))) quad(p.x+x*scale,p.y+y*scale);
