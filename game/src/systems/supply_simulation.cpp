@@ -10,8 +10,10 @@ double scale(const PlacedResource& r){return r.size==ResourceSizeTier::Small?0.5
 double habitat_scale(const PlacedHabitat& h){
     return h.size==HabitatSizeTier::Small?0.5:h.size==HabitatSizeTier::Mid?1.5:h.size==HabitatSizeTier::Big?2.0:1.0;
 }
-double battery_capacity(const PlacedResource& r){return 60.0*scale(r);}
+double battery_capacity(const PlacedResource& r){return power_storage_capacity_kwh(r.size);}
+double solar_buffer_capacity(const PlacedResource& r){return solar_panel_buffer_capacity_kwh(r.size);}
 double tank_capacity(const PlacedResource& r){return 2000.0*scale(r);}
+double driller_buffer_capacity(const PlacedResource& r){return water_driller_buffer_capacity_litres(r.size);}
 double hydrogen_buffer_capacity(const PlacedHabitat& h){return kOxygenGeneratorHydrogenBufferKg*habitat_scale(h);}
 double hydrogen_generator_peak_kw(const PlacedResource& r){return kHydrogenGeneratorPeakKw*scale(r);}
 double load_kw(const PlacedResource& r){
@@ -46,7 +48,7 @@ double path_length(const std::vector<eng::Vec3>& path){double n=0;for(std::size_
 
 UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     auto services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
-    struct Component {std::vector<std::size_t> tanks,batteries,drillers,hydrogen_generators,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;};
+    struct Component {std::vector<std::size_t> tanks,batteries,solars,drillers,hydrogen_generators,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;};
     std::map<std::size_t,Component> groups;
     // Charging is a real network load. Clear transient telemetry before this
     // dispatch pass; powered workshop bays set it again only when energy is
@@ -93,6 +95,21 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     }
     for(std::size_t i=0;i<placed_resources_.size();++i){
         auto& r=placed_resources_[i];const auto& m=resource_models_.mesh(r);
+        if(r.kind==ResourceKind::SolarPanel){
+            const auto sun=status_.sun_pose();
+            const eng::Vec3 fixed=solar_tracking::fixed_panel_normal(r.rotation_degrees);
+            const eng::Vec3 target=(r.solar_tracking_enabled && sun.above_horizon)?sun.direction:fixed;
+            if(!r.solar_visual_initialized || eng::length(r.solar_visual_normal)<0.5f){
+                r.solar_visual_normal=fixed;
+                r.solar_visual_initialized=true;
+            }
+            // Critically damped-looking slew: never snap to a new sun position,
+            // even when game speed changes or tracking is toggled.
+            const float alpha=1.0f-std::exp(-0.8f*std::max(0.0f,dt));
+            if(alpha>0.0f){
+                r.solar_visual_normal=eng::normalize(r.solar_visual_normal*(1.0f-alpha)+eng::normalize(target)*alpha);
+            }
+        }
         // External equipment has a small sealed service manifold: its ports
         // relay air between pipes without treating the exterior as a cabin.
         add_node(r.supply,r.position,r.kind==ResourceKind::StorageDome && r.construction.complete()?m.footprint_x*m.footprint_z*std::max(0.0f,m.height-m.walkable_floor_y)*0.65:(r.construction.complete()?0.02:0),0);
@@ -107,12 +124,14 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         }
         g.resources.push_back(i);g.load_kw+=r.supply.power_demand_kw;
         if(r.kind==ResourceKind::PowerStorage){r.supply.energy_kwh=std::clamp(r.supply.energy_kwh,0.0,battery_capacity(r));g.batteries.push_back(i);}
+        if(r.kind==ResourceKind::SolarPanel){r.supply.energy_kwh=std::clamp(r.supply.energy_kwh,0.0,solar_buffer_capacity(r));g.solars.push_back(i);}
         if(r.kind==ResourceKind::WaterStorage){r.supply.water_litres=std::clamp(r.supply.water_litres,0.0,tank_capacity(r));g.tanks.push_back(i);}
-        if(r.kind==ResourceKind::WaterDriller)g.drillers.push_back(i);
+        if(r.kind==ResourceKind::WaterDriller){r.supply.water_litres=std::clamp(r.supply.water_litres,0.0,driller_buffer_capacity(r));g.drillers.push_back(i);}
         if(r.kind==ResourceKind::HydrogenGenerator)g.hydrogen_generators.push_back(i);
         if(r.kind==ResourceKind::SolarPanel){
             const auto sun=status_.sun_pose();
-            g.solar_kw+=kSolarPeakKw*scale(r)*sun.irradiance_fraction;
+            const double incidence=r.solar_tracking_enabled?1.0:solar_tracking::fixed_panel_incidence_fraction(sun.direction,r.rotation_degrees);
+            g.solar_kw+=kSolarPeakKw*scale(r)*sun.irradiance_fraction*incidence;
         }
     }
     for(auto& u:utility_network_.mutable_connections()){
@@ -123,9 +142,19 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     }
     double initial_energy=0,initial_water=0,consumed_water=0,demanded_energy=0;
     for(const auto& [key,g]:groups){(void)key;for(auto i:g.batteries)initial_energy+=placed_resources_[i].supply.energy_kwh;for(auto i:g.tanks)initial_water+=placed_resources_[i].supply.water_litres;}
-    const auto water_total=[&](const Component& g){double v=0;for(auto i:g.tanks)v+=placed_resources_[i].supply.water_litres;return v;};
+    const auto water_total=[&](const Component& g){
+        double v=0;
+        for(auto i:g.tanks)v+=placed_resources_[i].supply.water_litres;
+        for(auto i:g.drillers)v+=placed_resources_[i].supply.water_litres;
+        return v;
+    };
     const auto take_water=[&](Component& g,double wanted){
-        double remaining=wanted;for(auto i:g.tanks){auto& v=placed_resources_[i].supply.water_litres;const double q=std::min(v,remaining);v-=q;remaining-=q;}consumed_water+=wanted-remaining;return wanted-remaining;
+        double remaining=wanted;
+        // Dedicated tanks are the primary network store. Driller buffers are a
+        // local reserve and are consumed only after tank inventory is exhausted.
+        for(auto i:g.tanks){auto& v=placed_resources_[i].supply.water_litres;const double q=std::min(v,remaining);v-=q;remaining-=q;if(remaining<=1e-12)break;}
+        if(remaining>1e-12)for(auto i:g.drillers){auto& v=placed_resources_[i].supply.water_litres;const double q=std::min(v,remaining);v-=q;remaining-=q;if(remaining<=1e-12)break;}
+        consumed_water+=wanted-remaining;return wanted-remaining;
     };
     const auto hydrogen_total=[&](const Component& g){
         double v=0;for(auto i:g.habitats)if(placed_habitats_[i].kind==HabitatKind::OxygenGeneratorDome)v+=placed_habitats_[i].supply.hydrogen_kg;return v;
@@ -143,6 +172,7 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     for(auto& [key,g]:groups){
         (void)key;double available_kw=g.solar_kw;
         if(hydrogen_total(g)>1e-9)for(auto i:g.hydrogen_generators)available_kw+=hydrogen_generator_peak_kw(placed_resources_[i]);
+        for(auto i:g.solars)if(placed_resources_[i].supply.energy_kwh>0)available_kw+=kSolarPeakKw*scale(placed_resources_[i]);
         for(auto i:g.batteries)if(placed_resources_[i].supply.energy_kwh>0)available_kw+=10.0*scale(placed_resources_[i]);
         g.power=g.load_kw>0?std::clamp(available_kw/g.load_kw,0.0,1.0):1.0;
     }
@@ -174,6 +204,17 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
                 const auto& r=placed_resources_[i];
                 charge_input_room+=std::max(0.0,std::min((battery_capacity(r)-r.supply.energy_kwh)/0.95,10.0*scale(r)*hours));
             }
+            // Local solar buffers bridge short production/storage gaps. They
+            // discharge before hydrogen or the main battery, at no more than the
+            // collector's rated peak output.
+            double requested_buffer_energy=std::max(0.0,demand-generation);
+            for(auto i:g.solars){
+                if(requested_buffer_energy<=1e-12) break;
+                auto& panel=placed_resources_[i];
+                const double q=std::min({panel.supply.energy_kwh,requested_buffer_energy,kSolarPeakKw*scale(panel)*hours});
+                panel.supply.energy_kwh-=q;generation+=q;requested_buffer_energy-=q;
+            }
+
             double requested_h2_energy=std::max(0.0,demand+charge_input_room-generation);
             for(auto i:g.hydrogen_generators){
                 if(requested_h2_energy<=1e-12)break;
@@ -208,14 +249,36 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
                 }
             }
             for(auto i:g.batteries){auto& r=placed_resources_[i];const double q=std::min({generation,(battery_capacity(r)-r.supply.energy_kwh)/0.95,10.0*scale(r)*hours});r.supply.energy_kwh+=q*0.95;generation-=q;}
+            // Any otherwise-curtailed solar energy remains at the collector in
+            // its small local buffer. External batteries still have priority.
+            for(auto i:g.solars){
+                if(generation<=1e-12) break;
+                auto& panel=placed_resources_[i];
+                const double q=std::min(generation,solar_buffer_capacity(panel)-panel.supply.energy_kwh);
+                panel.supply.energy_kwh+=q;generation-=q;
+            }
             for(auto i:g.drillers){
-                const double produced=500.0*scale(placed_resources_[i])*days*g.power;
-                double left=produced;for(auto j:g.tanks){auto& tank=placed_resources_[j];const double q=std::min(left,tank_capacity(tank)-tank.supply.water_litres);tank.supply.water_litres+=q;left-=q;}
+                auto& driller=placed_resources_[i];
+                // If a tank becomes available after the driller was isolated,
+                // automatically flush the local buffer into network storage.
+                double buffered=driller.supply.water_litres;
+                for(auto j:g.tanks){
+                    if(buffered<=1e-12) break;
+                    auto& tank=placed_resources_[j];
+                    const double q=std::min(buffered,tank_capacity(tank)-tank.supply.water_litres);
+                    tank.supply.water_litres+=q;buffered-=q;
+                }
+                driller.supply.water_litres=buffered;
+
+                const double produced=500.0*scale(driller)*days*g.power;
+                double left=produced;
+                for(auto j:g.tanks){auto& tank=placed_resources_[j];const double q=std::min(left,tank_capacity(tank)-tank.supply.water_litres);tank.supply.water_litres+=q;left-=q;if(left<=1e-12)break;}
+                if(left>1e-12){const double q=std::min(left,driller_buffer_capacity(driller)-driller.supply.water_litres);driller.supply.water_litres+=q;}
             }
             for(auto i:g.habitats){auto& h=placed_habitats_[i];
                 if(h.kind==HabitatKind::OxygenGeneratorDome){
                     const double deficit=h.supply.volume_m3*kOxygenKgPerM3-h.supply.oxygen_kg;
-                    const double capacity=9.0*habitat_scale(h);
+                    const double capacity=18.0*habitat_scale(h);
                     const double oxygen=std::min({deficit,capacity*days*g.power,water_total(g)/kWaterPerOxygen});
                     const double processed_water=take_water(g,oxygen*kWaterPerOxygen);
                     const double produced_oxygen=processed_water/kWaterPerOxygen;
@@ -272,8 +335,8 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
             services.resources[i].power=g.power>=0.99;services.resources[i].water=water;
             if(load_kw(r)>0 && g.power<0.99)r.supply.warnings|=NoPower;
             if(r.kind==ResourceKind::WaterPurifier && !water)r.supply.warnings|=NoWater;
-            if(r.kind==ResourceKind::SolarPanel && g.batteries.empty())r.supply.warnings|=NoStorage;
-            if(r.kind==ResourceKind::WaterDriller && g.tanks.empty())r.supply.warnings|=NoStorage;
+            if(r.kind==ResourceKind::SolarPanel && g.batteries.empty() && r.supply.energy_kwh>=solar_buffer_capacity(r)-1e-6)r.supply.warnings|=NoStorage;
+            if(r.kind==ResourceKind::WaterDriller && g.tanks.empty() && r.supply.water_litres>=driller_buffer_capacity(r)-1e-6)r.supply.warnings|=NoStorage;
             if(r.kind==ResourceKind::HydrogenGenerator && hydrogen_total(g)<=1e-9)r.supply.warnings|=NoHydrogen;
             if(r.kind==ResourceKind::PowerStorage){stored_power+=r.supply.energy_kwh;power_capacity+=battery_capacity(r);if(r.supply.energy_kwh<0.1*battery_capacity(r))r.supply.warnings|=LowStock;}
             if(r.kind==ResourceKind::WaterStorage){stored_water+=r.supply.water_litres;water_capacity+=tank_capacity(r);if(r.supply.water_litres<0.1*tank_capacity(r))r.supply.warnings|=LowStock;}

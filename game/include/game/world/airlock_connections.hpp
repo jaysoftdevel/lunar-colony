@@ -7,7 +7,9 @@ namespace game::airlock_connections {
 
 // Air Locks have no authored hatches any more.  Their first connection may
 // create an entrance on either longitudinal end, but never on a side wall; the
-// chosen end is then reserved for all base-side utility/corridor connections.
+// chosen end is then reserved for passenger connections (corridors/walkways).
+// Supply-channel service ports are independent hull penetrations and may attach
+// to any Air Lock side without reserving either passenger end.
 inline int side(const PlacedHabitat& habitat,eng::Vec3 point){
     const auto local=world_math::rotate_y(point-habitat.position,-habitat.rotation_degrees);
     const float scale=habitat.size==HabitatSizeTier::Small?0.76f:1.0f;
@@ -27,8 +29,7 @@ inline bool allows(std::size_t index,eng::Vec3 point,const std::vector<PlacedHab
     if(!requested)return false;
     for(const auto& c:corridors)for(const auto* e:{&c.endpoint_a,&c.endpoint_b})
         if(e->kind==CorridorEndpointKind::Habitat && e->index==index && side(habitat,e->door.wall_position)!=requested)return false;
-    for(const auto& c:utilities)for(const auto* e:{&c.endpoint_a,&c.endpoint_b})
-        if(e->kind==UtilityEndpointKind::Habitat && e->index==index && side(habitat,e->position)!=requested)return false;
+    (void)utilities; // utility ports never reserve an Air Lock passenger side
     for(const auto& c:walkways)for(const auto* e:{&c.endpoint_a,&c.endpoint_b})
         if(e->kind==WalkwayEndpointKind::Habitat && e->index==index && side(habitat,e->door.wall_position)!=requested)return false;
     return true;

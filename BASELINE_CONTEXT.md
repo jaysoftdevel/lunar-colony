@@ -92,3 +92,37 @@
 New structures may no longer consume the final 2.25 m along any playfield edge. Habitat/resource footprints, Robot Workshop approach clearance, Storage Dome cargo aprons and generated corridor gate pads all respect the same reserved band, leaving the largest current rover enough hard-clearance space to route around edge-side colonies. Existing loaded structures are not moved; only new placement/access creation is constrained. The inner edge is rendered as a subtle guide.
 
 The debug frame now owns a `WorldLayoutMode` selector (`MESH` / `TEXTURED`). No texture/material asset path exists yet, so both modes currently render through the procedural mesh backend; future texture work can dispatch on the stored mode without changing gameplay/UI contracts.
+
+## v0.43.19 corridor attachment / short-run routing
+
+Corridor structure attachments are cursor-angle driven over the complete available hull. The exact pressure-hull hit follows the cursor continuously through 360 degrees; the old four-face/seven-slot fallback has been removed. If the exact angular sector is unavailable because of an existing connection/gate or a tiny mesh seam, the resolver searches outward from the requested angle in 1 degree increments and uses the nearest valid free sector. Storage Dome crew-corridor anchors likewise keep their exact selected radial angle instead of snapping near cardinal faces; cargo-gate sectors remain exclusive.
+
+For close unobstructed structure-to-structure links, the main corridor centerline is now a single straight segment. Generated vestibules still handle each hull's local pressure-door orientation, but the tube between the two outer docking endpoints is not allowed to form a tangent-driven S-curve. A bend is introduced only when the direct short segment is physically blocked.
+
+## v0.43.20 shorter corridor start preview
+- The initial corridor blueprint shown while hovering a structure is intentionally compact: the sample run is 1.35 m instead of 2.75 m.
+- The fallback visual start marker is 1.10 m instead of 1.55 m.
+- This only changes the pre-click blueprint visualization. It does not impose a minimum/maximum length on committed corridors.
+
+## v0.43.21 minimal corridor start / connection-safe structure spacing
+- Structure-hover corridor placement shows only a 0.56 m orientation/docking hint before the first click; it no longer creates a temporary routed corridor sample.
+- `kStructureConnectionReserve` is derived from the complete generated corridor approach (`1.70 m` generated entrance + `1.75 m` docking transition = `3.45 m` per side).
+- New habitat/resource placement uses that expanded ground reservation against other structures and the playfield perimeter. The visible blueprint ground rectangle matches the reserved area.
+- The supplied `0-43-20.gmsave` spacing case (Small Air Lock at `(-20,-4)`, Small Oxygen Generator at `(-11,-4)`) remains loadable but is intentionally too close under the new placement rule; the nearest legal replacement spacing produces a straight two-point corridor.
+
+## v0.43.22 Bio Dome end-cap corridor connectivity
+- The Bio Dome greenhouse barrel now has real semicircular pressure end caps on both long-axis ends. Previously the half-cylinder roof was open at those ends above the low foundation, so a generated corridor hatch could find the lower wall but could not project its full doorway profile onto a pressure surface.
+- Front/back corridor attachment now uses the same generated 360-degree pressure-hatch path as every other free Bio Dome hull sector; no special authored entrance or snap point is introduced.
+- Existing saves need no migration; the mesh change affects rendering/attachment geometry only.
+
+## v0.43.23 doubled new-game playfields
+
+- New Game defaults to 128 x 128. Selectable sizes run from 32 x 32 through 1024 x 1024 in 32 m increments, preserving the same number/order of size choices at twice the previous linear scale.
+- DEBUG START TEMPLATE now uses 128 x 128. Legacy saves may still contain the historical 16..512 m sizes; load validation now also accepts the new 1024 m maximum.
+
+## v0.43.24 scrollable upper-left info pane
+
+- The selection/details pane is capped to the usable area between the status bar and build catalog instead of allowing overflowing telemetry to draw outside its frame.
+- Overflowing content is vertically scrollable with the mouse wheel and displays a proportional scrollbar. Non-overflowing selections keep the existing static layout.
+- Wheel input while the pointer is inside the selection pane is UI-owned: it neither zooms the playfield camera nor cycles placement sizes.
+- Scroll position resets when the selected world object changes and is clamped when content/viewport height changes.

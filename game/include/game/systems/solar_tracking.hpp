@@ -53,4 +53,21 @@ inline SolarPose pose(float hour){
     return out;
 }
 
+inline eng::Vec3 fixed_panel_normal(float base_rotation_degrees){
+    constexpr float pi=3.14159265358979323846f;
+    constexpr float pitch=24.0f*pi/180.0f;
+    const eng::Vec3 authored_normal{0.0f,std::cos(pitch),-std::sin(pitch)};
+    const float yaw=base_rotation_degrees*pi/180.0f;
+    return eng::normalize({
+        authored_normal.x*std::cos(yaw)+authored_normal.z*std::sin(yaw),
+        authored_normal.y,
+       -authored_normal.x*std::sin(yaw)+authored_normal.z*std::cos(yaw)
+    });
+}
+
+inline float fixed_panel_incidence_fraction(eng::Vec3 sun_direction,float base_rotation_degrees){
+    if(sun_direction.y<=0.0f) return 0.0f;
+    return std::clamp(eng::dot(fixed_panel_normal(base_rotation_degrees),eng::normalize(sun_direction)),0.0f,1.0f);
+}
+
 } // namespace game::solar_tracking

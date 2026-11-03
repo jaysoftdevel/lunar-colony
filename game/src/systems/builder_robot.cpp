@@ -551,6 +551,7 @@ ResourceBundle GameApp::starter_resource_reserve() const {
 }
 
 void GameApp::reset_builder_robot_and_starter_stash(){
+    robot_enclosure_legacy_scan_pending_=true;
     robot_safety_time_seconds_=0.0f;
     production_fraction_.fill(0.0);
     life_support_fraction_seconds_=0.0;
@@ -1429,6 +1430,23 @@ void GameApp::update_builder_robot(float dt){
         robot.battery_capacity_kwh=robot_battery_capacity_kwh(robot.role);
         robot.battery_charge_kwh=std::clamp(robot.battery_charge_kwh,0.0f,robot.battery_capacity_kwh);
         robot.battery_last_draw_kw=0.0f;
+
+        // A depleted traction pack is an energy-management state, not a motion-
+        // safety invariant failure. Old saves can already contain 0 kWh. Give
+        // those rovers only the protected reserve needed to reach charging; the
+        // normal reserve policy then diverts them before useful work resumes.
+        if(robot.battery_charge_kwh<=0.0001f)
+            robot.battery_charge_kwh=robot.battery_capacity_kwh*kRobotBatteryCriticalFraction;
+
+        if(has_workshop){
+            robot.starter_charge_active=false;
+        }else{
+            const float fraction=robot.battery_charge_kwh/std::max(0.001f,robot.battery_capacity_kwh);
+            const bool safe_to_interrupt=robot.action==BuilderRobotAction::None &&
+                !robot.stage_commit_pending && !robot.drop_exit_pending;
+            if(fraction<=kRobotBatteryReserveFraction && safe_to_interrupt)
+                robot.starter_charge_active=true;
+        }
     }
     const auto battery_service_required=[&](const BuilderRobotState& robot){
         if(!has_workshop || robot.battery_capacity_kwh<=0.001f) return false;
@@ -3000,11 +3018,125 @@ void GameApp::update_builder_robot(float dt){
         return move_towards(robot_index,destination,stop_radius,speed_scale);
     };
 
+    struct ExteriorRouteAssessment {
+        bool exterior_connected{true};
+        bool escape_valid{false};
+        Vec3 escape{};
+    };
+
+    // A local footprint check is not enough to protect a rover from being
+    // enclosed by several structures/corridors that collectively form a ring.
+    // Build a coarse full-playfield connectivity map at construction commit
+    // time.  The perimeter service lane is permanently structure-free, so a
+    // rover connected to that lane cannot be sealed into a construction pocket.
+    auto assess_exterior_connectivity=[&](std::size_t robot_index,const ConstructionTargetRef* future_target,std::uint8_t future_step){
+        ExteriorRouteAssessment result{};
+        if(robot_index>=builder_robots_.size()) return result;
+        const auto& robot=builder_robots_[robot_index];
+        const float radius=robot_resource_clearance_radius(robot.role)+kRobotObstacleMargin;
+        const float half=std::max(2.0f,(float)playfield_.size()*0.5f-radius-0.18f);
+        constexpr float cell=1.0f;
+        const int side=std::max(5,(int)std::floor((2.0f*half)/cell)+1);
+        const std::size_t count=(std::size_t)side*(std::size_t)side;
+        std::vector<unsigned char> current_clear(count,0),future_clear(count,0),exterior(count,0),visited(count,0);
+        auto index=[&](int x,int z){ return (std::size_t)z*(std::size_t)side+(std::size_t)x; };
+        auto point=[&](int x,int z){
+            const float fx=-half+(2.0f*half)*(float)x/(float)(side-1);
+            const float fz=-half+(2.0f*half)*(float)z/(float)(side-1);
+            return Vec3{fx,rover_floor_height({fx,0.0f,fz}),fz};
+        };
+        auto blocked_by_future=[&](Vec3 p){
+            if(!future_target || !future_target->valid()) return false;
+            return target_future_envelope_contains(*future_target,future_step,p,radius) ||
+                   target_blocks_at_step(*future_target,future_step,p,radius);
+        };
+        for(int z=0;z<side;++z) for(int x=0;x<side;++x){
+            const Vec3 p=point(x,z);
+            const bool clear=robot_structure_move_allowed(robot,p,p);
+            current_clear[index(x,z)]=(unsigned char)clear;
+            future_clear[index(x,z)]=(unsigned char)(clear && !blocked_by_future(p));
+        }
+        std::vector<std::size_t> queue;queue.reserve(count);
+        auto push_exterior=[&](int x,int z){
+            const auto i=index(x,z);if(!future_clear[i] || exterior[i])return;exterior[i]=1;queue.push_back(i);
+        };
+        for(int i=0;i<side;++i){push_exterior(i,0);push_exterior(i,side-1);push_exterior(0,i);push_exterior(side-1,i);}
+        std::size_t q=0;
+        constexpr int dx[4]{1,-1,0,0},dz[4]{0,0,1,-1};
+        auto edge_clear=[&](std::size_t a,std::size_t b,bool future){
+            const int ax=(int)(a%(std::size_t)side),az=(int)(a/(std::size_t)side);
+            const int bx=(int)(b%(std::size_t)side),bz=(int)(b/(std::size_t)side);
+            const Vec3 pa=point(ax,az),pb=point(bx,bz);
+            // Cell-center occupancy alone is not enough: two individually clear
+            // samples may still be separated by the inflated corner of a hull
+            // or corridor. Use the same swept-chassis predicate as the real rover
+            // mover for every topology edge so a graph route is physically drivable.
+            if(!robot_structure_move_allowed(robot,pa,pb)) return false;
+            if(!future || !future_target || !future_target->valid()) return true;
+            // The future stage is not part of the live nav cache yet. Sample the
+            // short (<=1 m) graph edge densely against its inflated construction
+            // envelope so the topology graph cannot tunnel through a stage that
+            // is about to become solid.
+            constexpr int samples=4;
+            for(int sample=0;sample<=samples;++sample){
+                const float t=(float)sample/(float)samples;
+                const Vec3 p=pa+(pb-pa)*t;
+                if(blocked_by_future(p)) return false;
+            }
+            return true;
+        };
+        while(q<queue.size()){
+            const auto i=queue[q++];const int x=(int)(i%(std::size_t)side),z=(int)(i/(std::size_t)side);
+            for(int d=0;d<4;++d){
+                const int nx=x+dx[d],nz=z+dz[d];if(nx<0||nz<0||nx>=side||nz>=side)continue;
+                const auto ni=index(nx,nz);
+                if(future_clear[ni]&&!exterior[ni]&&edge_clear(i,ni,true)){exterior[ni]=1;queue.push_back(ni);}
+            }
+        }
+        int sx=(int)std::lround((robot.position.x+half)*(float)(side-1)/(2.0f*half));
+        int sz=(int)std::lround((robot.position.z+half)*(float)(side-1)/(2.0f*half));
+        sx=std::clamp(sx,0,side-1);sz=std::clamp(sz,0,side-1);
+        std::size_t start=index(sx,sz);
+        if(!current_clear[start]){
+            float best=std::numeric_limits<float>::max();
+            for(int rz=std::max(0,sz-3);rz<=std::min(side-1,sz+3);++rz)for(int rx=std::max(0,sx-3);rx<=std::min(side-1,sx+3);++rx){
+                const auto ri=index(rx,rz);if(!current_clear[ri])continue;const float d=dist_xz(robot.position,point(rx,rz));if(d<best){best=d;start=ri;}
+            }
+        }
+        if(current_clear[start] && exterior[start]) return result;
+        result.exterior_connected=false;
+
+        // For a construction step that is ABOUT to close the pocket, find the
+        // nearest cell that is reachable with today's geometry and remains in
+        // the exterior component after the new stage appears. Routing there
+        // before commit preserves continuous physical motion through the last
+        // still-open gap.
+        queue.clear();q=0;
+        if(current_clear[start]){visited[start]=1;queue.push_back(start);}
+        while(q<queue.size()){
+            const auto i=queue[q++];
+            if(exterior[i]){const int x=(int)(i%(std::size_t)side),z=(int)(i/(std::size_t)side);result.escape=point(x,z);result.escape_valid=true;return result;}
+            const int x=(int)(i%(std::size_t)side),z=(int)(i/(std::size_t)side);
+            for(int d=0;d<4;++d){
+                const int nx=x+dx[d],nz=z+dz[d];if(nx<0||nz<0||nx>=side||nz>=side)continue;
+                const auto ni=index(nx,nz);
+                if(current_clear[ni]&&!visited[ni]&&edge_clear(i,ni,false)){visited[ni]=1;queue.push_back(ni);}
+            }
+        }
+        // Legacy saves can already contain a completely sealed component. A
+        // continuous route no longer exists, so expose the nearest clear point
+        // in the exterior component for the one-time emergency extraction.
+        float best=std::numeric_limits<float>::max();
+        for(int z=0;z<side;++z)for(int x=0;x<side;++x){const auto i=index(x,z);if(!exterior[i])continue;const Vec3 p=point(x,z);const float d=dist_xz(robot.position,p);if(d<best){best=d;result.escape=p;result.escape_valid=true;}}
+        return result;
+    };
+
     auto robot_safe_for_next_stage=[&](std::size_t robot_index,const ConstructionTargetRef& target,std::uint8_t next_step){
         const auto& robot=builder_robots_[robot_index];
         const float radius=robot_resource_clearance_radius(robot.role)+kRobotObstacleMargin;
         if(target_future_envelope_contains(target,next_step,robot.position,radius)) return false;
         if(target_blocks_at_step(target,next_step,robot.position,radius)) return false;
+        if(!assess_exterior_connectivity(robot_index,&target,next_step).exterior_connected) return false;
         return true;
     };
 
@@ -3113,6 +3245,32 @@ void GameApp::update_builder_robot(float dt){
     // resumes. This prevents an idle carrier (or another constructor passing
     // through the blueprint) from being sealed inside by somebody else's step.
     std::vector<bool> safety_repositioning(builder_robots_.size(),false);
+
+    // Repair old saves that were written after a ring had already become
+    // complete. There is no collision-free path through solid walls at that
+    // point, so perform one deterministic emergency extraction to the nearest
+    // perimeter-connected clear cell. Cargo, assignment and reservations stay
+    // intact; only transient navigation/safety state is reset. Workshops are
+    // legitimate enclosed parking volumes and are excluded from this rule.
+    if(robot_enclosure_legacy_scan_pending_){
+        robot_enclosure_legacy_scan_pending_=false;
+        for(std::size_t ri=0;ri<builder_robots_.size();++ri){
+            auto& robot=builder_robots_[ri];
+            if(robot.workshop_parked) continue;
+            const auto enclosure=assess_exterior_connectivity(ri,nullptr,0);
+            if(enclosure.exterior_connected || !enclosure.escape_valid) continue;
+            robot.position=enclosure.escape;
+            robot.position.y=rover_floor_height(robot.position);
+            clear_route(robot);
+            robot.safety={};
+            robot.current_speed_mps=0.0f;
+            robot.route_replan_cooldown=0.0f;
+            robot.watchdog_elapsed=0.0f;
+            robot.watchdog_position=robot.position;
+            safety_repositioning[ri]=true;
+        }
+    }
+
     for(std::size_t ci=0;ci<builder_robots_.size();++ci){
         auto& constructor=builder_robots_[ci];
         if(constructor.role!=RobotRole::Constructor || !constructor.stage_commit_pending || !constructor.target.valid()) continue;
@@ -3139,7 +3297,8 @@ void GameApp::update_builder_robot(float dt){
                 return robot_structure_move_allowed(evac,candidate,candidate);
             };
             if(!evacuation_destination_still_valid(evac.stage_commit_safe_position)){
-                evac.stage_commit_safe_position=safe_stage_commit_destination(ri,constructor.target,next_step);
+                const auto enclosure=assess_exterior_connectivity(ri,&constructor.target,next_step);
+                evac.stage_commit_safe_position=enclosure.escape_valid?enclosure.escape:safe_stage_commit_destination(ri,constructor.target,next_step);
                 evac.stage_commit_safe_position_valid=true;
                 evac.stage_commit_alternate_attempted=false;
                 clear_route(evac);
@@ -3161,15 +3320,21 @@ void GameApp::update_builder_robot(float dt){
             // over without repeatedly launching a world search.
             const bool reached=move_construction_service_direct(ri,destination,0.025f,0.72f);
             if(!reached && evac.stage_commit_evacuate_elapsed>2.0f && !evac.stage_commit_alternate_attempted){
-                // After one genuine blocked interval choose exactly one alternate
-                // exterior sector. Do not reset blocked_elapsed here: if the
-                // alternate is also unsolvable, the 5 s hard safety relocation
-                // below must remain reachable instead of restarting forever.
+                // Never replace a topology evacuation with a generic construction
+                // service point: that point may be geometrically clear while still
+                // lying INSIDE the pocket that the pending stage is about to seal.
+                // Re-evaluate the post-stage exterior component and only accept an
+                // alternate that is explicitly exterior-connected. If the original
+                // escape remains the only valid choice, keep it and let the normal
+                // certified route planner continue working toward it.
                 evac.service_slot_offset=(std::uint8_t)((evac.service_slot_offset+7u)%24u);
+                const auto enclosure=assess_exterior_connectivity(ri,&constructor.target,next_step);
+                if(enclosure.escape_valid){
+                    evac.stage_commit_safe_position=enclosure.escape;
+                    evac.stage_commit_safe_position_valid=true;
+                }
                 clear_route(evac);
                 evac.route_replan_cooldown=0.0f;
-                evac.stage_commit_safe_position=safe_stage_commit_destination(ri,constructor.target,next_step);
-                evac.stage_commit_safe_position_valid=true;
                 evac.stage_commit_alternate_attempted=true;
                 destination=evac.stage_commit_safe_position;
             }
@@ -4447,6 +4612,9 @@ void GameApp::update_builder_robot(float dt){
         // normal Building branch in the same tick, freezing the stage forever.
         if(safety_repositioning[robot_index] || body_escape_repositioning[robot_index] ||
            completed_structure_relocated[robot_index]) continue;
+        // Bootstrap charging temporarily owns locomotion but preserves the
+        // construction state; the same target can resume after the pack recovers.
+        if(robot.starter_charge_active) continue;
 
         // Role separation from v0.40.16 onward: a constructor never transports
         // construction stock. Legacy saves can still contain an in-flight BR-02
@@ -5057,6 +5225,7 @@ void GameApp::update_builder_robot(float dt){
         auto& carrier=builder_robots_[robot_index];
         if(carrier.role!=RobotRole::Carrier) continue;
         if(safety_repositioning[robot_index]) continue;
+        if(carrier.starter_charge_active) continue;
 
         // A CR-01 finishes any load already on its deck, but an empty rover at
         // the reserve threshold releases its lease and returns to a powered
@@ -5066,7 +5235,12 @@ void GameApp::update_builder_robot(float dt){
         if(battery_service_required(carrier) && carrier.cargo.empty() &&
            carrier.action==BuilderRobotAction::None && !carrier.drop_exit_pending){
             clear_logistics_assignment(carrier);carrier.target={};carrier.support_robot_index=kNoRobotIndex;
-            carrier.mode=BuilderRobotMode::Idle;clear_route(carrier);
+            carrier.mode=BuilderRobotMode::Idle;
+            // With an operational workshop the idle-home controller below owns
+            // the next navigation goal. Do not erase the persistent planner on
+            // every low-battery tick; safety_tick invalidates it once when the
+            // workshop goal actually differs from the previous work goal.
+            if(!has_workshop) clear_route(carrier);
             continue;
         }
 
@@ -5277,7 +5451,13 @@ void GameApp::update_builder_robot(float dt){
                 // once the current construction queue is complete.
                 carrier.mode=any_unfinished_blueprint()?BuilderRobotMode::Idle:BuilderRobotMode::DepotTransfer;
                 carrier.cargo_committed_to_build=false;
-                if(!carrier.debug_move_active)clear_route(carrier);
+                // An idle carrier may still have a real workshop-return request
+                // later in this same update. Repeatedly clearing its route here
+                // used to destroy the incremental D* state every rendered frame
+                // (0-43-36.gmsave), causing millions of redundant node expands.
+                // With a workshop present, keep the planner state; the safety
+                // coordinator will invalidate it exactly once if the goal changes.
+                if(!carrier.debug_move_active && !has_workshop) clear_route(carrier);
             }
         }
 
@@ -5553,6 +5733,65 @@ void GameApp::update_builder_robot(float dt){
         }
     }
 
+    // Before the first Robot Workshop is operational, the starter apron acts
+    // as a bootstrap charger. This is deliberately a recovery mechanism rather
+    // than free roaming energy: at <=10% a rover suspends its current state,
+    // returns to its own original parking bay, charges to 80%, then resumes the
+    // preserved mode/target/cargo/reservation. This removes the circular failure
+    // where a workshop cannot be built because the robots needed to build it
+    // have no remaining energy.
+    if(!has_workshop){
+        const float half=(float)playfield_.size()*0.5f;
+        auto starter_charge_bay=[&](std::size_t ordinal){
+            Vec3 p{};
+            if(half>=12.0f){
+                const Vec3 center=starter_stash_center_+Vec3{4.60f,0.0f,11.60f};
+                const int column=(int)(ordinal%3u);
+                const int row=(int)(ordinal/3u);
+                p={center.x+((float)column-1.0f)*3.00f,0.0f,
+                   center.z+((float)row-1.5f)*3.00f};
+            }else{
+                const Vec3 center=starter_stash_center_+Vec3{7.00f,0.0f,0.0f};
+                const int column=(int)(ordinal%2u);
+                const int row=(int)(ordinal/2u);
+                p={center.x+((float)column-0.5f)*2.40f,0.0f,
+                   center.z+((float)row-2.5f)*2.40f};
+            }
+            const float edge=robot_resource_clearance_radius(builder_robots_[ordinal].role)+kRobotObstacleMargin+0.12f;
+            p.x=std::clamp(p.x,-half+edge,half-edge);
+            p.z=std::clamp(p.z,-half+edge,half-edge);
+            p.y=rover_floor_height(p);
+            return p;
+        };
+
+        for(std::size_t i=0;i<builder_robots_.size();++i){
+            auto& robot=builder_robots_[i];
+            if(!robot.starter_charge_active) continue;
+            navigation_requests[i]={};
+            clear_action(robot);
+            const Vec3 bay=starter_charge_bay(i);
+            if(dist_xz(robot.position,bay)>0.24f || std::abs(robot.current_speed_mps)>0.04f){
+                robot.battery_charging=false;
+                move_towards(i,bay,0.18f,0.68f);
+                continue;
+            }
+            clear_route(robot);
+            robot.current_speed_mps=0.0f;
+            robot.battery_charging=true;
+            const float charge_kwh=kStarterRobotChargePowerKw*(std::max(0.0f,dt)/10.0f);
+            robot.battery_charge_kwh=std::min(robot.battery_capacity_kwh,robot.battery_charge_kwh+charge_kwh);
+            if(robot.battery_charge_kwh>=robot.battery_capacity_kwh*kStarterRobotChargeReleaseFraction){
+                robot.starter_charge_active=false;
+                robot.battery_charging=false;
+                robot.blocked_elapsed=0.0f;
+                robot.watchdog_elapsed=0.0f;
+                robot.recovery_attempts=0;
+                robot.safety.temporary_goal_valid=false;
+                clear_route(robot);
+            }
+        }
+    }
+
     // Idle CR-01s do not spend simulation time pathfinding toward a cosmetic
     // global parking bay. Every completed delivery already has a protected
     // drop-exit phase which moves the chassis clear of the shared apron. Once
@@ -5766,7 +6005,10 @@ void GameApp::update_builder_robot(float dt){
         agent.heading_degrees=robot.heading_degrees;
         agent.speed_mps=robot.current_speed_mps;
         agent.radius_m=robot_safety_corridor_radius(robot.role);
-        agent.max_speed_mps=robot.battery_charge_kwh>0.0001f?robot.move_speed_mps:0.0f;
+        // max_speed_mps describes the rover's physical motion bounds. Battery
+        // availability is handled by dispatch/charging logic above; zero charge
+        // must never be reclassified as INVALID MOTION BOUNDS.
+        agent.max_speed_mps=robot.move_speed_mps;
         agent.acceleration_mps2=kRobotAccelerationMps2;
         agent.braking_mps2=kRobotBrakingMps2;
         agent.turn_rate_degrees_per_second=kRobotTurnRateDegreesPerSecond;

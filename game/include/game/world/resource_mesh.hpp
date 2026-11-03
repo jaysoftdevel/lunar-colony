@@ -41,6 +41,25 @@ inline const char* resource_size_name(ResourceSizeTier size){
     }
 }
 
+// Shared electrical-storage capacity definition. Keep simulation, status bar
+// and inspectors on the same source of truth. v0.43.32 raises the dedicated
+// Power Storage battery by another 50%: Standard 90 -> 135 kWh,
+// Small 45 -> 67.5 kWh.
+inline constexpr double power_storage_capacity_kwh(ResourceSizeTier size){
+    return size==ResourceSizeTier::Small?67.5:135.0;
+}
+
+// Small local output buffers keep generators useful during short storage/network
+// interruptions without turning them into replacements for dedicated storage.
+// The standard solar buffer holds 15 minutes at peak output; small keeps the
+// same duration. Water drillers buffer a fraction of a game-day production.
+inline constexpr double solar_panel_buffer_capacity_kwh(ResourceSizeTier size){
+    return size==ResourceSizeTier::Small?2.0:4.0;
+}
+inline constexpr double water_driller_buffer_capacity_litres(ResourceSizeTier size){
+    return size==ResourceSizeTier::Small?50.0:100.0;
+}
+
 enum class StorageDomeSize {
     Small = 0,
     Mid,
@@ -153,6 +172,15 @@ struct PlacedResource {
     float workshop_gate_hold{0.0f};
     bool workshop_gate_initialized{false};
     int workshop_entry_owner{-1};
+    // Solar collectors track the star by default to preserve the established
+    // maximum-output behaviour. Players can disable this per collector from
+    // its status panel; the collector then remains at its authored fixed pose.
+    bool solar_tracking_enabled{true};
+    // Transient visual tracker pose. The simulation output may react instantly,
+    // but the physical collector slews continuously toward its target so neither
+    // time progression nor toggling tracking can make the panel jump.
+    eng::Vec3 solar_visual_normal{};
+    bool solar_visual_initialized{false};
     // Non-storage outdoor structures support STANDARD + SMALL. Storage domes
     // retain their dedicated SMALL/MID/BIG/HUGE tiers.
     ResourceSizeTier size{ResourceSizeTier::Standard};

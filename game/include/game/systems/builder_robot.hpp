@@ -60,6 +60,11 @@ inline constexpr float kRobotBatteryReserveFraction = 0.10f;
 inline constexpr float kRobotBatteryCriticalFraction = 0.025f;
 inline constexpr float kRobotWorkshopChargePowerKw = 8.0f;
 inline constexpr float kRobotWorkshopChargeEfficiency = 0.92f;
+// Bootstrap charger beside the starter stash. It is available only until an
+// operational Robot Workshop exists, preventing an early colony from becoming
+// permanently unrecoverable because both construction rovers exhausted their packs.
+inline constexpr float kStarterRobotChargePowerKw = 8.0f;
+inline constexpr float kStarterRobotChargeReleaseFraction = 0.80f;
 inline constexpr float kBuilderDriveEnergyKwhPerMeter = 0.0032f;
 inline constexpr float kCarrierDriveEnergyKwhPerMeter = 0.0038f;
 inline constexpr float kBuilderAuxiliaryPowerKw = 0.08f;
@@ -144,6 +149,7 @@ struct BuilderRobotState {
     float battery_charge_kwh{kBuilderRobotBatteryCapacityKwh};
     float battery_last_draw_kw{0.0f};       // telemetry, transient
     bool battery_charging{false};            // telemetry, transient
+    bool starter_charge_active{false};       // transient bootstrap/emergency return latch
     float work_elapsed{0.0f};
     float idle_elapsed{0.0f};
     std::size_t workshop_index{kNoRobotIndex};

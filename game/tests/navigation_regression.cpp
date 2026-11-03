@@ -359,6 +359,113 @@ struct NavigationRegression {
                  <<" m with full hard hull clearance; replans="<<max_replans<<"\n";
     }
 
+    static void stuck_carrier_save(const std::string& path){
+        eng::Application engine;GameApp app(engine);std::string error;
+        require(app.load_game_from_file(path,error),error);
+        std::size_t carrier_index=app.builder_robots_.size();
+        for(std::size_t i=0;i<app.builder_robots_.size();++i)
+            if(app.builder_robots_[i].role==RobotRole::Carrier){carrier_index=i;break;}
+        require(carrier_index<app.builder_robots_.size(),"stuck-carrier fixture needs a carrier");
+        const Vec3 start=app.builder_robots_[carrier_index].position;
+        std::uint32_t max_initializations=0,max_expansions=0;
+        double total_ms=0.0,worst_ms=0.0;
+        bool moved=false,parked=false;
+        int frames=0;
+        for(int frame=0;frame<60*120;++frame){
+            ++frames;
+            const auto began=std::chrono::steady_clock::now();
+            app.update_pressure_doors(1.0f/60.0f);
+            app.update_construction(1.0f/60.0f);
+            const double elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-began).count();
+            total_ms+=elapsed;worst_ms=std::max(worst_ms,elapsed);
+            const auto& carrier=app.builder_robots_[carrier_index];
+            require(carrier.safety.mode!=SafetyMode::Fault,"stuck carrier entered safety fault");
+            moved=moved || distance(start,carrier.position)>8.0f;
+            parked=parked || carrier.workshop_parked;
+            max_initializations=std::max(max_initializations,carrier.safety.incremental_path.initialization_count);
+            max_expansions=std::max(max_expansions,carrier.safety.incremental_path.expanded_node_count);
+            if(parked) break;
+        }
+        const auto& carrier=app.builder_robots_[carrier_index];
+        require(moved,"carrier remained stuck at its saved position");
+        require(parked,"carrier did not complete the workshop return");
+        require(max_initializations<12,"stuck recovery repeatedly restarted the incremental planner");
+        require(max_expansions<100000,"stuck recovery expanded an excessive number of route nodes");
+        std::cout<<"Saved carrier recovered from "<<start.x<<","<<start.z
+                 <<" to "<<carrier.position.x<<","<<carrier.position.z
+                 <<"; planner init="<<max_initializations<<" nodes="<<max_expansions
+                 <<" avg tick ms="<<(total_ms/std::max(1,frames))
+                 <<" worst tick ms="<<worst_ms<<"\n";
+    }
+
+    static void pending_enclosure_save(const std::string& path){
+        eng::Application engine;GameApp app(engine);std::string error;
+        require(app.load_game_from_file(path,error),error);
+        require(!app.builder_robots_.empty(),"pending-enclosure fixture needs a builder");
+        require(app.corridor_network_.connections().size()>5,"pending-enclosure fixture needs corridor 5");
+        const Vec3 start=app.builder_robots_[0].position;
+        const auto initial_step=app.corridor_network_.connections()[5].construction.step;
+        require(initial_step<kCorridorConstructionSteps,"pending-enclosure corridor already complete");
+        bool committed=false;
+        Vec3 at_commit=start;
+        for(int frame=0;frame<20*90;++frame){
+            app.update_pressure_doors(0.05f);app.update_construction(0.05f);
+            for(const auto& robot:app.builder_robots_)
+                require(robot.safety.mode!=SafetyMode::Fault,"pending enclosure replay entered safety fault");
+            if(app.corridor_network_.connections()[5].construction.step>initial_step){
+                committed=true;at_commit=app.builder_robots_[0].position;break;
+            }
+        }
+        require(committed,"pending enclosure corridor never committed after evacuation");
+        require(distance(start,at_commit)>4.5f,"builder did not leave the future enclosure before corridor commit");
+        require(at_commit.z>17.0f,"builder remained on the enclosed side when corridor committed");
+        std::cout<<"Pending enclosure evacuated builder from "<<start.x<<","<<start.z
+                 <<" to "<<at_commit.x<<","<<at_commit.z<<" before corridor commit\n";
+    }
+    static void enclosure_save(const std::string& path){
+        eng::Application engine;GameApp app(engine);std::string error;
+        require(app.load_game_from_file(path,error),error);
+        require(!app.builder_robots_.empty(),"enclosure fixture needs a robot");
+        const Vec3 before=app.builder_robots_[0].position;
+        app.update_pressure_doors(1.0f/60.0f);
+        app.update_construction(1.0f/60.0f);
+        const Vec3 after=app.builder_robots_[0].position;
+        require(distance(before,after)>1.0f,"legacy enclosed robot was not emergency-extracted");
+        for(int frame=0;frame<60*20;++frame){
+            app.update_pressure_doors(1.0f/60.0f);app.update_construction(1.0f/60.0f);
+            for(const auto& robot:app.builder_robots_)require(robot.safety.mode!=SafetyMode::Fault,"enclosure recovery entered safety fault");
+        }
+        require(distance(before,app.builder_robots_[0].position)>1.0f,"recovered robot returned to sealed pocket");
+        std::cout<<"Legacy enclosed robot extracted from "<<before.x<<","<<before.z<<" to "<<after.x<<","<<after.z<<" and remained safe\n";
+    }
+
+    static void airlock_supply_save(const std::string& path){
+        eng::Application engine;GameApp app(engine);std::string error;
+        require(app.load_game_from_file(path,error),error);
+        std::size_t checked=0;
+        for(std::size_t i=0;i<app.placed_habitats_.size();++i){
+            const auto& h=app.placed_habitats_[i];
+            if(h.kind!=HabitatKind::AirLock) continue;
+            const auto& mesh=app.habitat_models_.mesh(h);
+            for(const Vec3 local_cursor:std::array<Vec3,4>{
+                    Vec3{ mesh.footprint_x*0.49f,0,0},Vec3{-mesh.footprint_x*0.49f,0,0},
+                    Vec3{0,0, mesh.footprint_z*0.49f},Vec3{0,0,-mesh.footprint_z*0.49f}}){
+                const Vec3 cursor=h.position+world_math::rotate_y(local_cursor,h.rotation_degrees);
+                const auto anchor=app.utility_anchor_at(cursor,UtilityKind::SupplyChannel);
+                require(anchor && anchor->kind==UtilityEndpointKind::Habitat && anchor->index==i,"save Air Lock side not selectable");
+                const Vec3 away=cursor+world_math::rotate_y(eng::normalize(local_cursor)*14.0f,h.rotation_degrees);
+                const auto port=app.utility_network_.preview_anchor(UtilityKind::SupplyChannel,*anchor,away,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+                require(port.has_value(),"save Air Lock side did not resolve to supply port");
+                const Vec3 lp=world_math::rotate_y(port->position-h.position,-h.rotation_degrees);
+                if(std::abs(local_cursor.x)>std::abs(local_cursor.z)) require(lp.x*local_cursor.x>0,"save Air Lock X-side remapped");
+                else require(lp.z*local_cursor.z>0,"save Air Lock lateral side remapped");
+                ++checked;
+            }
+        }
+        require(checked>0,"save contains no Air Lock side to validate");
+        std::cout<<"save Air Lock player-facing supply snapping passed on "<<checked<<" sides\n";
+    }
+
     static void inspect(const std::string& path){
         eng::Application engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
@@ -383,7 +490,7 @@ struct NavigationRegression {
     }
     static void construction(const std::string& path,bool late_corridor=false,bool inject_fault=false){
         eng::Application engine;GameApp app(engine);
-        app.playfield_.rebuild(64);app.starting_robot_count_=3;app.starting_carrier_count_=3;
+        app.playfield_.rebuild(GameApp::kDebugTemplatePlayfieldSize);app.starting_robot_count_=3;app.starting_carrier_count_=3;
         app.reset_builder_robot_and_starter_stash();
         std::string error;
         require(app.load_debug_blueprint_template_from_file(path,error),"load debug template: "+error);
@@ -687,9 +794,10 @@ struct NavigationRegression {
         // rejected if it consumes the permanent perimeter rover lane.
         const float half_field=(float)placement.playfield_.size()*0.5f;
         const auto& solar_mesh=placement.resource_models_.mesh(ResourceKind::SolarPanel,ResourceSizeTier::Small);
-        const float near_border_x=half_field-solar_mesh.footprint_x*0.5f-0.10f;
+        const float solar_ground_x=geometry::structure_ground_extent(solar_mesh.footprint_x);
+        const float near_border_x=half_field-solar_ground_x*0.5f-0.10f;
         require(!placement.resource_placement_valid(ResourceKind::SolarPanel,ResourceSizeTier::Small,StorageDomeSize::Small,{near_border_x,0,0},0),"structure consumed perimeter rover lane");
-        const float safe_border_x=half_field-geometry::kPlayfieldRobotPerimeterLane-solar_mesh.footprint_x*0.5f-0.20f;
+        const float safe_border_x=half_field-geometry::kPlayfieldRobotPerimeterLane-solar_ground_x*0.5f-0.20f;
         require(placement.resource_placement_valid(ResourceKind::SolarPanel,ResourceSizeTier::Small,StorageDomeSize::Small,{safe_border_x,0,0},0),"structure rejected inside perimeter rover lane boundary");
         PlacedResource obstacle;obstacle.kind=ResourceKind::PowerStorage;obstacle.position={0,0,-14};placement.placed_resources_={obstacle};
         require(!placement.resource_placement_valid(w.kind,ResourceSizeTier::Standard,StorageDomeSize::Small,{0,0,0},0),"workshop ramp can be placed against an obstacle");
@@ -839,7 +947,7 @@ struct NavigationRegression {
         require(app.placed_habitats_[0].supply.volume_m3>0 && mass()==0,"zero-time air metadata refresh advanced the simulation");
         app.update_supply_simulation(0.1f);
         const auto& gen=app.placed_habitats_[0].supply;
-        require(gen.oxygen_produced_kg_per_day>8.99 && gen.oxygen_produced_kg_per_day<=9.00001,"generator does not report actual oxygen output");
+        require(gen.oxygen_produced_kg_per_day>17.99 && gen.oxygen_produced_kg_per_day<=18.00001,"generator does not report doubled oxygen output");
         require(std::abs(gen.water_processed_litres_per_day-gen.oxygen_produced_kg_per_day*kWaterPerOxygen)<1e-9,"water processing and oxygen rate disagree");
         require(std::abs(gen.hydrogen_produced_kg_per_day-gen.oxygen_produced_kg_per_day*kHydrogenPerOxygen)<1e-9,"electrolysis hydrogen/oxygen mass ratio is not 1:8");
         require(gen.hydrogen_kg>0 && gen.hydrogen_kg<=kOxygenGeneratorHydrogenBufferKg,"oxygen generator did not retain hydrogen by-product in its local buffer");
@@ -857,11 +965,11 @@ struct NavigationRegression {
         app.placed_resources_[1].supply.water_litres=100;clock.hour=0;app.status_.restore(clock);const double before_unpowered=app.placed_resources_[1].supply.water_litres;app.update_supply_simulation(1);
         require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && (gen.warnings&NoPower) && app.placed_resources_[1].supply.water_litres==before_unpowered,"unpowered generator processed water");
         clock.hour=12;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=s.volume_m3*kOxygenKgPerM3;});app.update_supply_simulation(1);
-        require(gen.oxygen_produced_kg_per_day>0 && gen.oxygen_produced_kg_per_day<9 && gen.water_processed_litres_per_day>0 && app.placed_resources_[1].supply.water_litres<100,"nominal full-pressure leakage was not replenished by life support");
+        require(gen.oxygen_produced_kg_per_day>0 && gen.oxygen_produced_kg_per_day<18 && gen.water_processed_litres_per_day>0 && app.placed_resources_[1].supply.water_litres<100,"nominal full-pressure leakage was not replenished by life support");
         clock.hour=0;clock.crew_current=6;app.status_.restore(clock);app.update_supply_simulation(1);
         require(app.placed_habitats_[2].supply.air_change_percentage_points_per_day<0,"depleting isolated interior did not report falling air");
         clock.hour=12;clock.crew_current=0;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=0;});app.placed_resources_[1].supply.water_litres=0.01;app.update_supply_simulation(10);
-        require(std::abs(mass()*kWaterPerOxygen-0.01)<1e-9 && app.placed_resources_[1].supply.water_litres>=0 && gen.oxygen_produced_kg_per_day<9,"nearly empty tank was overdrawn or reported nominal output");
+        require(std::abs(mass()*kWaterPerOxygen-0.01)<1e-9 && app.placed_resources_[1].supply.water_litres>=0 && gen.oxygen_produced_kg_per_day<18,"nearly empty tank was overdrawn or reported nominal output");
         const double saved_mass=mass();app.update_supply_simulation(0);
         require(mass()==saved_mass && gen.oxygen_produced_kg_per_day==0 && gen.oxygen_net_kg_per_day==0,"zero-time refresh consumed water or retained a stale rate");
         std::cout<<"Water electrolysis, measured output/intake and air-change rates, room/storage distribution, depletion, isolation and input/capacity limits passed\n";
@@ -902,18 +1010,52 @@ struct NavigationRegression {
         require(app.placed_habitats_[0].supply.hydrogen_kg==remaining,"disconnected fuel cell teleported hydrogen from the oxygen generator");
         require(app.placed_resources_[1].supply.energy_kwh<=stored+1e-9,"disconnected hydrogen generator created stored energy");
 
-        // Completed solar collectors physically change collector-head orientation with the nonvisualized star.
+        // Completed solar collectors physically follow the star, but a clock/target change
+        // must not teleport the collector. The visual pose advances only through the
+        // tracker slew update and converges smoothly toward the new orientation.
         GameApp solar(engine);solar.playfield_.rebuild(160);solar.placed_resources_={resource(ResourceKind::SolarPanel,{0,0,0})};
-        auto solar_clock=solar.status_.state();solar_clock.hour=8;solar.status_.restore(solar_clock);GeometryRecorder east_view;solar.render_resources(east_view);
-        solar_clock.hour=12;solar.status_.restore(solar_clock);GeometryRecorder noon_view;solar.render_resources(noon_view);
-        require(east_view.triangles.size()==noon_view.triangles.size() && !east_view.triangles.empty(),"tracked solar renderer emitted inconsistent geometry");
+        auto solar_clock=solar.status_.state();solar_clock.hour=8;solar.status_.restore(solar_clock);solar.update_supply_simulation(2.0f);GeometryRecorder east_view;solar.render_resources(east_view);
+        solar_clock.hour=12;solar.status_.restore(solar_clock);GeometryRecorder unchanged_view;solar.render_resources(unchanged_view);
+        require(east_view.triangles.size()==unchanged_view.triangles.size() && !east_view.triangles.empty(),"tracked solar renderer emitted inconsistent geometry");
+        float instant_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)instant_shift=std::max(instant_shift,eng::length(east_view.triangles[i]-unchanged_view.triangles[i]));
+        require(instant_shift<0.001f,"solar collector jumped when the target sun position changed");
+        solar.update_supply_simulation(0.1f);GeometryRecorder transition_view;solar.render_resources(transition_view);
+        float transition_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)transition_shift=std::max(transition_shift,eng::length(east_view.triangles[i]-transition_view.triangles[i]));
+        require(transition_shift>0.01f && transition_shift<0.75f,"solar collector did not begin a smooth slew toward the new sun position");
+        solar.update_supply_simulation(2.0f);GeometryRecorder noon_view;solar.render_resources(noon_view);
         float max_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)max_shift=std::max(max_shift,eng::length(east_view.triangles[i]-noon_view.triangles[i]));
         require(max_shift>0.25f,"solar collector head did not follow the star across the playfield");
         std::cout<<"Hydrogen electrolysis/fuel-cell energy cycle, network isolation, realistic star arc and two-axis solar tracking passed\n";
     }
 
     static void battery_bootstrap(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);
+        eng::Application engine;
+
+        // A colony without an operational workshop must never become a permanent
+        // energy deadlock. Reproduce the failure mode from 0-43-28(1).gmsave:
+        // one rover is already empty and the other is below the 10% reserve.
+        // Both must reach the starter charger, recover, and never enter a safety
+        // fault merely because their traction battery was depleted.
+        {
+            GameApp recovery(engine);recovery.playfield_.rebuild(128);
+            recovery.starting_robot_count_=1;recovery.starting_carrier_count_=1;
+            recovery.reset_builder_robot_and_starter_stash();
+            recovery.builder_robots_[0].position={-20,0,-15};
+            recovery.builder_robots_[1].position={10,0,8};
+            recovery.builder_robots_[0].battery_charge_kwh=0.0f;
+            recovery.builder_robots_[1].battery_charge_kwh=recovery.builder_robots_[1].battery_capacity_kwh*0.055f;
+            bool builder_recovered=false,carrier_recovered=false;
+            for(int frame=0;frame<60*150 && !(builder_recovered&&carrier_recovered);++frame){
+                recovery.update_construction(1.0f/60.0f);
+                for(const auto& r:recovery.builder_robots_)
+                    require(r.safety.mode!=SafetyMode::Fault,"battery depletion incorrectly became a safety fault");
+                builder_recovered=!recovery.builder_robots_[0].starter_charge_active && recovery.builder_robots_[0].battery_charge_kwh>=recovery.builder_robots_[0].battery_capacity_kwh*0.75f;
+                carrier_recovered=!recovery.builder_robots_[1].starter_charge_active && recovery.builder_robots_[1].battery_charge_kwh>=recovery.builder_robots_[1].battery_capacity_kwh*0.75f;
+            }
+            require(builder_recovered&&carrier_recovered,"starter bootstrap charger failed to recover depleted fleet");
+        }
+
+        GameApp app(engine);app.playfield_.rebuild(128);
         app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();
         app.placed_resources_.clear();app.placed_habitats_.clear();app.utility_network_.clear();
         app.utility_network_.set_playfield_half_extent(64);
@@ -1172,7 +1314,7 @@ struct NavigationRegression {
             require(!app.corridor_network_.build_corridor(blocked,other,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"second air-lock end built");
             require(!app.corridor_network_.preview_built_corridor(other,blocked,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"blocked hatch accepted as destination");
             auto reused=app.corridor_network_.preview_anchor(a,b.position,app.placed_habitats_,app.habitat_models_);require(reused && reused->kind==CorridorEndpointKind::Corridor,"used hatch lost shared-trunk branching");
-            require(!airlock_connections::allows(0,outer,app.placed_habitats_,app.corridor_network_.connections()),"supply/walkway cross-network guard accepted exterior side");
+            require(!airlock_connections::allows(0,outer,app.placed_habitats_,app.corridor_network_.connections()),"passenger-side guard accepted opposite exterior side");
             app.corridor_network_.mutable_connections()[0].construction.step=kCorridorConstructionSteps;
             require(!app.habitat_exterior_access_enabled(0,0),"air lock exposed legacy authored surface access");
             const auto air_doors=app.habitat_doors(0);require(air_doors.size()==4,"air lock no longer has four generated/structural pressure doors");
@@ -1184,17 +1326,43 @@ struct NavigationRegression {
             require(app.corridor_network_.preview_anchor(blocked,other.position,app.placed_habitats_,app.habitat_models_).has_value(),"removing final connection did not release side");
             UtilityBuildAnchor u{UtilityEndpointKind::Habitat,0,hatch},uo{UtilityEndpointKind::Open,0,hatch+normal*14},ub{UtilityEndpointKind::Habitat,0,outer},ubend{UtilityEndpointKind::Open,0,outer+outer_normal*14};
             require(app.utility_network_.build_connection(UtilityKind::SupplyChannel,u,uo,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"first air-lock utility side rejected");
-            require(!app.utility_network_.preview_anchor(UtilityKind::SupplyChannel,ub,ubend.hit,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"opposite utility port preview allowed");
-            require(!app.utility_network_.build_connection(UtilityKind::SupplyChannel,ubend,ub,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"opposite utility port accepted as destination");
-            require(!airlock_connections::allows(0,outer,app.placed_habitats_,{},app.utility_network_.connections()),"utility-first reservation did not block opposite corridor");
-            require(airlock_connections::allows(0,hatch,app.placed_habitats_,{},app.utility_network_.connections()),"same-side corridor and utility ports rejected");
-            app.utility_network_.remove_connection(0);require(airlock_connections::allows(0,outer,app.placed_habitats_,{},app.utility_network_.connections()),"removed utility left stale side reservation");
+            require(app.utility_network_.preview_anchor(UtilityKind::SupplyChannel,ub,ubend.hit,app.placed_habitats_,app.habitat_models_,{},app.resource_models_).has_value(),"opposite utility port preview rejected");
+            require(app.utility_network_.build_connection(UtilityKind::SupplyChannel,ubend,ub,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"opposite utility port rejected");
+            // Both lateral hull sides must also accept independent supply ports.
+            for(int lateral:{-1,1}){
+                const Vec3 local_side{0,mesh.walkable_floor_y,(float)lateral*mesh.footprint_z*0.5f};
+                const Vec3 local_side_normal{0,0,(float)lateral};
+                const Vec3 side_point=air.position+world_math::rotate_y(local_side,rotation);
+                const Vec3 side_normal=world_math::rotate_y(local_side_normal,rotation);
+                UtilityBuildAnchor us{UtilityEndpointKind::Habitat,0,side_point},use{UtilityEndpointKind::Open,0,side_point+side_normal*14};
+                require(app.utility_network_.preview_anchor(UtilityKind::SupplyChannel,us,use.hit,app.placed_habitats_,app.habitat_models_,{},app.resource_models_).has_value(),"lateral air-lock utility port preview rejected");
+                require(app.utility_network_.build_connection(UtilityKind::SupplyChannel,us,use,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"lateral air-lock utility port rejected");
+            }
+            // Player-facing cursor snapping must preserve all four Air Lock sides.
+            // Earlier code rewrote every cursor hit to +/- local X, so direct
+            // network tests passed while lateral ports were impossible in-game.
+            for(const Vec3 local_cursor:std::array<Vec3,4>{
+                    Vec3{ mesh.footprint_x*0.49f,0,0},Vec3{-mesh.footprint_x*0.49f,0,0},
+                    Vec3{0,0, mesh.footprint_z*0.49f},Vec3{0,0,-mesh.footprint_z*0.49f}}){
+                const Vec3 cursor=air.position+world_math::rotate_y(local_cursor,rotation);
+                const auto selected=app.utility_anchor_at(cursor,UtilityKind::SupplyChannel);
+                require(selected && selected->kind==UtilityEndpointKind::Habitat && selected->index==0,"Air Lock side was not selectable through player supply-channel snapping");
+                const Vec3 away=cursor+world_math::rotate_y(eng::normalize(local_cursor)*14.0f,rotation);
+                const auto port=app.utility_network_.preview_anchor(UtilityKind::SupplyChannel,*selected,away,app.placed_habitats_,app.habitat_models_,{},app.resource_models_);
+                require(port.has_value(),"Air Lock cursor-selected side did not resolve to a physical supply port");
+                const Vec3 lp=world_math::rotate_y(port->position-air.position,-rotation);
+                if(std::abs(local_cursor.x)>std::abs(local_cursor.z)) require(lp.x*local_cursor.x>0,"Air Lock X-side cursor jumped to another side");
+                else require(lp.z*local_cursor.z>0,"Air Lock lateral cursor jumped to an end face");
+            }
+            // Utility placement must not reserve or change the passenger corridor side.
+            require(airlock_connections::allows(0,outer,app.placed_habitats_,{},app.utility_network_.connections()),"utility port incorrectly reserved an air-lock passenger side");
+            app.utility_network_.mutable_connections().clear();
             // Cursor positions on the curved cylinder must reuse a real hatch.
             CorridorBuildAnchor side=a;side.position=air.position+world_math::rotate_y({(float)end*0.8f,0,4},rotation);
             auto snapped=app.corridor_network_.preview_anchor(side,b.position,app.placed_habitats_,app.habitat_models_);require(!snapped,"air lock allowed an arbitrary side entrance");
             ++cases;
         }
-        std::cout<<cases<<" air-lock side/rotation/size cases: blueprint reservations, both endpoints, shared-trunk branches, utility-first ordering, removal and exterior access passed\n";
+        std::cout<<cases<<" air-lock side/rotation/size cases: passenger-side reservations, all-side utility ports, shared-trunk branches, removal and exterior access passed\n";
     }
 
     static void queue_and_flow(){
@@ -1226,7 +1394,7 @@ struct NavigationRegression {
         clock.hour=0;flow.status_.restore(clock);flow.update_supply_simulation(1);require(std::abs(flow.battery_net_kw_+4)<1e-6,"night discharge rate wrong");
         for(int i=0;i<2;++i){PlacedHabitat h;h.kind=i?HabitatKind::CrewQuarters:HabitatKind::OxygenGeneratorDome;h.position={(float)i*20,0,20};h.construction.step=kConstructionSteps;flow.placed_habitats_.push_back(h);UtilityConnection u;u.endpoint_a.kind=UtilityEndpointKind::Resource;u.endpoint_a.index=3;u.endpoint_b.kind=UtilityEndpointKind::Habitat;u.endpoint_b.index=i;u.path={{30,0,0},h.position};u.construction.step=u.construction.total_steps;flow.utility_network_.mutable_connections().push_back(u);}
         clock.hour=12;clock.crew_current=6;flow.status_.restore(clock);flow.placed_resources_[2].construction.step=0;flow.placed_resources_[3].supply.water_litres=100;flow.update_supply_simulation(1);
-        require(std::abs(flow.water_net_litres_per_day_+34.125)<1e-6 && std::abs(flow.supply_water_load_litres_per_day_-34.125)<1e-6,"tank consumption/electrolysis rate wrong");
+        require(std::abs(flow.water_net_litres_per_day_+44.25)<1e-6 && std::abs(flow.supply_water_load_litres_per_day_-44.25)<1e-6,"tank consumption/doubled electrolysis rate wrong");
         const auto water=flow.placed_resources_[3].supply.water_litres;flow.update_supply_simulation(0);require(flow.battery_net_kw_==0 && flow.water_net_litres_per_day_==0 && flow.placed_resources_[3].supply.water_litres==water,"paused telemetry consumed resources or kept stale rate");
         std::cout<<"FIFO until completion/removal, ready corridor/pipe precedence, prerequisite escape, save roundtrip and measured charge/fill/drain/load rates passed\n";
     }
@@ -1274,6 +1442,26 @@ struct NavigationRegression {
         eng::Application engine;GameApp app(engine);app.playfield_.rebuild(192);app.builder_robots_.resize(1);app.builder_robots_[0].position={-80,0,80};
         auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
         app.status_.reset();auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
+        require(std::abs(power_storage_capacity_kwh(ResourceSizeTier::Standard)-135.0)<1e-9 && std::abs(power_storage_capacity_kwh(ResourceSizeTier::Small)-67.5)<1e-9,"power storage capacity increase missing");
+
+        // Generator-local buffers must preserve otherwise-curtailed output and
+        // remain useful without replacing dedicated long-term storage.
+        GameApp buffered(engine);buffered.playfield_.rebuild(96);buffered.status_.reset();auto buffered_clock=buffered.status_.state();buffered_clock.hour=12;buffered.status_.restore(buffered_clock);
+        buffered.placed_resources_={resource(ResourceKind::SolarPanel,{0,0,0}),resource(ResourceKind::WaterDriller,{10,0,0})};
+        UtilityConnection local;local.endpoint_a.kind=local.endpoint_b.kind=UtilityEndpointKind::Resource;local.endpoint_a.index=0;local.endpoint_b.index=1;local.path={{0,0,0},{10,0,0}};local.construction.step=local.construction.total_steps;buffered.utility_network_.mutable_connections().push_back(local);
+        buffered.update_supply_simulation(10);
+        require(std::abs(buffered.placed_resources_[0].supply.energy_kwh-solar_panel_buffer_capacity_kwh(ResourceSizeTier::Standard))<1e-6,"solar local buffer did not retain curtailed production");
+        require(buffered.placed_resources_[1].supply.water_litres>0 && buffered.placed_resources_[1].supply.water_litres<=water_driller_buffer_capacity_litres(ResourceSizeTier::Standard)+1e-6,"water driller local buffer missing or overflowed");
+        const double solar_buffer_before=buffered.placed_resources_[0].supply.energy_kwh;
+        const double water_buffer_before=buffered.placed_resources_[1].supply.water_litres;
+        buffered_clock.hour=0;buffered.status_.restore(buffered_clock);buffered.update_supply_simulation(1);
+        require(buffered.placed_resources_[0].supply.energy_kwh<solar_buffer_before,"solar local buffer did not bridge night load");
+        require(buffered.placed_resources_[1].supply.water_litres>water_buffer_before,"buffered solar did not keep the water driller operating at night");
+        PlacedResource tank=resource(ResourceKind::WaterStorage,{20,0,0});buffered.placed_resources_.push_back(tank);
+        UtilityConnection unload=local;unload.endpoint_a.index=1;unload.endpoint_b.index=2;unload.path={{10,0,0},{20,0,0}};buffered.utility_network_.mutable_connections().push_back(unload);
+        const double buffered_water=buffered.placed_resources_[1].supply.water_litres;buffered.update_supply_simulation(0.1f);
+        require(buffered.placed_resources_[2].supply.water_litres>=buffered_water-1e-6 && buffered.placed_resources_[1].supply.water_litres<1e-6,"water driller buffer did not unload into newly connected tank");
+
         app.placed_resources_={resource(ResourceKind::SolarPanel,{0,0,-30}),resource(ResourceKind::PowerStorage,{10,0,-30}),resource(ResourceKind::WaterDriller,{20,0,-30}),resource(ResourceKind::WaterStorage,{30,0,-30}),resource(ResourceKind::WaterStorage,{70,0,60})};
         const auto rr=[&](std::size_t a,std::size_t b){UtilityConnection u;u.endpoint_a.kind=u.endpoint_b.kind=UtilityEndpointKind::Resource;u.endpoint_a.index=a;u.endpoint_b.index=b;u.path={app.placed_resources_[a].position,app.placed_resources_[b].position};u.construction.step=u.construction.total_steps;app.utility_network_.mutable_connections().push_back(u);};
         rr(0,1);rr(1,2);rr(2,3);
@@ -1283,9 +1471,11 @@ struct NavigationRegression {
         require(app.placed_resources_[4].supply.water_litres==0,"water teleported into disconnected tank");
         require(app.ground_resource_piles_.empty(),"water appeared as a ground pallet");
         const double charged=app.placed_resources_[1].supply.energy_kwh;
+        const double local_solar=app.placed_resources_[0].supply.energy_kwh;
         clock.hour=0;app.status_.restore(clock);app.update_supply_simulation(1);
-        require(app.placed_resources_[1].supply.energy_kwh<charged,"night load did not discharge battery");
-        app.placed_resources_[1].supply.energy_kwh=0;app.update_supply_simulation(1);
+        require(app.placed_resources_[0].supply.energy_kwh<local_solar,"night load did not use local solar buffer first");
+        require(app.placed_resources_[1].supply.energy_kwh<=charged+1e-9,"night load unexpectedly increased battery");
+        app.placed_resources_[0].supply.energy_kwh=0;app.placed_resources_[1].supply.energy_kwh=0;app.update_supply_simulation(1);
         require(app.placed_resources_[2].supply.warnings&NoPower,"unpowered outdoor consumer has no warning");
         clock.hour=12;app.status_.restore(clock);
         for(auto& q:app.placed_resources_)if(q.kind==ResourceKind::WaterStorage)q.supply.water_litres=2000;
@@ -1328,7 +1518,7 @@ struct NavigationRegression {
         require(gate.save_game_to_name("supply-gate-regression",error),"gate save failed");gate.refresh_save_games();for(const auto& e:gate.save_games_)if(e.name=="supply-gate-regression")path=e.path;
         require(restored.load_game_from_file(path,error),"free-angle gate load failed: "+error);
         require(std::abs(restored.placed_resources_[0].storage_gate_angle_degrees-53.25f)<1e-6,"gate angle changed on load");
-        std::cout<<"Connected storage, day/night dispatch, tank limits, air delay/conservation, warnings, gate pads and save roundtrip passed\n";
+        std::cout<<"Generator buffers, increased battery capacity, connected storage, day/night dispatch, tank limits, air delay/conservation, warnings, gate pads and save roundtrip passed\n";
     }
 
     static void utilities(){
@@ -1652,6 +1842,111 @@ struct NavigationRegression {
             }
             for(std::size_t j=1;j<c->path.size();++j) check_walk(c->path[j-1],c->path[j],label+" corridor");
         }
+        // Corridor attachment is a continuous polar choice around a structure.
+        // Moving the cursor by one degree must move/rotate the generated hatch
+        // smoothly instead of snapping between authored cardinal faces.
+        {
+            app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
+            PlacedHabitat h;h.kind=HabitatKind::CrewQuarters;h.size=HabitatSizeTier::Standard;
+            h.position={0,0,0};h.rotation_degrees=23.0f;h.construction.step=kConstructionSteps;
+            app.placed_habitats_={h};
+            const auto& hm=app.habitat_models_.mesh(h);
+            std::vector<Vec3> walls;
+            walls.reserve(360);
+            for(int degree=0;degree<360;++degree){
+                const float a=(float)degree*3.14159265358979323846f/180.0f;
+                const Vec3 dir{std::cos(a),0,std::sin(a)};
+                const CorridorBuildAnchor anchor{CorridorEndpointKind::Habitat,0,h.position+dir*(std::max(hm.footprint_x,hm.footprint_z)+4.0f)};
+                const auto ep=app.corridor_network_.preview_anchor(anchor,h.position+dir*100.0f,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+                require(ep.has_value(),"360-degree corridor attachment missing at "+std::to_string(degree));
+                const Vec3 selected=eng::normalize(Vec3{ep->door.wall_position.x-h.position.x,0,ep->door.wall_position.z-h.position.z});
+                require(eng::dot(selected,dir)>0.9995f,"corridor attachment position snapped away from cursor angle at "+std::to_string(degree));
+                walls.push_back(ep->door.wall_position);
+            }
+            for(std::size_t i=0;i<walls.size();++i){
+                const std::size_t next=(i+1)%walls.size();
+                require(world_math::distance_xz(walls[i],walls[next])<0.85f,"corridor attachment position jumps around hull near degree "+std::to_string(i));
+            }
+        }
+
+        // Bio Dome barrel ends are real pressure surfaces. The old half-cylinder
+        // mesh had no X end caps, so a generated hatch could hit the low
+        // foundation but its upper doorway profile had nothing to attach to.
+        // Verify both long-axis ends for every size and with rotation applied.
+        {
+            for(int tier=0;tier<(int)HabitatSizeTier::Count;++tier) for(float rotation:{0.0f,37.0f,90.0f}){
+                app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
+                PlacedHabitat bio;bio.kind=HabitatKind::BioDome;bio.size=(HabitatSizeTier)tier;
+                bio.position={0,0,0};bio.rotation_degrees=rotation;bio.construction.step=kConstructionSteps;
+                app.placed_habitats_={bio};
+                const auto& bm=app.habitat_models_.mesh(bio);
+                for(float sign:{-1.0f,1.0f}){
+                    const Vec3 direction=world_math::rotate_y({sign,0,0},rotation);
+                    const CorridorBuildAnchor source{CorridorEndpointKind::Habitat,0,bio.position+direction*(bm.footprint_x+4.0f)};
+                    const CorridorBuildAnchor open{CorridorEndpointKind::OpenDoor,0,bio.position+direction*(bm.footprint_x+18.0f)};
+                    const auto endpoint=app.corridor_network_.preview_anchor(source,open.position,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+                    require(endpoint.has_value(),"Bio Dome front/back corridor anchor missing tier "+std::to_string(tier)+" rot "+std::to_string((int)rotation));
+                    require(endpoint->door.wall_profile.size()>=10,"Bio Dome end hatch lacks conformal pressure profile");
+                    require(eng::dot(endpoint->door.normal,direction)>0.94f,"Bio Dome end hatch normal points away from selected end");
+                    auto connection=app.corridor_network_.preview_built_corridor(source,open,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+                    require(connection.has_value(),"Bio Dome front/back corridor build preview rejected");
+                }
+            }
+        }
+
+        // Reproduce the 0-43-20.gmsave spacing issue: an Air Lock at
+        // (-20,-4) and a SMALL Oxygen Generator at (-11,-4) had only ~1.21 m
+        // between their old ground footprints, so the opposing docking runs
+        // overlapped before a straight corridor could exist. The new ground
+        // reservation must reject that legacy-new-placement distance, and the
+        // nearest legal integer-grid placement must connect with one straight
+        // corridor segment.
+        {
+            app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
+            PlacedHabitat left;left.kind=HabitatKind::AirLock;left.size=HabitatSizeTier::Small;
+            left.position={-20,0,-4};left.construction.step=kConstructionSteps;
+            PlacedHabitat right;right.kind=HabitatKind::OxygenGeneratorDome;right.size=HabitatSizeTier::Small;
+            right.rotation_degrees=0;right.construction.step=kConstructionSteps;
+            app.placed_habitats_={left};
+            require(!app.placement_valid(right.kind,right.size,{-11,0,-4},0.0f),
+                    "0-43-20 close habitat spacing still accepted");
+            bool found=false;float nearest_x=-11.0f;
+            for(int x=-11;x<=16;++x){
+                if(app.placement_valid(right.kind,right.size,{(float)x,0,-4},0.0f)){nearest_x=(float)x;found=true;break;}
+            }
+            require(found,"corridor-reserved ground rectangle left no nearby legal habitat placement");
+            if(nearest_x>-11.0f) require(!app.placement_valid(right.kind,right.size,{nearest_x-1.0f,0,-4},0.0f),
+                                         "nearest legal corridor-reserved spacing was not minimal");
+            right.position={nearest_x,0,-4};app.placed_habitats_={left,right};
+            const auto& lm=app.habitat_models_.mesh(left);const auto& rm=app.habitat_models_.mesh(right);
+            const CorridorBuildAnchor a{CorridorEndpointKind::Habitat,0,left.position+Vec3{lm.footprint_x,0,0}};
+            const CorridorBuildAnchor b{CorridorEndpointKind::Habitat,1,right.position-Vec3{rm.footprint_x,0,0}};
+            const auto c=app.corridor_network_.preview_built_corridor(a,b,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+            require(c.has_value(),"nearest legal structure spacing could not create corridor");
+            require(c->path.size()==2,"nearest legal structure spacing did not create a straight corridor");
+            require(distance(c->path.front(),c->path.back())>=0.30f,"ground reservation left a degenerate corridor gap");
+        }
+
+        // A close, unobstructed structure pair gets one straight corridor
+        // centerline. Endpoint vestibules may meet the hull at different local
+        // angles, but the pressure tube between them must not form an S-curve.
+        {
+            app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
+            PlacedHabitat left;left.kind=HabitatKind::CrewQuarters;left.construction.step=kConstructionSteps;
+            PlacedHabitat right=left;right.kind=HabitatKind::CantineDome;right.rotation_degrees=31.0f;
+            const auto& lm=app.habitat_models_.mesh(left);const auto& rm=app.habitat_models_.mesh(right);
+            const float center_distance=lm.footprint_x*0.5f+rm.footprint_x*0.5f+10.0f;
+            left.position={-center_distance*0.5f,0,0};right.position={center_distance*0.5f,0,0};
+            app.placed_habitats_={left,right};
+            const CorridorBuildAnchor a{CorridorEndpointKind::Habitat,0,left.position+Vec3{lm.footprint_x,0,0}};
+            const CorridorBuildAnchor b{CorridorEndpointKind::Habitat,1,right.position-Vec3{rm.footprint_x,0,0}};
+            const auto c=app.corridor_network_.preview_built_corridor(a,b,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+            require(c.has_value(),"close structure corridor unavailable");
+            require(c->path.size()==2,"close structure corridor was bent/twisted instead of straight");
+            const Vec3 direct=eng::normalize(c->path.back()-c->path.front());
+            require(std::abs(direct.y)<0.01f,"close straight corridor changed elevation across the short gap");
+        }
+
         for(int size=0;size<4;++size) for(int port=0;port<4;++port){
             app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
             PlacedHabitat air;air.kind=HabitatKind::AirLock;air.position={-22,0,0};air.construction.step=kConstructionSteps;app.placed_habitats_={air};
@@ -1704,6 +1999,10 @@ int main(int argc,char** argv){
         else if(argc>2 && std::string(argv[1])=="fault-construction") game::NavigationRegression::construction(argv[2],true,true);
         else if(argc>2 && std::string(argv[1])=="construction") game::NavigationRegression::construction(argv[2]);
         else if(argc>2 && std::string(argv[1])=="clearance-save") game::NavigationRegression::clearance_save(argv[2]);
+        else if(argc>2 && std::string(argv[1])=="stuck-carrier-save") game::NavigationRegression::stuck_carrier_save(argv[2]);
+        else if(argc>2 && std::string(argv[1])=="airlock-supply-save") game::NavigationRegression::airlock_supply_save(argv[2]);
+        else if(argc>2 && std::string(argv[1])=="enclosure-save") game::NavigationRegression::enclosure_save(argv[2]);
+        else if(argc>2 && std::string(argv[1])=="pending-enclosure-save") game::NavigationRegression::pending_enclosure_save(argv[2]);
         else if(argc>2 && std::string(argv[1])=="inspect") game::NavigationRegression::inspect(argv[2]);
         else if(argc>2 && std::string(argv[1])=="late") game::NavigationRegression::construction(argv[2],true);
         else {

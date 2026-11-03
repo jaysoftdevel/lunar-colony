@@ -51,6 +51,18 @@ inline constexpr float kGeneratedEntranceHalfWidth = 1.16f;
 inline constexpr float kGeneratedEntranceHeight = 2.68f;
 inline constexpr float kRouteClearance = 0.55f;
 
+// Placement reservation around every structure. A generated habitat corridor
+// occupies kGeneratedEntranceDepth from the pressure skin to the outer hatch
+// and another kCorridorDockRun before the full corridor profile begins. Keep
+// exactly that run available on every side of every structure so even two
+// blueprints placed at their minimum legal spacing retain room for opposing
+// docking assemblies and a short straight pressure tube between them.
+inline constexpr float kStructureConnectionReserve = kGeneratedEntranceDepth + kCorridorDockRun;
+inline constexpr float kStructurePlacementGap = 0.45f;
+inline constexpr float structure_ground_extent(float physical_extent){
+    return physical_extent + 2.0f*kStructureConnectionReserve;
+}
+
 // Permanent perimeter circulation lane. New structures and their reserved
 // service aprons stay outside this band so the largest rover can always route
 // around the colony instead of a building sealing the playfield edge. 2.25 m

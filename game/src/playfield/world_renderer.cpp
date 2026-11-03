@@ -23,6 +23,16 @@ using namespace world_math;
 using namespace world_labels;
 
 namespace {
+void draw_structure_ground_reservation(Renderer& r,float physical_x,float physical_z,Vec3 position,float rotation_degrees,Color color,float width){
+    const float hx=geometry::structure_ground_extent(physical_x)*0.5f;
+    const float hz=geometry::structure_ground_extent(physical_z)*0.5f;
+    std::vector<Vec3> marker{{-hx,0.025f,-hz},{hx,0.025f,-hz},
+                             {hx,0.025f,-hz},{hx,0.025f,hz},
+                             {hx,0.025f,hz},{-hx,0.025f,hz},
+                             {-hx,0.025f,hz},{-hx,0.025f,-hz}};
+    r.draw_lines_3d(transformed_vertices(marker,position,rotation_degrees),color,width);
+}
+
 std::vector<Vec3> construction_path_lines(const std::vector<Vec3>& path){
     std::vector<Vec3> lines;
     if(path.size()<2) return lines;
@@ -111,43 +121,45 @@ void draw_resource_box(Renderer& r,Vec3 base,float half_width,float height,Mater
 }
 
 
-Vec3 rotate_from_to(Vec3 v,Vec3 from,Vec3 to){
-    from=normalize(from);to=normalize(to);
-    const float c=std::clamp(from.x*to.x+from.y*to.y+from.z*to.z,-1.0f,1.0f);
-    Vec3 axis=cross(from,to);
-    float sn=length(axis);
-    if(sn<1.0e-5f){
-        if(c>0.0f)return v;
-        axis=normalize(std::abs(from.x)<0.8f?cross(from,{1,0,0}):cross(from,{0,1,0}));
-        return axis*(2.0f*(axis.x*v.x+axis.y*v.y+axis.z*v.z))-v;
-    }
-    axis=axis*(1.0f/sn);
-    const float d=axis.x*v.x+axis.y*v.y+axis.z*v.z;
-    return v*c+cross(axis,v)*sn+axis*(d*(1.0f-c));
-}
-
 std::vector<Vec3> tracked_solar_vertices(const std::vector<Vec3>& src,Vec3 position,float base_rotation,Vec3 sun_direction){
     constexpr float pitch=24.0f*3.14159265358979323846f/180.0f;
+    const Vec3 authored_x{1,0,0};
     const Vec3 authored_normal{0,std::cos(pitch),-std::sin(pitch)};
+    const Vec3 authored_z{0,std::sin(pitch),std::cos(pitch)};
+    const Vec3 pivot{0,3.38f,0};
+
+    // A real two-axis tracker uses azimuth around the vertical mast plus tilt
+    // around the collector's horizontal bearing.  Keeping target_x horizontal
+    // prevents the old shortest-arc rotation from adding roll and swinging the
+    // wide panel edge through the playfield near sunrise/sunset.
     const Vec3 target_world=sun_direction.y>0.0f?normalize(sun_direction):rotate_y(authored_normal,base_rotation);
     const Vec3 target_local=rotate_y(target_world,-base_rotation);
-    const Vec3 pivot{0,3.38f,0};
+    Vec3 target_x=normalize(cross({0,1,0},target_local));
+    if(length(target_x)<0.001f) target_x=authored_x;
+    if(dot(target_x,authored_x)<0.0f) target_x=target_x*-1.0f;
+    Vec3 target_z=normalize(cross(target_x,target_local));
+
     std::vector<Vec3> local;local.reserve(src.size());
     for(Vec3 v:src){
-        // The pedestal and inverter remain fixed. Everything above the azimuth
-        // bearing follows the two-axis collector head, including cell-grid lines.
-        if(v.y>3.12f)v=pivot+rotate_from_to(v-pivot,authored_normal,target_local);
+        if(v.y>3.12f){
+            const Vec3 q=v-pivot;
+            v=pivot+target_x*dot(q,authored_x)+target_local*dot(q,authored_normal)+target_z*dot(q,authored_z);
+            // Mechanical guard. With the yaw/tilt transform this should only be
+            // a numerical safety net, but never allow a collector-head vertex
+            // to penetrate the playfield plane.
+            v.y=std::max(v.y,0.08f);
+        }
         local.push_back(v);
     }
     return transformed_vertices(local,position,base_rotation);
 }
 
-void draw_tracked_solar(Renderer& r,const ResourceMesh& mesh,const PlacedResource& instance,Vec3 sun_direction,bool selected,Color accent){
+void draw_tracked_solar(Renderer& r,const ResourceMesh& mesh,const PlacedResource& instance,Vec3 tracker_normal,bool selected,Color accent){
     const float boost=selected?1.45f:1.0f;
     const auto foundation=transformed_vertices(mesh.foundation,instance.position,instance.rotation_degrees);
-    const auto body=tracked_solar_vertices(mesh.body,instance.position,instance.rotation_degrees,sun_direction);
-    const auto details=tracked_solar_vertices(mesh.details,instance.position,instance.rotation_degrees,sun_direction);
-    const auto edges=tracked_solar_vertices(mesh.edges,instance.position,instance.rotation_degrees,sun_direction);
+    const auto body=tracked_solar_vertices(mesh.body,instance.position,instance.rotation_degrees,tracker_normal);
+    const auto details=tracked_solar_vertices(mesh.details,instance.position,instance.rotation_degrees,tracker_normal);
+    const auto edges=tracked_solar_vertices(mesh.edges,instance.position,instance.rotation_degrees,tracker_normal);
     mesh_wireframe::draw_layer(r,foundation,{0.20f,0.84f,0.36f,1.0f},2.40f*boost);
     mesh_wireframe::draw_layer(r,body,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
     mesh_wireframe::draw_layer(r,details,{0.22f,0.92f,0.40f,0.99f},2.35f*boost);
@@ -309,6 +321,8 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
             mesh_wireframe::draw_layer(r,access_details,faint,1.15f);
             r.draw_lines_3d(access_edges,line,1.6f);
         }
+        draw_structure_ground_reservation(r,mesh.footprint_x,mesh.footprint_z,position,rotation_degrees,
+                                          valid?Color{0.20f,0.80f,1.00f,0.62f}:Color{1.00f,0.30f,0.22f,0.70f},1.65f);
         return;
     }
 
@@ -343,9 +357,8 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
         mesh_wireframe::draw_layer(r,glazing,{1.00f,0.76f,0.20f,0.94f},1.80f*boost);
         if(!edges.empty()) r.draw_lines_3d(edges,installed,selected?3.45f:2.45f);
         if(construction_step==0){
-            const float hx=mesh.footprint_x*0.5f, hz=mesh.footprint_z*0.5f;
-            std::vector<Vec3> marker{{-hx,0.03f,-hz},{hx,0.03f,-hz},{hx,0.03f,-hz},{hx,0.03f,hz},{hx,0.03f,hz},{-hx,0.03f,hz},{-hx,0.03f,hz},{-hx,0.03f,-hz}};
-            r.draw_lines_3d(transformed_vertices(marker,position,rotation_degrees),blueprint,selected?3.2f:2.4f);
+            draw_structure_ground_reservation(r,mesh.footprint_x,mesh.footprint_z,position,rotation_degrees,
+                                              blueprint,selected?3.2f:2.4f);
         }
         return;
     }
@@ -361,7 +374,7 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
     const Color interior_color{0.34f,1.00f,0.50f,0.98f};
     const Color detail_color{0.22f,0.92f,0.40f,0.99f};
     const Color glass_color{0.32f,1.00f,0.56f,0.82f};
-    const Color edge_color=selected?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f};
+    const Color edge_color=selected?Color{1.0f,0.94f,0.55f,1.0f}:Color{0.18f,1.00f,0.38f,1.0f};
     const float selected_boost=selected?1.45f:1.0f;
 
     // Structures intentionally remain mesh-only in this development phase.
@@ -391,6 +404,8 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
         mesh_wireframe::draw_layer(r,body,line,1.35f);
         mesh_wireframe::draw_layer(r,details,faint,1.10f);
         r.draw_lines_3d(edges,line,1.8f);
+        draw_structure_ground_reservation(r,mesh.footprint_x,mesh.footprint_z,position,rotation_degrees,
+                                          valid?Color{0.20f,0.80f,1.00f,0.62f}:Color{1.00f,0.30f,0.22f,0.70f},1.65f);
         return;
     }
 
@@ -415,9 +430,8 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
         mesh_wireframe::draw_layer(r,details,installed,1.95f*boost);
         if(!edges.empty()) r.draw_lines_3d(edges,installed,selected?3.45f:2.45f);
         if(construction_step==0){
-            const float hx=mesh.footprint_x*0.5f, hz=mesh.footprint_z*0.5f;
-            std::vector<Vec3> marker{{-hx,0.03f,-hz},{hx,0.03f,-hz},{hx,0.03f,-hz},{hx,0.03f,hz},{hx,0.03f,hz},{-hx,0.03f,hz},{-hx,0.03f,hz},{-hx,0.03f,-hz}};
-            r.draw_lines_3d(transformed_vertices(marker,position,rotation_degrees),blueprint,selected?3.2f:2.4f);
+            draw_structure_ground_reservation(r,mesh.footprint_x,mesh.footprint_z,position,rotation_degrees,
+                                              blueprint,selected?3.2f:2.4f);
         }
         return;
     }
@@ -430,7 +444,7 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
     mesh_wireframe::draw_layer(r,foundation,{0.20f,0.84f,0.36f,1.0f},2.40f*boost);
     mesh_wireframe::draw_layer(r,body,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
     mesh_wireframe::draw_layer(r,details,{0.22f,0.92f,0.40f,0.99f},2.35f*boost);
-    r.draw_lines_3d(edges,selected?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f},selected?3.65f:2.90f);
+    r.draw_lines_3d(edges,selected?Color{1.0f,0.94f,0.55f,1.0f}:Color{0.18f,1.00f,0.38f,1.0f},selected?3.65f:2.90f);
 }
 
 
@@ -505,8 +519,10 @@ void GameApp::render_resources(Renderer& r){
             fpv_doors=storage_dome_doors(i);
             fpv_ptr=&fpv_doors;
         }
-        if(instance.kind==ResourceKind::SolarPanel && instance.construction.complete())
-            draw_tracked_solar(r,mesh,instance,status_.sun_direction(),selected,theme_.accent);
+        if(instance.kind==ResourceKind::SolarPanel && instance.construction.complete()){
+            const Vec3 visual_normal=instance.solar_visual_initialized?instance.solar_visual_normal:solar_tracking::fixed_panel_normal(instance.rotation_degrees);
+            draw_tracked_solar(r,mesh,instance,visual_normal,selected,Color{1.0f,0.94f,0.55f,1.0f});
+        }
         else
             render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
@@ -664,7 +680,7 @@ void GameApp::render_habitats(Renderer& r){
         if(fpv_ptr) for(const auto& door:fpv_doors){
             draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
             if(instance.kind==HabitatKind::AirLock && door.entrance_index==-4)
-                draw_generated_airlock_access(r,door,mesh.walkable_floor_y,selected?theme_.accent:Color{0.24f,0.96f,0.42f,1.0f});
+                draw_generated_airlock_access(r,door,mesh.walkable_floor_y,selected?Color{1.0f,0.94f,0.55f,1.0f}:Color{0.24f,0.96f,0.42f,1.0f});
         }
 
         // Legacy authored access arrays are normally empty from v0.43.17 onward.
@@ -681,7 +697,7 @@ void GameApp::render_habitats(Renderer& r){
             const Color access_color=instance.construction.complete()?Color{0.24f,0.96f,0.42f,1.0f}:Color{1.00f,0.68f,0.12f,0.99f};
             mesh_wireframe::draw_layer(r,details,access_color,instance.construction.complete()?2.45f:2.0f);
             if(!edges.empty()){
-                const Color ec=selected?theme_.accent:Color{0.08f,0.11f,0.13f,1.0f};
+                const Color ec=selected?Color{1.0f,0.94f,0.55f,1.0f}:Color{0.08f,0.11f,0.13f,1.0f};
                 r.draw_lines_3d(edges,ec,selected?3.35f:(instance.construction.complete()?2.55f:2.25f));
             }
         }

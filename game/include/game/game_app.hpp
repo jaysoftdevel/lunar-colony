@@ -59,7 +59,12 @@ private:
     eng::InputState input_{};
     eng::InputState ui_input_{};
     eng::ui::Theme theme_{};
-    int playfield_size_=64;
+    static constexpr int kNewGamePlayfieldMin=32;
+    static constexpr int kNewGamePlayfieldMax=1024;
+    static constexpr int kNewGamePlayfieldStep=32;
+    static constexpr int kNewGamePlayfieldDefault=128;
+    static constexpr int kDebugTemplatePlayfieldSize=128;
+    int playfield_size_=kNewGamePlayfieldDefault;
     int starting_robot_count_=1;
     int starting_carrier_count_=1;
     int viewport_width_=1600;
@@ -145,6 +150,13 @@ private:
     int selected_utility_=-1;
     int selected_walkway_=-1;
     int selected_robot_=-1;
+    // The upper-left selection/info pane is a fixed viewport.  Rich telemetry
+    // can be taller than that viewport at high UI scales, so retain a
+    // per-selection scroll position instead of allowing details to spill over
+    // the build bar or disappear below the pane.
+    float selection_panel_scroll_{0.0f};
+    bool robot_enclosure_legacy_scan_pending_{true};
+    std::uint64_t selection_panel_scroll_key_{0};
     int corridor_link_source_=-1;
     std::optional<CorridorBuildAnchor> corridor_build_start_{};
     std::optional<UtilityBuildAnchor> utility_build_start_{};
@@ -191,6 +203,7 @@ private:
     void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
     bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees) const;
     bool resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees) const;
+    bool placement_preserves_robot_escape(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z) const;
     eng::Vec3 snap_storage_dome(eng::Vec3 hit,StorageDomeSize size,float& rotation_degrees) const;
     void select_world_at(int screen_x,int screen_y);
     int pick_habitat(eng::Vec3 ground_hit) const;
@@ -204,6 +217,11 @@ private:
     std::optional<WalkwayBuildAnchor> walkway_anchor_at(eng::Vec3 ground_hit,bool source_only) const;
     CorridorBuildAnchor corridor_anchor_at(eng::Vec3 ground_hit) const;
     eng::Rect selection_panel_rect() const;
+    float selection_panel_content_height() const;
+    float selection_panel_max_scroll() const;
+    std::uint64_t current_selection_panel_scroll_key() const;
+    void sync_selection_panel_scroll();
+    void update_selection_panel_scroll(const eng::InputState& input);
     eng::Rect ground_resource_panel_rect() const;
     bool mouse_over_selection_panel(const eng::InputState& input) const;
     void clear_world_selection();

@@ -149,3 +149,39 @@ Windows compilation cannot be executed in this Linux environment because MSVC, t
 - Workshop approach and Storage Dome cargo apron placement share the same boundary rule; generated corridor access pads are also rejected when they enter the lane.
 - `ui_resolution_scaling` exercises the debug-frame MESH -> TEXTURED selector and checks the enlarged debug panel remains inside the UI bounds.
 - Release validation: 24/24 registered CTest groups pass after the v0.43.18 changes.
+
+## v0.43.19 corridor angle / short-run validation
+
+- `navigation_geometry` sweeps a generated Crew Quarters corridor anchor through all 360 integer degrees and requires the pressure-hull contact point to remain on the selected polar ray with no large adjacent-position jump.
+- The same regression creates a close Crew Quarters/Canteen pair and requires an unobstructed short corridor to contain exactly two path points (one straight segment), while preserving generated entrance traversal and floor continuity.
+- Existing Storage Dome, Air Lock, pressure-door, construction, robot-navigation, UI, supply, hydrogen/solar and Stage-2 battery regressions remain enabled.
+- Release validation: 24/24 optimized registered CTest groups pass after the v0.43.19 changes.
+
+## v0.43.20 corridor start-preview validation
+- Build/test validation confirms the shortened pre-click blueprint does not change committed corridor routing or geometry.
+- Existing corridor geometry, 360-degree attachment, straight short-run, construction and navigation regressions remain applicable.
+
+## v0.43.21 corridor start / placement-envelope validation
+- Loaded the supplied `0-43-20.gmsave` and reproduced its two close habitats: Small Air Lock at `(-20,-4)` and Small Oxygen Generator at `(-11,-4)`, with only about 1.21 m between the old footprint edges.
+- `navigation_geometry` now rejects that spacing for new placement, finds the nearest legal integer-grid position using the corridor-derived ground reservation, and requires the resulting connection to be one straight two-point corridor with a non-degenerate gap.
+- Existing save loading remains unchanged; the supplied save continued for 20 simulated seconds without a safety fault.
+- Optimized validation: tests 1-22 passed in the broad run; the two long tests (`navigation_construction`, `navigation_late_corridor`) passed separately, for 24/24 registered groups overall.
+
+## v0.43.22 Bio Dome end-cap validation
+- Reproduced the supplied `0-43-21.gmsave`; its Bio Dome uses the greenhouse barrel geometry whose two long-axis ends previously lacked upper pressure surfaces.
+- `navigation_geometry` now tests both long-axis Bio Dome ends for all four size tiers at 0, 37 and 90 degree rotation, requiring a valid on-demand hatch, conformal doorway wall profile and corridor preview.
+- A clean optimized rebuild passes 24/24 registered CTest groups.
+- The Robot Workshop perimeter fixture was updated to compute its boundary probe from the corridor-reserved `structure_ground_extent()` introduced in v0.43.21; this is a test-fixture correction only.
+
+## v0.43.23 playfield-size validation
+
+- UI regression asserts the new 128 x 128 default, 32..1024 selectable bounds, 32 m selector step and 128 x 128 debug-template size, then directly rebuilds the maximum 1024 x 1024 playfield.
+- Legacy internal/saved playfield sizes remain supported; save validation accepts the new 1024 m upper bound without changing the save schema.
+- Full optimized registered regression suite remains the release gate.
+
+## v0.43.24 selection-panel overflow validation
+
+- UI regression creates an overflowing upper-left Storage Dome info panel at 1280x720 / 200% UI scale and requires its content height to exceed the capped viewport.
+- Mouse-wheel input inside the panel must advance the panel scroll offset while leaving camera zoom unchanged; repeated scrolling must reach the exact bottom limit.
+- The previously hidden bottom action row must become visible after scrolling, a scrollbar must be rendered, and every scrolled text row must stay within the panel viewport.
+- Full optimized registered regression suite: 24/24 CTest groups pass.

@@ -45,9 +45,9 @@ No job routine may directly change a robot pose, insert an avoidance steering im
 
 ## v0.40.33 debug-start template
 
-- `game/src/screens/new_game.cpp`: debug toggle, 64x64 template lock, paused startup.
+- `game/src/screens/new_game.cpp`: debug toggle, 128x128 template lock, paused startup.
 - `game/src/systems/save_game.cpp`: construction-only debug template parser/importer.
-- `game/debug-templates/0-40-32-debug-start.gmsave`: bundled source construction layout.
+- `game/debug-templates/0-40-32-debug-start.gmsave`: bundled debug-template payload, now replaced with the supplied 0.43.28 save layout (filename retained for runtime compatibility).
 - `game/CMakeLists.txt`: copies the template beside the built executable under `bin/debug/`.
 
 ## v0.40.43 GPU / CPU runtime cluster
@@ -129,3 +129,37 @@ The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; i
 - `features/habitat_placement.cpp`, `features/resource_placement.cpp`, `systems/storage_extensions.cpp` and `systems/gate_areas.cpp` keep structure bodies and reserved service/access geometry inside the lane boundary.
 - `playfield/playfield_view.cpp` renders the inner lane guide; navigation itself still uses the full playfield and therefore may use the reserved band as a bypass.
 - `GameApp::WorldLayoutMode` plus `ui/debug_frame.cpp` expose the future MESH/TEXTURED render dispatch. Current textured mode intentionally falls back to the same procedural mesh renderer because no texture asset/material pipeline exists yet.
+
+## v0.43.19 continuous corridor attachments
+
+- `world/corridor/entrances.cpp` resolves generated habitat entrances from the cursor's exact polar ray and replaces the cardinal face/slot fallback with nearest-free angular search. Storage Dome corridor attachment no longer snaps to cardinal crew faces; real cargo-gate sectors and existing pressure entrances still reserve their space.
+- `world/corridor/factory.cpp` tries a two-point straight centerline first for close structure-to-structure connections when the direct swept route is valid. Existing obstacle routing remains the fallback.
+- `navigation_regression geometry` sweeps 360 one-degree habitat attachment positions, checks continuous hull movement, verifies on-demand entrances remain traversable, and requires a close unobstructed structure pair to produce exactly one straight corridor segment.
+
+## v0.43.20 corridor start-preview sizing
+- `game/src/features/corridor_builder.cpp`: short structure-attached pre-click sample (1.35 m) and compact fallback marker (1.10 m).
+- Actual corridor routing and committed geometry are unchanged after the source point is selected.
+
+## v0.43.21 corridor-safe structure envelopes
+- `game/world/geometry_standards.hpp`: canonical `kStructureConnectionReserve`, `kStructurePlacementGap`, and `structure_ground_extent()` derive placement space from corridor docking geometry.
+- `features/habitat_placement.cpp` / `features/resource_placement.cpp`: structure-to-structure placement and map-edge checks use the expanded ground reservation; workshop/service checks respect the same reserved structure area.
+- `playfield/world_renderer.cpp`: placement previews and step-0 construction blueprints draw the expanded ground reservation instead of only the physical mesh footprint.
+- `features/corridor_builder.cpp`: structure-hover start preview is a 0.56 m compact endpoint hint; no temporary corridor route is generated before the source click.
+- `navigation_regression geometry`: reproduces the supplied 0.43.20 Air Lock/Oxygen Generator spacing and requires the nearest new legal placement to accept a straight two-point corridor.
+
+## v0.43.22 Bio Dome pressure end caps
+- `world/habitats/bio_dome.cpp`: closes both X-axis ends of the greenhouse half-cylinder with glazed semicircular pressure surfaces, retaining the existing foundation below the arch spring. Generated corridor doorway profiles can therefore conform to the complete end face.
+- `navigation_regression geometry`: verifies both Bio Dome long-axis ends for every habitat size at 0, 37 and 90 degree rotations and requires a full generated wall profile plus corridor preview.
+- The perimeter placement validation fixture now derives its safe test position from `structure_ground_extent()` so it matches the v0.43.21 corridor-reserved ground rectangle.
+
+## v0.43.23 new-game playfield sizing
+
+- `game_app.hpp` owns the new-game playfield constants: 32 m minimum, 1024 m maximum, 32 m step, 128 m default/debug-template size.
+- `screens/new_game.cpp` consumes those constants for the selector and debug-template lock; `systems/save_game.cpp` retains legacy 16 m compatibility while accepting the new 1024 m maximum.
+
+## v0.43.24 selection-panel scrolling
+
+- `systems/world_selection.cpp`: owns selection-panel content height, viewport-height capping, scroll range, per-selection scroll identity and wheel-scroll state.
+- `systems/gameplay_controller.cpp`: routes wheel input to the info pane before camera/build-size controls whenever the pointer is over the pane.
+- `ui/selection_panel.cpp`: offsets only contained rows/buttons by the scroll position, suppresses rows outside the viewport, and renders a proportional scrollbar without enlarging the panel.
+- `ui_regression`: forces a warning-heavy Storage Dome to overflow at 200% UI scale and verifies the bottom rows become reachable, the scrollbar is visible, scrolled text stays inside the panel, and the camera distance does not change.

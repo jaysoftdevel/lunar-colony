@@ -1,3 +1,5 @@
+v0.43.27 - Air Lock supply channels attach independently to all hull sides
+v0.43.26 - failsafe reset control; smooth solar tracker slew; light-yellow selection outlines; oxygen generator throughput +100%
 0.43.15 - hydrogen fuel-cell generation and tracked stellar solar input
 - Add Hydrogen Generator as an outdoor buildable resource structure with native procedural fuel-cell/radiator/manifold geometry, construction costs, catalog icon, selection telemetry and supply warnings.
 - Oxygen Generator electrolysis now preserves the physical 1:8 H2:O2 by-product mass ratio. Each generator buffers size-scaled hydrogen locally; excess is reported as vented when the buffer is full. Hydrogen inventory is persistent in save schema 20; schemas 1-19 remain readable and default to an empty H2 buffer.
@@ -428,3 +430,73 @@ v0.40.9
 - Existing saves remain loadable without relocating structures; the perimeter rule applies to new placement and newly generated access/service areas.
 - Draws the inner edge of the reserved lane as a subtle world-space guide.
 - Adds a MESH/TEXTURED layout selector directly to the debug frame. The current renderer has no texture/material asset pipeline, so TEXTURED intentionally falls back to the same procedural mesh rendering until such a backend exists; the game-side mode/state is ready for that future dispatch.
+
+0.43.19 - straight short corridors and continuous 360-degree structure attachments
+- Close unobstructed structure-to-structure corridor runs now use one straight centerline segment instead of a tangent-driven cubic/S-curve. Vestibules still handle the local hull/door orientation; obstacles can still force a routed bend.
+- Generated habitat corridor anchors follow the exact cursor polar ray around the pressure hull. Removes the four-cardinal-face/seven-slot fallback that caused visible attachment jumps.
+- When the exact angle is unavailable, searches nearest free angles in 1-degree increments; existing connections/gates remain real blockers.
+- Storage Dome crew-corridor attachment no longer snaps near cardinal positions; cargo-gate sectors remain reserved.
+- Optimized release regression: 24/24 registered CTest groups passed.
+0.43.20 - shorter initial structure-attached corridor blueprint
+- Reduced the pre-click structure corridor sample from 2.75 m to 1.35 m.
+- Reduced the fallback start marker from 1.55 m to 1.10 m.
+- Real corridor length after selecting the source remains entirely controlled by the destination/cursor and routing system.
+0.43.21 - minimal corridor start and corridor-safe ground rectangles
+- Replaces the 1.35 m structure-hover sample corridor with a 0.56 m compact docking/orientation hint; no real corridor route is previewed until the source is selected.
+- Reserves 3.45 m per structure side for corridor entrance + docking geometry and uses the expanded rectangle for new structure spacing and edge placement.
+- Draws the reserved ground rectangle during placement and at construction step 0.
+- Adds a regression based on 0-43-20.gmsave ensuring the old too-close spacing is rejected for new placement and the nearest legal spacing connects with a straight corridor.
+0.43.22 - Bio Dome front/back corridor connectivity
+- Closes both greenhouse barrel ends with real glazed pressure-envelope caps so generated corridor hatches can attach there.
+- Keeps the normal free-angle/on-demand entrance model; no predefined Bio Dome doors are added.
+- Adds size/rotation regressions for both long-axis ends and keeps save schema unchanged.
+
+0.43.23 - doubled new-game playfield sizes
+- Doubles the New Game default from 64x64 to 128x128.
+- Doubles every selectable playfield size: 32..1024 in 32 m steps instead of 16..512 in 16 m steps.
+- Debug start template now uses 128x128. Legacy saves as small as 16 remain readable; save validation accepts the new 1024 maximum.
+
+0.43.24 - scrollable upper-left selection/info panel
+- Caps the selection/details panel above the build bar and adds mouse-wheel scrolling when its content is taller than the available viewport.
+- Adds a proportional scrollbar, per-selection scroll reset/clamping, and prevents panel wheel input from also zooming the camera or changing placement size.
+- Adds overflow regression coverage; optimized release validation passes 24/24 registered CTest groups.
+
+0.43.25 - switchable safe solar tracking and Air Lock supply attachment
+- Adds a per-Solar Panel SUN TRACKING ON/OFF control in the selected structure status panel. Tracking remains enabled by default; disabling it keeps the collector at its authored default orientation.
+- Solar production now respects collector orientation when tracking is disabled, while tracked collectors retain maximum incidence output whenever the star is above the horizon.
+- Replaces shortest-arc collector rotation with physical azimuth + tilt tracking so the wide collector head cannot roll through the playfield; adds a final ground-plane penetration guard.
+- Save schema 22 persists each Solar Panel tracking setting; older saves load with tracking enabled.
+- Supply Channel selection now resolves Air Lock attachment to the permitted longitudinal end, including when hovering the side/center of the Air Lock or snapping from just outside it. Existing one-side-only Air Lock connection rules remain enforced.
+
+0.43.28 -> 0.43.29 : replaced the bundled DEBUG START TEMPLATE payload with the supplied 0-43-28.gmsave layout; debug-template import now uses the current 128x128 template playfield requirement.
+
+0.43.30 - larger power storage and robust scrollable status frame
+- Increased every Power Storage capacity by 50%: Small 30 -> 45 kWh and Standard 60 -> 90 kWh.
+- Centralized Power Storage capacity so simulation limits, the top power indicator and the selected-structure status frame always report the same value.
+- Reworked selection/status-frame overflow sizing to include newer telemetry, warnings and controls before calculating the scroll range; overflowing content remains clipped to the frame and is reachable with the mouse wheel.
+- Wheel input over the status frame remains isolated from world-camera zoom, and a proportional scrollbar is shown only when content exceeds the available frame height.
+
+0.43.31 - battery-deadlock recovery and safety-state hardening
+- A depleted rover battery is no longer reported as INVALID MOTION BOUNDS. The safety coordinator receives the rover's physical speed capability while energy availability remains an energy/dispatch concern.
+- Until the first operational Robot Workshop exists, the starter apron provides a bootstrap charger. At <=10% charge an interruptible rover preserves its mode, target, cargo and logistics reservation, returns to its original starter bay, charges to 80%, then resumes the preserved task.
+- Existing saves that already contain a 0 kWh rover receive only the protected 2.5% emergency reserve required to reach charging, preventing a permanent legacy-save deadlock without refilling the pack for normal work.
+- Added a battery regression that starts one rover at 0 kWh and one below reserve, verifies both recover without entering SAFETY FAULT, and retains the calibrated no-recharge Stage-1/Stage-2 bootstrap test.
+- Replayed 0-43-28(1).gmsave: builder recovery from 0 kWh and carrier recovery from 5.6% both proceed without a fault; the carrier resumes its preserved 10 kg corridor shipment.
+
+0.43.32 - local generator buffers and larger battery storage
+- Solar panels now retain up to 4 kWh (standard) / 2 kWh (small) of otherwise-curtailed generation and use it before the main battery for local/network load.
+- Water drillers now retain up to 100 L (standard) / 50 L (small) and automatically unload buffered water into connected tanks when capacity becomes available.
+- Dedicated Power Storage capacity increased by another 50% to 135 kWh standard / 67.5 kWh small.
+- Selection inspector exposes generator buffer fill levels.
+
+0.43.33 - robot enclosure prevention and legacy pocket recovery
+- Construction-stage commits now run a full-playfield exterior-connectivity guard so several structures/corridors cannot collectively seal a rover into a closed pocket.
+- If a pending stage would disconnect a rover from the protected perimeter service lane, the stage is held and the rover is routed through the still-open escape before geometry becomes solid.
+- Legacy saves that already contain an exterior rover in a sealed component receive a one-time emergency extraction to the nearest exterior-connected clear point while preserving cargo, construction/logistics assignment and reservations.
+- Replayed 0-43-31.gmsave: the trapped builder at approximately (-45.56, 12.33) is recovered to an exterior-connected point around (-45.70, 18.58) and remains out of SAFETY FAULT during continued simulation.
+0.43.37 - persistent carrier return routing and stuck-CPU fix
+- Fixed an idle/low-battery Carrier workshop-return deadlock where logistics housekeeping cleared the route every frame immediately before the workshop controller requested the same route again.
+- Preserve the Carrier incremental planner while an operational Robot Workshop owns the idle-return goal; real goal changes are still invalidated by the safety coordinator.
+- Replayed 0-43-36.gmsave: CR-01 leaves the stuck position around (-56.83, 20.00), reaches and parks at the workshop without SAFETY FAULT, with planner restarts reduced from thousands to a few and node expansions from millions to only a few thousand.
+- Added a save-specific regression that requires the Carrier to escape, park, remain fault-free, and stay below bounded planner restart/expansion limits.
+

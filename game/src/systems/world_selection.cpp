@@ -3,6 +3,7 @@
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/world_labels.hpp"
+#include "game/world/airlock_connections.hpp"
 #include "game/version.hpp"
 #include <algorithm>
 #include <array>
@@ -131,27 +132,87 @@ Vec3 point_along_path(const std::vector<Vec3>& path,float fraction,Vec3* tangent
 }
 }
 
-Rect GameApp::selection_panel_rect() const {
+float GameApp::selection_panel_content_height() const {
     float extra=0;
     const float warning_font=eng::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_);
-    if(selection_kind_==SelectionKind::Robot)
-        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,485.0f,390.0f};
+    if(selection_kind_==SelectionKind::Robot) return 416.0f;
     if(selection_kind_==SelectionKind::Habitat){
-        bool generator=false;
+        HabitatKind kind=HabitatKind::CrewQuarters;
         if(selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size()){
-            const auto& h=placed_habitats_[(std::size_t)selected_habitat_];generator=h.kind==HabitatKind::OxygenGeneratorDome || h.kind==HabitatKind::AirLock;
+            const auto& h=placed_habitats_[(std::size_t)selected_habitat_];kind=h.kind;
             if(h.construction.complete())extra=supply_warning_extra_height(supply_warning_lines(h.supply,382.0f,warning_font));
         }
-        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,(generator?344.0f:306.0f)+extra};
+        if(kind==HabitatKind::OxygenGeneratorDome) return 378.0f+extra;
+        if(kind==HabitatKind::AirLock) return 362.0f+extra;
+        return 324.0f+extra;
     }
-    if(selection_kind_==SelectionKind::Corridor)return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,344.0f};
+    if(selection_kind_==SelectionKind::Corridor) return 356.0f;
     if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 && (std::size_t)selected_resource_<placed_resources_.size()){
-        const auto& item=placed_resources_[(std::size_t)selected_resource_];const bool storage=item.kind==ResourceKind::StorageDome;
-        const float width=storage?485.0f:410.0f;
+        const auto& item=placed_resources_[(std::size_t)selected_resource_];
+        const float width=item.kind==ResourceKind::StorageDome?485.0f:410.0f;
         if(item.construction.complete())extra=supply_warning_extra_height(supply_warning_lines(item.supply,width-28.0f,warning_font,item.kind));
-        return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,width,(storage?388.0f:280.0f)+extra};
+        if(item.kind==ResourceKind::StorageDome) return 408.0f+extra;
+        // The fuel-cell telemetry has one more row than the generic outdoor
+        // resource panel.  Keep that row in the scrollable content instead of
+        // silently drawing it below a 280 px panel.
+        if(item.kind==ResourceKind::HydrogenGenerator) return 320.0f+extra;
+        if(item.kind==ResourceKind::SolarPanel) return 316.0f+extra;
+        return 300.0f+extra;
     }
-    return {PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,410.0f,280.0f};
+    return 290.0f;
+}
+
+Rect GameApp::selection_panel_rect() const {
+    float width=410.0f;
+    if(selection_kind_==SelectionKind::Robot) width=485.0f;
+    else if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 && (std::size_t)selected_resource_<placed_resources_.size() &&
+            placed_resources_[(std::size_t)selected_resource_].kind==ResourceKind::StorageDome) width=485.0f;
+    const float y=STATUS_BAR_H+PLAYFIELD_MARGIN;
+    const float logical_h=(float)viewport_height_/std::max(0.01f,ui_scale_);
+    const float available_h=std::max(0.0f,logical_h-BUILD_BAR_H-PLAYFIELD_MARGIN-y);
+    return {PLAYFIELD_MARGIN,y,width,std::min(selection_panel_content_height(),available_h)};
+}
+
+float GameApp::selection_panel_max_scroll() const {
+    if(selection_kind_==SelectionKind::None ||
+       (selection_kind_==SelectionKind::GroundResource && selected_ground_resources_.size()<=1)) return 0.0f;
+    return std::max(0.0f,selection_panel_content_height()-selection_panel_rect().h);
+}
+
+std::uint64_t GameApp::current_selection_panel_scroll_key() const {
+    std::uint64_t key=(std::uint64_t)selection_kind_+1u;
+    const auto mix=[&](std::uint64_t value){key^=value+0x9e3779b97f4a7c15ull+(key<<6)+(key>>2);};
+    switch(selection_kind_){
+        case SelectionKind::Habitat: mix((std::uint64_t)(selected_habitat_+2)); break;
+        case SelectionKind::Corridor: mix((std::uint64_t)(selected_corridor_+2)); break;
+        case SelectionKind::Resource: mix((std::uint64_t)(selected_resource_+2)); break;
+        case SelectionKind::Utility: mix((std::uint64_t)(selected_utility_+2)); break;
+        case SelectionKind::Walkway: mix((std::uint64_t)(selected_walkway_+2)); break;
+        case SelectionKind::Robot: mix((std::uint64_t)(selected_robot_+2)); break;
+        case SelectionKind::GroundResource:
+            if(selected_ground_resources_.size()>1){
+                mix(selected_ground_resources_.size());
+                for(int index:selected_ground_resources_) mix((std::uint64_t)(index+2));
+            }else mix((std::uint64_t)(selected_ground_resource_+2));
+            break;
+        case SelectionKind::None: break;
+    }
+    return key;
+}
+
+void GameApp::sync_selection_panel_scroll(){
+    const auto key=current_selection_panel_scroll_key();
+    if(selection_panel_scroll_key_!=key){selection_panel_scroll_key_=key;selection_panel_scroll_=0.0f;}
+    selection_panel_scroll_=std::clamp(selection_panel_scroll_,0.0f,selection_panel_max_scroll());
+}
+
+void GameApp::update_selection_panel_scroll(const InputState& input){
+    sync_selection_panel_scroll();
+    const float maximum=selection_panel_max_scroll();
+    if(maximum<=0.0f || input.wheel==0.0f || !mouse_over_selection_panel(input)) return;
+    // Scroll only the status frame under the pointer; the gameplay controller
+    // suppresses the same wheel event from camera zoom while the frame is hit.
+    selection_panel_scroll_=std::clamp(selection_panel_scroll_-input.wheel*30.0f,0.0f,maximum);
 }
 
 Rect GameApp::ground_resource_panel_rect() const {
@@ -187,6 +248,8 @@ bool GameApp::mouse_over_selection_panel(const InputState& input) const {
 
 void GameApp::clear_world_selection(){
     selection_kind_=SelectionKind::None;
+    selection_panel_scroll_=0.0f;
+    selection_panel_scroll_key_=0;
     selected_habitat_=-1;
     selected_corridor_=-1;
     selected_resource_=-1;
@@ -300,6 +363,9 @@ std::optional<UtilityBuildAnchor> GameApp::utility_anchor_at(Vec3 hit,UtilityKin
     }
     const int habitat=pick_habitat(hit);
     if(habitat>=0){
+        // Keep the exact cursor hit for every habitat, including Air Locks.
+        // UtilityNetwork::preview_anchor() resolves that hit onto the physical
+        // hull surface, so lateral Air Lock walls remain directly selectable.
         UtilityBuildAnchor a{UtilityEndpointKind::Habitat,(size_t)habitat,hit};
         if(utility_network_.anchor_compatible(kind,a,placed_habitats_,placed_resources_)) return a;
     }
@@ -320,10 +386,11 @@ std::optional<UtilityBuildAnchor> GameApp::utility_anchor_at(Vec3 hit,UtilityKin
             if(d<best){ best=d; snapped=a; }
         }
         for(std::size_t i=0;i<placed_habitats_.size();++i){
+            const auto& habitat_item=placed_habitats_[i];
+            const auto& mesh=habitat_models_.mesh(habitat_item);
             UtilityBuildAnchor a{UtilityEndpointKind::Habitat,i,hit};
             if(!utility_network_.anchor_compatible(kind,a,placed_habitats_,placed_resources_)) continue;
-            const auto& mesh=habitat_models_.mesh(placed_habitats_[i]);
-            const float d=rotated_rect_distance_xz(hit,placed_habitats_[i].position,placed_habitats_[i].rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+            const float d=rotated_rect_distance_xz(hit,habitat_item.position,habitat_item.rotation_degrees,mesh.footprint_x,mesh.footprint_z);
             if(d<best){ best=d; snapped=a; }
         }
         if(snapped) return snapped;

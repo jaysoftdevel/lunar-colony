@@ -456,6 +456,19 @@ std::vector<Vec3> find_non_overlapping_route(const CorridorEndpoint& a,const Cor
                     const std::vector<CorridorConnection>& existing,float playfield_half_extent){
     const float d=distance_xz(a.position,b.position);
 
+    // Close structure-to-structure connections must never curl into an S-shape
+    // merely to satisfy two slightly different docking normals. The generated
+    // vestibules already handle the short normal-aligned transition from each
+    // hull to its corridor endpoint; if the clear gap between those endpoints
+    // is directly traversable, make the actual pressure corridor one straight
+    // centerline. Only a real obstacle may force a bend.
+    const bool structure_a=a.kind==CorridorEndpointKind::Habitat || a.kind==CorridorEndpointKind::Resource;
+    const bool structure_b=b.kind==CorridorEndpointKind::Habitat || b.kind==CorridorEndpointKind::Resource;
+    if(structure_a && structure_b && d<=DIRECT_CORRIDOR_MAX_RASTERS){
+        std::vector<Vec3> straight{a.position,b.position};
+        if(route_is_valid(straight,habitats,library,resources,resource_library,existing,a,b)) return straight;
+    }
+
     // When at least one endpoint is an existing corridor, first try a compact
     // tangent-preserving connector.  This is what makes an entrance directly
     // beside a corridor connectable without forcing a large detour or allowing

@@ -182,7 +182,7 @@ Structure placement no longer triggers full-playfield route searches. Robot path
 
 The starter depot is a deterministic traffic layout with hull-safe parking, one front pickup lane per material and a clear entry/exit spine. Same-material pickup is serialized only at the source lane; different materials and construction routes continue in parallel. Idle carriers return to dedicated standby bays instead of blocking pallet exits. Construction logistics are carrier-first; builders remain at their worksite unless the site coordinator sees a genuine carrier-service timeout. Pickup/delivery/work stations stay fixed for the current operation so destinations cannot drift while a robot is travelling.
 
-The release QA places an Air Lock, adds a Factory while 6 BR-02 builders and 6 CR-01 carriers are already active, and checks fleet collisions, carrier delivery liveness, low-speed spin, simultaneous movement and placement/update timing. Placement scaling is also checked from 16 m through 512 m playfields.
+The release QA places an Air Lock, adds a Factory while 6 BR-02 builders and 6 CR-01 carriers are already active, and checks fleet collisions, carrier delivery liveness, low-speed spin, simultaneous movement and placement/update timing. Placement scaling is also checked across legacy small fields and the expanded new-game range up to 1024 m.
 
 
 ## v0.31.19 concurrent logistics lanes and close-range construction
@@ -205,7 +205,7 @@ Robot geometry path search is isolated in `game_cluster_pathfinding`. Normal mov
 
 ## v0.40.33 debug blueprint start
 
-The New Game screen includes a `DEBUG START TEMPLATE` toggle. Enabling it locks the playfield to 64x64, imports the bundled construction layout from the supplied 0.40.32 debug save as fresh blueprints, keeps the selected new-game robot counts and starter resource stash, and opens the playfield paused.
+The New Game screen includes a `DEBUG START TEMPLATE` toggle. Enabling it locks the playfield to 128x128, imports the bundled construction layout from the supplied 0.43.28 debug save as fresh blueprints, keeps the selected new-game robot counts and starter resource stash, and opens the playfield paused.
 
 ## v0.40.32 local fleet awareness and active-only traffic motion
 
@@ -344,3 +344,28 @@ The starter packs are calibrated against a full uninterrupted Stage-1/Stage-2 bo
 A permanent 2.25 m rover circulation band is reserved inside the playfield boundary. New structures and their non-crossable service/access clearances cannot occupy it, so edge-side construction cannot eliminate the last route around the colony. A subtle line marks the inner edge of the reserved band. Existing saves are not repositioned.
 
 When the debug frame is enabled it now includes a `MESH` / `TEXTURED` layout switch. The project currently has no texture/material asset pipeline, so textured mode deliberately uses the same procedural mesh renderer for now; the mode exists as the stable hook for future textured rendering.
+
+### v0.43.19 seamless corridor attachment angles
+
+Corridor attachment points now follow the cursor continuously around the complete usable structure hull instead of jumping between predefined/cardinal face slots. Existing corridor entrances and functional gate sectors still reserve their physical space; when the selected angle is occupied, placement slides to the nearest free angular position rather than jumping to an unrelated face. Storage Dome crew-corridor placement follows the same exact-angle behavior while cargo gates remain protected.
+
+When two structures are close enough for a direct unobstructed connection, the pressure corridor between their docking vestibules is forced to a straight centerline. The local vestibules may still meet differently angled hull surfaces, but a short corridor itself no longer twists into an S-shape merely to follow both endpoint tangents.
+
+### v0.43.20 shorter corridor blueprint start
+When corridor placement is first hovered over a structure, the temporary structure-attached blueprint stub is now much shorter (1.35 m instead of 2.75 m). The fallback start marker is also reduced to 1.10 m. Once the source is selected, corridor length continues to follow the actual destination and routing normally.
+
+### v0.43.21 minimal corridor start and corridor-safe placement envelopes
+The pre-click corridor hint on a structure no longer previews a real corridor section. It now shows only a compact 0.56 m docking/orientation hint; the full generated entrance, docking transition and routed corridor appear after the source is selected.
+
+Every new structure now reserves a larger ground-placement rectangle derived from the real corridor hardware: 1.70 m generated entrance depth + 1.75 m docking transition = 3.45 m reserve on every side. Two structures placed at the minimum legal spacing therefore still retain enough clear ground for opposing docking assemblies and a short straight pressure corridor. The reserve is visible in structure placement/step-0 blueprints. Existing saves are not moved or rejected; the rule applies to new placement.
+
+### v0.43.22 Bio Dome front/back corridor connections
+Bio Domes now have sealed pressure-envelope end caps on both ends of the greenhouse barrel. Corridor placement can therefore create normal on-demand pressure hatches on the front and back faces as well as along the curved sides. The attachment remains continuous/free-angle and does not add predefined entrances. Existing saves are compatible.
+
+### v0.43.23 doubled playfield sizes
+
+New games now default to a 128 x 128 playfield instead of 64 x 64. The selectable range is doubled consistently from 32 x 32 through 1024 x 1024 in 32 m steps. The debug start template is likewise locked to 128 x 128. Legacy saves down to the historical 16 x 16 size remain loadable, while saves up to 1024 x 1024 are now accepted.
+
+### v0.43.24 scrollable selection/info panel
+
+The upper-left selection/info panel now behaves as a fixed viewport above the build bar. If robot telemetry, structure warnings, resource inventories or other detail rows exceed the available vertical space, the panel shows a scrollbar and the mouse wheel scrolls the contained information. Wheel input over the panel is consumed by the UI, so it does not zoom the world or change a structure-placement size. Selecting a different object resets the panel to the top. Short panels remain unchanged and do not show a scrollbar.

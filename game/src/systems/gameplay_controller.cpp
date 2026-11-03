@@ -51,7 +51,7 @@ void GameApp::update(float dt,const InputState& in){
             status_.update(sim_dt);
             update_construction(sim_dt);
             if(in.escape_pressed){ exit_first_person_mode(); return; }
-            camera_.update(in,playfield_.size(),viewport_height_);
+            camera_.update(in,playfield_.size(),viewport_height_,dt);
             const float logical_y=(float)in.mouse_y/ui_scale_;
             const bool over_world=logical_y>=STATUS_BAR_H && logical_y<((float)viewport_height_/ui_scale_-BUILD_BAR_H);
             if(in.left_pressed && over_world){
@@ -139,8 +139,10 @@ void GameApp::update(float dt,const InputState& in){
             return;
         }
 
+        const bool over_selection_panel=mouse_over_selection_panel(in);
+        update_selection_panel_scroll(in);
         InputState camera_input=in;
-        if(const BuildObjectDefinition* selected=build_catalog_.selected(); selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
+        if(const BuildObjectDefinition* selected=build_catalog_.selected(); !over_selection_panel && selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
             constexpr float step=15.0f;
             if(selected->kind==BuildObjectKind::Habitat){
                 auto cycle_habitat=[&](int delta){
@@ -182,8 +184,8 @@ void GameApp::update(float dt,const InputState& in){
             if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
         }
         const float pointer_y=(float)in.mouse_y/ui_scale_;
-        if(pointer_y<STATUS_BAR_H || pointer_y>=(float)viewport_height_/ui_scale_-BUILD_BAR_H || mouse_over_selection_panel(in))camera_input.wheel=0;
-        camera_.update(camera_input,playfield_.size(),viewport_height_);
+        if(pointer_y<STATUS_BAR_H || pointer_y>=(float)viewport_height_/ui_scale_-BUILD_BAR_H || over_selection_panel)camera_input.wheel=0;
+        camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
         status_.update(sim_dt);
         update_construction(sim_dt);
 
@@ -216,8 +218,11 @@ void GameApp::update(float dt,const InputState& in){
             if(std::sqrt((float)(dx*dx+dy*dy))>=6.0f*ui_scale_) selection_marquee_dragged_=true;
             if(!in.left_down) finish_selection_marquee();
         }
-    } else if(in.escape_pressed && screen_!=Screen::MainMenu) {
-        screen_=Screen::MainMenu;
+    } else if(in.escape_pressed) {
+        // When the pause/game menu is open, ESC is a direct resume shortcut.
+        // Sub-pages still use ESC to return one level to that menu first.
+        if(screen_==Screen::MainMenu && game_session_active_) screen_=Screen::Playfield;
+        else if(screen_!=Screen::MainMenu) screen_=Screen::MainMenu;
     }
 }
 

@@ -135,7 +135,7 @@ void GameApp::render_status_bar(Renderer& r){
     }
     for(const auto& item:placed_resources_)if(item.construction.complete()){
         if(item.kind==ResourceKind::PowerStorage){
-            const double capacity=item.size==ResourceSizeTier::Small?30.0:60.0;energy_capacity+=capacity;
+            const double capacity=power_storage_capacity_kwh(item.size);energy_capacity+=capacity;
             if(std::isfinite(item.supply.energy_kwh))energy+=std::clamp(item.supply.energy_kwh,0.0,capacity);
         }else if(item.kind==ResourceKind::WaterStorage){
             const double capacity=item.size==ResourceSizeTier::Small?1000.0:2000.0;water_capacity+=capacity;

@@ -78,6 +78,17 @@ make the air-lock inside a three stages facility
 - exit to inside area
 - it shall be passable in both direction just like a usual airlock system
 
+add an option to enable the solar panel status frame:
+- if enabled it shall follow the sun to gain max power production
+- if disabled it shall remain in default position
+the solar panel shall respect the playfield ground and not ditch into it.
+cannot connect supply channels to the air-lock, make it possible.
+
+if a robot goes to failsave mode, add a reset option button to the status frame to reset its internal statemachine
+don't let the solarpanel position "jump", it shall move seamless from one position to another.
+highlight the currently selected structure/robot with light yellow outlines
+increase the oxygen generators throughput by 100%
+
 *** ToDo:
 
 
@@ -117,6 +128,9 @@ generate astronauts, the shall look like future astronauts and move like humans
   - walking
   - jumping
   - running
+- every astronaut shall have two appearances
+	- space suite wearing (outside)
+	- space suite not wearing (inside)
 dont integrate into the game yet, just show me sampled drafts
 
 

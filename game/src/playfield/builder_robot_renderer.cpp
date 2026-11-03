@@ -423,7 +423,7 @@ void GameApp::render_builder_robot(Renderer& r){
         if(selection_kind_==SelectionKind::Robot && selected_robot_==(int)robot_index){
             const float rr=robot_body_radius(robot.role)+0.26f;
             const float yy=pos.y+0.04f;
-            const Color sel=robot.role==RobotRole::Carrier?Color{0.24f,0.86f,1.0f,0.95f}:Color{1.0f,0.66f,0.18f,0.95f};
+            const Color sel{1.0f,0.94f,0.55f,1.0f};
             r.draw_lines_3d({{pos.x-rr,yy,pos.z-rr},{pos.x+rr,yy,pos.z-rr},
                              {pos.x+rr,yy,pos.z-rr},{pos.x+rr,yy,pos.z+rr},
                              {pos.x+rr,yy,pos.z+rr},{pos.x-rr,yy,pos.z+rr},

@@ -155,10 +155,28 @@ Vec3 source_hint(const CorridorBuildAnchor& anchor,Vec3 hit,const std::vector<Pl
     return c+d*10.0f;
 }
 
+constexpr float initial_corridor_preview_run(){
+    // Before the source is selected the player only needs an orientation hint,
+    // not a fake section of already-sized corridor. Half a door-frame half
+    // width is enough to show the pressure direction without implying length.
+    return geometry::kDoorFrameHalfWidth*0.5f;
+}
+
+CorridorEndpoint compact_structure_start_endpoint(CorridorEndpoint endpoint){
+    if(endpoint.kind!=CorridorEndpointKind::Habitat && endpoint.kind!=CorridorEndpointKind::Resource) return endpoint;
+    const Vec3 n=flat_dir(endpoint.door.normal);
+    const float run=initial_corridor_preview_run();
+    endpoint.door.position=endpoint.door.wall_position+n*(run*0.5f);
+    endpoint.position=endpoint.door.wall_position+n*run;
+    endpoint.position.y=0.0f;
+    endpoint.tangent=n;
+    return endpoint;
+}
+
 void draw_corridor_start_sample(Renderer& r,Vec3 origin,Vec3 tangent,bool valid){
     tangent=flat_dir(tangent);
     const Vec3 side=side_of(tangent);
-    constexpr float length_m=1.55f;
+    const float length_m=initial_corridor_preview_run();
     constexpr float half_w=0.76f;
     constexpr float y=0.12f;
     const Vec3 a=origin+Vec3{0,y,0};
@@ -249,39 +267,33 @@ void GameApp::render_corridor_placement(Renderer& r){
         highlight_resource_anchor(hover);
         auto candidate=corridor_network_.preview_anchor(hover,source_hint(hover,hit,placed_habitats_,placed_resources_),placed_habitats_,habitat_models_,placed_resources_,resource_models_);
         if(!airlock_allowed(hover))candidate.reset();
-        std::optional<CorridorConnection> sample;
-        if(candidate && candidate->kind!=CorridorEndpointKind::Corridor){
-            const Vec3 dir=flat_dir(candidate->tangent);
-            const CorridorBuildAnchor sample_end{CorridorEndpointKind::OpenDoor,0,candidate->position+dir*2.75f};
-            sample=corridor_network_.preview_built_corridor(hover,sample_end,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
-        }
-        // The first click selects a connection node, not a finished route. A
-        // corridor node therefore previews only its junction/adapter mesh; the
-        // route itself appears after the source has been selected and the mouse
-        // provides a real destination. This avoids the misleading initial stub.
+        // The first click selects only a source node. Do not preview a real
+        // corridor run yet: that created the impression that every structure
+        // connection started with a long mandatory segment. Structure anchors
+        // show a compact 0.56 m docking hint; the full vestibule/corridor appears
+        // only after the source has been selected and a destination exists.
         const bool start_valid=candidate.has_value();
-        if(sample){
-            draw_compact_corridor_blueprint(r,*sample,true);
-        }else if(!candidate || candidate->kind!=CorridorEndpointKind::Corridor){
-            draw_corridor_start_sample(r,candidate?candidate->position:hit,candidate?candidate->tangent:Vec3{1,0,0},start_valid);
-        }
         if(candidate){
-            const Color c=start_valid?(candidate->kind==CorridorEndpointKind::OpenDoor?Color{0.96f,0.67f,0.22f,1.0f}:theme_.accent)
-                                     :Color{1.00f,0.28f,0.22f,1.0f};
-            // Always render the actual endpoint hardware before the first click.
-            // Generated entrances therefore float over the hull while built-in
-            // doors show their exact pressure adapter. Reused entrances resolve
-            // to their shared corridor manifold and show that junction instead.
-            if(candidate->kind==CorridorEndpointKind::Habitat || candidate->kind==CorridorEndpointKind::Resource ||
-               candidate->kind==CorridorEndpointKind::Corridor){
-                const auto entrance_mesh=corridor_network_.preview_endpoint_mesh(*candidate);
-                const Color shell=start_valid?Color{0.34f,1.00f,0.72f,0.88f}:Color{1.00f,0.24f,0.18f,0.80f};
-                const Color details=start_valid?Color{0.24f,0.88f,0.68f,0.82f}:Color{1.00f,0.34f,0.24f,0.78f};
-                mesh_wireframe::draw_layer(r,entrance_mesh.shell,shell,1.35f);
-                mesh_wireframe::draw_layer(r,entrance_mesh.details,details,1.15f);
+            const Color c=candidate->kind==CorridorEndpointKind::OpenDoor?Color{0.96f,0.67f,0.22f,1.0f}:theme_.accent;
+            if(candidate->kind==CorridorEndpointKind::Habitat || candidate->kind==CorridorEndpointKind::Resource){
+                const CorridorEndpoint compact=compact_structure_start_endpoint(*candidate);
+                const auto entrance_mesh=corridor_network_.preview_endpoint_mesh(compact);
+                mesh_wireframe::draw_layer(r,entrance_mesh.shell,{0.34f,1.00f,0.72f,0.88f},1.35f);
+                mesh_wireframe::draw_layer(r,entrance_mesh.details,{0.24f,0.88f,0.68f,0.82f},1.15f);
                 r.draw_lines_3d(entrance_mesh.edges,c,1.8f);
+                render_endpoint_highlight(r,compact,c,3.0f);
+            }else if(candidate->kind==CorridorEndpointKind::Corridor){
+                const auto junction_mesh=corridor_network_.preview_endpoint_mesh(*candidate);
+                mesh_wireframe::draw_layer(r,junction_mesh.shell,{0.34f,1.00f,0.72f,0.88f},1.35f);
+                mesh_wireframe::draw_layer(r,junction_mesh.details,{0.24f,0.88f,0.68f,0.82f},1.15f);
+                r.draw_lines_3d(junction_mesh.edges,c,1.8f);
+                render_endpoint_highlight(r,*candidate,c,3.0f);
+            }else{
+                draw_corridor_start_sample(r,candidate->position,candidate->tangent,true);
+                render_endpoint_highlight(r,*candidate,c,3.0f);
             }
-            render_endpoint_highlight(r,*candidate,c,3.0f);
+        }else{
+            draw_corridor_start_sample(r,hit,Vec3{1,0,0},false);
         }
         if(input_.left_pressed && start_valid){
             corridor_build_start_=hover;

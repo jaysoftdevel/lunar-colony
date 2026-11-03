@@ -1,4 +1,3 @@
-#include "game/world/airlock_connections.hpp"
 #include "game/world/utility_network.hpp"
 #include "game/world/geometry_standards.hpp"
 #include "game/world/storage_loading_gate.hpp"
@@ -890,10 +889,11 @@ std::optional<UtilityEndpoint> UtilityNetwork::preview_anchor(
     const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
     const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const {
     if(!anchor_compatible(kind,anchor,habitats,resources)) return std::nullopt;
-    auto endpoint=surface_endpoint(anchor,toward,kind,habitats,habitat_library,resources,resource_library);
-    if(endpoint && endpoint->kind==UtilityEndpointKind::Habitat &&
-       !airlock_connections::allows(endpoint->index,endpoint->position,habitats,{},connections_))return std::nullopt;
-    return endpoint;
+    // Supply channels may attach to any physical side of an Air Lock.
+    // Corridor/walkway access remains governed by airlock_connections, but
+    // service ports are independent hull penetrations and must not reserve or
+    // inherit the Air Lock's passenger connection side.
+    return surface_endpoint(anchor,toward,kind,habitats,habitat_library,resources,resource_library);
 }
 
 UtilityMesh UtilityNetwork::preview_endpoint_mesh(const UtilityEndpoint& endpoint) const {

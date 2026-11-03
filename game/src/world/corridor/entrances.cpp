@@ -210,19 +210,9 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
     if(!found) return std::nullopt;
 
     const Vec3 local_hit=origin+direction*best_t;
-    // Keep the surface normal pointing away from the habitat center. Curved and
-    // faceted structures therefore get a door collar aligned to the real face.
     local_normal=flat_normal(local_normal);
-    if(length(local_normal)<0.01f) local_normal=local_outward;
-    if(dot(local_normal,local_outward)<0.0f) local_normal=local_normal*-1.0f;
-    // A cursor ray can strike a narrow chamfer whose triangle normal points far
-    // away from the intended docking direction.  Such a collar leaves too
-    // little shoulder clearance beside the adjacent hull.  Reject that exact
-    // facet and let the face-slot fallback choose the nearest safe pressure
-    // surface instead.  This changes only discretionary placement, never the
-    // actual door/body clearance contract.
-    if(dot(local_normal,local_outward)<0.78f) return std::nullopt;
-
+    if(length(local_normal)<0.001f)local_normal=local_outward;
+    if(dot(local_normal,local_outward)<0.0f)local_normal=local_normal*-1.0f;
     CorridorDoor d;
     d.wall_position=habitat.position+rotate_y(local_hit,habitat.rotation_degrees);
     d.wall_position.y=habitat.position.y+geometry::kEntranceSliceY;
@@ -273,36 +263,27 @@ std::optional<CorridorDoor> generated_face_door(std::size_t habitat_index,
                                                 const HabitatMesh& mesh,
                                                 Vec3 target,
                                                 const std::vector<CorridorConnection>& existing){
-    const Vec3 target_dir=flat_normal(target-habitat.position);
-    const std::array<Vec3,4> normals={Vec3{1,0,0},Vec3{-1,0,0},Vec3{0,0,1},Vec3{0,0,-1}};
-    const std::array<float,7> slots={0.0f,0.30f,-0.30f,0.50f,-0.50f,0.68f,-0.68f};
-    bool found=false;
-    float best=std::numeric_limits<float>::max();
-    CorridorDoor result{};
-    for(const Vec3 ln:normals){
-        const Vec3 wn=flat_normal(rotate_y(ln,habitat.rotation_degrees));
-        const float facing_penalty=(1.0f-dot(wn,target_dir))*4.0f;
-        const float tangent_extent=local_tangent_extent(mesh,ln);
-        for(float factor:slots){
-            auto local_wall=local_hull_wall_point(mesh,ln,factor*tangent_extent);
-            if(!local_wall) continue; // never invent a door on a footprint plane with no pressure hull
-            CorridorDoor d;
-            d.wall_position=habitat.position+rotate_y(*local_wall,habitat.rotation_degrees);
-            d.wall_position.y=habitat.position.y+geometry::kEntranceSliceY;
-            d.normal=wn;
-            d.position=d.wall_position+d.normal*GENERATED_ENTRANCE_DEPTH;
-            d.position.y=habitat.position.y+mesh.walkable_floor_y;
-            d.generated=true;
-            d.entrance_index=-1;
-            if(!attach_surface_profile(d,habitat,mesh)) continue;
-            d.wall_position.y=d.position.y;
-            if(!entrance_slot_clear(habitat_index,d,habitat,mesh,existing)) continue;
-            const float score=distance_xz(d.position,target)+facing_penalty+std::abs(factor)*0.4f;
-            if(score<best){ best=score; result=d; found=true; }
+    // Exact cursor-angle placement is attempted first by generated_cursor_door().
+    // Reaching this fallback means that direction is unavailable (usually an
+    // existing entrance/gate or a tiny pressure-mesh seam). Search continuously
+    // around the requested polar angle instead of snapping to four authored
+    // faces/slot bands. The nearest free angle wins, so motion stays seamless
+    // until an actual occupied sector forces the attachment to slide around it.
+    Vec3 wanted=target-habitat.position;
+    wanted.y=0.0f;
+    if(length(wanted)<0.05f) wanted={1,0,0};
+    wanted=flat_normal(wanted);
+    const float base=std::atan2(wanted.z,wanted.x);
+    constexpr float STEP=PI/180.0f; // 1 degree; only used after exact placement failed.
+    for(int ring=1;ring<=180;++ring){
+        for(float sign:{-1.0f,1.0f}){
+            const float angle=base+sign*(float)ring*STEP;
+            const Vec3 dir{std::cos(angle),0.0f,std::sin(angle)};
+            const Vec3 probe=habitat.position+dir*(std::max(mesh.footprint_x,mesh.footprint_z)+4.0f);
+            if(auto door=generated_cursor_door(habitat_index,habitat,mesh,probe,existing)) return door;
         }
     }
-    if(!found) return std::nullopt;
-    return result;
+    return std::nullopt;
 }
 
 CorridorEndpoint resolve_open_or_corridor(const CorridorBuildAnchor& anchor,Vec3 other,
@@ -536,12 +517,10 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
     if(length(normal)<0.08f){ normal=other-placed.position; normal.y=0.0f; }
     if(length(normal)<0.001f) normal={0,0,-1};
     normal=flat_normal(normal);
+    // Crew corridor attachments remain at the exact cursor-selected polar
+    // angle. Cargo gates below reserve their own angular sectors; they block an
+    // attachment but never pull a nearby free attachment onto a cardinal face.
     Vec3 wall=placed.position+normal*wall_radius;
-    for(int face=0;face<4;++face){
-        const auto n=rotate_y(storage_loading::local_normal(face),placed.rotation_degrees);
-        const auto door=placed.position+n*wall_radius;
-        if(distance_xz(anchor.position,door)<1.75f){normal=n;wall=door;break;}
-    }
 
     // The actual fixed/extra cargo gate aperture may not become a crew pressure
     // connection even when the cursor sits just outside its reservation apron.

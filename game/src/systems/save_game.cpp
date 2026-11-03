@@ -22,7 +22,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=21;
+constexpr std::uint32_t kSaveSchema=22;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -528,6 +528,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         out.pod(item.storage_parent_sequence);
         write_supply(out,item.supply);
         out.pod(item.storage_gate_angle_degrees);
+        out.pod((std::uint8_t)(item.solar_tracking_enabled?1:0));
     });
     write_object_vector(w,ground_resource_piles_,[](Writer& out,const GroundResourcePile& pile){
         out.pod((std::uint8_t)pile.resource); out.pod(pile.amount); write_vec3(out,pile.position); out.pod(pile.radius); out.pod(pile.condition);
@@ -537,6 +538,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,utility_network_.connections(),write_utility);
     write_object_vector(w,walkway_network_.connections(),write_walkway);
 
+    // Save schema 22: persistent per-solar-panel sun-tracking enable state.
     // Save schema 20: persistent hydrogen buffer inventory in SupplyState.
     // Save schema 13: persistent global blueprint placement order for FIFO carrier logistics.
     // Save schema 12: v0.40.40 eight-pallet starter depots are migrated to hull-safe boundary clearance.
@@ -612,8 +614,8 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     for(int i=0;i<6;++i) (void)r.pod<std::int32_t>();
     (void)read_bundle(r);
 
-    if(!r.valid || saved_playfield!=64 || playfield_.size()!=64){
-        error="Template requires a 64 X 64 playfield.";
+    if(!r.valid || saved_playfield!=kDebugTemplatePlayfieldSize || playfield_.size()!=kDebugTemplatePlayfieldSize){
+        error="Template requires a "+std::to_string(kDebugTemplatePlayfieldSize)+" X "+std::to_string(kDebugTemplatePlayfieldSize)+" playfield.";
         return false;
     }
 
@@ -662,6 +664,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         }
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
         if(source_schema>=17){item.supply=read_supply(in,source_schema>=20);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
+        if(source_schema>=22){const auto tracking=in.pod<std::uint8_t>();if(tracking>1)in.valid=false;item.solar_tracking_enabled=tracking!=0;}
         sync_stored_resource_totals(item);
         return item;
     })){ error="Template structure data is damaged."; return false; }
@@ -770,6 +773,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
 }
 
 bool GameApp::load_game_from_file(const std::string& path,std::string& error){
+    robot_enclosure_legacy_scan_pending_=true;
     Reader r{fs::path(path)};
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Invalid savegame file."; return false; }
@@ -794,7 +798,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     const auto saved_storage_size=(StorageDomeSize)r.pod<std::uint8_t>();
     const auto saved_resource_size=source_schema>=7?(ResourceSizeTier)r.pod<std::uint8_t>():ResourceSizeTier::Standard;
     const auto saved_game_speed=source_schema>=4?(GameSpeed)r.pod<std::uint8_t>():GameSpeed::Normal;
-    if(saved_playfield<16 || saved_playfield>512){ error="Savegame playfield size is invalid."; return false; }
+    if(saved_playfield<16 || saved_playfield>kNewGamePlayfieldMax){ error="Savegame playfield size is invalid."; return false; }
 
     CameraState camera_state{};
     camera_state.distance=r.pod<float>(); camera_state.elevation_degrees=r.pod<float>(); camera_state.azimuth_degrees=r.pod<float>(); camera_state.target=read_vec3(r);
@@ -829,6 +833,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         }
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
         if(source_schema>=17){item.supply=read_supply(in,source_schema>=20);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
+        if(source_schema>=22){const auto tracking=in.pod<std::uint8_t>();if(tracking>1)in.valid=false;item.solar_tracking_enabled=tracking!=0;}
         sync_stored_resource_totals(item); return item;
     })){ error="Savegame structure data is damaged."; return false; }
 

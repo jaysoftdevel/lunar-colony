@@ -81,18 +81,38 @@ std::string oxygen_net_text(const SupplyState& supply,bool paused){
 }
 
 void GameApp::render_selection_panel(Renderer& r){
+    sync_selection_panel_scroll();
     const Rect text_panel=selection_kind_==SelectionKind::GroundResource && selected_ground_resources_.size()<=1?ground_resource_panel_rect():selection_panel_rect();
+    const bool scrollable_panel=selection_kind_!=SelectionKind::GroundResource || selected_ground_resources_.size()>1;
+    const float panel_scroll=scrollable_panel?selection_panel_scroll_:0.0f;
+    const float content_height=scrollable_panel?selection_panel_content_height():text_panel.h;
     float warning_extra=0;
+    const auto row_visible=[&](float y,float h){return y>=text_panel.y+4.0f && y+h<=text_panel.y+text_panel.h-4.0f;};
     const auto game_label=[&](Renderer& renderer,Vec2 pos,const std::string& text,float scale,const ui::Theme& theme,bool muted=false){
         if(pos.y>=text_panel.y+80.0f)pos.y+=warning_extra;
+        pos.y-=panel_scroll;
+        if(!row_visible(pos.y,14.0f))return;
         layout::game_label_fitted(renderer,{pos.x,pos.y,std::max(0.0f,text_panel.x+text_panel.w-pos.x-12.0f),14.0f},text,scale,theme,muted);
+    };
+
+    const auto draw_scrollbar=[&](const Rect& panel){
+        const float maximum=selection_panel_max_scroll();
+        if(!scrollable_panel || maximum<=0.0f || panel.h<=12.0f)return;
+        const Rect track{panel.x+panel.w-7.0f,panel.y+6.0f,3.0f,panel.h-12.0f};
+        r.draw_rect(track,theme_.panel2);
+        const float thumb_h=std::max(20.0f,track.h*(panel.h/std::max(panel.h,content_height)));
+        const float travel=std::max(0.0f,track.h-thumb_h);
+        const float t=maximum>0.0f?std::clamp(selection_panel_scroll_/maximum,0.0f,1.0f):0.0f;
+        r.draw_rect({track.x-1.0f,track.y+travel*t,5.0f,thumb_h},theme_.accent);
     };
 
     const auto warning_reasons=[&](const SupplyState& supply,bool complete,ResourceKind kind=ResourceKind::Count){
         if(!complete)return;
         const auto lines=supply_warning_lines(supply,text_panel.w-28.0f,eng::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_),kind);
-        for(std::size_t i=0;i<lines.size();++i)
-            layout::game_label_fitted(r,{text_panel.x+14.0f,text_panel.y+75.0f+(float)i*12.0f,text_panel.w-28.0f,11.0f},lines[i],0.43f,theme_);
+        for(std::size_t i=0;i<lines.size();++i){
+            const float y=text_panel.y+75.0f+(float)i*12.0f-panel_scroll;
+            if(row_visible(y,11.0f))layout::game_label_fitted(r,{text_panel.x+14.0f,y,text_panel.w-28.0f,11.0f},lines[i],0.43f,theme_);
+        }
         warning_extra=supply_warning_extra_height(lines);
     };
 
@@ -101,6 +121,7 @@ void GameApp::render_selection_panel(Renderer& r){
             const Rect p=selection_panel_rect();
             ui::panel(r,p,theme_);
             r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2.0f);
+            draw_scrollbar(p);
             const float x=p.x+14.0f;
             ResourceBundle totals{};
             float condition_sum=0.0f;
@@ -131,7 +152,7 @@ void GameApp::render_selection_panel(Renderer& r){
                 game_label(r,{x,y},line.str(),0.48f,theme_);
                 y+=19.0f;
             }
-            game_label(r,{x,p.y+p.h-28.0f},debug_frame_enabled_?"DEL  MOVE SELECTED BOXES TO STORAGE":"DEBUG REQUIRED FOR DEL",0.43f,theme_,true);
+            game_label(r,{x,p.y+content_height-28.0f},debug_frame_enabled_?"DEL  MOVE SELECTED BOXES TO STORAGE":"DEBUG REQUIRED FOR DEL",0.43f,theme_,true);
             return;
         }
         if(selected_ground_resource_<0 || (std::size_t)selected_ground_resource_>=ground_resource_piles_.size()) return;
@@ -163,6 +184,7 @@ void GameApp::render_selection_panel(Renderer& r){
     const Rect p=selection_panel_rect();
     ui::panel(r,p,theme_);
     r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2.0f);
+    draw_scrollbar(p);
     const float x=p.x+14.0f;
 
     if(selection_kind_==SelectionKind::Robot && selected_robot_>=0 && (std::size_t)selected_robot_<builder_robots_.size()){
@@ -371,14 +393,33 @@ void GameApp::render_selection_panel(Renderer& r){
         game_label(r,{x,p.y+300},recovery.str(),0.40f,theme_,true);
         game_label(r,{x,p.y+322},power.str(),0.42f,theme_,true);
         game_label(r,{x,p.y+344},condition.str(),0.42f,theme_,true);
+        if(robot.safety.mode==robots::SafetyMode::Fault){
+            Rect reset{x,p.y+370.0f-panel_scroll,p.w-28,30};
+            if(row_visible(reset.y,reset.h) && ui::button(r,ui_input_,reset,"RESET FAILSAFE / STATE MACHINE",theme_,true)){
+                auto& reset_robot=builder_robots_[robot_index];
+                reset_robot.safety={};
+                reset_robot.current_speed_mps=0.0f;
+                reset_robot.route_active=false;
+                reset_robot.route_cursor=0;
+                reset_robot.route_waiting_for_clearance=false;
+                reset_robot.route_wait_elapsed=0.0f;
+                reset_robot.route_resolution_elapsed=0.0f;
+                reset_robot.route_force_full_replan=true;
+                reset_robot.blocked_elapsed=0.0f;
+                reset_robot.watchdog_elapsed=0.0f;
+                reset_robot.recovery_attempts=0;
+                reset_robot.safety.route_replan_required=true;
+            }
+        }
         if(debug_frame_enabled_){
             const bool picking=debug_move_pick_robot_==(int)robot_index;
             const char* label=picking?"CANCEL DESTINATION PICK":robot.debug_move_active?"CANCEL DEBUG MOVE":"DEBUG MOVE / PICK DESTINATION";
-            if(ui::button(r,ui_input_,{x,p.y+p.h-43,p.w-28,30},label,theme_,debug_robot_move_available(robot_index))){
+            Rect button{x,p.y+content_height-43.0f-panel_scroll,p.w-28,30};
+            if(row_visible(button.y,button.h) && ui::button(r,ui_input_,button,label,theme_,debug_robot_move_available(robot_index))){
                 if(robot.debug_move_active)builder_robots_[robot_index].debug_move_active=false;
                 else debug_move_pick_robot_=picking?-1:(int)robot_index;
             }
-        }else game_label(r,{x,p.y+p.h-27.0f},"LMB SELECT OTHER / ROBOTS ARE NOT DELETABLE",0.42f,theme_,true);
+        }else game_label(r,{x,p.y+content_height-27.0f},"LMB SELECT OTHER / ROBOTS ARE NOT DELETABLE",0.42f,theme_,true);
         return;
     }
 
@@ -453,19 +494,31 @@ void GameApp::render_selection_panel(Renderer& r){
             std::ostringstream rate;rate<<std::fixed<<std::setprecision(1);
             if(item.kind==ResourceKind::SolarPanel){
                 const auto sun=status_.sun_pose();
-                rate<<"SOLAR "<<kSolarPeakKw*factor*sun.irradiance_fraction<<" / "<<kSolarPeakKw*factor<<" KW PEAK";
+                const double incidence=item.solar_tracking_enabled?1.0:solar_tracking::fixed_panel_incidence_fraction(sun.direction,item.rotation_degrees);
+                rate<<"SOLAR "<<kSolarPeakKw*factor*sun.irradiance_fraction*incidence<<" / "<<kSolarPeakKw*factor<<" KW PEAK";
                 game_label(r,{x,p.y+208},rate.str(),0.48f,theme_);
-                std::ostringstream track;track<<"TRACKING SUN  AZ "<<std::setprecision(0)<<sun.azimuth_degrees<<" DEG / EL "<<sun.elevation_degrees<<" DEG";
+                std::ostringstream track;
+                if(item.solar_tracking_enabled) track<<"TRACKING ON  AZ "<<std::setprecision(0)<<sun.azimuth_degrees<<" DEG / EL "<<sun.elevation_degrees<<" DEG";
+                else track<<"TRACKING OFF  FIXED AT DEFAULT "<<(int)std::round(item.rotation_degrees)<<" DEG ORIENTATION";
                 game_label(r,{x,p.y+228},track.str(),0.42f,theme_,true);
+                std::ostringstream buffer;buffer<<std::fixed<<std::setprecision(1)<<"LOCAL BUFFER "<<item.supply.energy_kwh<<" / "<<solar_panel_buffer_capacity_kwh(item.size)<<" KWH";
+                game_label(r,{x,p.y+246},buffer.str(),0.42f,theme_,true);
+                Rect tracking_button{x,p.y+264+warning_extra-panel_scroll,190.0f,28.0f};
+                if(row_visible(tracking_button.y,tracking_button.h) && ui::button(r,ui_input_,tracking_button,item.solar_tracking_enabled?"SUN TRACKING: ON":"SUN TRACKING: OFF",theme_,item.construction.complete())){
+                    placed_resources_[(std::size_t)selected_resource_].solar_tracking_enabled=!item.solar_tracking_enabled;
+                    return;
+                }
             }else{
                 rate<<"PUMP "<<500*factor*item.supply.power_fraction<<" L/D / "<<4*factor<<" KW";
                 game_label(r,{x,p.y+208},rate.str(),0.48f,theme_);
+                std::ostringstream buffer;buffer<<std::fixed<<std::setprecision(1)<<"LOCAL BUFFER "<<item.supply.water_litres<<" / "<<water_driller_buffer_capacity_litres(item.size)<<" L";
+                game_label(r,{x,p.y+228},buffer.str(),0.42f,theme_,true);
             }
         }
         if(item.kind==ResourceKind::PowerStorage || item.kind==ResourceKind::WaterStorage){
             const double factor=item.size==ResourceSizeTier::Small?0.5:1.0;
             std::ostringstream inventory;inventory<<std::fixed<<std::setprecision(1);
-            if(item.kind==ResourceKind::PowerStorage)inventory<<"BATTERY "<<item.supply.energy_kwh<<" / "<<60*factor<<" KWH";
+            if(item.kind==ResourceKind::PowerStorage)inventory<<"BATTERY "<<item.supply.energy_kwh<<" / "<<power_storage_capacity_kwh(item.size)<<" KWH";
             else inventory<<"TANK "<<item.supply.water_litres<<" / "<<2000*factor<<" L";
             game_label(r,{x,p.y+208},inventory.str(),0.52f,theme_);
         }
@@ -513,7 +566,8 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+364},"DEL REMOVE / LMB SELECT OTHER",0.43f,theme_,true);
             const bool available=gates<3;
             const std::string caption=gates>=3?"MAX THREE GATES":(available?"PLACE GATE":"NO FREE GATE AREA");
-            if(ui::button(r,ui_input_,{p.x+p.w-174,p.y+125+warning_extra,160,28},caption,theme_,available && !storage_gate_placement_active_)){
+            Rect button{p.x+p.w-174,p.y+125+warning_extra-panel_scroll,160,28};
+            if(row_visible(button.y,button.h) && ui::button(r,ui_input_,button,caption,theme_,available && !storage_gate_placement_active_)){
                 storage_gate_placement_active_=true;
                 storage_gate_placement_owner_=(std::size_t)selected_resource_;
                 corridor_build_start_.reset();
@@ -648,11 +702,12 @@ void GameApp::render_selection_panel(Renderer& r){
         const bool linking=corridor_link_source_==selected_corridor_;
         const std::string label=linking?"CANCEL CONNECTION":"CONNECT TO CORRIDOR";
         const bool enabled=linking || corridor_network_.connections().size()>1;
-        if(ui::button(r,ui_input_,{x,p.y+p.h-47.0f,220.0f,34.0f},label,theme_,enabled)){
+        Rect button{x,p.y+content_height-47.0f-panel_scroll,220.0f,34.0f};
+        if(row_visible(button.y,button.h) && ui::button(r,ui_input_,button,label,theme_,enabled)){
             if(linking) corridor_link_source_=-1;
             else corridor_link_source_=selected_corridor_;
         }
-        if(linking) game_label(r,{x+230.0f,p.y+p.h-38.0f},"SELECT TARGET",0.47f,theme_,true);
+        if(linking) game_label(r,{x+230.0f,p.y+content_height-38.0f},"SELECT TARGET",0.47f,theme_,true);
     }
 }
 

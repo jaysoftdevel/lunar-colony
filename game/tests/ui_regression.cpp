@@ -93,7 +93,7 @@ struct UiRegression {
         }
     }
     static void order_controls(){
-        eng::Application engine;GameApp defaults(engine);require(defaults.ui_scale_index_==0 && defaults.ui_scale_==1,"default UI scale is not 100%");int cases=0;
+        eng::Application engine;GameApp defaults(engine);require(defaults.ui_scale_index_==0 && defaults.ui_scale_==1,"default UI scale is not 100%");require(defaults.playfield_size_==128,"default playfield is not 128 x 128");require(GameApp::kNewGamePlayfieldMin==32 && GameApp::kNewGamePlayfieldMax==1024 && GameApp::kNewGamePlayfieldStep==32,"new-game playfield range is not doubled");require(GameApp::kDebugTemplatePlayfieldSize==128,"debug template playfield is not doubled");Playfield maximum_field;maximum_field.rebuild(GameApp::kNewGamePlayfieldMax);require(maximum_field.size()==1024 && maximum_field.floor_triangles().size()==6,"1024 x 1024 playfield failed to build");int cases=0;
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:std::array<eng::Vec2,3>{{{1280,720},{1920,1080},{3840,2160}}})for(int domain=0;domain<5;++domain){
             GameApp app(engine);setup(app,7,zoom);app.placed_habitats_[0].placement_sequence=1;app.placed_resources_[0].placement_sequence=2;
             ConstructionTargetRef t;
@@ -165,13 +165,13 @@ struct UiRegression {
             }
             Recorder r;r.resize((int)size.x,(int)size.y);r.set_2d(app.ui_scale_);app.render_status_bar(r);r.check_bounds("status charge/air bars");
             std::vector<Draw> bars;std::string labels;for(const auto& d:r.draws){if(d.type=='R' && d.v[1]==33 && d.v[3]==6)bars.push_back(d);if(d.type=='T')labels+=d.text+"|";}
-            require(bars.size()==6,"missing charge/air/water indicator bars");const float charge=state==0?0:state==1?0.5f:1,air=state==0?0:state==1?0.25f:1;
+            require(bars.size()==6,"missing charge/air/water indicator bars");const float charge=state==0?0:state==1?(45.0f/202.5f):1,air=state==0?0:state==1?0.25f:1;
             require(std::abs(bars[1].v[2]-bars[0].v[2]*charge)<0.001f,"charge bar is not actual completed-battery energy/capacity");
             require(std::abs(bars[3].v[2]-bars[2].v[2]*air)<0.001f,"air bar does not combine indoor volume correctly");
             require(std::abs(bars[5].v[2]-bars[4].v[2]*air)<0.001f,"water bar is not actual completed tank fill");
             if(state){require(labels.find(state==1?"RATE +4.5 KW":"RATE -2.0 KW")!=std::string::npos,"power charge/discharge rate missing");require(labels.find(state==1?"RATE +123.0 L/D":"RATE -34.1 L/D")!=std::string::npos,"water fill/drain rate missing");}
             require(labels.find(state==0?"AIR --":state==1?"AIR 25.0%":"AIR 100.0%")!=std::string::npos,"air label disagrees with indicator");
-            require(labels.find(state==0?"POWER 0.0/0.0 KWH":state==1?"POWER 45.0/90.0 KWH":"POWER 90.0/90.0 KWH")!=std::string::npos,"power label uses stale counters or includes blueprints");
+            require(labels.find(state==0?"POWER 0.0/0.0 KWH":state==1?"POWER 45.0/202.5 KWH":"POWER 202.5/202.5 KWH")!=std::string::npos,"power label uses stale counters or includes blueprints");
             if(!output.empty() && state==1 && zoom==2 && (size.x==1280 || size.x==3840))r.write(std::filesystem::path(output)/("status-bars-"+std::to_string((int)size.x)+".json"));
             ++cases;
         }
@@ -193,11 +193,48 @@ struct UiRegression {
         std::cout<<cases<<" progression checklist resolution/border cases plus debug-mode suppression passed\n";
     }
 
+    static void scrollable_selection_panel(){
+        eng::Application engine;GameApp app(engine);setup(app,16,4);
+        app.placed_resources_[0].supply.warnings=255;
+        Recorder r;r.resize(1280,720);app.render(r);
+        const auto panel=app.selection_panel_rect();
+        require(app.selection_panel_content_height()>panel.h+1.0f,"overflowing selection details were not capped to a viewport");
+        require(app.selection_panel_max_scroll()>1.0f,"overflowing selection details have no scroll range");
+        require(app.selection_panel_scroll_==0.0f,"new selection panel does not start at the top");
+        bool bottom_before=false;
+        for(const auto& d:r.draws)if(d.type=='T' && d.text.find("DEL REMOVE / LMB SELECT OTHER")!=std::string::npos)bottom_before=true;
+        require(!bottom_before,"overflowing selection panel exposes bottom content before scrolling");
+
+        const float distance=app.camera_.distance();
+        eng::InputState wheel{};
+        wheel.mouse_x=(int)std::lround((panel.x+panel.w*0.5f)*app.ui_scale_);
+        wheel.mouse_y=(int)std::lround((panel.y+panel.h*0.5f)*app.ui_scale_);
+        wheel.wheel=-1.0f;
+        app.update(0.0f,wheel);
+        require(app.selection_panel_scroll_>0.0f,"mouse wheel over selection panel did not scroll details");
+        require(app.camera_.distance()==distance,"selection-panel wheel also zoomed the world");
+        for(int i=0;i<32 && app.selection_panel_scroll_<app.selection_panel_max_scroll()-0.01f;++i)app.update(0.0f,wheel);
+        require(std::abs(app.selection_panel_scroll_-app.selection_panel_max_scroll())<0.01f,"selection panel did not reach its bottom scroll limit");
+
+        app.input_=wheel;app.render(r);
+        bool bottom_after=false,scrollbar=false;
+        for(const auto& d:r.draws){
+            if(d.type=='T' && d.text.find("DEL REMOVE / LMB SELECT OTHER")!=std::string::npos)bottom_after=true;
+            if(d.type=='R' && d.v[0]>=panel.x+panel.w-9.0f && d.v[0]<=panel.x+panel.w-2.0f && d.v[1]>=panel.y+4.0f && d.v[1]+d.v[3]<=panel.y+panel.h-4.0f)scrollbar=true;
+            if(d.type=='T' && d.v[0]>=panel.x && d.v[0]<panel.x+panel.w && d.v[1]>panel.y && d.v[1]<panel.y+panel.h)
+                require(d.v[1]>=panel.y+4.0f-0.01f && d.v[1]+d.v[3]<=panel.y+panel.h-4.0f+0.01f,"scrolled info text escaped the selection viewport");
+        }
+        require(bottom_after,"bottom selection details are not reachable by scrolling");
+        require(scrollbar,"overflowing selection panel does not render a scrollbar");
+        std::cout<<"selection info overflow viewport, wheel scrolling, camera-wheel isolation and scrollbar passed\n";
+    }
+
     static void run(const std::string& output){
         order_controls();
         airlock_status();
         status_bars(output);
         progress_tree();
+        scrollable_selection_panel();
         eng::Application engine;
         constexpr std::array<eng::Vec2,5> sizes{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}};
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(int scene=0;scene<19;++scene){
@@ -242,6 +279,40 @@ struct UiRegression {
         }
         GameApp settings(engine);setup(settings,3,2);Recorder r;settings.render(r);const float before=settings.ui_scale_;const auto plus=r.button(">");settings.input_.mouse_x=(int)std::lround((plus.x+plus.w/2)*before);settings.input_.mouse_y=(int)std::lround((plus.y+plus.h/2)*before);settings.input_.left_pressed=true;settings.render(r);
         require(settings.ui_scale_index_==3 && settings.ui_scale_==before,"zoom changed input/drawing transform mid-frame");settings.input_={};settings.render(r);require(settings.ui_scale_>before,"zoom preference did not apply on next frame");
+        // Top-down keyboard camera controls: W/S translate along the current
+        // ground-forward axis, A/D strafe, and movement must be time based.
+        {
+            GameApp keyboard(engine);setup(keyboard,7,2);
+            keyboard.screen_=GameApp::Screen::Playfield;
+            const auto start=keyboard.camera_.target();
+            eng::InputState move_w;move_w.key_w_down=true;
+            keyboard.update(0.5f,move_w);
+            const auto after_w=keyboard.camera_.target();
+            require(eng::length(after_w-start)>0.1f,"W did not translate the top-down camera");
+            eng::InputState move_d;move_d.key_d_down=true;
+            keyboard.update(0.5f,move_d);
+            const auto after_d=keyboard.camera_.target();
+            require(eng::length(after_d-after_w)>0.1f,"D did not strafe the top-down camera");
+
+            GameApp coarse(engine);setup(coarse,7,2);coarse.screen_=GameApp::Screen::Playfield;
+            GameApp fine(engine);setup(fine,7,2);fine.screen_=GameApp::Screen::Playfield;
+            for(int i=0;i<20;++i)coarse.update(0.05f,move_w);
+            for(int i=0;i<100;++i)fine.update(0.01f,move_w);
+            require(eng::length(coarse.camera_.target()-fine.camera_.target())<0.05f,"WASD camera movement depends on frame rate");
+        }
+        // ESC from the in-game menu resumes the active session. ESC from a
+        // sub-menu still returns to the game menu first.
+        {
+            GameApp menu(engine);setup(menu,0,2);
+            menu.game_session_active_=true;
+            menu.screen_=GameApp::Screen::MainMenu;
+            eng::InputState esc;esc.escape_pressed=true;
+            menu.update(0.0f,esc);
+            require(menu.screen_==GameApp::Screen::Playfield,"ESC did not resume from the in-game menu");
+            menu.screen_=GameApp::Screen::Settings;
+            menu.update(0.0f,esc);
+            require(menu.screen_==GameApp::Screen::MainMenu,"ESC from an in-game sub-menu did not return to the game menu");
+        }
         for(const auto size:std::array<eng::Vec2,3>{{{1280,1024},{3440,1440},{5120,1440}}}){GameApp app(engine);setup(app,10,2);r.resize((int)size.x,(int)size.y);app.render(r);r.check_bounds("non-16:9 HUD");}
         GameApp catalog(engine);setup(catalog,7,4);Recorder small;small.resize(1280,720);catalog.render(small);
         const auto next=small.button(">");catalog.input_.mouse_x=(int)std::lround((next.x+next.w/2)*small.scale);catalog.input_.mouse_y=(int)std::lround((next.y+next.h/2)*small.scale);catalog.input_.left_pressed=true;catalog.render(small);

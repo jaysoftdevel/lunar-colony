@@ -33,10 +33,10 @@ void GameApp::render_new_game(Renderer& r){
     const float size_w=text_width(size_text,size_scale,theme_);
     ui::label(r,{p.x+(p.w-size_w)*0.5f,p.y+68},size_text,size_scale,theme_);
     if(!debug_start_template_enabled_){
-        if(ui::button(r,ui_input_,{left,p.y+60,58,42},"<",theme_)) playfield_size_=std::max(16,playfield_size_-16);
-        if(ui::button(r,ui_input_,{right-58,p.y+60,58,42},">",theme_)) playfield_size_=std::min(512,playfield_size_+16);
+        if(ui::button(r,ui_input_,{left,p.y+60,58,42},"<",theme_)) playfield_size_=std::max(kNewGamePlayfieldMin,playfield_size_-kNewGamePlayfieldStep);
+        if(ui::button(r,ui_input_,{right-58,p.y+60,58,42},">",theme_)) playfield_size_=std::min(kNewGamePlayfieldMax,playfield_size_+kNewGamePlayfieldStep);
     }else{
-        ui::label(r,{left,p.y+101},"DEBUG TEMPLATE REQUIRES 64 X 64",0.61f,theme_,true);
+        ui::label(r,{left,p.y+101},"DEBUG TEMPLATE REQUIRES 128 X 128",0.61f,theme_,true);
     }
 
     auto count_selector=[&](float y,const char* title,int& value,const char* suffix,float column_left,float column_right){
@@ -60,7 +60,7 @@ void GameApp::render_new_game(Renderer& r){
     if(ui::button(r,ui_input_,{right-82,p.y+(compact?250:360),82,34},debug_template_label,theme_)){
         debug_start_template_enabled_=!debug_start_template_enabled_;
         new_game_status_message_.clear();
-        if(debug_start_template_enabled_) playfield_size_=64;
+        if(debug_start_template_enabled_) playfield_size_=kDebugTemplatePlayfieldSize;
     }
     ui::label(r,{left,p.y+(compact?302:412)},"AUTOLOAD ATTACHED CONSTRUCTION BLUEPRINT SETUP",0.61f,theme_,true);
     ui::label(r,{left,p.y+(compact?324:434)},"STARTS THE SIMULATION PAUSED; ROBOT COUNTS ABOVE STILL APPLY",0.61f,theme_,true);
@@ -75,7 +75,7 @@ void GameApp::render_new_game(Renderer& r){
         screen_=Screen::MainMenu;
     }
     if(ui::button(r,ui_input_,{right-action_w,action_y,action_w,action_h},"CREATE",theme_)){
-        if(debug_start_template_enabled_) playfield_size_=64;
+        if(debug_start_template_enabled_) playfield_size_=kDebugTemplatePlayfieldSize;
         playfield_.rebuild(playfield_size_);
         camera_.reset(playfield_size_);
         first_person_mode_=FirstPersonMode::Off;

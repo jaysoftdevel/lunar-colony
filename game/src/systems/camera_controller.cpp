@@ -28,7 +28,7 @@ void CameraController::restore(const CameraState& state){
     target_=state.target;
 }
 
-void CameraController::update(const InputState& in,int playfield_size,int viewport_height){
+void CameraController::update(const InputState& in,int playfield_size,int viewport_height,float dt){
     if(in.wheel!=0){
         const float factor=std::pow(0.88f,in.wheel);
         distance_=std::clamp(distance_*factor,8.0f,(float)playfield_size*5.0f);
@@ -41,13 +41,32 @@ void CameraController::update(const InputState& in,int playfield_size,int viewpo
             azimuth_deg_=wrap_degrees(azimuth_deg_-(float)in.mouse_dx*0.35f);
     }
 
+    const float yaw=radians(azimuth_deg_);
+    const Vec3 right{std::cos(yaw),0.0f,-std::sin(yaw)};
+    const Vec3 ground_fwd{-std::sin(yaw),0.0f,-std::cos(yaw)};
+
     if(in.right_down && (in.mouse_dx||in.mouse_dy)){
-        const float yaw=radians(azimuth_deg_);
-        const Vec3 right{std::cos(yaw),0.0f,-std::sin(yaw)};
-        const Vec3 ground_fwd{-std::sin(yaw),0.0f,-std::cos(yaw)};
         const float h=(float)std::max(1,viewport_height);
         const float units_per_px=2.0f*distance_*std::tan(radians(55.0f)*0.5f)/h;
         target_ += right*(-in.mouse_dx*units_per_px) + ground_fwd*(in.mouse_dy*units_per_px);
+    }
+
+    // Keyboard camera translation mirrors familiar RTS/free-camera controls.
+    // W/S move along the camera's ground-forward axis while A/D strafe left
+    // and right. Movement is time based (not frame based) and scales gently
+    // with zoom so it remains useful both close to and far above the base.
+    Vec3 keyboard_move{};
+    if(in.key_w_down) keyboard_move+=ground_fwd;
+    if(in.key_s_down) keyboard_move+=ground_fwd*-1.0f;
+    if(in.key_d_down) keyboard_move+=right;
+    if(in.key_a_down) keyboard_move+=right*-1.0f;
+    if(length(keyboard_move)>0.001f){
+        keyboard_move=normalize(keyboard_move);
+        const float speed=std::clamp(distance_*0.70f,12.0f,90.0f)*(in.key_shift_down?1.75f:1.0f);
+        target_+=keyboard_move*(speed*std::clamp(dt,0.0f,0.05f));
+    }
+
+    if(in.right_down || length(keyboard_move)>0.001f){
         const float half=(float)playfield_size*0.75f;
         target_.x=std::clamp(target_.x,-half,half);
         target_.z=std::clamp(target_.z,-half,half);

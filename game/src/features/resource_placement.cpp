@@ -34,18 +34,22 @@ float degrees_for_minus_z(Vec3 direction){
 bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,Vec3 position,float rotation_degrees) const {
     const ResourceMesh& candidate=kind==ResourceKind::StorageDome?resource_models_.mesh(kind,storage_size):resource_models_.mesh(kind,size);
     const float half_field=(float)playfield_.size()*0.5f;
+    const float ground_x=geometry::structure_ground_extent(candidate.footprint_x);
+    const float ground_z=geometry::structure_ground_extent(candidate.footprint_z);
     const float a=radians(rotation_degrees);
-    const float hx=std::abs(std::cos(a))*candidate.footprint_x*0.5f+std::abs(std::sin(a))*candidate.footprint_z*0.5f;
-    const float hz=std::abs(std::sin(a))*candidate.footprint_x*0.5f+std::abs(std::cos(a))*candidate.footprint_z*0.5f;
+    const float hx=std::abs(std::cos(a))*ground_x*0.5f+std::abs(std::sin(a))*ground_z*0.5f;
+    const float hz=std::abs(std::sin(a))*ground_x*0.5f+std::abs(std::cos(a))*ground_z*0.5f;
     const float build_limit=half_field-geometry::kPlayfieldRobotPerimeterLane;
     if(position.x-hx<-build_limit || position.x+hx>build_limit ||
        position.z-hz<-build_limit || position.z+hz>build_limit) return false;
 
-    const auto candidate_box=footprint(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z);
-    constexpr float clearance=0.45f;
+    const auto candidate_box=footprint(position,rotation_degrees,ground_x,ground_z);
+    constexpr float clearance=geometry::kStructurePlacementGap;
     for(const auto& placed:placed_habitats_){
         const HabitatMesh& other=habitat_models_.mesh(placed);
-        const auto other_box=footprint(placed.position,placed.rotation_degrees,other.footprint_x,other.footprint_z);
+        const auto other_box=footprint(placed.position,placed.rotation_degrees,
+                                       geometry::structure_ground_extent(other.footprint_x),
+                                       geometry::structure_ground_extent(other.footprint_z));
         if(overlaps(candidate_box,other_box,clearance)) return false;
     }
     for(const auto& placed:placed_resources_){
@@ -53,7 +57,9 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
         if(placed.kind==ResourceKind::StorageDome) for(int face:storage_loading::faces(placed))
             if(face>=0 && overlaps(candidate_box,storage_loading::apron(placed,face),clearance)) return false;
         const ResourceMesh& other=resource_models_.mesh(placed);
-        const auto other_box=footprint(placed.position,placed.rotation_degrees,other.footprint_x,other.footprint_z);
+        const auto other_box=footprint(placed.position,placed.rotation_degrees,
+                                       geometry::structure_ground_extent(other.footprint_x),
+                                       geometry::structure_ground_extent(other.footprint_z));
         if(overlaps(candidate_box,other_box,clearance)) return false;
     }
     for(const auto& pile:ground_resource_piles_){
@@ -77,9 +83,13 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
             if(std::abs(q.x)>build_limit || std::abs(q.y)>build_limit) return false;
         }
         for(const auto& h:placed_habitats_){const auto& m=habitat_models_.mesh(h);
-            if(overlaps(apron,footprint(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;}
+            if(overlaps(apron,footprint(h.position,h.rotation_degrees,
+                                         geometry::structure_ground_extent(m.footprint_x),
+                                         geometry::structure_ground_extent(m.footprint_z)),clearance)) return false;}
         for(const auto& r:placed_resources_){const auto& m=resource_models_.mesh(r);
-            if(overlaps(apron,footprint(r.position,r.rotation_degrees,m.footprint_x,m.footprint_z),clearance)) return false;
+            if(overlaps(apron,footprint(r.position,r.rotation_degrees,
+                                         geometry::structure_ground_extent(m.footprint_x),
+                                         geometry::structure_ground_extent(m.footprint_z)),clearance)) return false;
             if(r.kind==ResourceKind::StorageDome) for(int face:storage_loading::faces(r))
                 if(face>=0 && overlaps(apron,storage_loading::apron(r,face),clearance)) return false;}
         for(const auto& pile:ground_resource_piles_)
@@ -99,6 +109,7 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
     }
     PlacedResource candidate_item;candidate_item.kind=kind;candidate_item.size=size;candidate_item.storage_size=storage_size;candidate_item.position=position;candidate_item.rotation_degrees=rotation_degrees;
     if(!gate_layout_clear(nullptr,&candidate_item))return false;
+    if(!placement_preserves_robot_escape(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z)) return false;
     return true;
 }
 
