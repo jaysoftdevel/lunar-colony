@@ -50,6 +50,8 @@ void GameApp::render_playfield(Renderer& r){
         return;
     }
 
+    corridor_placement_failure_title_.clear();
+    corridor_placement_failure_detail_.clear();
     render_corridor_link_preview(r);
     render_corridor_placement(r);
     render_habitat_placement(r);
@@ -67,6 +69,7 @@ void GameApp::render_playfield(Renderer& r){
     render_selection_marquee(r);
     if(debug_frame_enabled_) render_debug_frame(r);
     if(selection_kind_!=SelectionKind::None) render_selection_panel(r);
+    render_corridor_placement_tooltip(r);
 
     if(selection_kind_==SelectionKind::None){
     const BuildObjectDefinition* active_build=build_catalog_.selected();

@@ -155,10 +155,16 @@ private:
     // per-selection scroll position instead of allowing details to spill over
     // the build bar or disappear below the pane.
     float selection_panel_scroll_{0.0f};
+    // Bio Dome crop selector popup. It is transient UI state and is reset when
+    // the selected structure changes or the selection is cleared.
+    int hydroponics_dropdown_habitat_{-1};
+    int hydroponics_dropdown_bay_{-1};
     bool robot_enclosure_legacy_scan_pending_{true};
     std::uint64_t selection_panel_scroll_key_{0};
     int corridor_link_source_=-1;
     std::optional<CorridorBuildAnchor> corridor_build_start_{};
+    std::string corridor_placement_failure_title_{};
+    std::string corridor_placement_failure_detail_{};
     std::optional<UtilityBuildAnchor> utility_build_start_{};
     std::optional<WalkwayBuildAnchor> walkway_build_start_{};
     std::optional<WalkwayBuildAnchor> walkway_build_target_{};
@@ -199,7 +205,8 @@ private:
     void render_utility_placement(eng::Renderer& r);
     void render_walkway_placement(eng::Renderer& r);
     void render_corridor_placement(eng::Renderer& r);
-    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
+    void render_corridor_placement_tooltip(eng::Renderer& r);
+    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false) const;
     void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
     bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees) const;
     bool resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees) const;

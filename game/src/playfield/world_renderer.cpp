@@ -299,7 +299,7 @@ void draw_loading_gate(Renderer& r,const PlacedResource& item,float opening,bool
 
 }
 
-void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
+void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors,bool greenhouse_dark) const {
     if(preview){
         const auto shell=transformed_vertices(portal_layer(mesh.shell,position,rotation_degrees,fpv_doors),position,rotation_degrees);
         const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
@@ -369,11 +369,11 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
     auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     auto glazing=transformed_vertices(portal_layer(mesh.glazing,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
-    const Color shell_color{0.24f,0.96f,0.42f,1.0f};
-    const Color foundation_color{0.20f,0.84f,0.36f,1.0f};
-    const Color interior_color{0.34f,1.00f,0.50f,0.98f};
-    const Color detail_color{0.22f,0.92f,0.40f,0.99f};
-    const Color glass_color{0.32f,1.00f,0.56f,0.82f};
+    const Color shell_color=greenhouse_dark?Color{0.15f,0.46f,0.24f,1.0f}:Color{0.24f,0.96f,0.42f,1.0f};
+    const Color foundation_color=greenhouse_dark?Color{0.13f,0.38f,0.20f,1.0f}:Color{0.20f,0.84f,0.36f,1.0f};
+    const Color interior_color=greenhouse_dark?Color{0.10f,0.27f,0.16f,0.78f}:Color{0.34f,1.00f,0.50f,0.98f};
+    const Color detail_color=greenhouse_dark?Color{0.10f,0.23f,0.15f,0.80f}:Color{0.22f,0.92f,0.40f,0.99f};
+    const Color glass_color=greenhouse_dark?Color{0.08f,0.18f,0.15f,0.46f}:Color{0.54f,1.00f,0.48f,0.90f};
     const Color edge_color=selected?Color{1.0f,0.94f,0.55f,1.0f}:Color{0.18f,1.00f,0.38f,1.0f};
     const float selected_boost=selected?1.45f:1.0f;
 
@@ -676,7 +676,8 @@ void GameApp::render_habitats(Renderer& r){
             fpv_doors=habitat_doors(i);
             fpv_ptr=&fpv_doors;
         }
-        render_habitat_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
+        const bool greenhouse_dark=instance.kind==HabitatKind::BioDome && instance.construction.complete() && !hydroponics_lights_on(status_.hour());
+        render_habitat_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr,greenhouse_dark);
         if(fpv_ptr) for(const auto& door:fpv_doors){
             draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
             if(instance.kind==HabitatKind::AirLock && door.entrance_index==-4)

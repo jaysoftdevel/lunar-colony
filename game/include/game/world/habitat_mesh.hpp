@@ -1,5 +1,6 @@
 #pragma once
 #include "game/world/supply_state.hpp"
+#include "game/world/hydroponics.hpp"
 #include "engine/engine.hpp"
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
@@ -43,6 +44,16 @@ inline bool habitat_has_extended_size_tiers(HabitatKind kind){
 // Every habitat now supports at least SMALL + STANDARD. The four historically
 // scalable domes additionally retain MID + BIG.
 inline bool habitat_has_size_tiers(HabitatKind){ return true; }
+
+inline std::size_t hydroponics_bay_count(HabitatSizeTier size){
+    switch(size){
+        case HabitatSizeTier::Small: return 2;
+        case HabitatSizeTier::Standard: return 4;
+        case HabitatSizeTier::Mid: return 6;
+        case HabitatSizeTier::Big: return 8;
+        default: return 4;
+    }
+}
 
 inline const char* habitat_size_name(HabitatSizeTier size){
     switch(size){
@@ -99,6 +110,7 @@ struct PlacedHabitat {
     ConstructionState construction{};
     ConstructionResourcePlan resource_plan{};
     ResourceBundle site_buffer{}; // delivered construction material staged at this blueprint
+    std::array<HydroponicsBay,kMaxHydroponicsBays> hydroponics{};
 };
 
 class HabitatModelLibrary {

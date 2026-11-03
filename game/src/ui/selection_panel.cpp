@@ -424,7 +424,7 @@ void GameApp::render_selection_panel(Renderer& r){
     }
 
     if(selection_kind_==SelectionKind::Habitat && selected_habitat_>=0 && (size_t)selected_habitat_<placed_habitats_.size()){
-        const auto& h=placed_habitats_[(size_t)selected_habitat_];
+        auto& h=placed_habitats_[(size_t)selected_habitat_];
         std::ostringstream pos,rot,conn,utilities;
         pos<<"POSITION "<<std::fixed<<std::setprecision(1)<<h.position.x<<" / "<<h.position.z;
         rot<<"ROTATION "<<(int)std::round(h.rotation_degrees)<<" DEG";
@@ -461,6 +461,126 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+318},state,0.44f,theme_,true);
             if(h.supply.hydrogen_vented_kg_per_day>1e-8){std::ostringstream vent;vent<<"H2 BUFFER FULL / VENTING "<<std::fixed<<std::setprecision(3)<<(paused?0.0:h.supply.hydrogen_vented_kg_per_day)<<" KG/D";game_label(r,{x,p.y+338},vent.str(),0.40f,theme_,true);}
             else game_label(r,{x,p.y+338},"RATES PER GAME DAY / DEL REMOVE",0.40f,theme_,true);
+        }else if(h.kind==HabitatKind::BioDome){
+            const std::size_t bay_count=hydroponics_bay_count(h.size);
+            if(!h.construction.complete()){
+                hydroponics_dropdown_habitat_=-1;
+                hydroponics_dropdown_bay_=-1;
+                game_label(r,{x,p.y+278},"HYDROPONICS BAYS  OFFLINE UNTIL CONSTRUCTION IS COMPLETE",0.43f,theme_);
+                game_label(r,{x,p.y+298},"COMMISSIONED BAYS START EMPTY / CROPS ARE PLAYER-SELECTED",0.39f,theme_,true);
+            }else{
+                if(hydroponics_dropdown_habitat_!=selected_habitat_ || hydroponics_dropdown_bay_<0 || (std::size_t)hydroponics_dropdown_bay_>=bay_count){
+                    hydroponics_dropdown_habitat_=-1;
+                    hydroponics_dropdown_bay_=-1;
+                }
+
+                const bool light_phase=hydroponics_lights_on(status_.hour());
+                const float phase_left=hydroponics_hours_until_phase_change(status_.hour());
+                std::ostringstream heading;heading<<"HYDROPONICS  "<<bay_count<<" BAYS / TWO-COLUMN GROW TABLE";
+                game_label(r,{x,p.y+278},heading.str(),0.45f,theme_);
+                std::ostringstream cycle;cycle<<"PHOTOPERIOD  LIGHT 06:00-22:00 / DARK 22:00-06:00 / NOW "<<(light_phase?"LIGHT":"DARK")<<"  "<<std::fixed<<std::setprecision(1)<<phase_left<<" H LEFT";
+                game_label(r,{x,p.y+298},cycle.str(),0.37f,theme_,true);
+                std::ostringstream system;
+                if(paused) system<<"GROW SYSTEM PAUSED";
+                else if(!light_phase) system<<"DARK PHASE / GROWTH REST / CLIMATE CONTROL ACTIVE";
+                else if(h.supply.power_fraction<=1e-6) system<<"WAITING FOR POWER";
+                else if(h.supply.breathability()<80.0) system<<"WAITING FOR BREATHABLE AIR >=80%";
+                else if(h.supply.warnings&NoWater) system<<"LIGHT PHASE / WATER LIMITED";
+                else system<<"LIGHT PHASE / GROWTH ACTIVE";
+                system<<" / POWER "<<(int)std::lround(std::clamp(h.supply.power_fraction,0.0,1.0)*100.0)<<"% / AIR "<<std::fixed<<std::setprecision(0)<<h.supply.breathability()<<"%";
+                game_label(r,{x,p.y+316},system.str(),0.37f,theme_,true);
+
+                const float gap=10.0f;
+                const float cell_w=(p.w-28.0f-gap)*0.5f;
+                const float row_h=90.0f;
+                const float grid_raw_y=p.y+340.0f;
+                Rect active_selector{};
+                bool has_active_selector=false;
+                bool selector_toggled=false;
+
+                for(std::size_t bay_index=0;bay_index<bay_count;++bay_index){
+                    auto& bay=h.hydroponics[bay_index];
+                    const auto& crop=hydroponic_profile(bay.plant);
+                    const std::size_t row=bay_index/2;
+                    const std::size_t col=bay_index%2;
+                    const float cell_x=x+(float)col*(cell_w+gap);
+                    const float cell_y=grid_raw_y+(float)row*row_h+warning_extra-panel_scroll;
+                    if(!row_visible(cell_y,row_h-4.0f)) continue;
+
+                    const Rect cell{cell_x,cell_y,cell_w,row_h-6.0f};
+                    r.draw_rect(cell,theme_.panel2);
+                    r.draw_line({cell.x,cell.y},{cell.x+cell.w,cell.y},theme_.border);
+                    r.draw_line({cell.x+cell.w,cell.y},{cell.x+cell.w,cell.y+cell.h},theme_.border);
+                    r.draw_line({cell.x+cell.w,cell.y+cell.h},{cell.x,cell.y+cell.h},theme_.border);
+                    r.draw_line({cell.x,cell.y+cell.h},{cell.x,cell.y},theme_.border);
+
+                    layout::game_label_fitted(r,{cell.x+7.0f,cell.y+5.0f,42.0f,17.0f},"BAY "+std::to_string(bay_index+1),0.39f,theme_,true);
+                    const Rect selector{cell.x+50.0f,cell.y+3.0f,cell.w-57.0f,23.0f};
+                    std::string selector_text=(bay.plant==HydroponicPlant::Empty?"EMPTY / REMOVE":std::string(crop.name))+"  V";
+                    if(ui::button(r,ui_input_,selector,selector_text,theme_,true)){
+                        const bool was_open=hydroponics_dropdown_habitat_==selected_habitat_ && hydroponics_dropdown_bay_==(int)bay_index;
+                        hydroponics_dropdown_habitat_=was_open?-1:selected_habitat_;
+                        hydroponics_dropdown_bay_=was_open?-1:(int)bay_index;
+                        selector_toggled=true;
+                    }
+                    if(hydroponics_dropdown_habitat_==selected_habitat_ && hydroponics_dropdown_bay_==(int)bay_index){
+                        active_selector=selector;
+                        has_active_selector=true;
+                    }
+
+                    std::ostringstream progress;
+                    if(bay.plant==HydroponicPlant::Empty) progress<<"EMPTY / HARVESTS "<<bay.harvests;
+                    else progress<<"GROWTH "<<(int)std::lround(std::clamp(bay.growth_fraction,0.0,1.0)*100.0)<<"% / HARVESTS "<<bay.harvests;
+                    layout::game_label_fitted(r,{cell.x+7.0f,cell.y+31.0f,cell.w-14.0f,15.0f},progress.str(),0.37f,theme_,true);
+                    const Rect track{cell.x+7.0f,cell.y+48.0f,cell.w-14.0f,7.0f};
+                    r.draw_rect(track,theme_.panel);
+                    if(bay.growth_fraction>0.0) r.draw_rect({track.x,track.y,track.w*(float)std::clamp(bay.growth_fraction,0.0,1.0),track.h},theme_.accent);
+
+                    std::ostringstream stats;
+                    if(bay.plant==HydroponicPlant::Empty) stats<<"NO CROP / NO LIGHT OR WATER LOAD";
+                    else stats<<std::fixed<<std::setprecision(1)<<crop.growth_days<<" D / "<<crop.harvest_food_kg<<" KG / H2O "<<crop.water_litres_per_day<<" L/D / "<<std::setprecision(2)<<crop.power_kw<<" KW";
+                    layout::game_label_fitted(r,{cell.x+7.0f,cell.y+59.0f,cell.w-14.0f,13.0f},stats.str(),0.31f,theme_,true);
+                    layout::game_label_fitted(r,{cell.x+7.0f,cell.y+72.0f,cell.w-14.0f,11.0f},bay.plant==HydroponicPlant::Empty?"SELECT A CROP FROM THE DROPDOWN":crop.role,0.29f,theme_,true);
+                }
+
+                if(has_active_selector && hydroponics_dropdown_bay_>=0 && (std::size_t)hydroponics_dropdown_bay_<bay_count){
+                    constexpr float item_h=23.0f;
+                    const float menu_h=item_h*(float)HydroponicPlant::Count+4.0f;
+                    float menu_y=active_selector.y+active_selector.h+2.0f;
+                    if(menu_y+menu_h>text_panel.y+text_panel.h-4.0f) menu_y=active_selector.y-menu_h-2.0f;
+                    menu_y=std::clamp(menu_y,text_panel.y+4.0f,std::max(text_panel.y+4.0f,text_panel.y+text_panel.h-menu_h-4.0f));
+                    const Rect menu{active_selector.x,menu_y,active_selector.w,menu_h};
+                    ui::panel(r,menu,theme_);
+                    bool option_clicked=false;
+                    auto& bay=h.hydroponics[(std::size_t)hydroponics_dropdown_bay_];
+                    for(int plant_value=0;plant_value<(int)HydroponicPlant::Count;++plant_value){
+                        const auto plant=(HydroponicPlant)plant_value;
+                        const auto& profile=hydroponic_profile(plant);
+                        const std::string label=plant==HydroponicPlant::Empty?"EMPTY / REMOVE CROP":profile.name;
+                        const Rect option{menu.x+2.0f,menu.y+2.0f+(float)plant_value*item_h,menu.w-4.0f,item_h};
+                        if(ui::button(r,ui_input_,option,label,theme_,true)){
+                            if(plant!=bay.plant){
+                                bay.plant=plant;
+                                bay.growth_fraction=0.0;
+                            }
+                            hydroponics_dropdown_habitat_=-1;
+                            hydroponics_dropdown_bay_=-1;
+                            option_clicked=true;
+                            break;
+                        }
+                    }
+                    const Vec2 mouse{(float)ui_input_.mouse_x,(float)ui_input_.mouse_y};
+                    if(ui_input_.left_pressed && !selector_toggled && !option_clicked && !menu.contains(mouse.x,mouse.y) && !active_selector.contains(mouse.x,mouse.y)){
+                        hydroponics_dropdown_habitat_=-1;
+                        hydroponics_dropdown_bay_=-1;
+                    }
+                }
+
+                const float row_count=(float)((bay_count+1)/2);
+                const float footer=p.y+340.0f+row_count*row_h;
+                game_label(r,{x,footer},"GROWTH REQUIRES LIGHT PHASE + POWER + WATER + >=80% BREATHABLE AIR",0.35f,theme_,true);
+                game_label(r,{x,footer+18.0f},">=95% AIR = FULL SPEED / 80-95% AIR = REDUCED SPEED / EMPTY REMOVES A CROP",0.33f,theme_,true);
+            }
         }else if(h.kind==HabitatKind::AirLock){
             const auto index=(std::size_t)selected_habitat_;const airlock::Cycle idle{};
             const auto& cycle=index<airlock_cycles_.size()?airlock_cycles_[index]:idle;

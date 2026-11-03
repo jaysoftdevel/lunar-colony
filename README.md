@@ -369,3 +369,22 @@ New games now default to a 128 x 128 playfield instead of 64 x 64. The selectabl
 ### v0.43.24 scrollable selection/info panel
 
 The upper-left selection/info panel now behaves as a fixed viewport above the build bar. If robot telemetry, structure warnings, resource inventories or other detail rows exceed the available vertical space, the panel shows a scrollbar and the mouse wheel scrolls the contained information. Wheel input over the panel is consumed by the UI, so it does not zoom the world or change a structure-placement size. Selecting a different object resets the panel to the top. Short panels remain unchanged and do not show a scrollbar.
+
+### v0.44.0 Bio Dome hydroponics
+Bio Domes now operate real hydroponics bays instead of producing Food from a fixed background rate. Bay count scales with dome size (Small 2, Standard 4, Mid 6, Big 8). Each bay can be independently set to Empty, Potato, Wheat, Soybean, Pea, Lettuce, Tomato or Strawberry from the selected Bio Dome's status frame. The table shows the crop purpose, grow time, Food yield, water and lighting demand, completed harvest count, and a live progress bar for each bay.
+
+Growth is supply-driven: a configured bay requires electrical power, water and breathable air. Full growth speed requires at least 95% breathable air; 80-95% supports reduced growth, and below 80% pauses the crop. Harvests automatically enter the existing Food/resource system and the bay begins its next cycle. Schema-23 saves retain crop/progress/harvest state; older saves are migrated to a balanced starter crop mix.
+
+
+### v0.44.1 POV interior collision
+Completed structures now use their rendered interior geometry for first-person collision. The astronaut can no longer walk through beds, tables, consoles, hydroponics racks, tanks, production machines, cabinets, internal partitions, Storage Dome racks/cargo packages, or Robot Workshop service equipment. The collision test uses the full body radius and vertical span, while the authored floor/deck remains walkable and generated doors/entrance aisles remain passable.
+
+### v0.44.2 Bio Dome commissioning, crop dropdowns and photoperiod
+Newly placed/constructed Bio Domes no longer receive an automatic crop mix. Every hydroponics bay starts **EMPTY** and stays idle until the player selects a crop. Existing schema-23 saves preserve their configured crops; schema <=22 migration now creates empty bays instead of assigning starter crops.
+
+The Bio Dome status frame exposes crop controls only after the structure is fully built. Completed domes use a compact two-column bay table. Each bay has one dropdown containing EMPTY / REMOVE CROP plus Potato, Wheat, Soybean, Pea, Lettuce, Tomato and Strawberry; changing or removing a crop resets that bay's current growth cycle while retaining its lifetime harvest counter.
+
+Hydroponics now follow a controlled greenhouse **16 h light / 8 h dark** photoperiod: grow lights are active from 06:00 to 22:00 and the dark/rest phase runs from 22:00 to 06:00. Crop growth and crop water demand occur only during the light phase. The Bio Dome base climate-control load remains active continuously, and growth additionally requires electrical power, water and at least 80% breathable air (95%+ for full speed). Completed Bio Domes visually dim their shell/interior/glazing during the dark phase so the rendered greenhouse matches the simulation state.
+
+### v0.44.3 corridor placement rejection tooltips
+Invalid corridor previews now explain why placement is rejected directly beside the mouse cursor. The tooltip distinguishes reserved Air Lock passenger sides, unavailable structure/storage docking faces, attempts to connect a structure to itself, corridor points that are too close together, blocked route geometry, gate/service-clearance conflicts, and post-merge pressure-network conflicts. The existing red invalid preview remains visible underneath the explanation.

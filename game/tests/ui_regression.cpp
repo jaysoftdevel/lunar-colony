@@ -89,6 +89,9 @@ struct UiRegression {
                 item.supply.warnings=scene==16?(NoPower|LowAir):NoPower;app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;}
             if(scene==18){auto& item=app.placed_resources_[0];item.kind=ResourceKind::HydrogenGenerator;item.construction.step=kConstructionSteps;item.supply.hydrogen_power_kw=2.75;item.supply.hydrogen_consumed_kg_per_day=3.60;
                 app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;app.game_speed_=GameApp::GameSpeed::Normal;}
+            if(scene==19){auto& h=app.placed_habitats_[0];h.kind=HabitatKind::BioDome;h.size=HabitatSizeTier::Standard;h.construction.step=kConstructionSteps;h.supply.volume_m3=150;h.supply.oxygen_kg=150*kOxygenKgPerM3;h.supply.power_fraction=1;
+                for(std::size_t bay=0;bay<hydroponics_bay_count(h.size);++bay){h.hydroponics[bay].plant=(HydroponicPlant)(1+(int)(bay%((std::size_t)HydroponicPlant::Count-1)));h.hydroponics[bay].growth_fraction=0.15+0.18*(double)bay;}
+                app.selection_kind_=GameApp::SelectionKind::Habitat;app.selected_habitat_=0;app.game_speed_=GameApp::GameSpeed::Normal;}
             if(scene==12){app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({-12,0,-12},45);}
         }
     }
@@ -229,15 +232,69 @@ struct UiRegression {
         std::cout<<"selection info overflow viewport, wheel scrolling, camera-wheel isolation and scrollbar passed\n";
     }
 
+    static void hydroponics_panel(){
+        eng::Application engine;GameApp app(engine);setup(app,19,4);
+        app.placed_habitats_[0].size=HabitatSizeTier::Big;
+        for(std::size_t bay=0;bay<hydroponics_bay_count(HabitatSizeTier::Big);++bay){app.placed_habitats_[0].hydroponics[bay].plant=(HydroponicPlant)(1+(int)(bay%((std::size_t)HydroponicPlant::Count-1)));app.placed_habitats_[0].hydroponics[bay].growth_fraction=0.1*(double)(bay+1);}
+        Recorder r;r.resize(1280,720);app.on_resize(1280,720);app.render(r);
+        bool heading=false,progress_bar=false,photoperiod=false;float bay1_y=-1,bay2_y=-2,bay1_x=0,bay2_x=0;
+        for(const auto& d:r.draws){
+            if(d.type=='T' && d.text.find("TWO-COLUMN GROW TABLE")!=std::string::npos)heading=true;
+            if(d.type=='T' && d.text.find("PHOTOPERIOD")!=std::string::npos)photoperiod=true;
+        }
+        app.selection_panel_scroll_=120.0f;app.render(r);
+        for(const auto& d:r.draws){
+            if(d.type=='R' && d.v[3]>5.0f && d.v[3]<10.0f && d.v[2]>150.0f)progress_bar=true;
+            if(d.type=='T' && d.text=="BAY 1"){bay1_x=d.v[0];bay1_y=d.v[1];}
+            if(d.type=='T' && d.text=="BAY 2"){bay2_x=d.v[0];bay2_y=d.v[1];}
+        }
+        require(heading,"Bio Dome status frame has no two-column hydroponics table");
+        require(photoperiod,"Bio Dome status frame has no light/dark photoperiod state");
+        require(progress_bar,"Bio Dome bay growth progress bar missing");
+        require(std::abs(bay1_y-bay2_y)<0.1f && bay2_x>bay1_x+100.0f,"Bio Dome bays are not rendered as a two-column table");
+        require(app.selection_panel_content_height()>app.selection_panel_rect().h,"large Bio Dome table is not scrollable");
+
+        auto& first=app.placed_habitats_[0].hydroponics[0];
+        first.plant=HydroponicPlant::Potato;first.growth_fraction=0.72;
+        app.render(r);
+        const auto selector=r.button("POTATO  V");
+        app.input_.mouse_x=(int)std::lround((selector.x+selector.w*0.5f)*r.scale);
+        app.input_.mouse_y=(int)std::lround((selector.y+selector.h*0.5f)*r.scale);
+        app.input_.left_pressed=true;
+        app.render(r);
+        app.input_.left_pressed=false;
+        app.render(r);
+        const auto remove=r.button("EMPTY / REMOVE CROP");
+        app.input_.mouse_x=(int)std::lround((remove.x+remove.w*0.5f)*r.scale);
+        app.input_.mouse_y=(int)std::lround((remove.y+remove.h*0.5f)*r.scale);
+        app.input_.left_pressed=true;
+        app.render(r);
+        require(first.plant==HydroponicPlant::Empty,"Bio Dome dropdown could not remove a selected crop");
+        require(first.growth_fraction==0.0,"removing a Bio Dome crop did not reset its growth cycle");
+
+        app.input_.left_pressed=false;app.input_.mouse_x=-100;app.input_.mouse_y=-100;
+        app.placed_habitats_[0].construction.step=kConstructionSteps-1;
+        app.render(r);
+        bool offline=false,crop_selector_visible=false;
+        for(const auto& d:r.draws){
+            if(d.type=='T' && d.text.find("OFFLINE UNTIL CONSTRUCTION IS COMPLETE")!=std::string::npos)offline=true;
+            if(d.type=='T' && (d.text=="POTATO  V" || d.text=="EMPTY / REMOVE  V"))crop_selector_visible=true;
+        }
+        require(offline,"unfinished Bio Dome does not explain that hydroponics are offline");
+        require(!crop_selector_visible,"unfinished Bio Dome exposes crop selection controls");
+        std::cout<<"Bio Dome two-column dropdown table, crop removal, progress bars, photoperiod status and construction gating passed\n";
+    }
+
     static void run(const std::string& output){
         order_controls();
         airlock_status();
         status_bars(output);
         progress_tree();
         scrollable_selection_panel();
+        hydroponics_panel();
         eng::Application engine;
         constexpr std::array<eng::Vec2,5> sizes{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}};
-        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(int scene=0;scene<19;++scene){
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(int scene=0;scene<20;++scene){
             Recorder reference;
             for(std::size_t n=0;n<sizes.size();++n){
                 GameApp app(engine);setup(app,scene,zoom);Recorder r;r.resize((int)sizes[n].x,(int)sizes[n].y);app.render(r);
@@ -247,6 +304,7 @@ struct UiRegression {
                 if(scene==8 || scene==9 || (scene>=13 && scene<=15))require(has_text("BREATHABLE AIR") && has_text("AIR CHANGE"),"indoor details omit the air percentage/change rate");
                 if(scene==13)require(has_text("75.0%") && has_text("+0.125") && has_text("O2 OUTPUT 9.000 KG/D / WATER 10.125 L/D") && has_text("H2 OUTPUT 1.125 KG/D / BUFFER 2.250") && has_text("ELECTROLYSIS: O2 + H2"),"oxygen-generator details do not show measured oxygen/water/hydrogen output");
                 if(scene==18)require(has_text("FUEL CELL 2.75 / 3.00 KW") && has_text("H2 USE 3.600 KG/D") && has_text("COMPLETED SUPPLY-CHANNEL NETWORK"),"hydrogen-generator details omit fuel-cell dispatch/transport telemetry");
+                if(scene==19)require(has_text("HYDROPONICS") && has_text("PHOTOPERIOD"),"Bio Dome details omit hydroponics/photoperiod status");
                 if(scene==9)require(has_text("WARNING:") && has_text("AIR BELOW 95%"),"storage warning icon reason missing");
                 if(scene==16 || scene==17)require(has_text("WARNING:") && has_text("INSUFFICIENT POWER"),"storage/workshop early return hides warning reasons");
                 if(scene==12)require(has_text("SPACE JUMP"),"POV help omits Space jump");
@@ -300,6 +358,21 @@ struct UiRegression {
             for(int i=0;i<100;++i)fine.update(0.01f,move_w);
             require(eng::length(coarse.camera_.target()-fine.camera_.target())<0.05f,"WASD camera movement depends on frame rate");
         }
+        // Invalid corridor placement renders a readable cursor tooltip above
+        // the 3D preview. Keep this in the HUD bounds at common small screens.
+        {
+            GameApp tooltip(engine);setup(tooltip,7,2);
+            tooltip.corridor_placement_failure_title_="NO CLEAR CORRIDOR ROUTE";
+            tooltip.corridor_placement_failure_detail_="All tested routes are blocked by structure or corridor clearance. Move an endpoint or create more free space.";
+            tooltip.input_.mouse_x=1210;tooltip.input_.mouse_y=650;
+            Recorder tr;tr.resize(1280,720);tr.set_2d(tooltip.ui_scale_);
+            tooltip.render_corridor_placement_tooltip(tr);
+            tr.check_bounds("corridor rejection tooltip");
+            bool title=false,body=false;
+            for(const auto& d:tr.draws)if(d.type=='T'){title|=d.text.find("NO CLEAR CORRIDOR ROUTE")!=std::string::npos;body|=d.text.find("blocked")!=std::string::npos;}
+            require(title && body,"corridor rejection tooltip omitted title or reason");
+        }
+
         // ESC from the in-game menu resumes the active session. ESC from a
         // sub-menu still returns to the game menu first.
         {

@@ -89,12 +89,38 @@ don't let the solarpanel position "jump", it shall move seamless from one positi
 highlight the currently selected structure/robot with light yellow outlines
 increase the oxygen generators throughput by 100%
 
+in case textures ever become relevant add a switch to swap between mesh/textured layout...
+
+rework all structures so that the interiour can not be "walked-through". They shall block the POV character.
+
+refine the bio dome:
+- the bio dome shall provide hydroponics bays
+- each bay can be equiped with a plant type
+- suggest different plant types needed to survive in a moon base
+- when selecting the bio dome show in status frame a table where for each bay a plant type can be selected
+- create a plant growing mechanism
+- show the growth progress as a status bar below each bay in the status frame
+
+for the bio dome, don't auto place any crop. After building, the bays crop type shall be empty. Also let remove selected crops. The bio dome shall require power and breathable air to function. The dome shall follow a light/darkness scheme to simulate like a real grow cycle in e.g. green hauses. As long as the bio dome is not fully built, dont show the crop selection menu.
+Also rework the crop selection displaying:
+- make it a two columned table
+- add a dropdown menu to select the crop and replace/remove the swich buttons
+
+If a corridor cannot be placed, show a tooltip telling why it cannot be placed
+
+create a hydrogen power generator as outdoor structure
+- it shall process the produced hydrogen from the oxygen generator into electricity/energy that can be stored or used
+to the day/night cycle add a (not yet visualized) movement of a star (sun-like) accross the playfield following a realistic position above the playfield:
+- the solar panel shall follow it orientation for maximum photovoltic collection of energy
+
+apply a realistic power/water/air consumption mechanic
+
+
 *** ToDo:
 
 
 
 
-apply a realistic power/water/air consumption mechanic
 
 add a game progress tree (when not in debugging mode) and display as check list at the screen border (no overlaps!)
 Stage 1:
@@ -117,10 +143,7 @@ Stage 3:
 => Make this a game milestone "Ready for human crew"
 Keep the option for the definition of further stages!
 
-create a hydrogen power generator as outdoor structure
-- it shall process the produced hydrogen from the oxygen generator into electricity/energy that can be stored or used
-to the day/night cycle add a (not yet visualized) movement of a star (sun-like) accross the playfield following a realistic position above the playfield:
-- the solar panel shall follow it orientation for maximum photovoltic collection of energy
+
 
 generate astronauts, the shall look like future astronauts and move like humans
 - create a preview picture of how they would look like
@@ -136,8 +159,6 @@ dont integrate into the game yet, just show me sampled drafts
 
 
 
-
-in case textures ever become relevant add a switch to swap between mesh/textured layout...
 
 
 

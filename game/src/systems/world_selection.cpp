@@ -144,6 +144,12 @@ float GameApp::selection_panel_content_height() const {
         }
         if(kind==HabitatKind::OxygenGeneratorDome) return 378.0f+extra;
         if(kind==HabitatKind::AirLock) return 362.0f+extra;
+        if(kind==HabitatKind::BioDome){
+            if(selected_habitat_<0 || (std::size_t)selected_habitat_>=placed_habitats_.size() || !placed_habitats_[(std::size_t)selected_habitat_].construction.complete()) return 324.0f+extra;
+            const std::size_t bays=hydroponics_bay_count(placed_habitats_[(std::size_t)selected_habitat_].size);
+            const std::size_t rows=(bays+1)/2;
+            return 340.0f+extra+(float)rows*90.0f+48.0f;
+        }
         return 324.0f+extra;
     }
     if(selection_kind_==SelectionKind::Corridor) return 356.0f;
@@ -165,6 +171,8 @@ float GameApp::selection_panel_content_height() const {
 Rect GameApp::selection_panel_rect() const {
     float width=410.0f;
     if(selection_kind_==SelectionKind::Robot) width=485.0f;
+    else if(selection_kind_==SelectionKind::Habitat && selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size() &&
+            placed_habitats_[(std::size_t)selected_habitat_].kind==HabitatKind::BioDome && placed_habitats_[(std::size_t)selected_habitat_].construction.complete()) width=540.0f;
     else if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 && (std::size_t)selected_resource_<placed_resources_.size() &&
             placed_resources_[(std::size_t)selected_resource_].kind==ResourceKind::StorageDome) width=485.0f;
     const float y=STATUS_BAR_H+PLAYFIELD_MARGIN;
@@ -250,6 +258,8 @@ void GameApp::clear_world_selection(){
     selection_kind_=SelectionKind::None;
     selection_panel_scroll_=0.0f;
     selection_panel_scroll_key_=0;
+    hydroponics_dropdown_habitat_=-1;
+    hydroponics_dropdown_bay_=-1;
     selected_habitat_=-1;
     selected_corridor_=-1;
     selected_resource_=-1;

@@ -129,7 +129,11 @@ bool point_in_portal_clearance(Vec3 p,Vec3 center,Vec3 normal,float half_width,f
     const float longitudinal=std::abs(dot(Vec3{rel.x,0.0f,rel.z},normal));
     const float lateral=std::abs(dot(Vec3{rel.x,0.0f,rel.z},side));
     const float usable=std::max(0.0f,half_width-body_radius);
-    return longitudinal<=body_radius+0.62f && lateral<=usable;
+    // Rendering carves generated pressure openings 0.90 m into the source
+    // structure mesh. Keep collision clearance at least that deep plus the
+    // astronaut radius, otherwise uncarved source furniture/details can form
+    // an invisible lip immediately behind an otherwise open hatch.
+    return longitudinal<=body_radius+0.92f && lateral<=usable;
 }
 
 bool point_in_doorway_clearance(Vec3 p,const CorridorDoor& door,float body_radius){
@@ -240,6 +244,49 @@ bool projected_habitat_contains_body(const HabitatMesh& mesh,Vec3 local,float ra
         if(!projected_habitat_contains_point(mesh,q)) return false;
     }
     return true;
+}
+
+float point_segment_distance_xz_local(Vec3 p,Vec3 a,Vec3 b){
+    return dist_xz_local(p,closest_point_segment_xz(p,a,b));
+}
+
+float projected_triangle_distance_xz(Vec3 p,Vec3 a,Vec3 b,Vec3 c){
+    if(point_in_projected_triangle(p,a,b,c)) return 0.0f;
+    return std::min({point_segment_distance_xz_local(p,a,b),
+                     point_segment_distance_xz_local(p,b,c),
+                     point_segment_distance_xz_local(p,c,a)});
+}
+
+// Interior furniture/equipment is rendered as ordinary triangle meshes, but the
+// old POV collision code only treated the outer pressure shell as solid. Test
+// the astronaut's horizontal capsule against triangles whose vertical span
+// intersects the body. Horizontal deck triangles at/below the authoritative
+// floor are ignored, while tables, beds, tanks, racks, consoles, partitions,
+// machinery and low overhead equipment remain physical obstacles. Degenerate
+// X/Z projections (vertical walls) are handled by edge distance as well.
+bool mesh_blocks_first_person_body(const std::vector<Vec3>& triangles,Vec3 local_feet,
+                                   float radius,float body_height,float floor_y){
+    const float body_bottom=std::max(local_feet.y+0.045f,floor_y+0.045f);
+    const float body_top=local_feet.y+body_height-0.035f;
+    if(body_top<=body_bottom) return false;
+    constexpr float collision_pad=0.012f;
+    for(std::size_t i=0;i+2<triangles.size();i+=3){
+        const Vec3 a=triangles[i],b=triangles[i+1],c=triangles[i+2];
+        const float tri_min_y=std::min({a.y,b.y,c.y});
+        const float tri_max_y=std::max({a.y,b.y,c.y});
+        if(tri_max_y<=body_bottom || tri_min_y>=body_top) continue;
+        if(projected_triangle_distance_xz(local_feet,a,b,c)<=radius+collision_pad) return true;
+    }
+    return false;
+}
+
+bool habitat_interior_blocks_first_person(const HabitatMesh& mesh,Vec3 local_feet,float radius,float body_height){
+    return mesh_blocks_first_person_body(mesh.interior,local_feet,radius,body_height,mesh.walkable_floor_y) ||
+           mesh_blocks_first_person_body(mesh.details,local_feet,radius,body_height,mesh.walkable_floor_y);
+}
+
+bool resource_interior_blocks_first_person(const ResourceMesh& mesh,Vec3 local_feet,float radius,float body_height){
+    return mesh_blocks_first_person_body(mesh.details,local_feet,radius,body_height,mesh.walkable_floor_y);
 }
 
 std::optional<float> walkable_surface_height_at(const std::vector<Vec3>& triangles,Vec3 local_point,
@@ -829,7 +876,15 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
         // the avatar center is still technically outside the footprint.
         for(const auto& item:placed_resources_){
             if(!item.construction.complete() || item.kind==ResourceKind::StorageDome) continue;
-            if(item.kind==ResourceKind::RobotWorkshop){if(!workshop::clear(item,previous,current,radius)) return false;continue;}
+            if(item.kind==ResourceKind::RobotWorkshop){
+                if(!workshop::clear(item,previous,current,radius)) return false;
+                const auto& mesh=resource_models_.mesh(item);
+                if(near_rotated_footprint(current,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius+0.25f)){
+                    const Vec3 local=rotate_y(current-item.position,-item.rotation_degrees);
+                    if(resource_interior_blocks_first_person(mesh,local,radius,first_person_.body_height())) return false;
+                }
+                continue;
+            }
             const auto& mesh=resource_models_.mesh(item);
             if(!near_rotated_footprint(current,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,radius)) continue;
             if(body_overlaps_region(current,radius,[&](Vec3 q){
@@ -855,6 +910,10 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
 
             if(is_inside){
                 if(!inside_habitat_hull(current,h,mesh,radius) && !doorway) return false;
+                if(!doorway){
+                    const Vec3 local=rotate_y(current-h.position,-h.rotation_degrees);
+                    if(habitat_interior_blocks_first_person(mesh,local,radius,first_person_.body_height())) return false;
+                }
             }else if(body_overlaps_region(current,radius,[&](Vec3 q){
                 return inside_habitat_hull(q,h,mesh,0.0f);
             }) && !doorway){
@@ -883,6 +942,22 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
 
             if(is_inside){
                 if(!inside_storage_hull(current,item,mesh,radius) && !doorway) return false;
+                if(!doorway){
+                    const Vec3 local=rotate_y(current-item.position,-item.rotation_degrees);
+                    if(resource_interior_blocks_first_person(mesh,local,radius,first_person_.body_height())) return false;
+                    for(std::size_t box_index=0;box_index<item.stored_boxes.size();++box_index){
+                        Vec3 base{};float half_width=0.0f,height=0.0f;
+                        stored_resource_box_pose(item,mesh,box_index,base,half_width,height);
+                        const float bottom=base.y+0.02f;
+                        const float top=base.y+height+0.02f;
+                        const float body_bottom=current.y+0.045f;
+                        const float body_top=current.y+first_person_.body_height()-0.035f;
+                        if(top<=body_bottom || bottom>=body_top) continue;
+                        const float dx=std::max(0.0f,std::abs(current.x-base.x)-half_width);
+                        const float dz=std::max(0.0f,std::abs(current.z-base.z)-half_width);
+                        if(dx*dx+dz*dz<=radius*radius) return false;
+                    }
+                }
             }else if(body_overlaps_region(current,radius,[&](Vec3 q){
                 return inside_storage_hull(q,item,mesh,0.0f);
             }) && !doorway){

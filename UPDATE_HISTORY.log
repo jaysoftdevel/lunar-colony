@@ -500,3 +500,33 @@ v0.40.9
 - Replayed 0-43-36.gmsave: CR-01 leaves the stuck position around (-56.83, 20.00), reaches and parks at the workshop without SAFETY FAULT, with planner restarts reduced from thousands to a few and node expansions from millions to only a few thousand.
 - Added a save-specific regression that requires the Carrier to escape, park, remain fault-free, and stay below bounded planner restart/expansion limits.
 
+
+0.44.0 - Bio Dome hydroponics bays and crop growth
+- Replaces the Bio Dome's fixed abstract Food output with individually configurable hydroponics bays: 2 Small, 4 Standard, 6 Mid and 8 Big.
+- Adds Empty, Potato, Wheat, Soybean, Pea, Lettuce, Tomato and Strawberry bay selections with crop-specific growth time, harvest yield, water demand and lighting power.
+- Crop growth requires a powered Bio Dome, liquid water and at least 80% breathable air; >=95% air gives full growth speed and 80..95% gives reduced growth.
+- Completed growth cycles automatically harvest Food into the existing material/physical resource economy and immediately restart the selected crop.
+- The Bio Dome status frame contains an interactive per-bay crop table, previous/next selectors, crop role/resource details, harvest count and a growth progress bar below every bay.
+- Save schema 23 persists crop selection, growth fraction and harvest count. Older saves receive a balanced starter crop mix so existing Bio Domes retain practical food production after migration.
+- Adds dedicated hydroponics simulation/save and UI regressions.
+
+0.44.1 - physical POV interior collision
+- POV movement now collides with rendered habitat interior furniture/equipment instead of only the outer pressure shell. Beds, consoles, hydroponics racks, tanks, benches, machinery and internal partitions are solid to the astronaut while authoritative deck triangles remain walkable.
+- Collision uses the astronaut body radius plus vertical body span, so low floor/deck surfaces are ignored, overhead objects only block when they intersect body/head space, and jumping can clear genuinely low obstacles only when the body physically fits.
+- Storage Dome pallet/rack details and stored resource packages now block POV movement; intended entrance aisles remain traversable.
+- Robot Workshop POV movement additionally respects rendered service equipment while retaining the existing gate/ramp/wall collision model.
+- Generated pressure-door collision clearance now matches the 0.90 m render-side portal carve depth, preventing invisible collision lips behind dynamically cut hatches.
+- Navigation geometry regression now verifies every habitat type has both solid interior geometry and remaining walkable interior space.
+
+0.44.2 - Bio Dome empty commissioning, dropdown crop control and greenhouse photoperiod
+- New Bio Domes no longer auto-install a starter crop mix; every hydroponics bay starts EMPTY and must be configured by the player after construction completes.
+- Crop controls are hidden until the Bio Dome is fully built. The status frame now uses a two-column bay table with one dropdown per bay instead of previous/next switch buttons; EMPTY / REMOVE CROP explicitly clears a bay and resets its current growth.
+- Adds a controlled 16 h light / 8 h dark greenhouse cycle (06:00-22:00 light, 22:00-06:00 dark). Grow-light power, crop water demand and growth are active only in the light phase; base climate-control power remains continuous.
+- Crop growth still requires power, water and breathable air; <80% breathable air stops growth and 80-95% air runs reduced speed.
+- Completed Bio Domes visually dim during the dark phase so rendering follows the same grow-cycle state as simulation.
+- Schema 23 crop/progress/harvest persistence remains unchanged. Schema <=22 migration now produces empty bays instead of a balanced starter mix.
+
+0.44.3 - corridor placement rejection tooltips
+- Invalid corridor previews now display a cursor tooltip explaining the rejection reason instead of showing only a red blueprint/line.
+- Diagnostics distinguish reserved Air Lock passenger sides, unavailable structure/storage docking faces, same-structure requests, corridor points that are too close, route-clearance failures, gate/service-clearance conflicts, and post-merge network conflicts.
+- Tooltip rendering is clamped inside the playable HUD area and does not change corridor routing or validation rules.

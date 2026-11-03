@@ -962,7 +962,7 @@ struct NavigationRegression {
         app.placed_resources_[1].supply.water_litres=0;const double before_dry=mass();app.update_supply_simulation(1);
         require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && (gen.warnings&NoWater),"dry generator produced oxygen or reported a false running rate");
         require(std::abs(mass()-before_dry)<1e-8,"dry network created/lost oxygen without crew consumption");
-        app.placed_resources_[1].supply.water_litres=100;clock.hour=0;app.status_.restore(clock);const double before_unpowered=app.placed_resources_[1].supply.water_litres;app.update_supply_simulation(1);
+        app.placed_resources_[1].supply.water_litres=100;app.placed_resources_[0].supply.energy_kwh=0;clock.hour=0;app.status_.restore(clock);const double before_unpowered=app.placed_resources_[1].supply.water_litres;app.update_supply_simulation(1);
         require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && (gen.warnings&NoPower) && app.placed_resources_[1].supply.water_litres==before_unpowered,"unpowered generator processed water");
         clock.hour=12;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=s.volume_m3*kOxygenKgPerM3;});app.update_supply_simulation(1);
         require(gen.oxygen_produced_kg_per_day>0 && gen.oxygen_produced_kg_per_day<18 && gen.water_processed_litres_per_day>0 && app.placed_resources_[1].supply.water_litres<100,"nominal full-pressure leakage was not replenished by life support");
@@ -1363,6 +1363,68 @@ struct NavigationRegression {
             ++cases;
         }
         std::cout<<cases<<" air-lock side/rotation/size cases: passenger-side reservations, all-side utility ports, shared-trunk branches, removal and exterior access passed\n";
+    }
+
+    static void hydroponics(){
+        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();
+        auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
+        PlacedResource solar;solar.kind=ResourceKind::SolarPanel;solar.position={-20,0,0};solar.construction.step=kConstructionSteps;
+        PlacedResource battery;battery.kind=ResourceKind::PowerStorage;battery.position={-10,0,0};battery.construction.step=kConstructionSteps;battery.supply.energy_kwh=power_storage_capacity_kwh(ResourceSizeTier::Standard);
+        PlacedResource tank;tank.kind=ResourceKind::WaterStorage;tank.position={0,0,0};tank.construction.step=kConstructionSteps;tank.supply.water_litres=2000;
+        app.placed_resources_={solar,battery,tank};
+        PlacedHabitat bio;bio.kind=HabitatKind::BioDome;bio.size=HabitatSizeTier::Standard;bio.position={15,0,0};bio.construction.step=kConstructionSteps;
+        for(const auto& fresh:bio.hydroponics) require(fresh.plant==HydroponicPlant::Empty && fresh.growth_fraction==0.0,"new Bio Dome bay did not start empty");
+        bio.hydroponics[0].plant=HydroponicPlant::Potato;
+        app.placed_habitats_={bio};
+        auto connect=[&](UtilityEndpointKind ka,std::size_t a,UtilityEndpointKind kb,std::size_t b,Vec3 pa,Vec3 pb){
+            UtilityConnection u;u.endpoint_a.kind=ka;u.endpoint_a.index=a;u.endpoint_b.kind=kb;u.endpoint_b.index=b;u.path={pa,pb};u.construction.step=u.construction.total_steps;app.utility_network_.mutable_connections().push_back(u);
+        };
+        connect(UtilityEndpointKind::Resource,0,UtilityEndpointKind::Resource,1,solar.position,battery.position);
+        connect(UtilityEndpointKind::Resource,1,UtilityEndpointKind::Resource,2,battery.position,tank.position);
+        connect(UtilityEndpointKind::Resource,2,UtilityEndpointKind::Habitat,0,tank.position,bio.position);
+        app.update_supply_simulation(0.0f);
+        app.placed_habitats_[0].supply.oxygen_kg=app.placed_habitats_[0].supply.volume_m3*kOxygenKgPerM3;
+        const double water_before=app.placed_resources_[2].supply.water_litres;
+        app.update_supply_simulation(24.0f);
+        auto& bay=app.placed_habitats_[0].hydroponics[0];
+        require(bay.growth_fraction>0.02 && bay.growth_fraction<0.06,"potato bay did not advance at the expected crop-specific rate during the light phase");
+        require(app.placed_resources_[2].supply.water_litres<water_before,"hydroponics growth did not consume connected water");
+        require(app.placed_habitats_[0].supply.power_demand_kw>1.5,"hydroponics grow lights were not added during the light phase");
+        require(app.placed_habitats_[0].supply.water_demand_litres_per_day>=3.19,"hydroponics water demand telemetry missing during the light phase");
+
+        const double light_growth=bay.growth_fraction;
+        clock.hour=23;app.status_.restore(clock);app.update_supply_simulation(2.0f);
+        require(std::abs(bay.growth_fraction-light_growth)<1e-9,"crop grew during the greenhouse dark phase");
+        require(std::abs(app.placed_habitats_[0].supply.power_demand_kw-1.5)<1e-6,"grow-light demand remained active during the dark phase");
+        require(app.placed_habitats_[0].supply.water_demand_litres_per_day<1e-9,"crop water demand remained active during the dark phase");
+
+        clock.hour=12;app.status_.restore(clock);app.placed_habitats_[0].supply.oxygen_kg=0.0;
+        const double no_air_growth=bay.growth_fraction;app.update_supply_simulation(2.0f);
+        require(std::abs(bay.growth_fraction-no_air_growth)<1e-9,"crop grew without breathable air");
+        app.placed_habitats_[0].supply.oxygen_kg=app.placed_habitats_[0].supply.volume_m3*kOxygenKgPerM3;
+
+        bay.growth_fraction=0.999;
+        const auto food_before=app.resources_.amount(MaterialResource::Food);
+        app.update_supply_simulation(1.0f);
+        require(bay.harvests==1 && bay.growth_fraction<0.01,"mature crop did not auto-harvest and restart growth");
+        require(app.resources_.amount(MaterialResource::Food)==food_before+hydroponic_profile(HydroponicPlant::Potato).harvest_food_kg,"harvest did not enter Food inventory");
+        bool food_pile=false;for(const auto& pile:app.ground_resource_piles_)if(pile.resource==MaterialResource::Food && pile.amount==hydroponic_profile(HydroponicPlant::Potato).harvest_food_kg)food_pile=true;
+        require(food_pile,"hydroponics harvest did not create a physical Food package");
+        const double growth_before_power_loss=bay.growth_fraction;
+        app.placed_resources_[0].construction.step=0;app.placed_resources_[1].supply.energy_kwh=0;
+        app.update_supply_simulation(2.0f);
+        require(std::abs(bay.growth_fraction-growth_before_power_loss)<1e-9,"crop grew without electrical power");
+        app.placed_resources_[0].construction.step=kConstructionSteps;clock.hour=12;app.status_.restore(clock);
+        bay.plant=HydroponicPlant::Soybean;bay.growth_fraction=0.42;bay.harvests=7;
+        std::string error;require(app.save_game_to_name("hydroponics-regression",error),"hydroponics save failed: "+error);app.refresh_save_games();
+        std::string path;for(const auto& e:app.save_games_)if(e.name=="hydroponics-regression")path=e.path;require(!path.empty(),"hydroponics save was not listed");
+        GameApp loaded(engine);require(loaded.load_game_from_file(path,error),"hydroponics load failed: "+error);
+        const auto& restored=loaded.placed_habitats_[0].hydroponics[0];
+        require(restored.plant==HydroponicPlant::Soybean && std::abs(restored.growth_fraction-0.42)<1e-9 && restored.harvests==7,"hydroponics bay state changed across save/load");
+        std::filesystem::remove(path);
+        require(hydroponics_bay_count(HabitatSizeTier::Small)==2 && hydroponics_bay_count(HabitatSizeTier::Standard)==4 && hydroponics_bay_count(HabitatSizeTier::Mid)==6 && hydroponics_bay_count(HabitatSizeTier::Big)==8,"Bio Dome bay count does not scale with dome size");
+        require(hydroponics_lights_on(6.0f) && hydroponics_lights_on(21.99f) && !hydroponics_lights_on(22.0f) && !hydroponics_lights_on(5.99f),"Bio Dome 16/8 photoperiod boundaries are wrong");
+        std::cout<<"Bio Dome empty defaults, 16/8 light cycle, air/power/water dependency, harvest and schema-23 persistence passed\n";
     }
 
     static void queue_and_flow(){
@@ -1957,11 +2019,75 @@ struct NavigationRegression {
             const CorridorBuildAnchor a{CorridorEndpointKind::Habitat,0,{-16,0,0}},b{CorridorEndpointKind::Resource,0,storage.position+normal*mesh.footprint_x};
             auto c=app.corridor_network_.preview_built_corridor(a,b,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
             require(c.has_value(),"gate-less storage dome rejected a normal hull corridor");c->construction.step=kCorridorConstructionSteps;app.corridor_network_.restore_connections({*c});
-            check_walk(c->endpoint_b.position,c->endpoint_b.door.position,"storage ramp "+std::to_string(size)+":"+std::to_string(port));
-            check_walk(c->endpoint_b.door.position,storage.position,"storage interior");
-            check_walk(storage.position,c->endpoint_b.position,"storage return");
+            const std::string storage_label=std::to_string(size)+":"+std::to_string(port);
+            check_walk(c->endpoint_b.position,c->endpoint_b.door.position,"storage ramp "+storage_label);
+            Vec3 aisle=c->endpoint_b.door.wall_position-c->endpoint_b.door.normal*1.10f;
+            aisle.y=storage.position.y+mesh.walkable_floor_y;
+            check_walk(c->endpoint_b.door.position,aisle,"storage entry aisle "+storage_label);
+            check_walk(aisle,c->endpoint_b.door.position,"storage exit aisle "+storage_label);
         }
-        std::cout<<"120 habitat rotation/size cases, 16 gate-less storage connection approaches, exact apertures and interior headroom passed\n";
+
+        // POV collision must use the visible interior geometry instead of only
+        // the pressure shell. Every habitat type must contain at least one
+        // blocking furniture/equipment point while still retaining a clear
+        // walkable interior point. This catches regressions where tables, beds,
+        // hydroponics racks, tanks or machinery become ghost geometry again.
+        for(int kind=0;kind<(int)HabitatKind::Count;++kind){
+            app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
+            PlacedHabitat h;h.kind=(HabitatKind)kind;h.size=HabitatSizeTier::Standard;h.construction.step=kConstructionSteps;
+            app.placed_habitats_={h};const auto& hm=app.habitat_models_.mesh(h);
+            bool blocked=false,clear=false;
+            const auto probe_obstacles=[&](const std::vector<Vec3>& triangles){
+                for(std::size_t i=0;i+2<triangles.size() && !blocked;i+=3){
+                    const Vec3 a=triangles[i],b=triangles[i+1],c=triangles[i+2];
+                    const float min_y=std::min({a.y,b.y,c.y}),max_y=std::max({a.y,b.y,c.y});
+                    if(max_y<=hm.walkable_floor_y+0.20f || min_y>=hm.walkable_floor_y+1.65f) continue;
+                    Vec3 local=(a+b+c)*(1.0f/3.0f);local.y=hm.walkable_floor_y;
+                    if(std::abs(local.x)>hm.footprint_x*0.5f-0.75f || std::abs(local.z)>hm.footprint_z*0.5f-0.75f) continue;
+                    Vec3 p=h.position+world_math::rotate_y(local,h.rotation_degrees);
+                    app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn(p,0);
+                    if(app.first_person_environment_label()=="EXTERIOR / VACUUM") continue;
+                    blocked=!app.first_person_move_allowed(p,p);
+                }
+            };
+            probe_obstacles(hm.interior);probe_obstacles(hm.details);
+            require(blocked,"POV can walk through interior geometry for habitat kind "+std::to_string(kind));
+            const float hx=std::max(0.5f,hm.footprint_x*0.5f-0.85f),hz=std::max(0.5f,hm.footprint_z*0.5f-0.85f);
+            for(float z=-hz;z<=hz && !clear;z+=0.40f)for(float x=-hx;x<=hx && !clear;x+=0.40f){
+                Vec3 local{x,hm.walkable_floor_y,z};Vec3 p=h.position+world_math::rotate_y(local,h.rotation_degrees);
+                app.first_person_.spawn(p,0);
+                if(app.first_person_environment_label()=="EXTERIOR / VACUUM") continue;
+                clear=app.first_person_move_allowed(p,p);
+            }
+            require(clear,"interior collision consumed every walkable point for habitat kind "+std::to_string(kind));
+        }
+
+        // Accessible resource interiors follow the same rule. Storage racks and
+        // physical cargo packages are solid; the warehouse still keeps an aisle.
+        {
+            app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
+            PlacedResource storage;storage.kind=ResourceKind::StorageDome;storage.storage_size=StorageDomeSize::Mid;storage.construction.step=kConstructionSteps;
+            app.placed_resources_={storage};const auto& rm=app.resource_models_.mesh(storage);
+            bool blocked=false,clear=false;
+            for(std::size_t i=0;i+2<rm.details.size() && !blocked;i+=3){
+                const Vec3 a=rm.details[i],b=rm.details[i+1],c=rm.details[i+2];
+                const float min_y=std::min({a.y,b.y,c.y}),max_y=std::max({a.y,b.y,c.y});
+                if(max_y<=rm.walkable_floor_y+0.20f || min_y>=rm.walkable_floor_y+1.65f) continue;
+                Vec3 local=(a+b+c)*(1.0f/3.0f);local.y=rm.walkable_floor_y;
+                if(std::hypot(local.x,local.z)>storage_dome_diameter_m(storage.storage_size)*0.35f) continue;
+                const Vec3 p=storage.position+world_math::rotate_y(local,storage.rotation_degrees);
+                blocked=!app.first_person_move_allowed(p,p);
+            }
+            require(blocked,"Storage Dome racks are not physical POV obstacles");
+            const float r=storage_dome_diameter_m(storage.storage_size)*0.26f;
+            for(float z=-r;z<=r && !clear;z+=0.35f)for(float x=-r;x<=r && !clear;x+=0.35f){
+                if(x*x+z*z>r*r) continue;
+                const Vec3 p=storage.position+Vec3{x,rm.walkable_floor_y,z};
+                clear=app.first_person_move_allowed(p,p);
+            }
+            require(clear,"Storage Dome interior collision removed every aisle");
+        }
+        std::cout<<"120 habitat rotation/size cases, 16 gate-less storage connection approaches, exact apertures, solid interior equipment and walkable aisles passed\n";
     }
 };
 }
@@ -1988,6 +2114,7 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="priority") game::NavigationRegression::build_priority();
         else if(argc>1 && std::string(argv[1])=="airlock-cycle") game::NavigationRegression::airlock_cycle();
         else if(argc>1 && std::string(argv[1])=="airlock") game::NavigationRegression::airlock_connections();
+        else if(argc>1 && std::string(argv[1])=="hydroponics") game::NavigationRegression::hydroponics();
         else if(argc>1 && std::string(argv[1])=="queue-flow") game::NavigationRegression::queue_and_flow();
         else if(argc>1 && std::string(argv[1])=="network") game::NavigationRegression::supply_network();
         else if(argc>1 && std::string(argv[1])=="supply") game::NavigationRegression::supply();

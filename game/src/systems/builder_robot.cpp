@@ -206,15 +206,6 @@ bool robot_hulls_overlap(Vec3 a,float a_heading_degrees,RobotRole a_role,
     return true;
 }
 
-float size_multiplier(HabitatSizeTier tier){
-    switch(tier){
-        case HabitatSizeTier::Standard: return 1.0f;
-        case HabitatSizeTier::Mid: return 1.7f;
-        case HabitatSizeTier::Big: return 2.6f;
-        default: return 1.0f;
-    }
-}
-
 float segment_distance_xz(Vec3 p,Vec3 a,Vec3 b){
     const float dx=b.x-a.x,dz=b.z-a.z;
     const float den=dx*dx+dz*dz;
@@ -6374,10 +6365,8 @@ void GameApp::update_resource_economy(float dt){
         bool manufactory{false};
         bool laboratory{false};
         bool sick_bay{false};
-        float bio_capacity{0.0f};
         Vec3 industrial{};
         Vec3 water_source{};
-        Vec3 food_source{};
         Vec3 medical_source{};
         std::array<double,kMaterialResourceCount> rate_per_day{};
         std::array<Vec3,kMaterialResourceCount> output{};
@@ -6438,10 +6427,9 @@ void GameApp::update_resource_economy(float dt){
                 if(service.power){ network->sick_bay=true; network->medical_source=h.position; }
                 break;
             case HabitatKind::BioDome:
-                if(service.power && service.water){
-                    network->bio_capacity+=size_multiplier(h.size);
-                    network->food_source=h.position;
-                }
+                // Food production is simulated per hydroponics bay in the
+                // supply system so crop choice, water, power and growth state
+                // are authoritative instead of using a fixed dome-wide rate.
                 break;
             default:
                 break;
@@ -6468,8 +6456,7 @@ void GameApp::update_resource_economy(float dt){
         if(network.processing && network.factory && network.manufactory)
             set_rate(network,MaterialResource::Plastic,10.0,network.industrial);
         // Water is delivered directly into connected tanks by supply_simulation.
-        if(network.water_purifiers>0 && network.bio_capacity>0.0f)
-            set_rate(network,MaterialResource::Food,18.0*(double)network.bio_capacity,network.food_source);
+        // Bio Dome food is harvested per configured hydroponics bay.
         if(network.laboratory && network.sick_bay && network.factory)
             set_rate(network,MaterialResource::Medical,0.30,network.medical_source);
     }

@@ -163,3 +163,31 @@ The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; i
 - `systems/gameplay_controller.cpp`: routes wheel input to the info pane before camera/build-size controls whenever the pointer is over the pane.
 - `ui/selection_panel.cpp`: offsets only contained rows/buttons by the scroll position, suppresses rows outside the viewport, and renders a proportional scrollbar without enlarging the panel.
 - `ui_regression`: forces a warning-heavy Storage Dome to overflow at 200% UI scale and verifies the bottom rows become reachable, the scrollbar is visible, scrolled text stays inside the panel, and the camera distance does not change.
+
+## v0.44.0 Bio Dome hydroponics
+- `game/include/game/world/hydroponics.hpp`: crop catalog, crop profiles, bay runtime state, size-independent bay storage and balanced default assignments.
+- `game/include/game/world/habitat_mesh.hpp`: Bio Dome bay-count scaling and persistent per-habitat hydroponics state.
+- `game/src/systems/supply_simulation.cpp`: hydroponics electrical/water load, breathable-air gating, crop growth and Food harvest integration.
+- `game/src/ui/selection_panel.cpp` + `game/src/systems/world_selection.cpp`: interactive per-bay crop table, progress bars and scroll-aware Bio Dome status sizing.
+- `game/src/systems/save_game.cpp`: schema 23 crop/progress/harvest persistence and schema <=22 balanced migration.
+- `navigation_regression hydroponics` and `ui_regression`: resource dependencies, harvest, save round-trip, bay counts, selectors, progress bars and overflow scrolling.
+
+
+## v0.44.1 POV interior collision
+- `game/src/systems/first_person_mode.cpp`: triangle-based interior-body collision for habitat interior/details meshes, Storage Dome racks/cargo, and Robot Workshop service equipment; portal clearance aligned with dynamic render carving.
+- `game/tests/navigation_regression.cpp`: all habitat types must retain a clear interior point while exposing at least one solid interior obstacle; Storage Dome entrance aisles remain walkable.
+
+## v0.44.2 Bio Dome commissioning / photoperiod UI
+- `game/include/game/world/hydroponics.hpp`: authoritative 06:00-22:00 light / 22:00-06:00 dark greenhouse schedule and phase helpers; bays default to Empty.
+- `game/src/features/habitat_placement.cpp`: removes automatic starter-crop assignment from newly placed Bio Domes.
+- `game/src/systems/save_game.cpp`: schema <=22 hydroponics migration now initializes empty bays; schema 23 continues to preserve explicit crop/progress/harvest state.
+- `game/src/systems/supply_simulation.cpp`: grow-light/water demand and growth are light-phase gated while base Bio Dome climate power remains continuous; breathable-air and power gating remain authoritative.
+- `game/src/ui/selection_panel.cpp` + `game/src/systems/world_selection.cpp`: post-construction-only two-column bay table, per-bay dropdown selection/removal, progress bars, photoperiod/system state and scroll sizing.
+- `game/src/playfield/world_renderer.cpp`: completed Bio Domes use dimmed greenhouse colors during the dark phase and the bright grow-light palette during the light phase.
+- `navigation_regression hydroponics` and `ui_regression`: empty defaults, photoperiod boundaries, dark/no-air/no-power growth blocking, dropdown crop removal, construction gating and two-column layout.
+
+## v0.44.3 corridor rejection diagnostics
+- `game/src/features/corridor_builder.cpp`: maps corridor endpoint/routing/gate-clearance rejection states to player-facing reasons and renders the cursor tooltip after the 3D placement pass.
+- `game/src/playfield/playfield_view.cpp`: resets per-frame corridor diagnostic state before preview generation and renders the tooltip last in the HUD layer.
+- `game/include/game/game_app.hpp`: transient corridor tooltip title/detail state and render hook.
+- `game/tests/ui_regression.cpp`: verifies rejection tooltip text remains inside HUD bounds near a viewport corner.

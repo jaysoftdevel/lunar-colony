@@ -185,3 +185,28 @@ Windows compilation cannot be executed in this Linux environment because MSVC, t
 - Mouse-wheel input inside the panel must advance the panel scroll offset while leaving camera zoom unchanged; repeated scrolling must reach the exact bottom limit.
 - The previously hidden bottom action row must become visible after scrolling, a scrollbar must be rendered, and every scrolled text row must stay within the panel viewport.
 - Full optimized registered regression suite: 24/24 CTest groups pass.
+
+## v0.44.0 Bio Dome hydroponics validation
+- `navigation_regression hydroponics` verifies crop-specific growth, water and power dependency, automatic Food harvest, physical Food output, size-tier bay counts and schema-23 save/load persistence.
+- `navigation_regression supply` verifies the existing power/water network behavior remains valid with hydroponics loads.
+- `navigation_regression progression` verifies colony progression and crew-readiness behavior remains intact.
+- `ui_regression` verifies the Bio Dome bay table, crop selection/reset behavior, per-bay growth bars and scrolling at enlarged UI scale, together with the existing resolution/zoom UI suite.
+- A schema-22 v0.43.36 save loads successfully under the schema-23 reader, exercising legacy hydroponics migration without corrupting the existing world layout.
+
+
+## v0.44.1 POV interior collision validation
+- Optimized Linux Release build completes with navigation tests enabled.
+- `navigation_regression geometry` passes: generated habitat entrances, corridor ramps, Storage Dome entrance aisles and all existing geometry cases remain traversable where intended; every habitat kind also has verified solid interior equipment and remaining walkable floor space.
+- `navigation_pressure_gates`, `colony_airlock_cycle`, `colony_airlock_connections`, `navigation_storage_extensions` and `ui_resolution_scaling` pass.
+- `navigation_workshops` remains a very long-running pre-existing regression and exceeded the 300 s harness window during this validation; no robot/navigation workshop code is changed by v0.44.1.
+
+## v0.44.2 Bio Dome commissioning / photoperiod validation
+- Optimized Linux Release build completes with navigation/UI tests enabled.
+- `colony_hydroponics` passes: new bays are empty, the 06:00-22:00 light phase grows crops, 22:00-06:00 dark phase stops growth and crop light/water load, missing breathable air stops growth, missing electrical power stops growth, harvest/output and schema-23 persistence remain valid.
+- `ui_resolution_scaling` passes: the completed Bio Dome renders a two-column bay table with dropdown selectors and growth bars, EMPTY / REMOVE CROP clears a crop and resets growth, unfinished Bio Domes do not expose crop controls, and photoperiod state is shown.
+- `colony_oxygen`, `colony_progression`, `colony_supply_network` and `colony_supply` pass with the revised Bio Dome load behavior.
+
+## v0.44.3 corridor placement tooltip validation
+- Optimized Linux Release build completes with navigation/UI tests enabled.
+- `ui_resolution_scaling` verifies that a corridor rejection tooltip renders its title and explanatory body inside the HUD bounds even near the lower-right corner at 1280x720.
+- Existing corridor geometry, Air Lock connection and Storage Dome docking regressions remain enabled to ensure the diagnostic UI does not alter corridor routing/placement behavior.

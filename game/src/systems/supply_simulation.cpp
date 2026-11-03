@@ -44,10 +44,25 @@ double load_kw(const PlacedHabitat& h){
     }
 }
 double path_length(const std::vector<eng::Vec3>& path){double n=0;for(std::size_t i=1;i<path.size();++i)n+=eng::length(path[i]-path[i-1]);return n;}
+double hydroponics_power_kw(const PlacedHabitat& h,bool light_phase){
+    if(h.kind!=HabitatKind::BioDome || !light_phase) return 0.0;
+    double total=0.0;
+    const std::size_t count=hydroponics_bay_count(h.size);
+    for(std::size_t i=0;i<count;++i) total+=hydroponic_profile(h.hydroponics[i].plant).power_kw;
+    return total;
+}
+double hydroponics_water_litres_per_day(const PlacedHabitat& h,bool light_phase){
+    if(h.kind!=HabitatKind::BioDome || !light_phase) return 0.0;
+    double total=0.0;
+    const std::size_t count=hydroponics_bay_count(h.size);
+    for(std::size_t i=0;i<count;++i) total+=hydroponic_profile(h.hydroponics[i].plant).water_litres_per_day;
+    return total;
+}
 }
 
 UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     auto services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
+    const bool hydroponics_light_phase=hydroponics_lights_on(status_.hour());
     struct Component {std::vector<std::size_t> tanks,batteries,solars,drillers,hydrogen_generators,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;};
     std::map<std::size_t,Component> groups;
     // Charging is a real network load. Clear transient telemetry before this
@@ -89,7 +104,8 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         if(h.construction.complete()){
             if(h.kind==HabitatKind::OxygenGeneratorDome)
                 h.supply.hydrogen_kg=std::clamp(h.supply.hydrogen_kg,0.0,hydrogen_buffer_capacity(h));
-            h.supply.power_demand_kw=load_kw(h);
+            h.supply.power_demand_kw=load_kw(h)+hydroponics_power_kw(h,hydroponics_light_phase);
+            if(h.kind==HabitatKind::BioDome) h.supply.water_demand_litres_per_day+=hydroponics_water_litres_per_day(h,hydroponics_light_phase);
             auto& g=groups[services.habitats[i].connected?services.habitats[i].component:2000000+i];g.habitats.push_back(i);g.load_kw+=h.supply.power_demand_kw;
         }
     }
@@ -294,6 +310,31 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
                     h.supply.oxygen_kg=std::max(0.0,h.supply.oxygen_kg-crew_per_occupied*kCrewOxygenKgPerDay*days);
                     const double need=crew_per_occupied*kCrewWaterLitresPerDay*days;
                     if(take_water(g,need)+1e-9<need)h.supply.warnings|=NoWater;
+                }
+
+                // Hydroponics are independent bays. Grow lights/pumps are part
+                // of the component electrical demand above; growth advances only
+                // when the dome has usable air, power and water. Mature crops are
+                // harvested automatically into the existing physical Food economy.
+                if(h.kind==HabitatKind::BioDome && h.construction.complete()){
+                    const double air_factor=h.supply.breathability()>=95.0?1.0:(h.supply.breathability()>=80.0?0.35:0.0);
+                    const std::size_t bay_count=hydroponics_bay_count(h.size);
+                    for(std::size_t bay_index=0;bay_index<bay_count;++bay_index){
+                        auto& bay=h.hydroponics[bay_index];
+                        const auto& crop=hydroponic_profile(bay.plant);
+                        if(bay.plant==HydroponicPlant::Empty || crop.harvest_food_kg<=0 || !hydroponics_light_phase || air_factor<=0.0 || g.power<=1e-9) continue;
+                        const double water_need=crop.water_litres_per_day*days*g.power*air_factor;
+                        const double water_received=water_need>1e-12?take_water(g,water_need):0.0;
+                        const double water_fraction=water_need>1e-12?std::clamp(water_received/water_need,0.0,1.0):1.0;
+                        if(water_fraction<0.999) h.supply.warnings|=NoWater;
+                        const double growth_step=(days/std::max(0.1,crop.growth_days))*g.power*air_factor*water_fraction;
+                        bay.growth_fraction=std::clamp(bay.growth_fraction+growth_step,0.0,2.0);
+                        while(bay.growth_fraction>=1.0){
+                            bay.growth_fraction-=1.0;
+                            ++bay.harvests;
+                            spawn_produced_resource(MaterialResource::Food,crop.harvest_food_kg,h.position);
+                        }
+                    }
                 }
             }
         }

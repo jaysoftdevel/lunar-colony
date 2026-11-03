@@ -24,6 +24,11 @@ Vec3 flat_dir(Vec3 v){
 }
 Vec3 side_of(Vec3 normal){ normal=flat_dir(normal); return {-normal.z,0,normal.x}; }
 
+bool same_structure_anchor(const CorridorBuildAnchor& a,const CorridorBuildAnchor& b){
+    if(a.kind!=b.kind || a.index!=b.index) return false;
+    return a.kind==CorridorEndpointKind::Habitat || a.kind==CorridorEndpointKind::Resource;
+}
+
 void line(std::vector<Vec3>& out,Vec3 a,Vec3 b){ out.push_back(a); out.push_back(b); }
 
 std::size_t corridor_junction_count(const CorridorConnection& c){
@@ -204,8 +209,20 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     const int target=pick_corridor(hit,geometry::kCorridorHalfWidth+0.28f);
     if(target<0 || target==corridor_link_source_) return;
     auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
-    if(!preview) return;
-    const bool affordable=(can_start_construction(corridor_plan(*preview)) && corridor_gate_layout_clear(*preview));
+    if(!preview){
+        corridor_placement_failure_title_="CORRIDOR LINK CANNOT BE PLACED";
+        corridor_placement_failure_detail_="No collision-free connector can be routed between the selected corridor sections.";
+        return;
+    }
+    const bool gate_clear=corridor_gate_layout_clear(*preview);
+    const bool affordable=(can_start_construction(corridor_plan(*preview)) && gate_clear);
+    if(!gate_clear){
+        corridor_placement_failure_title_="GATE / SERVICE CLEARANCE BLOCKED";
+        corridor_placement_failure_detail_="The connector or its junction area overlaps a structure, gate, walkway, supply channel, or reserved service space.";
+    }else if(!can_start_construction(corridor_plan(*preview))){
+        corridor_placement_failure_title_="CORRIDOR CANNOT BE FUNDED";
+        corridor_placement_failure_detail_="Required construction resources are not available for this corridor.";
+    }
     draw_compact_corridor_blueprint(r,*preview,affordable);
     render_endpoint_highlight(r,preview->endpoint_a,affordable?theme_.accent:Color{1.00f,0.28f,0.22f,1.0f},2.8f);
     render_endpoint_highlight(r,preview->endpoint_b,affordable?Color{0.42f,1.00f,0.66f,1.0f}:Color{1.00f,0.28f,0.22f,1.0f},2.8f);
@@ -258,6 +275,25 @@ void GameApp::render_corridor_placement(Renderer& r){
         return anchor.kind!=CorridorEndpointKind::Habitat || airlock_connections::allows(anchor.index,anchor.position,
             placed_habitats_,corridor_network_.connections(),utility_network_.connections(),walkway_network_.connections());
     };
+    const auto fail=[&](std::string title,std::string detail){
+        corridor_placement_failure_title_=std::move(title);
+        corridor_placement_failure_detail_=std::move(detail);
+    };
+    const auto invalid_anchor=[&](const CorridorBuildAnchor& anchor,bool source){
+        if(anchor.kind==CorridorEndpointKind::Habitat){
+            if(anchor.index<placed_habitats_.size() && placed_habitats_[anchor.index].kind==HabitatKind::AirLock && !airlock_allowed(anchor)){
+                fail("AIR LOCK PASSENGER SIDE RESERVED","A corridor can use only the Air Lock passenger hatch. Supply channels remain attachable on every side.");
+            }else{
+                fail(source?"INVALID CORRIDOR START":"INVALID CORRIDOR END","No free pressure entrance can be created at the selected position on this structure.");
+            }
+        }else if(anchor.kind==CorridorEndpointKind::Resource){
+            fail(source?"INVALID STORAGE DOME START":"INVALID STORAGE DOME END","This Storage Dome face is reserved or unavailable for a pressure corridor. Select another free docking face.");
+        }else if(anchor.kind==CorridorEndpointKind::Corridor){
+            fail(source?"INVALID CORRIDOR START":"INVALID CORRIDOR END","The selected point cannot host a corridor junction. Move farther from the existing junction/end and try again.");
+        }else{
+            fail(source?"INVALID CORRIDOR START":"INVALID CORRIDOR END","The selected endpoint cannot host a pressure corridor.");
+        }
+    };
 
     // Before the first click, highlight the exact structural element that would
     // become the corridor source: habitat entrance/vestibule, corridor branch
@@ -273,6 +309,7 @@ void GameApp::render_corridor_placement(Renderer& r){
         // show a compact 0.56 m docking hint; the full vestibule/corridor appears
         // only after the source has been selected and a destination exists.
         const bool start_valid=candidate.has_value();
+        if(!candidate) invalid_anchor(hover,true);
         if(candidate){
             const Color c=candidate->kind==CorridorEndpointKind::OpenDoor?Color{0.96f,0.67f,0.22f,1.0f}:theme_.accent;
             if(candidate->kind==CorridorEndpointKind::Habitat || candidate->kind==CorridorEndpointKind::Resource){
@@ -313,12 +350,20 @@ void GameApp::render_corridor_placement(Renderer& r){
             highlight_habitat_anchor(hover);
             highlight_resource_anchor(hover);
         }
+        const bool source_airlock_allowed=airlock_allowed(*corridor_build_start_);
+        const bool destination_airlock_allowed=airlock_allowed(hover);
         preview=corridor_network_.preview_built_corridor(*corridor_build_start_,hover,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
-        if(!airlock_allowed(*corridor_build_start_) || !airlock_allowed(hover))preview.reset();
+        if(!source_airlock_allowed || !destination_airlock_allowed)preview.reset();
         if(preview){
             source_endpoint=preview->endpoint_a;
             destination_endpoint=preview->endpoint_b;
-            const bool affordable=(can_start_construction(corridor_plan(*preview)) && corridor_gate_layout_clear(*preview));
+            const bool gate_clear=corridor_gate_layout_clear(*preview);
+            const bool affordable=(can_start_construction(corridor_plan(*preview)) && gate_clear);
+            if(!gate_clear){
+                fail("GATE / SERVICE CLEARANCE BLOCKED","The corridor or entrance service area overlaps a structure, existing corridor, walkway, supply channel, or protected perimeter space.");
+            }else if(!can_start_construction(corridor_plan(*preview))){
+                fail("CORRIDOR CANNOT BE FUNDED","Required construction resources are not available for this corridor.");
+            }
             draw_compact_corridor_blueprint(r,*preview,affordable);
         }else{
             // Even if the route is blocked, resolve both endpoint structures so
@@ -327,8 +372,23 @@ void GameApp::render_corridor_placement(Renderer& r){
             source_endpoint=corridor_network_.preview_anchor(*corridor_build_start_,hover.position,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
             const Vec3 other=source_endpoint?source_endpoint->position:corridor_build_start_->position;
             destination_endpoint=corridor_network_.preview_anchor(hover,other,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
-            if(!airlock_allowed(*corridor_build_start_))source_endpoint.reset();
-            if(!airlock_allowed(hover))destination_endpoint.reset();
+            if(!source_airlock_allowed)source_endpoint.reset();
+            if(!destination_airlock_allowed)destination_endpoint.reset();
+
+            if(!source_airlock_allowed) invalid_anchor(*corridor_build_start_,true);
+            else if(!destination_airlock_allowed) invalid_anchor(hover,false);
+            else if(same_structure_anchor(*corridor_build_start_,hover)){
+                fail("SAME STRUCTURE","A corridor must connect two different structures, corridor nodes, or an open endpoint.");
+            }else if(corridor_build_start_->kind==CorridorEndpointKind::Corridor && hover.kind==CorridorEndpointKind::Corridor &&
+                    corridor_build_start_->index==hover.index &&
+                    distance_xz(corridor_network_.nearest_point_on_corridor(corridor_build_start_->index,corridor_build_start_->position),
+                                corridor_network_.nearest_point_on_corridor(hover.index,hover.position))<0.75f){
+                fail("CORRIDOR POINTS TOO CLOSE","Move the destination farther along the existing corridor before creating a branch or bypass.");
+            }else if(!source_endpoint) invalid_anchor(*corridor_build_start_,true);
+            else if(!destination_endpoint) invalid_anchor(hover,false);
+            else{
+                fail("NO CLEAR CORRIDOR ROUTE","All tested routes are blocked by structure or corridor clearance. Move an endpoint or create more free space.");
+            }
             const Vec3 a=source_endpoint?source_endpoint->position:corridor_build_start_->position;
             r.draw_lines_3d({a+Vec3{0,0.08f,0},hit+Vec3{0,0.08f,0}},{1.0f,0.28f,0.22f,0.9f},2.0f);
         }
@@ -344,14 +404,57 @@ void GameApp::render_corridor_placement(Renderer& r){
 
     const bool affordable=preview && (can_start_construction(corridor_plan(*preview)) && corridor_gate_layout_clear(*preview));
     const auto previous_corridors=corridor_network_.connections();
-    if(preview && affordable && corridor_network_.build_corridor(*corridor_build_start_,hover,placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
-        for(const auto& c:corridor_network_.connections())if(!gate_route_clear(c.path,geometry::kCorridorHalfWidth+0.2f)){corridor_network_.restore_connections(previous_corridors);return;}
-        corridor_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
-        selected_corridor_=(int)corridor_network_.connections().size()-1;
-        selected_habitat_=-1;
-        selection_kind_=SelectionKind::Corridor;
-        corridor_build_start_.reset();
-        build_catalog_.clear_selection();
+    if(preview && affordable){
+        if(corridor_network_.build_corridor(*corridor_build_start_,hover,placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
+            for(const auto& c:corridor_network_.connections())if(!gate_route_clear(c.path,geometry::kCorridorHalfWidth+0.2f)){
+                corridor_network_.restore_connections(previous_corridors);
+                fail("CORRIDOR MERGE BLOCKED","The merged corridor network would enter a reserved gate or service clearance area.");
+                return;
+            }
+            corridor_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
+            selected_corridor_=(int)corridor_network_.connections().size()-1;
+            selected_habitat_=-1;
+            selection_kind_=SelectionKind::Corridor;
+            corridor_build_start_.reset();
+            build_catalog_.clear_selection();
+            corridor_placement_failure_title_.clear();
+            corridor_placement_failure_detail_.clear();
+        }else{
+            fail("CORRIDOR NETWORK MERGE REJECTED","The route preview is clear, but joining it to the existing pressure network would create an invalid overlap or reserved-area conflict.");
+        }
+    }
+}
+
+void GameApp::render_corridor_placement_tooltip(Renderer& r){
+    if(corridor_placement_failure_title_.empty()) return;
+    const float logical_w=ui_width(r);
+    const float logical_h=ui_height(r);
+    if(logical_w<80.0f || logical_h<80.0f) return;
+
+    const float width=std::min(440.0f,std::max(250.0f,logical_w-16.0f));
+    const auto lines=ui::wrap_text(corridor_placement_failure_detail_,width-20.0f,
+                                   ui::font_scale(0.43f*GAME_FONT_BOOST,theme_));
+    const float height=38.0f+14.0f*(float)std::max<std::size_t>(1,lines.size());
+    const float mx=(float)input_.mouse_x/ui_scale_;
+    const float my=(float)input_.mouse_y/ui_scale_;
+    float x=mx+18.0f;
+    if(x+width>logical_w-8.0f) x=mx-width-18.0f;
+    x=std::clamp(x,8.0f,std::max(8.0f,logical_w-width-8.0f));
+    const float min_y=STATUS_BAR_H+6.0f;
+    const float max_y=std::max(min_y,logical_h-BUILD_BAR_H-height-6.0f);
+    float y=my+18.0f;
+    if(y>max_y) y=my-height-18.0f;
+    y=std::clamp(y,min_y,max_y);
+
+    const Rect tip{x,y,width,height};
+    ui::panel(r,tip,theme_);
+    r.draw_line({tip.x,tip.y},{tip.x+tip.w,tip.y},{1.0f,0.30f,0.22f,1.0f},2.0f);
+    game_label_fitted(r,{tip.x+10.0f,tip.y+7.0f,tip.w-20.0f,17.0f},corridor_placement_failure_title_,0.58f,theme_);
+    float ty=tip.y+27.0f;
+    if(lines.empty()) game_label_fitted(r,{tip.x+10.0f,ty,tip.w-20.0f,13.0f},corridor_placement_failure_detail_,0.43f,theme_,true);
+    else for(const auto& line_text:lines){
+        game_label_fitted(r,{tip.x+10.0f,ty,tip.w-20.0f,13.0f},line_text,0.43f,theme_,true);
+        ty+=14.0f;
     }
 }
 

@@ -22,7 +22,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=22;
+constexpr std::uint32_t kSaveSchema=23;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -249,6 +249,32 @@ SupplyState read_supply(Reader& r,bool with_hydrogen=false){
     if(with_hydrogen)s.hydrogen_kg=r.pod<double>();
     for(double v:{s.oxygen_kg,s.energy_kwh,s.water_litres,s.hydrogen_kg})if(!std::isfinite(v) || v<0 || v>1e12)r.valid=false;
     return s;
+}
+
+void initialize_empty_hydroponics(PlacedHabitat& h){
+    if(h.kind!=HabitatKind::BioDome) return;
+    for(auto& bay:h.hydroponics) bay={};
+}
+void write_hydroponics(Writer& w,const PlacedHabitat& h){
+    for(const auto& bay:h.hydroponics){
+        w.pod((std::uint8_t)bay.plant);
+        w.pod(bay.growth_fraction);
+        w.pod(bay.harvests);
+    }
+}
+void read_hydroponics(Reader& r,PlacedHabitat& h){
+    for(auto& bay:h.hydroponics){
+        const auto plant=r.pod<std::uint8_t>();
+        bay.growth_fraction=r.pod<double>();
+        bay.harvests=r.pod<std::uint32_t>();
+        if(plant>=(std::uint8_t)HydroponicPlant::Count || !std::isfinite(bay.growth_fraction) || bay.growth_fraction<0.0 || bay.growth_fraction>1.000001){
+            r.valid=false;
+            bay={};
+        }else{
+            bay.plant=(HydroponicPlant)plant;
+            bay.growth_fraction=std::clamp(bay.growth_fraction,0.0,1.0);
+        }
+    }
 }
 void write_corridor(Writer& w,const CorridorConnection& c){
     w.pod((std::uint8_t)c.kind); write_corridor_endpoint(w,c.endpoint_a); write_corridor_endpoint(w,c.endpoint_b); write_vec3s(w,c.path);
@@ -515,6 +541,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         out.pod(h.instance_serial);
         out.pod(h.placement_sequence);
         write_supply(out,h.supply);
+        write_hydroponics(out,h);
     });
     write_object_vector(w,placed_resources_,[](Writer& out,const PlacedResource& item){
         out.pod((std::uint8_t)item.kind); write_vec3(out,item.position); out.pod(item.rotation_degrees); write_construction(out,item.construction); write_plan(out,item.resource_plan); write_bundle(out,item.site_buffer);
@@ -538,6 +565,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,utility_network_.connections(),write_utility);
     write_object_vector(w,walkway_network_.connections(),write_walkway);
 
+    // Save schema 23: persistent Bio Dome hydroponics crop, growth and harvest state.
     // Save schema 22: persistent per-solar-panel sun-tracking enable state.
     // Save schema 20: persistent hydrogen buffer inventory in SupplyState.
     // Save schema 13: persistent global blueprint placement order for FIFO carrier logistics.
@@ -632,6 +660,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         if(source_schema>=10) h.instance_serial=in.pod<std::uint32_t>();
         if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
         if(source_schema>=17)h.supply=read_supply(in,source_schema>=20);
+        if(source_schema>=23) read_hydroponics(in,h); else initialize_empty_hydroponics(h);
         return h;
     })){ error="Template habitat data is damaged."; return false; }
 
@@ -814,6 +843,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         if(source_schema>=10) h.instance_serial=in.pod<std::uint32_t>();
         if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
         if(source_schema>=17)h.supply=read_supply(in,source_schema>=20);
+        if(source_schema>=23) read_hydroponics(in,h); else initialize_empty_hydroponics(h);
         return h;
     })){ error="Savegame habitat data is damaged."; return false; }
 
