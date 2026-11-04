@@ -10,6 +10,8 @@ PLATFORM-MATRIX.md
 README-WINDOWS.md
 README.md
 SOURCE-MANIFEST.txt
+STAGE1-CAMPAIGN-GUIDE.md
+STAGE1-UI-CONTROLS.md
 UPDATE_HISTORY.log
 VALIDATION.md
 VERSION
@@ -27,7 +29,10 @@ dev.bat
 dev.sh
 engine/CMakeLists.txt
 engine/include/engine/engine.hpp
+engine/include/engine/geometry_stream.hpp
 engine/include/engine/math.hpp
+engine/include/engine/ui_font.hpp
+engine/include/engine/ui_metrics.hpp
 engine/src/application.cpp
 engine/src/platform_win32.cpp
 engine/src/platform_x11.cpp
@@ -46,12 +51,14 @@ game/include/game/robots/safety_coordinator.hpp
 game/include/game/systems/builder_robot.hpp
 game/include/game/systems/camera_controller.hpp
 game/include/game/systems/colony_status.hpp
-game/include/game/systems/game_progress.hpp
-game/include/game/systems/solar_tracking.hpp
 game/include/game/systems/construction_costs.hpp
 game/include/game/systems/first_person_controller.hpp
+game/include/game/systems/game_progress.hpp
+game/include/game/systems/planning_game.hpp
 game/include/game/systems/resource_management.hpp
+game/include/game/systems/solar_tracking.hpp
 game/include/game/ui/layout.hpp
+game/include/game/ui/supply_warnings.hpp
 game/include/game/util/mesh_wireframe.hpp
 game/include/game/util/world_math.hpp
 game/include/game/version.hpp
@@ -104,13 +111,14 @@ game/src/screens/settings.cpp
 game/src/systems/builder_robot.cpp
 game/src/systems/camera_controller.cpp
 game/src/systems/colony_status.cpp
-game/src/systems/game_progress.cpp
 game/src/systems/construction_costs.cpp
 game/src/systems/construction_system.cpp
 game/src/systems/first_person_controller.cpp
 game/src/systems/first_person_mode.cpp
+game/src/systems/game_progress.cpp
 game/src/systems/gameplay_controller.cpp
 game/src/systems/gate_areas.cpp
+game/src/systems/planning_game.cpp
 game/src/systems/pressure_doors.cpp
 game/src/systems/resource_management.cpp
 game/src/systems/robot_workshop.cpp
@@ -162,6 +170,7 @@ game/src/world/playfield.cpp
 game/src/world/resource_mesh.cpp
 game/src/world/resources/antenna.cpp
 game/src/world/resources/hydrogen_generator.cpp
+game/src/world/resources/hydrogen_tank.cpp
 game/src/world/resources/landing_pad.cpp
 game/src/world/resources/ore_driller.cpp
 game/src/world/resources/power_storage.cpp
@@ -175,6 +184,7 @@ game/src/world/resources/water_storage.cpp
 game/src/world/utility_network.cpp
 game/src/world/walkway_network.cpp
 game/tests/navigation_regression.cpp
+game/tests/ui_regression.cpp
 install-deps.bat
 install-deps.sh
 run.bat
@@ -200,8 +210,3 @@ third_party/rvo2/src/RVOSimulator.h
 third_party/rvo2/src/Vector2.cc
 third_party/rvo2/src/Vector2.h
 todos.txt
-engine/include/engine/ui_metrics.hpp
-engine/include/engine/ui_font.hpp
-game/tests/ui_regression.cpp
-game/include/game/ui/supply_warnings.hpp
-engine/include/engine/geometry_stream.hpp

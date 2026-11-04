@@ -34,6 +34,16 @@ void GameApp::update(float dt,const InputState& in){
     }
 
     if(screen_==Screen::Playfield){
+        if(active_game_phase_==GamePhase::Planning){
+            // Stage 1 owns a separate company/mission-planning simulation. It
+            // intentionally never advances Stage-2 robots, construction, colony
+            // resources or first-person systems.
+            if(in.escape_pressed){ screen_=Screen::MainMenu; return; }
+            if(planning_.view==PlanningView::Site)
+                camera_.update(in,playfield_.size(),viewport_height_,dt);
+            update_planning_game(dt);
+            return;
+        }
         if(debug_move_pick_robot_>=0 && (!debug_robot_move_available((std::size_t)debug_move_pick_robot_) || build_catalog_.selected()))debug_move_pick_robot_=-1;
         if(debug_move_pick_robot_>=0 && (in.escape_pressed || in.right_pressed)){debug_move_pick_robot_=-1;return;}
 

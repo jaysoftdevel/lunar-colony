@@ -4,6 +4,8 @@
 #include "engine/ui_font.hpp"
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <iterator>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -329,12 +331,626 @@ struct UiRegression {
         }
         for(const auto size:sizes){
             GameApp app(engine);setup(app,0,2);Recorder r;r.resize((int)size.x,(int)size.y);app.render(r);
-            const auto start=r.button("START NEW GAME");app.input_.mouse_x=(int)std::lround((start.x+start.w*0.5f)*r.scale);app.input_.mouse_y=(int)std::lround((start.y+start.h*0.5f)*r.scale);app.input_.left_pressed=true;app.render(r);
+            const auto start=r.button("NEW GAME  /  CAMPAIGN OR FREE PLAY");app.input_.mouse_x=(int)std::lround((start.x+start.w*0.5f)*r.scale);app.input_.mouse_y=(int)std::lround((start.y+start.h*0.5f)*r.scale);app.input_.left_pressed=true;app.render(r);
             require(app.screen_==GameApp::Screen::NewGame,"menu hitbox missed after resolution scaling");
             app.input_={};app.selection_kind_=GameApp::SelectionKind::Robot;app.on_resize(r.w,r.h);const auto pane=app.selection_panel_rect();eng::InputState pointer;
             pointer.mouse_x=(int)std::lround((pane.x+pane.w/2)*app.ui_scale_);pointer.mouse_y=(int)std::lround((pane.y+pane.h/2)*app.ui_scale_);
             require(app.mouse_over_selection_panel(pointer),"selection hitbox differs from drawing");pointer.mouse_x=0;require(!app.mouse_over_selection_panel(pointer),"selection hitbox extends outside panel");
         }
+        {
+            GameApp stages(engine);setup(stages,2,2);Recorder stage_ui;stage_ui.resize(1920,1080);stages.render(stage_ui);
+            bool planning=false,robot_stage=false,manned=false;for(const auto& d:stage_ui.draws)if(d.type=='T'){planning|=d.text.find("1  PLANNING")!=std::string::npos;robot_stage|=d.text.find("2  ROBOT PREPARATION")!=std::string::npos;manned|=d.text.find("3  MANNED BASE")!=std::string::npos;}
+            require(planning&&robot_stage&&manned,"new-game stage selector is incomplete");
+            require(stages.new_game_mode_selection_==GameApp::NewGameMode::Career && stages.new_game_phase_selection_==GameApp::GamePhase::Planning,
+                    "new game does not default to Career / Stage 1");
+            require(stages.playfield_size_==GameApp::kNewGamePlayfieldDefault,"Stage 1 did not keep the fixed playfield");
+            stages.new_game_phase_selection_=GameApp::GamePhase::Planning;stages.render(stage_ui);const auto create=stage_ui.button("START CAREER");
+            stages.input_.mouse_x=(int)std::lround((create.x+create.w*0.5f)*stage_ui.scale);stages.input_.mouse_y=(int)std::lround((create.y+create.h*0.5f)*stage_ui.scale);stages.input_.left_pressed=true;stages.render(stage_ui);
+            require(stages.screen_==GameApp::Screen::Playfield && stages.active_game_phase_==GameApp::GamePhase::Planning,
+                    "Career did not start in Stage 1");
+            require(stages.active_game_mode_==GameApp::NewGameMode::Career && stages.playfield_size_==GameApp::kCompanySitePlayfieldSize,
+                    "Career selection or fixed campus size did not apply");
+            require(stages.builder_robots_.empty() && stages.placed_habitats_.empty() && stages.placed_resources_.empty(),"Stage 1 accidentally started Stage 2 gameplay content");
+            stages.input_={};stages.render(stage_ui);bool campus=false,assembly=false,launch=false,site_button=false;for(const auto& d:stage_ui.draws)if(d.type=='T'){campus|=d.text.find("SPACE COMPANY LAUNCH CAMPUS")!=std::string::npos;assembly|=d.text.find("VEHICLE ASSEMBLY")!=std::string::npos;launch|=d.text.find("LAUNCH COMPLEX")!=std::string::npos;site_button|=d.text.find("COMPANY SITE")!=std::string::npos;}
+            require(stages.planning_.view==PlanningView::Site && campus&&assembly&&launch&&site_button,"Stage 1 did not open on the interactive 3D company site");
+            // The novice shortcut should lead to a useful action, not a
+            // generic panel or a hidden game-state mutation.
+            auto next_step=stage_ui.button("NEXT STEP");
+            stages.input_.mouse_x=(int)std::lround((next_step.x+next_step.w*0.5f)*stage_ui.scale);
+            stages.input_.mouse_y=(int)std::lround((next_step.y+next_step.h*0.5f)*stage_ui.scale);
+            stages.input_.left_pressed=true;stages.render(stage_ui);
+            require(stages.planning_.view==PlanningView::Contracts && stages.planning_contract_selected_==0 &&
+                    stages.planning_.funds_eur==1'500'000,
+                    "first campaign guidance did not open the tutorial contract safely");
+            stages.planning_.view=PlanningView::Site;
+            stages.input_={};stages.render(stage_ui);
+
+            // Building clicks are the physical navigation layer. Point the
+            // camera straight at the Program Office; it must open that
+            // facility's mission-workflow station rather than bypassing gates.
+            stages.camera_.restore({80.0f,90.0f,0.0f,{-40.0f,0.0f,-24.0f}});
+            stages.input_={};stages.input_.mouse_x=stage_ui.w/2;stages.input_.mouse_y=stage_ui.h/2;stages.input_.left_pressed=true;stages.render(stage_ui);
+            require(stages.planning_.view==PlanningView::Mission && stages.planning_.mission_facility==MissionFacility::ProgramOffice,"clicking Program & Contracts did not open its mission-preparation station");
+            stages.input_={};stages.render(stage_ui);const auto contracts_shortcut=stage_ui.button("CONTRACTS");
+            stages.input_.mouse_x=(int)std::lround((contracts_shortcut.x+contracts_shortcut.w*0.5f)*stage_ui.scale);stages.input_.mouse_y=(int)std::lround((contracts_shortcut.y+contracts_shortcut.h*0.5f)*stage_ui.scale);stages.input_.left_pressed=true;stages.render(stage_ui);
+            stages.input_={};stages.render(stage_ui);bool market=false,study=false,tech_button=false;for(const auto& d:stage_ui.draws)if(d.type=='T'){market|=d.text.find("CUSTOMER CONTRACTS")!=std::string::npos;study|=d.text.find("Mission Architecture Study")!=std::string::npos;tech_button|=d.text.find("TECH TREE")!=std::string::npos;}
+            require(market&&study&&tech_button,"Stage 1 planning gameplay surface missing");
+            require(stages.planning_.funds_eur==1'500'000,"Stage 1 seed funding changed unexpectedly");
+            require(stages.accept_planning_contract(0),"initial planning contract was not selectable");
+            require(stages.planning_.funds_eur==1'750'000 && stages.planning_.contracts[0].status==PlanningContractStatus::Active,"contract deposit was not paid immediately");
+            stages.input_={};stages.render(stage_ui);
+            const auto fast_report=stage_ui.button("ADVANCE TO NEXT REPORT");
+            stages.input_.mouse_x=(int)std::lround((fast_report.x+fast_report.w*0.5f)*stage_ui.scale);
+            stages.input_.mouse_y=(int)std::lround((fast_report.y+fast_report.h*0.5f)*stage_ui.scale);
+            stages.input_.left_pressed=true;stages.render(stage_ui);
+            require(stages.planning_.contracts[0].progress_days==24.0 && stages.planning_.time_speed==0 &&
+                    stages.planning_.funds_eur==1'750'000,
+                    "contract skip-to-report button must pause at the report without paying it");
+
+            stages.planning_.time_speed=3;stages.update_planning_game(1.20f);
+            require(stages.planning_.contracts[0].status==PlanningContractStatus::Active && stages.planning_.funds_eur==1'750'000,
+                    "project was paid automatically before its customer deliverable was submitted");
+            stages.input_={};stages.render(stage_ui);
+            bool ready_for_delivery=false;for(const auto& d:stage_ui.draws)if(d.type=='T')ready_for_delivery|=d.text.find("READY FOR DELIVERY")!=std::string::npos;
+            require(ready_for_delivery,"finished customer project was not highlighted for delivery");
+            require(stages.deliver_planning_contract(0),"customer deliverable could not be submitted");
+            require(!stages.deliver_planning_contract(0),"customer deliverable could be paid twice");
+            require(stages.planning_.contracts[0].completed_count==1 && stages.planning_.contracts[0].status==PlanningContractStatus::Completed,"one-time planning contract did not close after delivery");
+            require(stages.planning_.funds_eur==2'300'000,"contract final payout was not credited");
+            require(stages.planning_technology_available(0) && stages.unlock_planning_technology(0),"foundation technology could not be funded");
+            require(stages.planning_.funds_eur==1'980'000 && stages.planning_.technologies[0],"first customer report did not discount its related technology by 20%");
+            // First-time income, one-click completion, and reputation must
+            // be deterministic and derived from the existing save fields.
+            require(stages.planning_contract_available(2)==false,"materials contract unlocked before structures research");
+
+            stages.planning_.view=PlanningView::Technology;stages.input_={};stages.render(stage_ui);bool module_tech=false,mission_tech=false,mission_header=false;int tree_lines=0;for(const auto& d:stage_ui.draws){if(d.type=='T'){module_tech|=d.text.find("STAGE-2 MODULE COMPETENCE")!=std::string::npos;mission_tech|=d.text.find("ROBOTIC LUNAR BASE")!=std::string::npos;mission_header|=d.text.find("MISSION READY")!=std::string::npos;}if(d.type=='L')++tree_lines;}
+            require(module_tech&&mission_tech,"Stage 1 tech tree does not expose its Stage-2 culmination");
+            require(mission_header && tree_lines>=30,"Stage 1 technology display is not rendered as a connected dependency tree");
+
+            // Node map is now navigable and keeps research controls out of the
+            // camera/world simulation. The UI must allow zoom, overview and
+            // inspection at the same scale as the other Stage-1 screens.
+            stage_ui.button("FIT ALL");stage_ui.button("FOCUS");
+            const float original_zoom=stages.planning_tech_zoom_;
+            auto fit_button=stage_ui.button("FIT ALL");
+            stages.input_={};stages.input_.mouse_x=(int)std::lround((fit_button.x+fit_button.w*0.5f)*stage_ui.scale);
+            stages.input_.mouse_y=(int)std::lround((fit_button.y+fit_button.h*0.5f)*stage_ui.scale);
+            stages.input_.left_pressed=true;stages.render(stage_ui);
+            require(stages.planning_tech_zoom_<original_zoom,"Fit All did not zoom research network to show all eight levels");
+            stage_ui.check_bounds("Stage 1 research overview");
+            stages.input_={};stages.planning_tech_selected_=1;stages.render(stage_ui);
+            auto focus_button=stage_ui.button("FOCUS");
+            stages.input_.mouse_x=(int)std::lround((focus_button.x+focus_button.w*0.5f)*stage_ui.scale);
+            stages.input_.mouse_y=(int)std::lround((focus_button.y+focus_button.h*0.5f)*stage_ui.scale);
+            stages.input_.left_pressed=true;stages.render(stage_ui);
+            require(stages.planning_tech_zoom_>=0.78f,"Focus did not restore a readable research-node size");
+            stages.input_={};stages.render(stage_ui);
+            auto unlock_button=stage_ui.button("UNLOCK TECHNOLOGY");
+            stages.input_.mouse_x=(int)std::lround((unlock_button.x+unlock_button.w*0.5f)*stage_ui.scale);
+            stages.input_.mouse_y=(int)std::lround((unlock_button.y+unlock_button.h*0.5f)*stage_ui.scale);
+            stages.input_.left_pressed=true;stages.render(stage_ui);
+            require(stages.planning_.technologies[1] && stages.planning_.funds_eur==1'430'000,
+                    "Research inspector failed to fund and unlock the selected available technology");
+            // First-time delivery premium +20%, and investor award for three
+            // unique completed customers. No customer contract can replay.
+            const auto cash_before_client2=stages.planning_.funds_eur;
+            require(stages.accept_planning_contract(2),"material customer not available after structures research");
+            const auto after_signing_client2=stages.planning_.funds_eur;
+            require(after_signing_client2==cash_before_client2+450'000,"wrong material contract advance");
+            require(stages.advance_planning_to_next_report(),"cannot advance to next report");
+            require(stages.planning_.time_speed==0 && stages.planning_.contracts[2].progress_days==30.0,
+                    "next report control did not stop exactly at the nearest deadline");
+            require(stages.planning_.funds_eur==after_signing_client2,"time advance paid customer without submission");
+            require(stages.deliver_planning_contract(2),"cannot deliver completed material job");
+            require(stages.planning_.funds_eur==after_signing_client2+1'260'000,"first-time 20% customer premium not applied");
+            stages.planning_.technologies[3]=1; // later contract's GNC prerequisite
+            require(stages.accept_planning_contract(1),"second technical customer unavailable");
+            const auto after_signing_client1=stages.planning_.funds_eur;
+            require(stages.advance_planning_to_next_report() && stages.planning_.contracts[1].progress_days==28.0,
+                    "new contract timing / one-click advance incorrect");
+            require(stages.deliver_planning_contract(1),"second technical report could not be submitted");
+            require(stages.planning_.funds_eur==after_signing_client1+800'000+160'000+750'000,
+                    "third new customer did not receive one-time investor milestone and first-time premium");
+            const auto funds_after_delivery=stages.planning_.funds_eur;
+            require(stages.planning_.contracts[1].status==PlanningContractStatus::Completed &&
+                    !stages.planning_contract_available(1) && !stages.accept_planning_contract(1) &&
+                    !stages.deliver_planning_contract(1) && stages.planning_.funds_eur==funds_after_delivery,
+                    "completed customer contract can be repeated or paid twice");
+            // Legacy schema-29 saves could have already delivered a repeatable
+            // contract but stored the status as Available. The completed_count
+            // guard must reject it even before save/load migration.
+            stages.planning_.contracts[1].status=PlanningContractStatus::Available;
+            require(!stages.planning_contract_available(1) && !stages.accept_planning_contract(1),
+                    "legacy delivered/repeatable contract reopened");
+            stages.planning_.contracts[1].status=PlanningContractStatus::Completed;
+            // Leaving Mission Prep and returning via the tab must keep the
+            // last facility and full rocket/lander/cargo configuration.
+            stages.planning_.view=PlanningView::Mission;
+            stages.planning_.mission_step=MissionPreparationStep::Plan;
+            stages.planning_.mission_facility=MissionFacility::MissionControl;
+            stages.planning_.mission_rocket=1;
+            stages.planning_.mission_lander=1;
+            stages.planning_.mission_cargo.food+=600;
+            const auto expected_cargo=stages.planning_.mission_cargo.total_amount();
+            stages.input_={};stages.render(stage_ui);
+            const auto site_tab=stage_ui.button("COMPANY SITE");
+            stages.input_.mouse_x=(int)std::lround((site_tab.x+site_tab.w*0.5f)*stage_ui.scale);
+            stages.input_.mouse_y=(int)std::lround((site_tab.y+site_tab.h*0.5f)*stage_ui.scale);
+            stages.input_.left_pressed=true;stages.render(stage_ui);
+            require(stages.planning_.view==PlanningView::Site,"mission site navigation failed");
+            stages.input_={};stages.render(stage_ui);
+            const auto mission_tab=stage_ui.button("MISSION PREP");
+            stages.input_.mouse_x=(int)std::lround((mission_tab.x+mission_tab.w*0.5f)*stage_ui.scale);
+            stages.input_.mouse_y=(int)std::lround((mission_tab.y+mission_tab.h*0.5f)*stage_ui.scale);
+            stages.input_.left_pressed=true;stages.render(stage_ui);
+            require(stages.planning_.view==PlanningView::Mission &&
+                    stages.planning_.mission_facility==MissionFacility::MissionControl &&
+                    stages.planning_.mission_step==MissionPreparationStep::Plan &&
+                    stages.planning_.mission_rocket==1 && stages.planning_.mission_lander==1 &&
+                    stages.planning_.mission_cargo.total_amount()==expected_cargo,
+                    "returning from mission planning discarded its configuration / current facility");
+            // Restore the untouched mission fixture for the ordered gate
+            // regression below. The navigation case intentionally changed it.
+            stages.planning_.mission_step=MissionPreparationStep::Research;
+            stages.planning_.mission_facility=MissionFacility::Overview;
+            stages.planning_.mission_rocket=0;
+            stages.planning_.mission_lander=0;
+            stages.planning_.mission_cargo=stages.planning_minimum_mission_cargo();
+            stages.input_={};stages.render(stage_ui);
+
+            stages.input_={};stages.render(stage_ui);stage_ui.check_bounds("Stage 1 research inspector");
+
+
+            stages.planning_.view=PlanningView::Mission;stages.planning_.mission_facility=MissionFacility::Overview;stages.render(stage_ui);
+            bool mission_title=false,workflow=false,research_gate=false;
+            for(const auto& d:stage_ui.draws)if(d.type=='T'){
+                mission_title|=d.text.find("MISSION PREPARATION")!=std::string::npos;
+                workflow|=d.text.find("FINAL CONFIRM")!=std::string::npos;
+                research_gate|=d.text.find("CURRENT GATE: RESEARCH")!=std::string::npos;
+            }
+            require(mission_title&&workflow&&research_gate,"Stage 1 facility workflow is incomplete");
+            const auto minimum_manifest=stages.planning_minimum_mission_cargo();
+            require(stages.planning_.mission_cargo.total_amount()==minimum_manifest.total_amount(),"new Stage 1 game does not preload its minimum lunar cargo manifest");
+            require(stages.planning_mission_payload_kg()<=stages.planning_mission_payload_capacity_kg(),"default rocket/lander cannot carry the mandatory minimum cargo");
+            require(!stages.complete_planning_mission_step(),"mission gate advanced without opening the owning facility");
+            stages.planning_.technologies.fill(1);stages.planning_.funds_eur=100'000'000;
+
+            stages.planning_.mission_facility=MissionFacility::ResearchEngineering;
+            require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Design,"research gate did not advance to design");
+            require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Test,"design gate did not advance to test");
+            stages.planning_.mission_facility=MissionFacility::ResearchEngineering;
+            require(!stages.complete_planning_mission_step(),"test gate advanced from the wrong facility");
+            stages.planning_.mission_facility=MissionFacility::PropulsionTest;
+            require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Refine,"test gate did not advance to refine");
+            require(stages.planning_.mission_facility==MissionFacility::ResearchEngineering,"test completion did not route findings back to Research & Engineering");
+            require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Plan,"refine gate did not advance to plan");
+            require(stages.planning_.mission_facility==MissionFacility::MissionControl,"refinement did not route to Mission Control");
+
+            stages.planning_.mission_cargo.iron=std::max<std::int64_t>(0,minimum_manifest.iron-1);
+            require(!stages.complete_planning_mission_step(),"mission plan accepted cargo below the mandatory construction minimum");
+            // Cargo purchased by the campaign must arrive exactly, even when
+            // the player ships more than the minimum baseline.
+            ResourceBundle selected_manifest=minimum_manifest;
+            selected_manifest.iron+=321;
+            selected_manifest.water+=98;
+            selected_manifest.aluminum+=12;
+            stages.planning_.mission_cargo=selected_manifest;
+            require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Confirm,"valid mission plan did not advance to confirmation");
+            require(stages.planning_.mission_facility==MissionFacility::ProgramOffice,"mission plan did not route to Program & Contracts");
+            require(stages.planning_mission_requirements_met(),"confirmed fully researched/funded minimum mission is not fundable");
+            // Save and reload *before* launch. Menu navigation and save/load
+            // must preserve the already-approved plan, not silently start at
+            // Research again or discard the chosen payload and vehicle pair.
+            stages.planning_.mission_rocket=1;
+            stages.planning_.mission_lander=1;
+            stages.planning_.contracts[0].status=PlanningContractStatus::Available; // legacy delivered job
+            stages.planning_.contracts.back().status=PlanningContractStatus::Active;
+            std::string mid_save_error;
+            require(stages.save_game_to_name("stage1-mid-mission",mid_save_error),
+                    "mid-mission save failed: "+mid_save_error);
+            const auto mid_save=std::filesystem::path(stages.save_game_directory())/"stage1-mid-mission.gmsave";
+            GameApp mid_loaded(engine);
+            require(mid_loaded.load_game_from_file(mid_save.string(),mid_save_error),
+                    "mid-mission load failed: "+mid_save_error);
+            require(mid_loaded.active_game_phase_==GameApp::GamePhase::Planning &&
+                    mid_loaded.planning_.view==PlanningView::Mission &&
+                    mid_loaded.planning_.mission_step==MissionPreparationStep::Confirm &&
+                    mid_loaded.planning_.mission_facility==MissionFacility::ProgramOffice &&
+                    mid_loaded.planning_.mission_rocket==1 && mid_loaded.planning_.mission_lander==1 &&
+                    mid_loaded.planning_.mission_cargo.total_amount()==selected_manifest.total_amount() &&
+                    !mid_loaded.planning_.mission_paid,
+                    "saved mission preparation/facility/vehicle/manifest was lost when loading");
+            require(mid_loaded.planning_.contracts[0].status==PlanningContractStatus::Completed &&
+                    !mid_loaded.planning_contract_available(0),
+                    "legacy previously delivered contract was not migrated to permanent Completed");
+            // Emulate a real v0.50.14 save: same binary layout except 12
+            // contracts, the old lunar customer at legacy ID 11 and schema 29.
+            // This checks that expanding the catalog does not lose a sponsor.
+            {
+                std::ifstream source(mid_save,std::ios::binary);
+                std::vector<char> bytes{std::istreambuf_iterator<char>(source),std::istreambuf_iterator<char>()};
+                constexpr std::size_t old_count=12;
+                constexpr std::size_t record_bytes=sizeof(std::uint8_t)+sizeof(double)+sizeof(std::uint16_t);
+                constexpr std::size_t trailing=2+kMaterialResourceCount*sizeof(std::int64_t)+1+sizeof(std::int64_t)+3;
+                require(bytes.size()>trailing+kPlanningContractCount*record_bytes+12,
+                        "schema-30 save too short for schema-29 contract migration test");
+                const auto contracts_end=bytes.size()-trailing;
+                const auto contracts_begin=contracts_end-kPlanningContractCount*record_bytes;
+                std::vector<char> old;
+                old.insert(old.end(),bytes.begin(),bytes.begin()+contracts_begin+11*record_bytes);
+                old.insert(old.end(),bytes.begin()+contracts_end-record_bytes,bytes.begin()+contracts_end);
+                old.insert(old.end(),bytes.begin()+contracts_end,bytes.end());
+                const std::uint32_t old_schema=29;
+                std::memcpy(old.data()+8,&old_schema,sizeof(old_schema));
+                const auto legacy_save=mid_save.parent_path()/"stage1-legacy-contracts.gmsave";
+                {std::ofstream out(legacy_save,std::ios::binary);out.write(old.data(),(std::streamsize)old.size());}
+                GameApp migrated(engine);std::string legacy_error;
+                require(migrated.load_game_from_file(legacy_save.string(),legacy_error),
+                        "schema-29 contract migration failed: "+legacy_error);
+                require(migrated.planning_.contracts[0].status==PlanningContractStatus::Completed &&
+                        migrated.planning_.contracts[kPlanningContractCount-1].status==PlanningContractStatus::Active &&
+                        migrated.planning_.contracts[11].status==PlanningContractStatus::Available,
+                        "old lunar contract not remapped to last slot or old customer status not kept");
+                std::error_code ec;std::filesystem::remove(legacy_save,ec);
+            }
+            std::error_code mid_remove_error;std::filesystem::remove(mid_save,mid_remove_error);
+            stages.planning_.contracts.back().status=PlanningContractStatus::Available;
+            stages.planning_.contracts[0].status=PlanningContractStatus::Completed;
+            require(kPlanningContractCount==32,"new commercial project catalog size changed");
+            GameApp added_customers(engine);
+            added_customers.reset_planning_game();
+            require(added_customers.accept_planning_contract(11) &&
+                    added_customers.accept_planning_contract(12),
+                    "new introductory contracts must be accessible without research");
+            require(added_customers.advance_planning_to_next_report() &&
+                    added_customers.deliver_planning_contract(11),
+                    "new early contract cannot be delivered");
+            require(!added_customers.accept_planning_contract(11),
+                    "new commercial contract can be repeated after delivery");
+            // Conservative prelaunch audit: total unconditional signing and
+            // completion payouts across the catalog, excluding launch sponsor,
+            // exceed all undiscounted research plus the most costly rocket,
+            // lander and the actual minimum Stage-2 payload procurement.
+            stages.planning_.mission_rocket=2;
+            stages.planning_.mission_lander=2;
+            const auto maximum_mission_cost=stages.planning_mission_cost_eur();
+            constexpr std::int64_t all_research_cost=21'850'000;
+            constexpr std::int64_t guaranteed_commercial_income=94'350'000;
+            require(guaranteed_commercial_income>all_research_cost+maximum_mission_cost,
+                    "one-time contract proceeds cannot finance full research and the most expensive minimum mission");
+            stages.planning_.mission_rocket=1;
+            stages.planning_.mission_lander=1;
+            const auto mission_cost=stages.planning_mission_cost_eur();
+            const auto funds_before_mission=stages.planning_.funds_eur;
+            require(stages.purchase_planning_mission(),"valid lunar mission could not be authorized/paid");
+            require(stages.planning_.mission_paid && stages.planning_.funds_eur==funds_before_mission-mission_cost,"mission authorization did not deduct the calculated price exactly once");
+            require(stages.planning_.mission_step==MissionPreparationStep::Build && stages.planning_.mission_facility==MissionFacility::VehicleAssembly,"funding did not release the vehicle build gate");
+            require(!stages.purchase_planning_mission(),"already-paid mission could be charged twice");
+            require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Integrate,"vehicle build did not advance to cargo integration");
+            require(stages.planning_.mission_facility==MissionFacility::CargoIntegration,"vehicle build did not route to Cargo Integration");
+            require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::FinalConfirm,"cargo integration did not advance to final readiness");
+            require(stages.planning_.mission_facility==MissionFacility::Communications,"cargo integration did not route to Communications");
+            require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Launch,"final readiness did not advance to launch");
+            require(stages.planning_.mission_facility==MissionFacility::LaunchComplex,"final readiness did not route to Launch Complex");
+            // Lunar customer sponsorship is tied to an actual launch, never
+            // an artificial timer. Deposit on award; final fee on launch.
+            require(stages.accept_planning_contract(kPlanningContractCount-1),"lunar launch customer could not sponsor the mission");
+            const auto before_launch=stages.planning_.funds_eur;
+            stages.update_planning_game(500.0f);
+            require(stages.planning_.contracts[kPlanningContractCount-1].status==PlanningContractStatus::Active && stages.planning_.funds_eur==before_launch,
+                    "lunar cargo delivery contract settled on time rather than actual launch");
+            require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Complete,"launch did not complete the Stage-1 mission workflow");
+            require(stages.active_game_phase_==GameApp::GamePhase::RobotPreparation && stages.screen_==GameApp::Screen::Playfield,
+                    "lunar launch did not start Stage-2 robotic preparation");
+            require(stages.active_game_mode_==GameApp::NewGameMode::Career && stages.playfield_.size()==128,
+                    "campaign launch did not retain Career mode and initialize a normal lunar playfield");
+            require(stages.builder_robots_.size()==2 && stages.placed_habitats_.empty() && stages.placed_resources_.empty(),
+                    "launch did not spawn a fresh robotic construction stage");
+            require(stages.planning_.funds_eur==before_launch+7'500'000 && stages.planning_.contracts[kPlanningContractCount-1].status==PlanningContractStatus::Completed,
+                    "actual launch did not settle the lunar customer contract exactly once");
+            for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
+                const auto material=(MaterialResource)ri;
+                require(stages.resources_.amount(material)==selected_manifest.amount(material),
+                        "Stage-2 inventory does not equal the funded Stage-1 resource manifest");
+                std::int64_t pallet_quantity=0;
+                for(const auto& pallet:stages.ground_resource_piles_)if(pallet.resource==material)pallet_quantity+=pallet.amount;
+                require(pallet_quantity==selected_manifest.amount(material),"Stage-2 pallet allocation lost or duplicated the shipped resource");
+            }
+            const auto cash_after_launch=stages.planning_.funds_eur;
+            require(!stages.complete_planning_mission_step() && !stages.purchase_planning_mission() && !stages.planning_contract_available(kPlanningContractCount-1),
+                    "completed lunar mission could be repeated or funded again");
+            require(stages.planning_.funds_eur==cash_after_launch,"repeated launch generated duplicate funds");
+            std::cout<<"One-time lunar campaign launch deployed "<<selected_manifest.total_amount()<<" kg of funded supplies into Stage 2; paid cost "<<mission_cost<<" EUR\n";
+
+            std::string planning_save_error;require(stages.save_game_to_name("planning-ui-regression",planning_save_error),"Stage-2 campaign save failed: "+planning_save_error);
+            const auto planning_save=std::filesystem::path(stages.save_game_directory())/"planning-ui-regression.gmsave";
+            GameApp planning_loaded(engine);require(planning_loaded.load_game_from_file(planning_save.string(),planning_save_error),"Stage 1 load failed: "+planning_save_error);
+            require(planning_loaded.active_game_phase_==GameApp::GamePhase::RobotPreparation && planning_loaded.planning_.funds_eur==stages.planning_.funds_eur,"Stage-2 campaign phase/funds did not survive save/load");
+            require(planning_loaded.active_game_mode_==GameApp::NewGameMode::Career,"Career save/load did not preserve game mode");
+            require(planning_loaded.planning_.technologies[0] && planning_loaded.planning_.contracts[0].completed_count==1,"Stage 1 technology/contract history did not survive save/load");
+            require(planning_loaded.planning_.mission_paid && planning_loaded.planning_.mission_paid_cost_eur==mission_cost,"Stage 1 paid mission did not survive save/load");
+            require(planning_loaded.planning_.mission_cargo.total_amount()==selected_manifest.total_amount(),"funded mission manifest did not survive save/load");
+            for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
+                const auto material=(MaterialResource)ri;
+                require(planning_loaded.resources_.amount(material)==selected_manifest.amount(material),
+                        "Stage-2 saved inventory no longer matches shipped cargo");
+            }
+            require(planning_loaded.planning_.mission_step==MissionPreparationStep::Complete,"Stage 1 facility workflow state did not survive save/load");
+            std::error_code planning_remove_error;std::filesystem::remove(planning_save,planning_remove_error);
+            // A legacy completed Stage-1 save must finish deploying into Stage 2
+            // when loaded rather than leaving the launched rocket on Earth.
+            GameApp legacy_launched(engine);
+            legacy_launched.playfield_.rebuild(128);
+            legacy_launched.camera_.reset(128);
+            legacy_launched.reset_planning_game();
+            legacy_launched.planning_=stages.planning_;
+            legacy_launched.active_game_phase_=GameApp::GamePhase::Planning;
+            legacy_launched.active_game_mode_=GameApp::NewGameMode::Career;
+            legacy_launched.game_session_active_=true;
+            require(legacy_launched.save_game_to_name("legacy-stage1-launched",planning_save_error),"legacy launched save fixture failed");
+            const auto legacy_save=std::filesystem::path(legacy_launched.save_game_directory())/"legacy-stage1-launched.gmsave";
+            GameApp legacy_loaded(engine);
+            require(legacy_loaded.load_game_from_file(legacy_save.string(),planning_save_error),"legacy launched save load failed: "+planning_save_error);
+            require(legacy_loaded.active_game_phase_==GameApp::GamePhase::RobotPreparation &&
+                    legacy_loaded.resources_.amount(MaterialResource::Iron)==selected_manifest.iron &&
+                    legacy_loaded.planning_.mission_step==MissionPreparationStep::Complete,
+                    "previously launched Stage-1 save was not migrated into lunar Stage 2");
+            std::filesystem::remove(legacy_save,planning_remove_error);
+            // Free Play is an actual UI choice, not just a hidden phase flag.
+            GameApp sandbox_stage(engine);setup(sandbox_stage,2,2);
+            sandbox_stage.render(stage_ui);
+            const auto free_button=stage_ui.button("[ ] FREE PLAY");
+            sandbox_stage.input_.mouse_x=(int)std::lround((free_button.x+free_button.w*0.5f)*stage_ui.scale);
+            sandbox_stage.input_.mouse_y=(int)std::lround((free_button.y+free_button.h*0.5f)*stage_ui.scale);
+            sandbox_stage.input_.left_pressed=true;sandbox_stage.render(stage_ui);
+            require(sandbox_stage.new_game_mode_selection_==GameApp::NewGameMode::FreePlay,"Free Play selection missed its UI button");
+            sandbox_stage.input_={};sandbox_stage.render(stage_ui);
+            const auto robot_button=stage_ui.button("2  ROBOT PREPARATION");
+            sandbox_stage.input_.mouse_x=(int)std::lround((robot_button.x+robot_button.w*0.5f)*stage_ui.scale);
+            sandbox_stage.input_.mouse_y=(int)std::lround((robot_button.y+robot_button.h*0.5f)*stage_ui.scale);
+            sandbox_stage.input_.left_pressed=true;sandbox_stage.render(stage_ui);
+            require(sandbox_stage.new_game_phase_selection_==GameApp::GamePhase::RobotPreparation,"Free Play could not select Stage 2");
+            sandbox_stage.input_={};sandbox_stage.render(stage_ui);
+            const auto robot_create=stage_ui.button("CREATE");
+            sandbox_stage.input_.mouse_x=(int)std::lround((robot_create.x+robot_create.w*0.5f)*stage_ui.scale);
+            sandbox_stage.input_.mouse_y=(int)std::lround((robot_create.y+robot_create.h*0.5f)*stage_ui.scale);
+            sandbox_stage.input_.left_pressed=true;sandbox_stage.render(stage_ui);
+            require(sandbox_stage.active_game_mode_==GameApp::NewGameMode::FreePlay &&
+                    sandbox_stage.active_game_phase_==GameApp::GamePhase::RobotPreparation,
+                    "Stage-2 Free Play failed to start its independent robot simulation");
+            require(sandbox_stage.resources_.amount(MaterialResource::Iron)==sandbox_stage.starter_resource_reserve().iron,
+                    "Free Play Stage-2 stock was overwritten by Career mission cargo");
+            GameApp manned_stage(engine);setup(manned_stage,2,2);manned_stage.new_game_mode_selection_=GameApp::NewGameMode::FreePlay;
+            manned_stage.new_game_phase_selection_=GameApp::GamePhase::MannedBase;
+            manned_stage.render(stage_ui);const auto manned_create=stage_ui.button("CREATE");
+            manned_stage.input_.mouse_x=(int)std::lround((manned_create.x+manned_create.w*0.5f)*stage_ui.scale);manned_stage.input_.mouse_y=(int)std::lround((manned_create.y+manned_create.h*0.5f)*stage_ui.scale);manned_stage.input_.left_pressed=true;manned_stage.render(stage_ui);
+            require(manned_stage.screen_==GameApp::Screen::Playfield && manned_stage.active_game_phase_==GameApp::GamePhase::MannedBase,"Stage 3 creation did not enter the manned-base content");
+            require(manned_stage.active_game_mode_==GameApp::NewGameMode::FreePlay,"Stage 3 Free Play mode was not applied");
+            require(!manned_stage.placed_habitats_.empty() && !manned_stage.placed_resources_.empty() && !manned_stage.corridor_network_.connections().empty(),"Stage 3 did not import the Stage-2 debug scenario");
+            for(const auto& h:manned_stage.placed_habitats_)require(h.construction.complete(),"Stage 3 habitat started as a blueprint");
+            for(const auto& item:manned_stage.placed_resources_)require(item.construction.complete(),"Stage 3 resource structure started as a blueprint");
+            for(const auto& c:manned_stage.corridor_network_.connections())require(c.construction.complete(),"Stage 3 corridor started as a blueprint");
+            for(const auto& u:manned_stage.utility_network_.connections())require(u.construction.complete(),"Stage 3 supply channel started as a blueprint");
+            for(const auto& w:manned_stage.walkway_network_.connections())require(w.construction.complete(),"Stage 3 walkway started as a blueprint");
+            std::string manned_save_error;require(manned_stage.save_game_to_name("manned-ui-regression",manned_save_error),"Stage 3 save failed: "+manned_save_error);
+            const auto manned_save=std::filesystem::path(manned_stage.save_game_directory())/"manned-ui-regression.gmsave";
+            GameApp manned_loaded(engine);require(manned_loaded.load_game_from_file(manned_save.string(),manned_save_error),"Stage 3 load failed: "+manned_save_error);
+            require(manned_loaded.active_game_phase_==GameApp::GamePhase::MannedBase && !manned_loaded.placed_habitats_.empty(),"Stage 3 phase/world did not survive save/load");
+            require(manned_loaded.active_game_mode_==GameApp::NewGameMode::FreePlay,"Stage 3 Free Play mode did not persist");
+            for(const auto& h:manned_loaded.placed_habitats_)require(h.construction.complete(),"Stage 3 loaded habitat lost completed construction state");
+            std::error_code manned_remove_error;std::filesystem::remove(manned_save,manned_remove_error);
+            manned_stage.input_={};manned_stage.render(stage_ui);bool placeholder=false;for(const auto& d:stage_ui.draws)if(d.type=='T')placeholder|=d.text.find("MANNED MOON BASE CONTENT")!=std::string::npos;require(!placeholder,"Stage 3 still renders the old placeholder surface");
+        }
+        int site_layout_cases=0;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:sizes){
+            GameApp site_ui(engine);setup(site_ui,7,zoom);site_ui.active_game_phase_=GameApp::GamePhase::Planning;site_ui.reset_planning_game();site_ui.planning_.view=PlanningView::Site;
+            site_ui.camera_.restore({112.0f,52.0f,325.0f,{0.0f,0.0f,2.0f}});
+            Recorder sr;sr.resize((int)size.x,(int)size.y);site_ui.on_resize(sr.w,sr.h);site_ui.render(sr);sr.check_bounds("company site");
+            bool title=false,contracts=false,research=false,mission=false;for(const auto& d:sr.draws)if(d.type=='T'){title|=d.text.find("SPACE COMPANY LAUNCH CAMPUS")!=std::string::npos;contracts|=d.text.find("PROGRAM & CONTRACTS")!=std::string::npos;research|=d.text.find("RESEARCH & ENGINEERING")!=std::string::npos;mission|=d.text.find("LAUNCH COMPLEX")!=std::string::npos;}
+            require(title&&contracts&&research&&mission,"company-site facilities vanished at supported scaling");++site_layout_cases;
+        }
+        std::cout<<site_layout_cases<<" company-site resolution/zoom cases passed\n";
+        // The Stage-1 camera must remain interactive at the fixed site size.
+        {
+            CameraController scene_camera;
+            scene_camera.restore({138.0f,55.0f,38.0f,{0,0,4}});
+            const auto start=scene_camera.state();
+            // The Stage-1 scene has a shallower, adaptive clip range. The
+            // 0.05..5000 legacy projection caused campus roads/markings to
+            // flicker as the camera changed view direction.
+            const auto stable=scene_camera.campus_view_projection(16.0f/9.0f);
+            const auto legacy=scene_camera.view_projection(16.0f/9.0f);
+            float projection_delta=0.0f;
+            for(std::size_t j=0;j<16;++j){
+                require(std::isfinite(stable.m[j]),"Stage-1 projection contains invalid entries");
+                projection_delta+=std::abs(stable.m[j]-legacy.m[j]);
+            }
+            require(projection_delta>0.01f,"Stage-1 camera still uses the precision-starved legacy frustum");
+            for(float zoom_distance:{8.0f,138.0f,640.0f}){
+                scene_camera.restore({zoom_distance,44.0f,38.0f,{0,0,4}});
+                const auto m=scene_camera.campus_view_projection(16.0f/9.0f);
+                for(float value:m.m)require(std::isfinite(value),"campus depth projection fails at extreme zoom");
+            }
+            scene_camera.restore(start);
+            eng::InputState zoom;zoom.wheel=2.0f;
+            scene_camera.update(zoom,GameApp::kCompanySitePlayfieldSize,1080,0.016f);
+            require(scene_camera.state().distance<start.distance,"Stage-1 mouse wheel zoom is not functional");
+            eng::InputState orbit;orbit.middle_down=true;orbit.mouse_dx=36;orbit.mouse_dy=20;
+            scene_camera.update(orbit,GameApp::kCompanySitePlayfieldSize,1080,0.016f);
+            require(scene_camera.state().azimuth_degrees!=start.azimuth_degrees &&
+                    scene_camera.state().elevation_degrees!=start.elevation_degrees,"Stage-1 middle-button orbit failed");
+            const auto old_target=scene_camera.state().target;
+            eng::InputState pan;pan.right_down=true;pan.mouse_dx=21;pan.mouse_dy=-8;
+            scene_camera.update(pan,GameApp::kCompanySitePlayfieldSize,1080,0.016f);
+            require(eng::length(scene_camera.state().target-old_target)>0.01f,"Stage-1 right-button pan failed");
+        }
+
+        // Contract Office: every scaling mode must expose the actionable
+        // customer report workflow, clear research benefit, and valid buttons.
+        int contract_layout_cases=0;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:sizes){
+            GameApp board_ui(engine);setup(board_ui,7,zoom);
+            board_ui.active_game_phase_=GameApp::GamePhase::Planning;
+            board_ui.reset_planning_game();board_ui.planning_.view=PlanningView::Contracts;
+            Recorder cr;cr.resize((int)size.x,(int)size.y);board_ui.on_resize(cr.w,cr.h);
+            board_ui.render(cr);cr.check_bounds("Stage 1 contract briefs");
+            bool title=false,deliverable=false,benefit=false;
+            for(const auto& d:cr.draws)if(d.type=='T'){
+                title|=d.text.find("CUSTOMER CONTRACTS")!=std::string::npos;
+                deliverable|=d.text.find("CUSTOMER DELIVERABLE")!=std::string::npos;
+                benefit|=d.text.find("HOW THIS ADVANCES")!=std::string::npos;
+            }
+            require(title&&deliverable&&benefit,"customer contract does not explain how it supports the moon program");
+            const auto accept=cr.button("ACCEPT CONTRACT / RECEIVE ADVANCE");
+            board_ui.input_.mouse_x=(int)std::lround((accept.x+accept.w*0.5f)*cr.scale);
+            board_ui.input_.mouse_y=(int)std::lround((accept.y+accept.h*0.5f)*cr.scale);
+            board_ui.input_.left_pressed=true;board_ui.render(cr);
+            require(board_ui.planning_.contracts[0].status==PlanningContractStatus::Active && board_ui.planning_.funds_eur==1'750'000,
+                    "customer-project acceptance button did not deposit the advance");
+            board_ui.input_={};board_ui.planning_.time_speed=3;board_ui.update_planning_game(1.3f);
+            board_ui.render(cr);cr.check_bounds("Stage 1 ready-to-deliver brief");
+            const auto deliver=cr.button("SUBMIT REPORT / CLAIM PAYMENT");
+            board_ui.input_.mouse_x=(int)std::lround((deliver.x+deliver.w*0.5f)*cr.scale);
+            board_ui.input_.mouse_y=(int)std::lround((deliver.y+deliver.h*0.5f)*cr.scale);
+            board_ui.input_.left_pressed=true;board_ui.render(cr);
+            require(board_ui.planning_.funds_eur==2'300'000 && board_ui.planning_.contracts[0].completed_count==1,
+                    "customer report submission did not release the final payment");
+            require(board_ui.planning_.contracts[0].status==PlanningContractStatus::Completed &&
+                    !board_ui.planning_contract_available(0),
+                    "delivered contract did not close permanently");
+            board_ui.input_={};board_ui.render(cr);
+            bool closed_label=false;
+            for(const auto& draw:cr.draws) if(draw.type=='T')
+                closed_label|=draw.text.find("COMPLETED - CLOSED")!=std::string::npos;
+            require(closed_label,"contract UI did not show its permanent completion status");
+            ++contract_layout_cases;
+        }
+        std::cout<<contract_layout_cases<<" contract-brief resolution/zoom and button delivery cases passed\n";
+        // Contract inspector: include every direct research requirement and
+        // recursively all upstream prerequisite technologies. Missing items
+        // must be genuinely red; completed research genuinely green.
+        {
+            GameApp requirements(engine);setup(requirements,7,0);
+            requirements.active_game_phase_=GameApp::GamePhase::Planning;
+            requirements.reset_planning_game();requirements.planning_.view=PlanningView::Contracts;
+            requirements.planning_contract_selected_=1;
+            requirements.planning_.technologies[0]=1; // systems done, avionics missing
+            Recorder sr;sr.resize(1920,1080);requirements.on_resize(sr.w,sr.h);requirements.render(sr);
+            auto colored_requirement=[&](const std::string& text,bool red){
+                for(const auto& d:sr.draws)if(d.type=='T'&&d.text.find(text)!=std::string::npos)
+                    if(red?d.color.r>0.85f&&d.color.g<0.5f&&d.color.b<0.5f:
+                           d.color.g>0.8f&&d.color.r<0.55f)return true;
+                return false;
+            };
+            require(colored_requirement("RESEARCHED  [DIRECT]  SYSTEMS ENGINEERING",false),
+                    "contract research did not mark completed technology green");
+            require(colored_requirement("MISSING  [DIRECT]  AVIONICS + GNC",true),
+                    "contract research did not mark missing direct requirement red");
+            requirements.planning_.technologies[3]=1;
+            requirements.input_={};requirements.render(sr);
+            require(colored_requirement("RESEARCHED  [DIRECT]  AVIONICS + GNC",false),
+                    "contract research status did not refresh when technology was unlocked");
+            requirements.planning_contract_selected_=(int)kPlanningContractCount-1;
+            requirements.planning_.technologies.fill(0);
+            requirements.input_={};requirements.render(sr);
+            bool shows_full_chain=false,shows_earlier_dependency=false;
+            for(const auto& d:sr.draws)if(d.type=='T'){
+                shows_full_chain|=d.text.find("REQUIRED RESEARCH  0 / 15 COMPLETE")!=std::string::npos;
+                shows_earlier_dependency|=d.text.find("[PREREQUISITE]")!=std::string::npos;
+            }
+            require(shows_full_chain&&shows_earlier_dependency,
+                    "lunar contract did not show complete recursive research dependency chain");
+            requirements.ui_scale_index_=4;
+            requirements.on_resize(sr.w,sr.h);
+            requirements.input_={};requirements.render(sr);
+            sr.check_bounds("contract research paginated at high UI zoom");
+            const auto next=sr.button(">");
+            requirements.input_.mouse_x=(int)std::lround((next.x+next.w*0.5f)*sr.scale);
+            requirements.input_.mouse_y=(int)std::lround((next.y+next.h*0.5f)*sr.scale);
+            requirements.input_.left_pressed=true;
+            requirements.render(sr);
+            require(requirements.planning_contract_research_page_==1,
+                    "contract research pagination button is not interactive at high zoom");
+            std::cout<<"contract research red/green and recursive prerequisites passed\n";
+        }
+        // Double click is an item-level primary action, not a shortcut around
+        // contract/research guards. Single clicks must never spend money.
+        {
+            GameApp contracts(engine);setup(contracts,7,0);
+            contracts.active_game_phase_=GameApp::GamePhase::Planning;
+            contracts.reset_planning_game();contracts.planning_.view=PlanningView::Contracts;
+            Recorder rr;rr.resize(1920,1080);contracts.on_resize(rr.w,rr.h);contracts.render(rr);
+            auto click_label=[&](const std::string& label){
+                for(const auto& d:rr.draws) if(d.type=='T' && d.text==label){
+                    contracts.input_.mouse_x=(int)((d.v[0]+5)*rr.scale);
+                    contracts.input_.mouse_y=(int)((d.v[1]+8)*rr.scale);
+                    contracts.input_.left_pressed=true;
+                    contracts.render(rr);
+                    contracts.input_.left_pressed=false;
+                    contracts.render(rr);
+                    return;
+                }
+                throw std::runtime_error("contract row not found: "+label);
+            };
+            click_label("Mission Architecture Study");
+            require(contracts.planning_.contracts[0].status==PlanningContractStatus::Available,
+                    "single-click accepted a contract without a second click");
+            click_label("Mission Architecture Study");
+            require(contracts.planning_.contracts[0].status==PlanningContractStatus::Active &&
+                    contracts.planning_.funds_eur==1'750'000,
+                    "double-click did not sign contract and award advance");
+            contracts.update_planning_game(24.0f);
+            contracts.input_={};contracts.render(rr);
+            click_label("Mission Architecture Study");
+            click_label("Mission Architecture Study");
+            require(contracts.planning_.contracts[0].completed_count==1 &&
+                    contracts.planning_.funds_eur==2'300'000,
+                    "double-click did not submit ready contract");
+            contracts.planning_contract_page_=1;contracts.input_={};contracts.render(rr);
+            click_label("Mission Architecture Study");
+            click_label("Mission Architecture Study");
+            require(contracts.planning_.contracts[0].completed_count==1 &&
+                    contracts.planning_.funds_eur==2'300'000,
+                    "double-click paid finished contract twice");
+
+            GameApp research(engine);setup(research,7,0);
+            research.active_game_phase_=GameApp::GamePhase::Planning;
+            research.reset_planning_game();research.planning_.view=PlanningView::Technology;
+            research.planning_tech_zoom_=0.78f;
+            research.planning_tech_pan_x_=research.planning_tech_pan_y_=0.0f;
+            Recorder tr;tr.resize(1920,1080);research.on_resize(tr.w,tr.h);research.render(tr);
+            // First node (systems engineering) appears near the top-left of
+            // the graph at this fixed zoom/pan configuration.
+            const int tx=112,ty=350;
+            auto click_tech=[&](){
+                research.input_.mouse_x=tx;research.input_.mouse_y=ty;
+                research.input_.left_pressed=true;research.render(tr);
+                research.input_.left_pressed=false;research.render(tr);
+            };
+            const auto cash=research.planning_.funds_eur;
+            click_tech();
+            require(!research.planning_.technologies[0] && research.planning_.funds_eur==cash,
+                    "research single click unexpectedly purchased technology");
+            click_tech();
+            require(research.planning_.technologies[0] && research.planning_.funds_eur<cash,
+                    "research double click failed to unlock technology");
+            const auto bought=research.planning_.funds_eur;
+            click_tech();click_tech();
+            require(research.planning_.funds_eur==bought,
+                    "research double click charged completed technology again");
+            tr.check_bounds("research double-click inspector");
+            std::cout<<"contract/research double-click guards passed\n";
+        }
+
+        int mission_layout_cases=0;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:sizes){
+            GameApp mission_ui(engine);setup(mission_ui,7,zoom);mission_ui.active_game_phase_=GameApp::GamePhase::Planning;mission_ui.reset_planning_game();mission_ui.planning_.view=PlanningView::Mission;mission_ui.planning_.mission_facility=MissionFacility::MissionControl;mission_ui.planning_.mission_step=MissionPreparationStep::Plan;
+            Recorder mr;mr.resize((int)size.x,(int)size.y);mission_ui.on_resize(mr.w,mr.h);mission_ui.render(mr);mr.check_bounds("mission planning");
+            bool title=false,workflow=false,manifest=false;for(const auto& d:mr.draws)if(d.type=='T'){title|=d.text.find("MISSION PREPARATION")!=std::string::npos;workflow|=d.text.find("FINAL CONFIRM")!=std::string::npos;manifest|=d.text.find("PAYLOAD")!=std::string::npos;}
+            require(title&&workflow&&manifest,"mission workflow UI vanished at supported scaling");++mission_layout_cases;
+        }
+        std::cout<<mission_layout_cases<<" mission-planning resolution/zoom cases passed\n";
+
         GameApp settings(engine);setup(settings,3,2);Recorder r;settings.render(r);const float before=settings.ui_scale_;const auto plus=r.button(">");settings.input_.mouse_x=(int)std::lround((plus.x+plus.w/2)*before);settings.input_.mouse_y=(int)std::lround((plus.y+plus.h/2)*before);settings.input_.left_pressed=true;settings.render(r);
         require(settings.ui_scale_index_==3 && settings.ui_scale_==before,"zoom changed input/drawing transform mid-frame");settings.input_={};settings.render(r);require(settings.ui_scale_>before,"zoom preference did not apply on next frame");
         // Top-down keyboard camera controls: W/S translate along the current

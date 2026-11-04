@@ -115,12 +115,67 @@ to the day/night cycle add a (not yet visualized) movement of a star (sun-like) 
 
 apply a realistic power/water/air consumption mechanic
 
+take the game and make this the 2nd of three game stages
+1. Planning
+2. Preparing base with the robots
+3. Full manned moon base
+add a selection menu in the "new game"s menu
+- the current game shall drop into the 2nd game stage
+- the 3rd stage are empty up to now
+- for the 1st stage add an empty screen in the same layout as the current game
+keep the three stages three different game contents
+make this a 0.50.0 version
+
+stage1:
+create a planning scenario game:
+- assume a space company plans a space mission
+- in order to gather money to execute the mission, several contracts shall be selectable
+- add a tech tree that can unlock space mission features like
+	- rocketry research for a system that is able to transfer payload to space and to the moon
+	- the competence to build the modules from stage-2
+- the contracts shall deliver money in like a deposit payment and a contract finish payout
+- collect the money and may it be used in the tech tree unlocking
+- make the tech tree logical and evolutional
+
+1st stage:
+- make the tech tree a real tree
+3rd stage:
+- take the debug scenario from the 2nd stage but make all structures are built already as starting conditions
+
+add a plan mission menu where:
+- the rocket and lander mission can be planned
+- the amount of resources to be carried and shipped to the moon mission can be selected and payed for
+- ensrue the minimal needed resources for building the rocket are available and can be carried
+
+add a 3d viewable space company site (e.g like cape canaveral)
+it shall provide:
+- a launch site
+- a rocket building site
+- a comm center
+- a research facility
+- what else would make sense
+on clicking onto any of these structures linke the related planning menu to it.
+
+align the preparation of a mission with the steps needed by each facility
+e.g. research -> design -> test -> refine -> plan -> confirm -> build -> confirm once more -> launch
+
+rework the tech tree. Is shall be a real tree
+bring the research in sync with the available structures
+improve the overall looking and enrue all use the same engine features, it shall look like made by the same hands
+
+for the 2nd game stage, generate a lander and create an animation that shows the lander approaching the moons surface
+- the landing animation shall simulate a realistic landing procedure
+- the lander shall carry all selected robots and resources from the 1st stage mission planning
+- remove the old source stash from 2nd stage
+- the lander shall have a boarding ramp that opens when the unload button in its status panel is clicked
+- unloading shall deploy the robots via the boarding ramp
+- the lander also features a crane that unloads all resources to a stash right next to the lander (which the robots will access to load needed resources)
+provide a 0.51.0 version update
 
 *** ToDo:
 
-
-
-
+the lander shall be deconstructable and return additional resources
+the position where the lander is touching ground shall be selectable
 
 add a game progress tree (when not in debugging mode) and display as check list at the screen border (no overlaps!)
 Stage 1:

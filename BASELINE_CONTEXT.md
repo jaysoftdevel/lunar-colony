@@ -1,10 +1,52 @@
-# game v0.42.0 baseline context
+v0.50.17: LH2 tanks now physically sized 2t/8t with spherical standard vessel and fully scaled small tier. Lunar surface-return vehicle demands 4.2t rocket H2 and 1.15t lander H2, plus displayed LOX requirements 25.2t/6.9t; Stage-2 oxidizer and launch still not simulated. Schema31 backward compatible.
+
+v0.50.16: Stages 2/3 gain a buildable H2 storage tank (400/800 kg), connected electrolysis hydrogen routing, landing-pad rocket/lander fueling allocations (80/30 kg), selection-panel fuel controls, and schema-31 persistence. Stage 1 mission/contract progression unchanged.
+
+v0.50.15: 20 additional one-time Stage-1 contracts, EUR 94.35M prelaunch commercial base funding, conservative full research+vehicle+minimum cargo budget, schema-30 12-to-32 contract migration.
+## 0.50.13 baseline — Stage-1 interaction consistency
+
+Stage 1 uses the same mental model for contract cards and research nodes: single click selects/inspects and double-click invokes the primary guarded action. The double-click detector is transient in `GameApp` (group/item, 410 ms and a 22-logical-pixel radius). It does not change the save format. Contract completion remains single-use; research prerequisite/funding checks and one-time purchase checks are unchanged. Mission cards navigate to the current facility, while confirmation/funding/launch remain explicit buttons. The selected navigation tab and primary-action area are visually prominent. Stage 2 and Stage 3 remain the previous baseline.
+
+## 0.50.12 baseline — one-time customer jobs and resumable planning
+
+All Stage-1 customer contracts are one-time, not repeatable. An earlier repeatable save entry with completed_count>0 is treated as Completed even if its previous status was Available or Active. Contract cards use green=completed, gold=ready, blue=active, cyan=available and gray=locked. The 16-node tech tree and one-time lunar mission/Stage-2 cargo handoff remain unchanged. Selecting Mission Prep resumes the previously chosen facility; an Overview button and a Continue at Required Facility shortcut are available. Rocket/lander/cargo/funding/mission step are kept in `planning_` and serialized by save schema 29. Do not reset `mission_facility` on tab navigation or after leaving the campus.
+
+## 0.50.11 baseline — one-way career lunar launch
+
+Stage-1 lunar mission is a **single-use** flight: launch at Launch Complex after final confirmation switches to the ordinary Stage-2 robot-preparation world, spawning one builder and one carrier and importing the selected paid manifest into both the central resource inventory and eight starter depot piles. Preserve `planning_` after deployment so research/contracts, paid cost, cargo and completed launch survive schema-29 saves. Previously completed Stage-1 saves migrate to deployed Stage 2 on load. Do not repeat a lunar mission or launch payout. Commercial customer contracts are now one-time only (since 0.50.12); direct Free Play Stage 2 must keep its existing starter stock. Stage 3 unchanged.
+
+0.50.8 update note: Stage-1 Tech Tree is now a navigable dependency map;
+research catalogue and Stage-1 economics unchanged, Stage-2 robot/colony
+baseline remains untouched, Stage-3 full-base start unchanged. Save schema 29.
+
+# game v0.50.7 baseline context
+
+- New Game has two independent modes. **Career / Campaign** starts at Stage 1 Planning (fixed 128 × 128 space-company site); **Free Play** allows choosing Stages 1/2/3. Existing saves are treated as Free Play unless schema 29 stores a mode. Career mode automatically transitions into Stage 2 on its unique lunar launch, shipping the paid manifest into Stage-2 resource counters and ground pallets.
+- Stage 1 campus remains physically clickable, with the existing research, contracts and facility mission workflow untouched. Its Earth-site playfield size is fixed, but camera controls include wheel zoom, MMB orbit, RMB pan and WASD camera movement.
+- Stage-1 visual rendering now uses an optional OpenGL procedural, per-pixel high-frequency world-space material shader (grass / sand / asphalt / concrete / water / roofing), sunlit façade faces and geometric ground shadows. The cross-platform base renderer falls back to plain 3D triangles on Windows/D3D12. No imported photograph textures and no true realtime shadow map are claimed.
+- Main menu and New Game use a layered, scaled, illustrated space/launch visual theme, validated by the standard UI matrix.
+- Stage 2 and Stage 3 construction, resources, and navigation are unchanged. Stage 2 alone retains adjustable playfield dimensions; Stage 3 remains the completed debug start.
+- Save schema 29 adds one mode byte after Stage-1 mission state. Older game save schemas remain readable; existing debug templates are unchanged.
 
 - Standalone C++20 cross-platform game with separate `engine/` and `game/` trees. Linux uses X11/OpenGL; Windows uses Win32/Direct3D 12.
 - Root `VERSION` is the release source. Linux builds to `build/linux/bin/game`; Windows builds to `build/windows/bin/game.exe`. The paired `build.*`, `run.*`, `test.*`, and `dev.*` scripts expose matching workflows.
 - All visible CPU lanes remain available through the persistent task pool. `GAME_CPU_LANES` is an optional diagnostic cap. Per-rover planning runs concurrently; arbitration, pose commit and resource/world mutation remain deterministic on the game thread.
 - Render presents with swap interval 0 by default (VSync off) so the GPU can run at full host throughput; `GAME_VSYNC=1` re-enables synchronized present.
 - The runtime loop is uncapped by default (no forced 1 ms idle sleep). Optional `GAME_FRAME_LIMIT_FPS=<n>` applies an explicit limiter when profiling or thermally constrained.
+
+
+## v0.50.5 top-level game content
+
+- The product has three independent top-level game phases: Planning, Preparing Base with Robots, and Full Manned Moon Base.
+- Stage 1 is an independent company/mission-planning simulation with contract funding, a shared cash balance, planning-time progression, a 16-node prerequisite technology tree and a freely viewable 3D company launch campus. The technology UI is a directional eight-level tree that rotates vertically on compact/high-zoom layouts. It must never silently run Stage-2 robot/world simulation.
+- New Stage-1 games start on the Company Site. Campus facilities route into the existing Contracts, Tech Tree or Plan Mission views; they do not create duplicate planning state.
+- Stage 2 remains the complete pre-0.50 robot-preparation game. Stage 3 now starts from the Stage-2 128 x 128 debug layout with all habitats, resource structures, corridors, utilities and walkways already construction-complete, then runs on the normal playfield surface.
+- Stage-1 research culminates in Stage-2 Module Competence and Robotic Lunar Base Mission Architecture; upon a one-time paid launch, a fresh Stage-2 simulation is created with the exact shipped payload (without merging the underlying simulation engines).
+
+- Stage 1 now includes a third `PLAN MISSION` surface. The player chooses a launch vehicle and lunar cargo lander, adjusts each Stage-2 material/consumable quantity, and pays a combined vehicle + cargo procurement/integration cost from company funds.
+- The default mission manifest is derived from the real Stage-2 construction-cost model and contains the minimum practical robotic-base package (power/water chain, pressurized core, six-person quarters, landing pad, robot workshop, corridors/utilities/walkways, contingency and survival consumables). Funding is blocked when any minimum is missing or the selected vehicle pair cannot land the mass.
+- Mission commitment also requires Stage-2 Module Competence and Robotic Lunar Base Mission Architecture. A paid mission is frozen and survives save/load.
+- New Game still defaults to Stage 2. Save schema 28 persists the Stage-1 planning view, ordered facility mission-preparation gate, selected facility, rocket/lander mission selection, lunar cargo manifest and mission payment; schema 26/27 saves migrate into the workflow and schema 1-23 saves still load as Stage 2.
 
 ## Robot movement
 
@@ -21,6 +63,12 @@
 - No speculative reverse fan or positional nudges. A blocked rover waits, pivots safely, obtains a stable detour, or retreats to a passing pocket. A parked idle robot may receive a certified yield task when it blocks a real destination or seals the only route; it holds the new bay until another job needs it. Active work holds remain protected. Untasked robots do not wander.
 - The existing FIFO shipping/material accounting and staged construction policy remain in `builder_robot.cpp`. Service and queue positions use the same disc clearance as locomotion.
 - Exterior rover queries use the planar playfield height except for the shared workshop ramp/deck height function. They do not run indoor crew/pressure-volume queries on every planner edge or safety sample.
+
+## v0.50.5 Stage-1 mission workflow
+- Mission preparation is strictly ordered: Research -> Design -> Test -> Refine -> Plan -> Confirm/Fund -> Build -> Integrate Cargo -> Final Confirm -> Launch.
+- Facility ownership: Research & Engineering (Research/Design/Refine), Propulsion Test (Test), Mission Control (Plan), Program & Contracts (Confirm/Fund), Vehicle Assembly (Build), Cargo Integration (Integrate), Communications (Final Confirm), Launch Complex (Launch).
+- The Company Site highlights the next required facility. Facility actions reject attempts from the wrong facility or out-of-order gate.
+- Program authorization deducts the mission cost once; vehicle build, cargo integration, readiness review and launch remain separate required gates after payment.
 
 ## Structures and crew access
 
@@ -126,3 +174,17 @@ For close unobstructed structure-to-structure links, the main corridor centerlin
 - Overflowing content is vertically scrollable with the mouse wheel and displays a proportional scrollbar. Non-overflowing selections keep the existing static layout.
 - Wheel input while the pointer is inside the selection pane is UI-owned: it neither zooms the playfield camera nor cycles placement sizes.
 - Scroll position resets when the selected world object changes and is clamped when content/viewport height changes.
+
+## v0.50.9 — Stage-1 customer-project and research-evidence integration
+
+Contract catalog IDs, advance/final payment amounts and duration data remain stable for historical saves. Existing `PlanningContractProgress` persists the progress and completion history; a project at or above duration is now *ready for explicit delivery*, not automatically paid. Research evidence is computed deterministically from `completed_count > 0`, mapped to a linked technology, with a maximum 35% discount from distinct customer projects; no new serialized fields are required. Final lunar customer delivery is a special event settled by the ordered Launch gate, not the planning timer. The Contracts view is now a selected customer-brief workflow rather than 12 compact list rows, and the Site view indicates the immediate useful action before the eventual mission gate. Schema 29 is retained; older Stage-1 contract runs may have ready-for-submission reports. Stage 2 and Stage 3 are unaffected.
+
+
+### 0.50.10 Stage-1 campaign balance and coaching
+
+- Adds a persistent context-sensitive **NEXT STEP** navigation shortcut and direct facility action on the 3D campus; never purchases or submits work without a separate click.
+- Commercial projects: faster completion for non-tutorial jobs; use **ADVANCE TO NEXT REPORT** to advance exactly to the nearest active project delivery and pause.
+- Technical evidence: first completed customer project provides a 20% discount to its target technology (distinct evidence capped at 35%). Previously completed projects still apply without a save schema change.
+- One-time first-customer completion premium (+20% final payment for projects 2–11), plus transparent investor reputation awards when unique completed projects reach 3, 6, and 9 (EUR 750K, 1.5M, and 3M). Repeat projects pay their normal price and remain available to prevent deadlocks.
+- Contract list ranks work ready for submission, active jobs and first-time relevant opportunities before repeat work; research shows a funding shortcut when unaffordable.
+- Stage-2 and Stage-3 mechanics are unchanged. Save schema 29 is preserved; old contract IDs and progress are retained.

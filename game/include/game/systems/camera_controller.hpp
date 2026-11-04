@@ -14,6 +14,9 @@ public:
     void reset(int playfield_size);
     void update(const eng::InputState& input,int playfield_size,int viewport_height,float dt);
     eng::Mat4 view_projection(float aspect) const;
+    // Stage-1 coastal campus uses a close, distance-dependent depth range so
+    // thin road/pad/marking layers remain stable during orbit and zoom.
+    eng::Mat4 campus_view_projection(float aspect) const;
     eng::Vec3 eye_position() const;
     bool intersect_playfield(int screen_x,int screen_y,int viewport_width,int viewport_height,int playfield_size,eng::Vec3& hit) const;
     float distance() const { return distance_; }

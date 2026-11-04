@@ -104,6 +104,18 @@ Mat4 CameraController::view_projection(float aspect) const {
     );
 }
 
+Mat4 CameraController::campus_view_projection(float aspect) const {
+    Vec3 eye,forward,right,up;
+    basis(eye,forward,right,up);
+    // The old 0.05..5000 frustum lost most of its depth precision at campus
+    // orbit distances (~100-600 m), causing millimetre-thin markings to fight
+    // with the roads beneath them. Keep the far plane just beyond the coast.
+    const float near_plane=std::clamp(distance_*0.055f,0.35f,32.0f);
+    const float far_plane=std::max(near_plane+80.0f,distance_+420.0f);
+    return multiply(perspective(radians(55.0f),aspect,near_plane,far_plane),
+                    look_at(eye,target_,up));
+}
+
 bool CameraController::intersect_playfield(int screen_x,int screen_y,int viewport_width,int viewport_height,int playfield_size,Vec3& hit) const {
     if(viewport_width<=0 || viewport_height<=0) return false;
     Vec3 eye,forward,right,up;

@@ -15,6 +15,25 @@ using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
+
+const char* GameApp::game_phase_name(GamePhase phase){
+    switch(phase){
+        case GamePhase::Planning: return "STAGE 1 - PLANNING";
+        case GamePhase::RobotPreparation: return "STAGE 2 - PREPARING BASE WITH ROBOTS";
+        case GamePhase::MannedBase: return "STAGE 3 - FULL MANNED MOON BASE";
+    }
+    return "UNKNOWN GAME STAGE";
+}
+
+const char* GameApp::game_phase_short_name(GamePhase phase){
+    switch(phase){
+        case GamePhase::Planning: return "PLANNING";
+        case GamePhase::RobotPreparation: return "ROBOT BASE PREPARATION";
+        case GamePhase::MannedBase: return "MANNED MOON BASE";
+    }
+    return "UNKNOWN";
+}
+
 void GameApp::on_resize(int width,int height){
     viewport_width_=std::max(1,width);viewport_height_=std::max(1,height);
     ui_scale_=resolution_scale(viewport_width_,viewport_height_,UI_SCALES[std::clamp(ui_scale_index_,0,UI_SCALE_COUNT-1)]);
@@ -34,7 +53,8 @@ void GameApp::render(Renderer& r){
 
     r.begin_frame({0.018f,0.024f,0.032f,1});
     if(screen_==Screen::Playfield){
-        render_playfield(r);
+        if(active_game_phase_==GamePhase::Planning) render_planning_game(r);
+        else render_playfield(r);
     } else {
         // Menus always use the normal desktop pointer. The crosshair is reserved
         // for the actual 3D playfield surface only.

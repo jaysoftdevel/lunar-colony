@@ -87,6 +87,7 @@ target_link_libraries(game_cluster_pathfinding PRIVATE rvo2)
 add_library(game_cluster_simulation OBJECT
     src/systems/colony_status.cpp
     src/systems/game_progress.cpp
+    src/systems/planning_game.cpp
     src/systems/supply_simulation.cpp
     src/systems/save_game.cpp
 )
@@ -128,6 +129,7 @@ configure_game_cluster(game_cluster_habitats)
 add_library(game_cluster_resources OBJECT
     src/world/resources/solar_panel.cpp
     src/world/resources/hydrogen_generator.cpp
+    src/world/resources/hydrogen_tank.cpp
     src/world/resources/water_driller.cpp
     src/world/resources/power_storage.cpp
     src/world/resources/water_storage.cpp

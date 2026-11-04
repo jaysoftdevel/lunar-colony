@@ -63,7 +63,7 @@ double hydroponics_water_litres_per_day(const PlacedHabitat& h,bool light_phase)
 UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     auto services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
     const bool hydroponics_light_phase=hydroponics_lights_on(status_.hour());
-    struct Component {std::vector<std::size_t> tanks,batteries,solars,drillers,hydrogen_generators,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;};
+    struct Component {std::vector<std::size_t> tanks,batteries,solars,drillers,hydrogen_generators,hydrogen_tanks,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;};
     std::map<std::size_t,Component> groups;
     // Charging is a real network load. Clear transient telemetry before this
     // dispatch pass; powered workshop bays set it again only when energy is
@@ -144,6 +144,14 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         if(r.kind==ResourceKind::WaterStorage){r.supply.water_litres=std::clamp(r.supply.water_litres,0.0,tank_capacity(r));g.tanks.push_back(i);}
         if(r.kind==ResourceKind::WaterDriller){r.supply.water_litres=std::clamp(r.supply.water_litres,0.0,driller_buffer_capacity(r));g.drillers.push_back(i);}
         if(r.kind==ResourceKind::HydrogenGenerator)g.hydrogen_generators.push_back(i);
+        if(r.kind==ResourceKind::HydrogenTank){
+            r.supply.hydrogen_kg=std::clamp(r.supply.hydrogen_kg,0.0,hydrogen_tank_capacity_kg(r.size));
+            g.hydrogen_tanks.push_back(i);
+        }
+        if(r.kind==ResourceKind::LandingPad){
+            r.rocket_fuel_kg=std::clamp(r.rocket_fuel_kg,0.0,landing_pad_rocket_fuel_capacity_kg());
+            r.lander_fuel_kg=std::clamp(r.lander_fuel_kg,0.0,landing_pad_lander_fuel_capacity_kg());
+        }
         if(r.kind==ResourceKind::SolarPanel){
             const auto sun=status_.sun_pose();
             const double incidence=r.solar_tracking_enabled?1.0:solar_tracking::fixed_panel_incidence_fraction(sun.direction,r.rotation_degrees);
@@ -173,13 +181,31 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         consumed_water+=wanted-remaining;return wanted-remaining;
     };
     const auto hydrogen_total=[&](const Component& g){
-        double v=0;for(auto i:g.habitats)if(placed_habitats_[i].kind==HabitatKind::OxygenGeneratorDome)v+=placed_habitats_[i].supply.hydrogen_kg;return v;
+        double v=0;
+        for(auto i:g.habitats)if(placed_habitats_[i].kind==HabitatKind::OxygenGeneratorDome)v+=placed_habitats_[i].supply.hydrogen_kg;
+        for(auto i:g.hydrogen_tanks)v+=placed_resources_[i].supply.hydrogen_kg;
+        return v;
     };
     const auto take_hydrogen=[&](Component& g,double wanted){
         double remaining=wanted;
         for(auto i:g.habitats){
             auto& h=placed_habitats_[i];if(h.kind!=HabitatKind::OxygenGeneratorDome)continue;
             const double q=std::min(h.supply.hydrogen_kg,remaining);h.supply.hydrogen_kg-=q;remaining-=q;if(remaining<=1e-12)break;
+        }
+        if(remaining>1e-12)for(auto i:g.hydrogen_tanks){
+            auto& stored=placed_resources_[i].supply.hydrogen_kg;
+            const double q=std::min(stored,remaining);stored-=q;remaining-=q;
+            if(remaining<=1e-12)break;
+        }
+        return wanted-remaining;
+    };
+    const auto store_in_hydrogen_tanks=[&](Component& g,double wanted){
+        double remaining=wanted;
+        for(auto i:g.hydrogen_tanks){
+            auto& tank=placed_resources_[i];
+            const double q=std::min(remaining,std::max(0.0,hydrogen_tank_capacity_kg(tank.size)-tank.supply.hydrogen_kg));
+            tank.supply.hydrogen_kg+=q;remaining-=q;
+            if(remaining<=1e-12)break;
         }
         return wanted-remaining;
     };
@@ -209,6 +235,14 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         const double step=std::min(remaining,0.1);remaining-=step;const double hours=step/10.0,days=step/240.0;
         for(auto& [key,g]:groups){
             (void)key;
+            // Collect any buffered electrolysis by-product into connected tanks
+            // before serving H2 electricity demand. Never move hydrogen between
+            // disconnected components and never create hydrogen in this transfer.
+            if(!g.hydrogen_tanks.empty())for(auto i:g.habitats){
+                auto& h=placed_habitats_[i];
+                if(h.kind!=HabitatKind::OxygenGeneratorDome)continue;
+                h.supply.hydrogen_kg-=store_in_hydrogen_tanks(g,h.supply.hydrogen_kg);
+            }
             double generation=g.solar_kw*hours, demand=g.load_kw*hours;
             demanded_energy+=demand;
 
@@ -302,8 +336,10 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
                     h.supply.water_processed_litres_per_day+=processed_water;
                     h.supply.oxygen_produced_kg_per_day+=produced_oxygen;
                     const double produced_hydrogen=produced_oxygen*kHydrogenPerOxygen;
-                    const double stored_hydrogen=std::min(produced_hydrogen,std::max(0.0,hydrogen_buffer_capacity(h)-h.supply.hydrogen_kg));
-                    h.supply.hydrogen_kg+=stored_hydrogen;
+                    const double sent_to_tank=store_in_hydrogen_tanks(g,produced_hydrogen);
+                    const double local_buffer=std::min(produced_hydrogen-sent_to_tank,std::max(0.0,hydrogen_buffer_capacity(h)-h.supply.hydrogen_kg));
+                    h.supply.hydrogen_kg+=local_buffer;
+                    const double stored_hydrogen=sent_to_tank+local_buffer;
                     h.supply.hydrogen_produced_kg_per_day+=produced_hydrogen;
                     h.supply.hydrogen_vented_kg_per_day+=produced_hydrogen-stored_hydrogen;
                 }else if(occupied){
@@ -381,6 +417,8 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
             if(r.kind==ResourceKind::HydrogenGenerator && hydrogen_total(g)<=1e-9)r.supply.warnings|=NoHydrogen;
             if(r.kind==ResourceKind::PowerStorage){stored_power+=r.supply.energy_kwh;power_capacity+=battery_capacity(r);if(r.supply.energy_kwh<0.1*battery_capacity(r))r.supply.warnings|=LowStock;}
             if(r.kind==ResourceKind::WaterStorage){stored_water+=r.supply.water_litres;water_capacity+=tank_capacity(r);if(r.supply.water_litres<0.1*tank_capacity(r))r.supply.warnings|=LowStock;}
+            if(r.kind==ResourceKind::HydrogenTank && r.supply.hydrogen_kg<0.10*hydrogen_tank_capacity_kg(r.size))r.supply.warnings|=LowStock;
+            if(r.kind==ResourceKind::LandingPad && (r.rocket_fuel_kg<landing_pad_rocket_fuel_capacity_kg()-1e-5 || r.lander_fuel_kg<landing_pad_lander_fuel_capacity_kg()-1e-5) && hydrogen_total(g)<1e-8)r.supply.warnings|=NoHydrogen;
             if(r.kind==ResourceKind::StorageDome && r.supply.breathability()<95)r.supply.warnings|=LowAir;
         }
     }
@@ -413,4 +451,29 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     last_supply_services_=services;
     return services;
 }
+// Transfer hydrogen from a completed, connected storage tank to a vehicle
+// serviced by a completed landing pad. No global hydrogen pool and no free fuel.
+double GameApp::refuel_landing_pad(std::size_t pad_index,bool rocket){
+    if(pad_index>=placed_resources_.size())return 0.0;
+    auto& pad=placed_resources_[pad_index];
+    if(pad.kind!=ResourceKind::LandingPad || !pad.construction.complete())return 0.0;
+    const auto services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
+    if(pad_index>=services.resources.size() || !services.resources[pad_index].connected)return 0.0;
+    // The fueling pump requires power as well as the H2 manifold.
+    if(pad.supply.power_fraction<0.5)return 0.0;
+    double& vehicle_fuel=rocket?pad.rocket_fuel_kg:pad.lander_fuel_kg;
+    const double capacity=rocket?landing_pad_rocket_fuel_capacity_kg():landing_pad_lander_fuel_capacity_kg();
+    double remaining=std::max(0.0,capacity-vehicle_fuel);
+    const auto component=services.resources[pad_index].component;
+    double added=0.0;
+    for(std::size_t i=0;i<placed_resources_.size() && remaining>1e-9;++i){
+        if(i>=services.resources.size() || !services.resources[i].connected || services.resources[i].component!=component)continue;
+        auto& tank=placed_resources_[i];
+        if(tank.kind!=ResourceKind::HydrogenTank || !tank.construction.complete())continue;
+        const double q=std::min({remaining,capacity-vehicle_fuel,std::max(0.0,tank.supply.hydrogen_kg)});
+        tank.supply.hydrogen_kg-=q;vehicle_fuel+=q;remaining-=q;added+=q;
+    }
+    return added;
 }
+
+} // namespace game

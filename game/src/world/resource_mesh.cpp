@@ -32,6 +32,7 @@ ResourceModelLibrary::ResourceModelLibrary(){
     meshes_[(size_t)ResourceKind::LandingPad]=resources::refine_future_resource(resources::make_landing_pad(),ResourceKind::LandingPad);
     meshes_[(size_t)ResourceKind::RobotWorkshop]=resources::make_robot_workshop();
     meshes_[(size_t)ResourceKind::HydrogenGenerator]=resources::refine_future_resource(resources::make_hydrogen_generator(),ResourceKind::HydrogenGenerator);
+    meshes_[(size_t)ResourceKind::HydrogenTank]=resources::refine_future_resource(resources::make_hydrogen_tank(),ResourceKind::HydrogenTank);
     storage_domes_[(size_t)StorageDomeSize::Small]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Small),ResourceKind::StorageDome);
     storage_domes_[(size_t)StorageDomeSize::Mid]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Mid),ResourceKind::StorageDome);
     storage_domes_[(size_t)StorageDomeSize::Big]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Big),ResourceKind::StorageDome);
@@ -41,7 +42,18 @@ ResourceModelLibrary::ResourceModelLibrary(){
     meshes_[(size_t)ResourceKind::StorageDome]=storage_domes_[(size_t)StorageDomeSize::Small];
     for(std::size_t i=0;i<(std::size_t)ResourceKind::Count;++i){
         const auto kind=(ResourceKind)i;
-        small_meshes_[i]=(kind==ResourceKind::StorageDome || kind==ResourceKind::RobotWorkshop || kind==ResourceKind::StorageGate)?meshes_[i]:scale_xz(meshes_[i],0.76f);
+        if(kind==ResourceKind::HydrogenTank){
+            // Preserve physical vessel volume: 0.63^3 ~= 0.25, matching the
+            // 2 t SMALL versus 8 t STANDARD rated cryogenic LH2 capacities.
+            small_meshes_[i]=meshes_[i];
+            const float s=(float)kHydrogenTankSmallLinearScale;
+            auto scale=[s](std::vector<eng::Vec3>& vs){for(auto& v:vs)v=v*s;};
+            auto& m=small_meshes_[i];
+            scale(m.body);scale(m.foundation);scale(m.details);scale(m.edges);
+            m.footprint_x*=s;m.footprint_z*=s;m.height*=s;
+        }else{
+            small_meshes_[i]=(kind==ResourceKind::StorageDome || kind==ResourceKind::RobotWorkshop || kind==ResourceKind::StorageGate)?meshes_[i]:scale_xz(meshes_[i],0.76f);
+        }
     }
 }
 

@@ -195,6 +195,13 @@ inline ResourceMesh refine_future_resource(ResourceMesh source,ResourceKind kind
                 b.cylinder_y(b.mesh.details,{c.x,1.62f,c.z},0.22f,0.14f,8,true);
             }
             break;
+        case ResourceKind::HydrogenTank:
+            // External cryogenic pump skid and low-height service hookups;
+            // avoid mounting pipes through the new spherical vessel skin.
+            b.cylinder_z(b.mesh.details,{4.90f,1.02f,0},2.7f,0.11f,10,false);
+            for(float z:{-0.85f,0.85f})
+                b.cylinder_y(b.mesh.details,{5.26f,1.39f,z},0.38f,0.14f,10,false);
+            break;
         case ResourceKind::HydrogenGenerator:
             // Hydrogen-rated plumbing, stack isolation and external service instrumentation.
             b.cylinder_x(b.mesh.details,{0,1.02f,-hz*0.42f},hx*1.35f,0.060f,8,true);

@@ -541,7 +541,7 @@ ResourceBundle GameApp::starter_resource_reserve() const {
     return total;
 }
 
-void GameApp::reset_builder_robot_and_starter_stash(){
+void GameApp::reset_builder_robot_and_starter_stash(const ResourceBundle* shipped_cargo){
     robot_enclosure_legacy_scan_pending_=true;
     robot_safety_time_seconds_=0.0f;
     production_fraction_.fill(0.0);
@@ -614,7 +614,10 @@ void GameApp::reset_builder_robot_and_starter_stash(){
         carrier.battery_charge_kwh=carrier.battery_capacity_kwh;
     }
 
-    const ResourceBundle reserve=starter_resource_reserve();
+    // Career deliveries use the exact paid Stage-1 manifest, never the
+    // much larger Free Play starter preset. The pallet stacks and shared
+    // inventory are initialized from the same authoritative quantity.
+    const ResourceBundle reserve=shipped_cargo?*shipped_cargo:starter_resource_reserve();
     resources_.restore(reserve);
     ground_resource_piles_.clear();
 

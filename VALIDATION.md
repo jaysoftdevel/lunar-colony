@@ -1,3 +1,100 @@
+## v0.50.17 — Hydrolox lunar-return sizing
+
+- Nominal return delta-v: 1,920 m/s lunar ascent + 975 m/s trans-Earth injection/correction, rounded to 3,000 m/s with flight-design margin. Source: https://ntrs.nasa.gov/api/citations/19900016723/downloads/19900016723.pdf
+- Engine: vacuum Isp = 450 s and O2:H2 mass ratio = 6 (assumed conceptual upper-stage design). Required propellant: `m_dry_and_payload * (exp(deltaV/(Isp*9.80665))-1)`; hydrogen is one seventh; round up to the next 50 kg. A 30,000 kg rocket -> 4,200 kg LH2 and 25,200 kg LOX, and an 8,000 kg return lander -> 1,150 kg LH2 and 6,900 kg LOX. This is an idealized delta-v model, not a detailed ascent trajectory.
+- LH2 sphere with 3.35 m radius: 157.48 m³ gross, ~8,386 kg at 71 kg/m³ × 0.75 usable fill. Nameplate capacity 8,000 kg standard; small uniformly scales by 0.63, so ~2,096 kg physical capacity versus 2,000 kg nameplate. Source: https://ntrs.nasa.gov/api/citations/19720025448/downloads/19720025448.pdf
+- `colony_hydrogen_refueling` regression includes geometric capacity plausibility, LOX requirement ratio, tonne-scale actual H2 conservation, small-vs-standard mesh dimensions, isolation, repeated/refill cap, and save/load.
+- Oxidizer storage/loading, liquid-hydrogen refrigeration/boiloff, and surface-to-Earth travel simulation are deliberately out of scope; the interface labels oxygen as *needed*, not supplied.
+
+## v0.50.16 — Hydrogen storage and surface vehicle fueling
+
+- Linux Release build: passed.
+- New `colony_hydrogen_refueling`: passed; covers BuildCatalog, tank mesh, electrolysis-to-tank transfer, rocket/lander fueling, exact conservation, capacity/no-double-fill, network disconnection, invalid pad index and save/load of tank inventory and vehicle allocations.
+- Existing `colony_hydrogen_solar`, `colony_supply`, `colony_supply_network`, `colony_oxygen`, `colony_progression`, `colony_hydroponics`, `colony_interaction`, `navigation_geometry`, `navigation_fleet`, and full `ui_resolution_scaling`: passed.
+- `apply.sh` performs a patch only and emits the changed-file list (no build step).
+
+
+## v0.50.15 validation goals
+
+- All 32 contract slots compile and render; 20 new commercial jobs can be accepted and completed exactly once.
+- Starting contracts are available without technology and advanced jobs enforce research dependencies.
+- Budget audit excludes the lunar customer launch-only final payment, includes all 16 undiscounted research costs, the most expensive rocket + lander, and the Stage-2 construction-derived minimum cargo procurement/integration cost.
+- Save schema 30 reads schema-29 files with 12 contracts and maps previous lunar sponsorship ID 11 to ID 31. Test existing Stage-1 and Stage-2 save/load and targeted UI and colony regressions.
+
+## v0.50.14 validation
+
+- Linux Release CMake/Ninja build compiled successfully with the new contract research list.
+- `ui_regression`: PASS, including 25 Contract Office resolution/zoom cases and all 475 UI scaling/screen cases.
+- Dedicated coverage: recursive 15-technology lunar-cargo dependency chain, red missing/green researched row colors, direct-vs-upstream labels, live refresh after research, and pagination at high zoom.
+- Eight targeted Stage-2/3 regression groups (fleet, geometry, interaction, oxygen, progression, hydroponics, supply network, supply): 8/8 passed.
+- Save schema 29 unchanged. No new currency/research purchase behavior; UI-only state does not need serialization.
+
+## v0.50.13 validation
+
+- Linux Release build and `ui_regression`: PASS, including 475 layout cases plus Stage-1 contracts/mission/campus.
+- New double-click tests: single-click only selects; second click signs a contract or delivers its report; completed contracts cannot pay again; research double-click charges exactly once and ignores completed nodes.
+- Stage-2/3 targeted tests: fleet, geometry, interaction, oxygen, progression, hydroponics, supply network and supply: 8/8 passed.
+- Save schema stays at 29; cross-stage gameplay and lunar manifest transfer unchanged.
+- Update is source-only; `apply.sh` must not invoke a build.
+
+## v0.50.12 validation
+
+- Linux Release build (CMake/Ninja): PASS.
+- UI resolution/scaling test: PASS, including 25 Contract Office cases with completed-contract permanent closure.
+- New regression: completed contracts cannot be accepted or delivered twice and prior schema-29 delivered-but-Available jobs cannot be replayed.
+- New regression: Mission Prep -> Company Site -> Mission Prep preserves selected facility, active step, selected rocket/lander and custom manifest.
+- New regression: save/load during the Stage-1 Confirm gate retains the manifest, vehicle selections, owning facility and gate; historical delivered contracts are normalized to Completed.
+- Stage-2 navigation_fleet, navigation_geometry, colony_progression, colony_hydroponics, colony_supply, colony_oxygen: PASS.
+- No schema bump: 29. Stage-2 and Stage-3 simulation unchanged.
+
+## v0.50.11 Stage-1 -> Stage-2 deployment validation
+
+- Linux Release build and full UI scaling regression pass, including the 10-step Stage-1 mission workflow.
+- Custom manifest (49,533 kg in regression) is delivered into Stage-2 inventory **and** every physical depot pallet with exact per-resource equality.
+- Launch transitions to Stage-2 robotic preparation with two robots, fresh empty base, existing Career/Free Play mode preserved.
+- Prevents repeated mission authorization, launch and lunar-customer payout; commercial project repeat rules unchanged.
+- Save/load of deployed Stage 2 preserves quantities, completed mission state, customer payments and technological progress.
+- Loads formerly completed Stage-1 save into Stage 2 using its saved manifest; direct Free Play Stage-2 starter inventory unchanged.
+- Runs targeted Stage-2 fleet, geometry, oxygen, interaction, progression, hydroponics and supply regressions.
+- Save schema remains 29; updater performs no build.
+
+---
+
+## v0.50.8 research UI validation
+
+- Linux Release compilation and the existing Stage-1 UI / navigation coverage
+  are exercised against the redesigned research canvas.
+- Validation covers zoom/fit/focus, 16 technology nodes and their directed
+  prerequisites, inspector research unlock, UI-scale clipping, and Stage-1
+  mission progression with unchanged funding/prerequisite logic.
+- The technology-map navigation state is view-local; schema remains 29.
+
+## v0.50.7 Stage-1 campus graphics validation
+
+- Linux Release build passed, and the headless UI suite passed all 475
+  resolution/zoom/screen cases plus 25 company-site and 25 mission-layout
+  cases and the full Research-to-Launch workflow. Targeted navigation/fleet,
+  geometry/access, colony interaction, oxygen, progression, hydroponics, supply
+  network and supply regressions passed (8/8). An OpenGL visual check uses explicit
+  `GAME_ALLOW_SOFTWARE_GL=1` inside Xvfb with a software rasterizer; default
+  game execution still rejects software GL and requires hardware acceleration.
+- Confirmed Stage-1 GPU shader initialization, high-resolution texture upload,
+  landscape rendering and orbit input via interactive diagnostic capture.
+- Near/far improvement addresses depth precision and coplanar-edge flicker;
+  actual flicker-free motion on a physical GPU and all possible drivers should
+  be confirmed in game on the target system.
+- Directional lighting and preprojected shadow decals are not full real-time
+  shadow mapping; procedurally generated textures and low-poly modeling are
+  not equivalent to scanned photoreal assets.
+
+## v0.50.6 menu/campaign and coastal campus validation
+
+- Release build succeeds for Linux with UI/navigation regression binaries enabled.
+- UI regression covers Career default at Stage 1, Stage-1 fixed 128 x 128 site, Free Play selection through actual UI buttons, direct Stage-2/Stage-3 independent starts, schema-29 Career/Free Play save round-trip, all Stage-1 contracts/research/mission gates, campus facility hit routing and 25 site / 25 mission UI layouts.
+- Camera checks verify mouse-wheel zoom, MMB orbit and RMB pan on the fixed site. Existing WASD behavior is retained.
+- Existing 475 UI resolution/zoom/screen cases pass, including high zoom and the two redesigned menus. Stage-2/3 regressions for fleet, geometry, progression, hydroponics, water/oxygen and supply networks all pass.
+- The Linux GLSL 1.20 program is compiled into the engine and uses world-space analytic materials; GPU appearance/shader runtime cannot be fully screenshot-validated in the headless environment. Windows uses the flat-material fallback and has not been natively built here.
+
 # v0.43.15 validation (2026-11-01)
 
 - Optimized Linux build completes for the game executable, UI regression executable and navigation regression executable after the new shared solar/status state is compiled through all dependent clusters.
@@ -210,3 +307,66 @@ Windows compilation cannot be executed in this Linux environment because MSVC, t
 - Optimized Linux Release build completes with navigation/UI tests enabled.
 - `ui_resolution_scaling` verifies that a corridor rejection tooltip renders its title and explanatory body inside the HUD bounds even near the lower-right corner at 1280x720.
 - Existing corridor geometry, Air Lock connection and Storage Dome docking regressions remain enabled to ensure the diagnostic UI does not alter corridor routing/placement behavior.
+
+## v0.50.0 three-stage game framework validation
+- Optimized Linux Release build completes with navigation/UI tests enabled.
+- `ui_resolution_scaling` passes and now verifies that New Game exposes all three stage choices, defaults to Stage 2, creates Stage 1 without Stage 2 world/robot state, and renders the independent Stage 1 / Stage 3 placeholder surfaces. The compact high-zoom New Game layout also remains inside the viewport.
+- `colony_hydroponics` passes under save schema 24, exercising current-schema Stage 2 save/load after the new game-stage byte was added.
+- `colony_progression`, `navigation_fleet` and `navigation_geometry` pass, confirming the existing Stage 2 gameplay/progression/navigation surfaces remain operational.
+- Legacy savegames without the schema-24 stage field default to Stage 2 in the loader; the existing schema-23 debug construction template remains readable because the new field is consumed only for schema 24 and newer.
+
+
+## v0.50.1 Stage-1 planning validation
+- Optimized Linux Release build completes with navigation/UI tests enabled.
+- `ui_resolution_scaling` passes with the operational Stage-1 contract market and technology tree, including high-zoom compact contract paging.
+- The Stage-1 regression verifies the initial EUR 1.5 M seed capital, immediate contract deposit, timed completion payout, repeatable contract reset, research spending/unlock behavior, and visibility of the Stage-2 Module Competence / Robotic Lunar Base culmination.
+- Schema-25 save/load regression verifies Stage-1 phase, funds, unlocked technology and contract completion history survive persistence.
+- `colony_progression`, `colony_hydroponics`, `navigation_geometry` and the default fleet suite pass after the Stage-1 changes, confirming Stage 2 remains operational.
+
+
+## v0.50.2 Stage-1 tree / Stage-3 starting-base validation
+- Optimized Linux Release build completes with navigation/UI tests enabled.
+- `ui_resolution_scaling` passes and verifies that Stage 1 renders a directional connected technology dependency tree, while Stage 3 creates the Stage-2 debug-base layout with all habitats, resource structures, corridors, supply channels and walkways already complete.
+- The Stage-3 regression also saves and reloads the new starting state and confirms that the top-level Manned Base phase and completed construction state persist.
+- `navigation_fleet`, `navigation_geometry`, `colony_interaction`, `colony_oxygen`, `colony_progression`, `colony_hydroponics`, `colony_supply_network` and `colony_supply` pass unchanged.
+- `navigation_construction` remains a pre-existing failing long-run regression: the debug blueprint scenario does not complete all construction targets within its 1800 simulated-second limit. This update does not alter Stage-2 construction/pathfinding behavior.
+
+
+## v0.50.3 Stage-1 lunar mission-planning validation
+- Optimized Linux Release build completes with navigation/UI tests enabled.
+- `ui_resolution_scaling` passes 25 dedicated mission-planning resolution/zoom cases in addition to the existing UI matrix.
+- The Stage-1 regression verifies the `PLAN MISSION` surface, rocket + lander selection, the 49,102 kg recipe-derived minimum manifest, default 180,000 kg carrying capacity, research/funds/cargo/capacity gates, exact one-time mission payment, and schema-26 save/load persistence.
+- Mission funding is rejected if even one mandatory material is below its minimum. The default manifest is therefore guaranteed to contain enough construction/survival stock for the intended Stage-2 starter-base package.
+
+
+## v0.50.4 Stage-1 company-site validation
+- Linux Release build completes successfully with the procedural campus renderer.
+- `ui_resolution_scaling` passes, including 25 Company Site resolution/UI-scale combinations.
+- Stage-1 creation now verifies that Company Site is the initial planning view and that the campus exposes the Program/Contracts, Research/Engineering and Launch Complex facilities.
+- A world-space click regression points the camera at the Program & Contracts Office, clicks the facility footprint, and verifies routing to the Contracts view.
+- Existing Stage-1 contract funding, technology tree, mission planner and save/load checks remain green.
+- Targeted Stage-2 regressions remain green: fleet navigation, geometry, colony progression, hydroponics and supply simulation.
+
+
+## v0.50.5 facility mission-workflow validation
+- Linux Release build completes with the new ordered Stage-1 workflow.
+- `ui_resolution_scaling` passes the complete Stage-1 workflow and 25 dedicated mission-preparation resolution/UI-scale combinations.
+- Regression covers wrong-facility rejection, required technology research, rocket/lander design freeze, propulsion testing, design refinement, minimum Stage-2 cargo enforcement, mission-plan freeze, exact one-time Program Authorization payment, vehicle build, cargo integration, communications readiness, launch and schema-28 save/load persistence.
+- Targeted unchanged moon-base regressions pass: fleet navigation, geometry, colony interaction, oxygen, progression, hydroponics and supply simulation.
+
+## v0.50.9 Stage-1 contract UI and mission-economy validation
+- Optimized Linux Release build succeeds with the updated Stage-1 contract economy and UI.
+- `ui_resolution_scaling` passes the existing 475 resolution/zoom/screen matrix plus 25 contract-brief resolution/zoom cases. Clicking the Contract Office's Accept and Submit buttons is covered through actual UI hitboxes. The regression rejects double submission and verifies that no final fee is paid by elapsed time alone.
+- First customer delivery provides a 15% reduction to Systems Engineering (EUR 400,000 -> EUR 340,000), with purchasing and save/load behavior verified. The lunar cargo customer contract is checked against an extended simulated time interval and pays the final EUR 7.5 million only at the real Launch gate.
+- Unchanged targeted moon-base regressions passed: navigation fleet, geometry, colony interaction, oxygen, progression, hydroponics, supply network and supply simulation.
+- Save schema remains 29; no persistent layout migration. The updater is from v0.50.8, verifies the old baseline before patching, prints a changed-file summary and does not run the build.
+
+
+### 0.50.10 Stage-1 campaign balance and coaching
+
+- Adds a persistent context-sensitive **NEXT STEP** navigation shortcut and direct facility action on the 3D campus; never purchases or submits work without a separate click.
+- Commercial projects: faster completion for non-tutorial jobs; use **ADVANCE TO NEXT REPORT** to advance exactly to the nearest active project delivery and pause.
+- Technical evidence: first completed customer project provides a 20% discount to its target technology (distinct evidence capped at 35%). Previously completed projects still apply without a save schema change.
+- One-time first-customer completion premium (+20% final payment for projects 2–11), plus transparent investor reputation awards when unique completed projects reach 3, 6, and 9 (EUR 750K, 1.5M, and 3M). Repeat projects pay their normal price and remain available to prevent deadlocks.
+- Contract list ranks work ready for submission, active jobs and first-time relevant opportunities before repeat work; research shows a funding shortcut when unaffordable.
+- Stage-2 and Stage-3 mechanics are unchanged. Save schema 29 is preserved; old contract IDs and progress are retained.

@@ -1,3 +1,4 @@
+#include <chrono>
 #pragma once
 #include "engine/engine.hpp"
 #include "game/features/build_catalog.hpp"
@@ -5,6 +6,7 @@
 #include "game/systems/first_person_controller.hpp"
 #include "game/systems/colony_status.hpp"
 #include "game/systems/game_progress.hpp"
+#include "game/systems/planning_game.hpp"
 #include "game/systems/resource_management.hpp"
 #include "game/systems/builder_robot.hpp"
 #include "game/world/playfield.hpp"
@@ -43,6 +45,14 @@ private:
     friend struct NavigationRegression;
     friend struct UiRegression;
     enum class Screen { MainMenu, NewGame, SaveGame, LoadGame, Settings, Credits, Playfield };
+    // Top-level game content. This is intentionally separate from the colony
+    // progression stages used inside RobotPreparation. Each phase owns a
+    // distinct gameplay surface so future Planning and Manned Base mechanics
+    // can evolve without coupling them to the robot-preparation simulation.
+    enum class GamePhase : std::uint8_t { Planning = 1, RobotPreparation = 2, MannedBase = 3 };
+    // Career begins in Stage 1; Free Play permits an independent stage start.
+    // The selected mode is saved independently from the top-level game phase.
+    enum class NewGameMode : std::uint8_t { Career = 0, FreePlay = 1 };
     enum class HabitatViewMode { Default, Full };
     enum class WorldLayoutMode { Mesh, Textured };
     enum class GameSpeed { Normal = 0, Quick, Fast, Pause };
@@ -64,6 +74,7 @@ private:
     static constexpr int kNewGamePlayfieldStep=32;
     static constexpr int kNewGamePlayfieldDefault=128;
     static constexpr int kDebugTemplatePlayfieldSize=128;
+    static constexpr int kCompanySitePlayfieldSize=128;
     int playfield_size_=kNewGamePlayfieldDefault;
     int starting_robot_count_=1;
     int starting_carrier_count_=1;
@@ -75,6 +86,28 @@ private:
     bool debug_frame_enabled_=true;
     WorldLayoutMode world_layout_mode_{WorldLayoutMode::Mesh};
     bool game_session_active_=false;
+    GamePhase active_game_phase_{GamePhase::RobotPreparation};
+    GamePhase new_game_phase_selection_{GamePhase::RobotPreparation};
+    NewGameMode new_game_mode_selection_{NewGameMode::Career};
+    NewGameMode active_game_mode_{NewGameMode::FreePlay};
+    PlanningGameState planning_{};
+    std::string planning_status_message_{};
+    int planning_contract_page_{0};
+    int planning_contract_selected_{0}; // transient contract brief selection, not part of save schema
+    int planning_contract_research_page_{0}; // scroll through full contract prerequisite chain
+    // Transient, independent 2D navigation for the Stage-1 technology map.
+    // No save migration is necessary: research state remains in planning_.
+    float planning_tech_zoom_{1.02f};
+    float planning_tech_pan_x_{0.0f};
+    float planning_tech_pan_y_{0.0f};
+    int planning_tech_selected_{0};
+    // A single click selects; a second click on the same card within the
+    // double-click window performs its primary action. Transient UI state only.
+    int planning_last_click_group_{-1};
+    int planning_last_click_item_{-1};
+    int planning_last_click_x_{0}, planning_last_click_y_{0};
+    std::chrono::steady_clock::time_point planning_last_click_time_{};
+    bool planning_double_clicked(int group,int item);
     bool debug_start_template_enabled_=false;
     std::string new_game_status_message_{};
     int ui_scale_index_=0;
@@ -180,6 +213,9 @@ private:
     void render_settings(eng::Renderer& r);
     void render_credits(eng::Renderer& r);
     void render_playfield(eng::Renderer& r);
+    void render_empty_game_phase(eng::Renderer& r);
+    void render_planning_game(eng::Renderer& r);
+    void render_planning_technology_tree(eng::Renderer& r,eng::Rect panel,bool compact);
     void render_status_bar(eng::Renderer& r);
     void render_progress_tree(eng::Renderer& r);
     void render_build_bar(eng::Renderer& r);
@@ -245,14 +281,33 @@ private:
     bool debug_robot_move_available(std::size_t index) const;
     bool issue_debug_robot_move(std::size_t index,eng::Vec3 destination);
 
-    void reset_builder_robot_and_starter_stash();
+    void reset_builder_robot_and_starter_stash(const ResourceBundle* shipped_cargo=nullptr);
+    void deploy_lunar_base_from_mission();
     void update_builder_robot(float dt);
     float game_speed_multiplier() const;
+    static const char* game_phase_name(GamePhase phase);
+    static const char* game_phase_short_name(GamePhase phase);
+    void reset_planning_game();
+    void update_planning_game(float dt);
+    bool accept_planning_contract(std::size_t index);
+    bool unlock_planning_technology(std::size_t index);
+    bool planning_contract_available(std::size_t index) const;
+    bool deliver_planning_contract(std::size_t index);
+    bool advance_planning_to_next_report();
+    bool planning_technology_available(std::size_t index) const;
+    ResourceBundle planning_minimum_mission_cargo() const;
+    std::int64_t planning_mission_payload_kg() const;
+    std::int64_t planning_mission_payload_capacity_kg() const;
+    std::int64_t planning_mission_cost_eur() const;
+    bool planning_mission_requirements_met() const;
+    bool purchase_planning_mission();
+    bool complete_planning_mission_step();
     void update_resource_economy(float dt);
     GameProgressSnapshot game_progress_snapshot() const;
     int crew_quarters_capacity() const;
     eng::Rect progress_tree_panel_rect() const;
     UtilityServiceSnapshot update_supply_simulation(float dt);
+    double refuel_landing_pad(std::size_t pad_index,bool rocket);
     void render_supply_indicators(eng::Renderer& r);
     void render_gate_areas(eng::Renderer& r) const;
     bool gate_route_clear(const std::vector<eng::Vec3>& path,float margin) const;
@@ -320,7 +375,7 @@ private:
     void refresh_save_games();
     bool save_game_to_name(const std::string& name,std::string& error);
     bool load_game_from_file(const std::string& path,std::string& error);
-    bool load_debug_blueprint_template_from_file(const std::string& path,std::string& error);
+    bool load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool complete_construction=false);
     std::string debug_blueprint_template_path() const;
     float ui_width(const eng::Renderer& r) const { return (float)r.width()/ui_scale_; }
     float ui_height(const eng::Renderer& r) const { return (float)r.height()/ui_scale_; }

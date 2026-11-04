@@ -254,6 +254,17 @@ void GameApp::render_build_icon(Renderer& renderer,BuildIcon icon,Rect q,Color c
             r.draw_line({cx-5,cy+15},{cx-9,cy+24},c,2);
             r.draw_line({cx+5,cy+15},{cx+9,cy+24},c,2);
             break;
+        case BuildIcon::HydrogenTank:
+            r.draw_rect({x+4,y+37,42,5},{c.r,c.g,c.b,0.14f});
+            r.draw_rect({x+11,y+11,28,25},{c.r,c.g,c.b,0.08f});
+            r.draw_line({x+11,y+11},{x+39,y+11},c,2.0f);
+            r.draw_line({x+11,y+36},{x+39,y+36},c,2.0f);
+            r.draw_line({x+11,y+11},{x+11,y+36},c,2.0f);
+            r.draw_line({x+39,y+11},{x+39,y+36},c,2.0f);
+            r.draw_line({x+19,y+12},{x+19,y+36},c,1.3f);
+            r.draw_line({x+31,y+12},{x+31,y+36},c,1.3f);
+            r.draw_line({x+25,y+4},{x+25,y+11},c,1.7f);
+            break;
         case BuildIcon::HydrogenGenerator:
             r.draw_rect({x+6,y+13,19,26},{c.r,c.g,c.b,0.10f});
             r.draw_rect({x+27,y+17,16,22},{c.r,c.g,c.b,0.08f});

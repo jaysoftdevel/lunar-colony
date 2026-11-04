@@ -15,6 +15,46 @@ using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
+void GameApp::render_empty_game_phase(Renderer& r){
+    const float aspect=(float)r.width()/std::max(1,r.height());
+    r.set_3d(camera_.view_projection(aspect));
+
+    // Stage 3 remains a separate reserved content surface. Stage 1 owns its
+    // mission-planning simulation and Stage 2 owns robot-preparation gameplay.
+    r.draw_triangles_3d(playfield_.floor_triangles(),{0.055f,0.075f,0.088f,1});
+    r.draw_lines_3d(playfield_.grid_lines(),{0.22f,0.43f,0.47f,1},1.0f);
+    const float lane_half=(float)playfield_.size()*0.5f-geometry::kPlayfieldRobotPerimeterLane;
+    const std::vector<Vec3> perimeter_lane{
+        {-lane_half,0.018f,-lane_half},{ lane_half,0.018f,-lane_half},
+        { lane_half,0.018f,-lane_half},{ lane_half,0.018f, lane_half},
+        { lane_half,0.018f, lane_half},{-lane_half,0.018f, lane_half},
+        {-lane_half,0.018f, lane_half},{-lane_half,0.018f,-lane_half}};
+    r.draw_lines_3d(perimeter_lane,{0.72f,0.52f,0.18f,0.72f},1.35f);
+
+    app_.set_cursor_visible(true);
+    r.set_2d(ui_scale_);
+    const float logical_w=ui_width(r);
+    const float logical_h=ui_height(r);
+    r.draw_rect({0,0,logical_w,STATUS_BAR_H},{0.020f,0.030f,0.040f,0.96f});
+    r.draw_rect({0,logical_h-BUILD_BAR_H,logical_w,BUILD_BAR_H},{0.020f,0.030f,0.040f,0.96f});
+
+    game_label(r,{18.0f,12.0f},game_phase_name(active_game_phase_),0.62f,theme_);
+    game_label(r,{logical_w-172.0f,13.0f},"VERSION "+std::string(version::current),0.45f,theme_,true);
+    game_label(r,{18.0f,logical_h-BUILD_BAR_H+17.0f},"ESC  GAME MENU",0.47f,theme_,true);
+
+    const float panel_w=640.0f;
+    const float panel_h=146.0f;
+    Rect panel{(logical_w-panel_w)*0.5f,(logical_h-panel_h)*0.5f,panel_w,panel_h};
+    ui::panel(r,panel,theme_);
+    const std::string title="MANNED MOON BASE CONTENT";
+    const std::string detail="STAGE 3 IS RESERVED FOR THE FUTURE FULLY MANNED BASE";
+    const float tw=game_text_width(title,0.82f,theme_);
+    game_label(r,{panel.x+(panel.w-tw)*0.5f,panel.y+34.0f},title,0.82f,theme_);
+    game_label_fitted(r,{panel.x+34.0f,panel.y+79.0f,panel.w-68.0f,22.0f},detail,0.52f,theme_,true);
+    game_label_fitted(r,{panel.x+34.0f,panel.y+105.0f,panel.w-68.0f,18.0f},
+                      "This stage is isolated from Stage 2 robot gameplay.",0.44f,theme_,true);
+}
+
 void GameApp::render_playfield(Renderer& r){
     const float aspect=(float)r.width()/std::max(1,r.height());
     if(first_person_mode_==FirstPersonMode::Active) r.set_3d(first_person_.view_projection(aspect));

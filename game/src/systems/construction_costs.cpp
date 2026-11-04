@@ -165,6 +165,8 @@ ConstructionResourcePlan structure(ResourceKind kind,const ResourceMesh& mesh){
             total=scaled(total,1.30,1.65,1.80,1.15); aluminum_share=0.52; break;
         case ResourceKind::HydrogenGenerator:
             total=scaled(total,1.05,1.95,2.05,1.30); aluminum_share=0.48; break;
+        case ResourceKind::HydrogenTank:
+            total=scaled(total,1.15,1.70,1.20,1.65); aluminum_share=0.55; break;
         case ResourceKind::Count: break;
     }
     total=lunar_half_mass(total,aluminum_share);

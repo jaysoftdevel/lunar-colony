@@ -56,6 +56,13 @@ public:
     virtual void set_2d(float scale=1.0f)=0;
     virtual void draw_lines_3d(const std::vector<Vec3>& vertices, Color color, float width=1.0f)=0;
     virtual void draw_triangles_3d(const std::vector<Vec3>& vertices, Color color)=0;
+    // Optional high-frequency world-space material shading. The base fallback
+    // works on every backend and keeps tests/headless renderers compatible.
+    // 0 grass, 1 sand, 2 tarmac, 3 concrete, 4 water, 5 industrial roof.
+    virtual void draw_material_triangles_3d(const std::vector<Vec3>& vertices, int material, Color tint){
+        (void)material;
+        draw_triangles_3d(vertices,tint);
+    }
     virtual void draw_rect(Rect r, Color color)=0;
     virtual void draw_line(Vec2 a, Vec2 b, Color color, float width=1.0f)=0;
     virtual void draw_text(Vec2 p, const std::string& text, float scale, Color color)=0;

@@ -1,3 +1,38 @@
+v0.50.16: Hydrogen tank mesh (`resources/hydrogen_tank.cpp`) and catalog/build-icon/cost/label integration; `supply_simulation.cpp` component-local tank filling and landing-pad consumption; `selection_panel.cpp` fueling controls; `save_game.cpp` schema-31 landing-pad allocation save/load; `navigation_regression.cpp` isolated and connected mass-balance tests.
+
+v0.50.15: 20 additional one-time Stage-1 contracts, EUR 94.35M prelaunch commercial base funding, conservative full research+vehicle+minimum cargo budget, schema-30 12-to-32 contract migration.
+### v0.50.13 Stage-1 UI interaction ownership
+
+- `game/src/systems/planning_game.cpp`: renders modernized Stage-1 navigation/contract/technology/mission panels and dispatches double-click on selectable cards to existing guarded game actions.
+- `game/include/game/game_app.hpp`: owns transient double-click tracking; no savegame data changes.
+- `game/tests/ui_regression.cpp`: verifies direct item actions and no duplicate cash charges.
+
+0.50.8: Stage-1 technology graph implementation remains inside the
+`planning_game.cpp` simulation cluster to access its existing immutable tech
+definitions, but is isolated in `GameApp::render_planning_technology_tree()`.
+Only view-local drawing/navigation changed; no engineering cluster boundary or
+build dependencies changed.
+
+## v0.50.7 rendering stabilization
+
+- `engine/src/renderer_gl.cpp`: 1024px GPU material generation and streaming,
+  world-aligned texture sampling, mipmaps, per-face normal lighting, diagnostic
+  software OpenGL opt-in.
+- `game/src/systems/camera_controller.cpp` and header: dedicated Stage-1
+  zoom-aware near/far projection only; Stage-2 projection unchanged.
+- `game/src/systems/planning_game.cpp`: 3D coastal landscape, shaded facades,
+  building details, shoreline, roads and sunset-free daylight atmosphere.
+- `game/src/screens/new_game.cpp`: lower (47-degree) oblique camera on Stage-1
+  start. No mission logic or save schema changes.
+
+## v0.50.6 source ownership
+
+- `game/src/screens/new_game.cpp`, `main_menu.cpp`: Career/Free Play screen flow and responsive background/menu graphics.
+- `game/include/game/game_app.hpp`, `game/src/systems/save_game.cpp`: active game mode, fixed Stage-1 extent and schema-29 persistence/migration.
+- `game/src/systems/planning_game.cpp`: procedural launch-center environment, campus facade detailing, ground shadows and site material use.
+- `engine/include/engine/engine.hpp`, `engine/src/renderer_gl.cpp`: optional material geometry API and Linux GLSL fine surface patterns. D3D12 uses the API's compatible fallback; do not change its main draw path unnecessarily.
+- `game/tests/ui_regression.cpp`: Career and Free Play UI routes, fixed Stage-1 dimensions, 3D site camera and schema-29 save checks.
+
 # v0.42.0 Implementation Clusters
 
 This file is the context map for future changes. Start from the smallest build target(s) below and load additional clusters only when an interface crosses the requested change. The target names are real CMake OBJECT targets in `game/cmake/GameClusters.cmake`.
@@ -191,3 +226,65 @@ The pathfinding cluster links vendored `third_party/rvo2` for velocity advice; i
 - `game/src/playfield/playfield_view.cpp`: resets per-frame corridor diagnostic state before preview generation and renders the tooltip last in the HUD layer.
 - `game/include/game/game_app.hpp`: transient corridor tooltip title/detail state and render hook.
 - `game/tests/ui_regression.cpp`: verifies rejection tooltip text remains inside HUD bounds near a viewport corner.
+
+## v0.50.0 top-level game stages
+- `game/include/game/game_app.hpp`: introduces the independent `GamePhase` model and tracks New Game selection vs active-session phase.
+- `game/src/screens/new_game.cpp`: owns the three-stage selector, defaults to Stage 2, preserves Stage-2 setup, initializes Stage 1 on the Earth-side company campus and Stage 3 from the completed debug-base scenario.
+- `game/src/game_app.cpp` + `game/src/playfield/playfield_view.cpp`: route Stage 2 and Stage 3 to the lunar playfield while Stage 1 uses its independent company/planning renderer.
+- `game/src/systems/gameplay_controller.cpp`: Stage 1 runs its planning economy plus Company Site camera controls; Stage 2/3 own lunar-world simulation. Stage 1 never advances robot/construction/POV systems.
+- `game/src/systems/save_game.cpp`: schema 24 persists the top-level game stage and maps all older saves to Stage 2.
+- `game/tests/ui_regression.cpp`: covers selector presence/default, empty Stage 1 creation, Stage 1/3 placeholder rendering and high-zoom menu bounds.
+
+
+## v0.50.1 Stage-1 planning cluster
+
+- `game/include/game/systems/planning_game.hpp` owns the persistent Stage-1 planning state: funds, planning time/speed, view, technology unlock flags and contract progress/history.
+- `game/src/systems/planning_game.cpp` owns the Stage-1 contract catalog, 16-node technology graph, funding/progression rules and the Contracts/Tech Tree rendering.
+- `game/src/systems/gameplay_controller.cpp` dispatches Stage 1 to the planning simulation and keeps Stage-2 world simulation isolated.
+- `game/src/systems/save_game.cpp` schema 25 persists the planning state.
+- `game/src/screens/new_game.cpp` resets the Stage-1 company state when a new Planning session is created.
+
+
+## v0.50.2 Stage-1 tree / Stage-3 built-base cluster
+- `game/src/systems/planning_game.cpp`: lays the 16 technologies out by dependency depth and lane, draws directional prerequisite branches, and rotates the hierarchy for compact/high-zoom layouts.
+- `game/src/screens/new_game.cpp`: Stage 3 automatically selects the fixed 128 x 128 debug-base layout and imports it as a completed starting base.
+- `game/src/systems/save_game.cpp`: the debug-template importer accepts a completed-construction mode; Stage 2 still imports blueprints while Stage 3 marks every construction entity complete. Debug-template path lookup also supports test/source-tree execution.
+- `game/src/game_app.cpp` and `game/src/systems/gameplay_controller.cpp`: Stage 3 now uses the normal playfield render/update path instead of the placeholder shell.
+- `game/tests/ui_regression.cpp`: verifies the connected Stage-1 tree, Stage-3 debug-base import, completion state across all construction domains, removal of the placeholder view, and Stage-3 save/load persistence.
+
+
+## v0.50.3 Stage-1 mission planning cluster
+- `game/include/game/systems/planning_game.hpp`: persistent rocket/lander selection, lunar cargo bundle and mission-payment state.
+- `game/src/systems/planning_game.cpp` (`game_cluster_simulation`): vehicle catalog, payload/cost rules, recipe-derived minimum mission cargo and Mission Planning UI.
+- `game/src/systems/save_game.cpp` (`game_cluster_simulation`): schema-26 persistence/migration for the mission plan.
+- `game/tests/ui_regression.cpp`: mission UI scaling, funding gates and persistence regression.
+
+
+## v0.50.4 Stage-1 company-site cluster
+- `game/src/systems/planning_game.cpp` (`game_cluster_simulation`): procedural launch-campus geometry, world-space facility labels, footprint picking and facility-to-planning-view routing.
+- `game/src/systems/gameplay_controller.cpp`: enables zoom/orbit/pan/WASD camera movement while the Site planning view is active.
+- `game/src/screens/new_game.cpp`: applies the default Stage-1 campus overview camera.
+- `game/include/game/systems/planning_game.hpp`: adds `PlanningView::Site` as value 3 to preserve prior enum values.
+- `game/src/systems/save_game.cpp`: save schema 27 validates/persists the Site view.
+- `game/tests/ui_regression.cpp`: covers default Company Site startup, physical Program Office click routing to Contracts and 25 site resolution/zoom combinations.
+
+
+## v0.50.5 Stage-1 facility workflow cluster
+- `game/include/game/systems/planning_game.hpp`: persistent `MissionPreparationStep` / `MissionFacility` state.
+- `game/src/systems/planning_game.cpp` (`game_cluster_simulation`): ordered mission gates, facility ownership checks, facility-specific preparation UI, campus next-facility highlighting, design/manifest freeze points, program funding, build/integration/readiness/launch progression.
+- `game/src/systems/save_game.cpp` (`game_cluster_simulation`): schema-28 workflow persistence and schema-26/27 migration.
+- `game/tests/ui_regression.cpp`: full Research-to-Launch gate chain, wrong-facility rejection, under-minimum cargo rejection, schema-28 persistence and 25 mission-workflow resolution/UI-scale cases.
+
+## v0.50.9 — Stage-1 customer-project and research-evidence integration
+
+Contract catalog IDs, advance/final payment amounts and duration data remain stable for historical saves. Existing `PlanningContractProgress` persists the progress and completion history; a project at or above duration is now *ready for explicit delivery*, not automatically paid. Research evidence is computed deterministically from `completed_count > 0`, mapped to a linked technology, with a maximum 35% discount from distinct customer projects; no new serialized fields are required. Final lunar customer delivery is a special event settled by the ordered Launch gate, not the planning timer. The Contracts view is now a selected customer-brief workflow rather than 12 compact list rows, and the Site view indicates the immediate useful action before the eventual mission gate. Schema 29 is retained; older Stage-1 contract runs may have ready-for-submission reports. Stage 2 and Stage 3 are unaffected.
+
+
+### 0.50.10 Stage-1 campaign balance and coaching
+
+- Adds a persistent context-sensitive **NEXT STEP** navigation shortcut and direct facility action on the 3D campus; never purchases or submits work without a separate click.
+- Commercial projects: faster completion for non-tutorial jobs; use **ADVANCE TO NEXT REPORT** to advance exactly to the nearest active project delivery and pause.
+- Technical evidence: first completed customer project provides a 20% discount to its target technology (distinct evidence capped at 35%). Previously completed projects still apply without a save schema change.
+- One-time first-customer completion premium (+20% final payment for projects 2–11), plus transparent investor reputation awards when unique completed projects reach 3, 6, and 9 (EUR 750K, 1.5M, and 3M). Repeat projects pay their normal price and remain available to prevent deadlocks.
+- Contract list ranks work ready for submission, active jobs and first-time relevant opportunities before repeat work; research shows a funding shortcut when unaffordable.
+- Stage-2 and Stage-3 mechanics are unchanged. Save schema 29 is preserved; old contract IDs and progress are retained.

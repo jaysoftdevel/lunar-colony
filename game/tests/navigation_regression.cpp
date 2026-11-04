@@ -975,6 +975,70 @@ struct NavigationRegression {
         std::cout<<"Water electrolysis, measured output/intake and air-change rates, room/storage distribution, depletion, isolation and input/capacity limits passed\n";
     }
 
+    static void hydrogen_refueling(){
+        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(192);app.status_.reset();
+        app.builder_robots_.resize(1);app.builder_robots_[0].position={60,0,60};
+        auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
+        auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
+        PlacedHabitat electrolyzer;electrolyzer.kind=HabitatKind::OxygenGeneratorDome;electrolyzer.position={-25,0,0};electrolyzer.construction.step=kConstructionSteps;
+        electrolyzer.supply.hydrogen_kg=4.0;app.placed_habitats_={electrolyzer};
+        app.placed_resources_={resource(ResourceKind::HydrogenTank,{-10,0,0}),resource(ResourceKind::LandingPad,{5,0,0}),
+                               resource(ResourceKind::SolarPanel,{24,0,0}),resource(ResourceKind::PowerStorage,{38,0,0})};
+        auto link=[](UtilityEndpointKind a,std::size_t ai,UtilityEndpointKind b,std::size_t bi,Vec3 pa,Vec3 pb){
+            UtilityConnection c;c.endpoint_a.kind=a;c.endpoint_a.index=ai;c.endpoint_b.kind=b;c.endpoint_b.index=bi;
+            c.path={pa,pb};c.construction.step=c.construction.total_steps;return c;
+        };
+        const auto tank_line=link(UtilityEndpointKind::Habitat,0,UtilityEndpointKind::Resource,0,{-25,0,0},{-10,0,0});
+        const auto pad_line=link(UtilityEndpointKind::Resource,0,UtilityEndpointKind::Resource,1,{-10,0,0},{5,0,0});
+        const auto solar_line=link(UtilityEndpointKind::Resource,1,UtilityEndpointKind::Resource,2,{5,0,0},{24,0,0});
+        const auto battery_line=link(UtilityEndpointKind::Resource,2,UtilityEndpointKind::Resource,3,{24,0,0},{38,0,0});
+        app.utility_network_.restore_connections({tank_line,pad_line,solar_line,battery_line});
+        require(app.build_catalog_.items().size()>0,"empty build catalog");
+        bool has_tank=false;for(const auto& item:app.build_catalog_.items())if(item.resource_kind==ResourceKind::HydrogenTank)has_tank=true;
+        require(has_tank,"hydrogen tank is not a buildable structure");
+        const auto& mesh=app.resource_models_.mesh(ResourceKind::HydrogenTank);
+        require(!mesh.body.empty() && !mesh.details.empty() && mesh.footprint_x>12.0f && mesh.height>8.0f,"large cryogenic tank size/mesh incorrect");
+        const auto& small_mesh=app.resource_models_.mesh(ResourceKind::HydrogenTank,ResourceSizeTier::Small);
+        require(small_mesh.height<mesh.height*0.7f && small_mesh.footprint_x<mesh.footprint_x*0.7f,"small cryogenic tank was not scaled volumetrically");
+        const double v=4.0/3.0*3.141592653589793*kHydrogenTankStandardVesselRadiusM*kHydrogenTankStandardVesselRadiusM*kHydrogenTankStandardVesselRadiusM;
+        require(hydrogen_tank_capacity_kg(ResourceSizeTier::Standard)<=v*kLiquidHydrogenDensityKgPerM3*kHydrogenTankUsableVolumeFraction,"standard hydrogen nameplate exceeds physical storage volume");
+        require(hydrogen_tank_capacity_kg(ResourceSizeTier::Small)<=v*std::pow(kHydrogenTankSmallLinearScale,3.0)*kLiquidHydrogenDensityKgPerM3*kHydrogenTankUsableVolumeFraction,"small hydrogen nameplate exceeds physical storage volume");
+        require(landing_pad_rocket_fuel_capacity_kg()==4200.0 && landing_pad_lander_fuel_capacity_kg()==1150.0,"lunar return fuel model mismatch");
+        require(landing_pad_rocket_oxidizer_requirement_kg()==25200.0 && landing_pad_lander_oxidizer_requirement_kg()==6900.0,"hydrolox oxidizer ratio mismatch");
+        app.update_supply_simulation(0.2f);
+        require(app.placed_resources_[0].supply.hydrogen_kg>3.9,"electrolysis H2 did not transfer to connected storage");
+        require(app.placed_habitats_[0].supply.hydrogen_kg<0.1,"oxygen generator kept H2 despite connected tank");
+        const double stored_before=app.placed_resources_[0].supply.hydrogen_kg;
+        const double first=app.refuel_landing_pad(1,true);
+        require(first>3.9 && first<=stored_before+1e-6,"rocket did not consume actual tank hydrogen");
+        require(std::abs((stored_before-app.placed_resources_[0].supply.hydrogen_kg)-first)<1e-7,"rocket fuel transfer lost mass");
+        require(app.refuel_landing_pad(1,true)<1e-8,"rocket refueled again without hydrogen");
+        app.placed_resources_[0].supply.hydrogen_kg=hydrogen_tank_capacity_kg(ResourceSizeTier::Standard);
+        require(app.refuel_landing_pad(1,true)>0.0,"rocket could not finish filling from storage");
+        require(app.refuel_landing_pad(1,false)>0.0,"lander could not fill from storage");
+        require(std::abs(app.placed_resources_[1].rocket_fuel_kg-landing_pad_rocket_fuel_capacity_kg())<1e-8,"rocket capacity exceeded or not filled");
+        require(std::abs(app.placed_resources_[1].lander_fuel_kg-landing_pad_lander_fuel_capacity_kg())<1e-8,"lander capacity exceeded or not filled");
+        const double left=app.placed_resources_[0].supply.hydrogen_kg;
+        require(left>=0.0 && left<hydrogen_tank_capacity_kg(ResourceSizeTier::Standard)-5300.0,"fueling did not subtract tonne-scale propellant");
+        require(app.refuel_landing_pad(1,true)==0 && app.refuel_landing_pad(1,false)==0,"double fueling after full tanks");
+        require(std::abs(app.placed_resources_[0].supply.hydrogen_kg-left)<1e-8,"full vehicles consumed hydrogen");
+        std::string error;require(app.save_game_to_name("hydrogen-tank-refuel",error),error);
+        const auto saved=std::filesystem::path(app.save_game_directory())/"hydrogen-tank-refuel.gmsave";
+        GameApp loaded(engine);require(loaded.load_game_from_file(saved.string(),error),error);
+        require(loaded.placed_resources_[0].kind==ResourceKind::HydrogenTank,"hydrogen tank kind lost on load");
+        require(std::abs(loaded.placed_resources_[0].supply.hydrogen_kg-left)<1e-8,"tank inventory changed after save/load");
+        require(std::abs(loaded.placed_resources_[1].rocket_fuel_kg-landing_pad_rocket_fuel_capacity_kg())<1e-8 &&
+                std::abs(loaded.placed_resources_[1].lander_fuel_kg-landing_pad_lander_fuel_capacity_kg())<1e-8,"vehicle fuel allocations lost on load");
+        std::filesystem::remove(saved);
+        // A disconnected tank must not magically refuel even when the pad has power.
+        app.placed_resources_[1].rocket_fuel_kg=0;
+        app.utility_network_.restore_connections({solar_line,battery_line});
+        app.update_supply_simulation(0.0f);
+        require(app.refuel_landing_pad(1,true)==0,"disconnected hydrogen tank supplied the landing pad");
+        require(app.refuel_landing_pad(999,true)==0,"invalid pad index accepted");
+        std::cout<<"Hydrogen tank, connected transfers, rocket/lander refueling, isolation and save/load passed\n";
+    }
+
     static void hydrogen_solar(){
         constexpr float eps=0.015f;
         const auto morning=solar_tracking::pose(6.25f),noon=solar_tracking::pose(12.0f),evening=solar_tracking::pose(17.75f),night=solar_tracking::pose(20.0f);
@@ -2110,6 +2174,7 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="progression") game::NavigationRegression::progression();
         else if(argc>1 && std::string(argv[1])=="battery-bootstrap") game::NavigationRegression::battery_bootstrap();
         else if(argc>1 && std::string(argv[1])=="hydrogen-solar") game::NavigationRegression::hydrogen_solar();
+        else if(argc>1 && std::string(argv[1])=="hydrogen-refueling") game::NavigationRegression::hydrogen_refueling();
         else if(argc>1 && std::string(argv[1])=="debug-orders") game::NavigationRegression::debug_orders();
         else if(argc>1 && std::string(argv[1])=="priority") game::NavigationRegression::build_priority();
         else if(argc>1 && std::string(argv[1])=="airlock-cycle") game::NavigationRegression::airlock_cycle();

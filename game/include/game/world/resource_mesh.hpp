@@ -4,6 +4,7 @@
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 #include <limits>
@@ -23,6 +24,7 @@ enum class ResourceKind {
     RobotWorkshop,
     StorageGate,
     HydrogenGenerator,
+    HydrogenTank, // Append for backward-compatible saved ResourceKind ordinals.
     Count
 };
 
@@ -55,6 +57,49 @@ inline constexpr double power_storage_capacity_kwh(ResourceSizeTier size){
 // same duration. Water drillers buffer a fraction of a game-day production.
 inline constexpr double solar_panel_buffer_capacity_kwh(ResourceSizeTier size){
     return size==ResourceSizeTier::Small?2.0:4.0;
+}
+// Lunar cryogenic tank geometry: a 3.35 m-radius vacuum-insulated sphere.
+// LH2 is ~71 kg/m^3 at ~20 K.  Its 157.5 m^3 gross volume with a 75%
+// usable/fill allowance holds ~8,386 kg; nominal nameplate capacity 8,000 kg.
+// The SMALL mesh has 0.63x linear dimensions => one quarter the usable volume.
+inline constexpr double kLiquidHydrogenDensityKgPerM3=71.0;
+inline constexpr double kHydrogenTankStandardVesselRadiusM=3.35;
+inline constexpr double kHydrogenTankUsableVolumeFraction=0.75;
+inline constexpr double kHydrogenTankSmallLinearScale=0.63;
+inline constexpr double hydrogen_tank_capacity_kg(ResourceSizeTier size){
+    return size==ResourceSizeTier::Small?2000.0:8000.0;
+}
+
+// Conceptual reusable LH2/LOX lunar-return vehicles (not Earth launchers).
+// NASA-derived lunar ascent ~1.92 km/s and trans-Earth injection/correction
+// ~0.975 km/s; design allowance rounds the combined manoeuvres to 3 km/s.
+// Vacuum engine Isp 450 s, oxidizer/fuel mass ratio 6:1. Tsiolkovsky:
+// m_prop = m_dry+payload * (exp(deltaV/(Isp*g0)) - 1).
+// A 30 t dry+payload return rocket and an 8 t small return lander are assumed.
+// LOX must also be supplied for any real departure. Existing Stage-2 fueling
+// only transfers LH2; the oxidizer is displayed but NOT falsely manufactured.
+inline constexpr double kLunarReturnDeltaVMps=3000.0;
+inline constexpr double kLunarReturnEngineIspSeconds=450.0;
+inline constexpr double kStandardGravityMps2=9.80665;
+inline constexpr double kHydroloxOxygenToHydrogenMassRatio=6.0;
+inline constexpr double kRocketReturnDryAndPayloadKg=30000.0;
+inline constexpr double kLanderReturnDryAndPayloadKg=8000.0;
+inline double lunar_return_hydrogen_requirement_kg(double dry_and_payload_kg){
+    const double ratio=std::exp(kLunarReturnDeltaVMps/(kLunarReturnEngineIspSeconds*kStandardGravityMps2));
+    const double hydrogen=dry_and_payload_kg*(ratio-1.0)/(1.0+kHydroloxOxygenToHydrogenMassRatio);
+    return std::ceil(hydrogen/50.0)*50.0; // 50 kg loading reserve/rounding
+}
+inline double landing_pad_rocket_fuel_capacity_kg(){
+    return lunar_return_hydrogen_requirement_kg(kRocketReturnDryAndPayloadKg);
+}
+inline double landing_pad_lander_fuel_capacity_kg(){
+    return lunar_return_hydrogen_requirement_kg(kLanderReturnDryAndPayloadKg);
+}
+inline double landing_pad_rocket_oxidizer_requirement_kg(){
+    return landing_pad_rocket_fuel_capacity_kg()*kHydroloxOxygenToHydrogenMassRatio;
+}
+inline double landing_pad_lander_oxidizer_requirement_kg(){
+    return landing_pad_lander_fuel_capacity_kg()*kHydroloxOxygenToHydrogenMassRatio;
 }
 inline constexpr double water_driller_buffer_capacity_litres(ResourceSizeTier size){
     return size==ResourceSizeTier::Small?50.0:100.0;
@@ -137,6 +182,9 @@ struct StoredResourceBox {
 
 struct PlacedResource {
     SupplyState supply{};
+    // Hydrogen already transferred into the two docked vehicle fuel allocations
+    // at a landing pad. Separate from H2 still inside the network storage tank.
+    double rocket_fuel_kg{0.0}, lander_fuel_kg{0.0};
     ResourceKind kind{ResourceKind::SolarPanel};
     // Stable serial within this exact structure type/size. It is assigned when
     // the blueprint is placed and remains unchanged after construction.

@@ -697,6 +697,64 @@ void GameApp::render_selection_panel(Renderer& r){
             }
             return;
         }
+        if(item.kind==ResourceKind::HydrogenTank){
+            const double capacity=hydrogen_tank_capacity_kg(item.size);
+            const double fraction=capacity>0?item.supply.hydrogen_kg/capacity:0.0;
+            std::ostringstream inventory;
+            inventory<<std::fixed<<std::setprecision(2)<<"STORED HYDROGEN  "<<item.supply.hydrogen_kg<<" / "<<capacity<<" KG";
+            game_label(r,{x,p.y+90},inventory.str(),0.54f,theme_);
+            std::ostringstream fullness;fullness<<std::fixed<<std::setprecision(1)<<"TANK FILL  "<<fraction*100.0<<"%";
+            game_label(r,{x,p.y+119},fullness.str(),0.52f,theme_,true);
+            game_label(r,{x,p.y+151},"CRYOGENIC LIQUID H2  /  APPROX. 20 K",0.42f,theme_,true);
+            game_label(r,{x,p.y+174},"SOURCE  ELECTROLYSIS / OXYGEN GENERATOR",0.42f,theme_,true);
+            game_label(r,{x,p.y+197},"H2 SHARED WITH FUEL CELLS ON CONNECTED NETWORK",0.40f,theme_,true);
+            game_label(r,{x,p.y+220},utilities.str(),0.45f,theme_,true);
+            game_label(r,{x,p.y+243},"SUPPLY CHANNEL TO PAD REQUIRED FOR REFUEL",0.40f,theme_,true);
+            game_label(r,{x,p.y+265},"LIQUID VOLUME: "+std::to_string((int)std::ceil(capacity/kLiquidHydrogenDensityKgPerM3))+" M3 USABLE",0.42f,theme_,true);
+            game_label(r,{x,p.y+291},"DEL REMOVE / LMB SELECT OTHER",0.42f,theme_,true);
+            return;
+        }
+        if(item.kind==ResourceKind::LandingPad){
+            const auto index=(std::size_t)selected_resource_;
+            auto service=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
+            double ready_hydrogen=0.0;
+            if(index<service.resources.size() && service.resources[index].connected){
+                for(std::size_t j=0;j<placed_resources_.size() && j<service.resources.size();++j){
+                    const auto& tank=placed_resources_[j];
+                    if(tank.kind==ResourceKind::HydrogenTank && tank.construction.complete() && service.resources[j].connected &&
+                       service.resources[j].component==service.resources[index].component) ready_hydrogen+=tank.supply.hydrogen_kg;
+                }
+            }
+            std::ostringstream rocket,lander,available;
+            rocket<<std::fixed<<std::setprecision(2)<<"ROCKET FUEL  "<<item.rocket_fuel_kg<<" / "<<landing_pad_rocket_fuel_capacity_kg()<<" KG H2";
+            lander<<std::fixed<<std::setprecision(2)<<"LANDER FUEL   "<<item.lander_fuel_kg<<" / "<<landing_pad_lander_fuel_capacity_kg()<<" KG H2";
+            available<<std::fixed<<std::setprecision(2)<<"CONNECTED TANK H2  "<<ready_hydrogen<<" KG";
+            game_label(r,{x,p.y+91},rocket.str(),0.48f,theme_);
+            game_label(r,{x,p.y+116},lander.str(),0.48f,theme_);
+            available<<"";
+            game_label(r,{x,p.y+145},available.str(),0.44f,theme_,true);
+            std::ostringstream oxidizer;
+            oxidizer<<"RETURN REQUIRES LOX  ROCKET "<<std::fixed<<std::setprecision(0)
+                    <<landing_pad_rocket_oxidizer_requirement_kg()<<" / LANDER "
+                    <<landing_pad_lander_oxidizer_requirement_kg()<<" KG";
+            game_label(r,{x,p.y+170},oxidizer.str(),0.37f,theme_,true);
+            game_label(r,{x,p.y+191},"LOX STORAGE/LOADING NOT YET SIMULATED",0.40f,theme_,true);
+            const bool powered=item.supply.power_fraction>=0.5;
+            game_label(r,{x,p.y+216},!item.construction.complete()?"BUILD LANDING PAD FIRST":!powered?"FUEL PUMP REQUIRES NETWORK POWER":ready_hydrogen<1e-9?"CONNECT / FILL A HYDROGEN TANK":"H2 FUELING MANIFOLD READY",0.41f,theme_,true);
+            const bool can_rocket=item.construction.complete() && powered && ready_hydrogen>1e-9 && item.rocket_fuel_kg<landing_pad_rocket_fuel_capacity_kg()-1e-8;
+            const bool can_lander=item.construction.complete() && powered && ready_hydrogen>1e-9 && item.lander_fuel_kg<landing_pad_lander_fuel_capacity_kg()-1e-8;
+            const Rect rocket_button{x,p.y+245+warning_extra-panel_scroll,160,28};
+            const Rect lander_button{x+174,p.y+245+warning_extra-panel_scroll,160,28};
+            if(row_visible(rocket_button.y,rocket_button.h) && ui::button(r,ui_input_,rocket_button,"FUEL ROCKET",theme_,can_rocket)){
+                refuel_landing_pad(index,true);return;
+            }
+            if(row_visible(lander_button.y,lander_button.h) && ui::button(r,ui_input_,lander_button,"FUEL LANDER",theme_,can_lander)){
+                refuel_landing_pad(index,false);return;
+            }
+            game_label(r,{x,p.y+296},"MOON RETURN DELTA-V 3.0 KM/S / ISP 450 S",0.41f,theme_,true);
+            game_label(r,{x,p.y+317},"NO LAUNCH OR OXIDIZER SIMULATION YET",0.40f,theme_,true);
+            return;
+        }
         if(item.kind==ResourceKind::HydrogenGenerator){
             const double factor=item.size==ResourceSizeTier::Small?0.5:1.0;
             const bool paused=game_speed_==GameSpeed::Pause;

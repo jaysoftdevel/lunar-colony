@@ -22,7 +22,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=23;
+constexpr std::uint32_t kSaveSchema=31;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -527,6 +527,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     w.pod((std::uint8_t)placement_storage_size_);
     w.pod((std::uint8_t)placement_resource_size_);
     w.pod((std::uint8_t)game_speed_);
+    w.pod((std::uint8_t)active_game_phase_);
 
     const CameraState camera_state=camera_.state();
     w.pod(camera_state.distance); w.pod(camera_state.elevation_degrees); w.pod(camera_state.azimuth_degrees); write_vec3(w,camera_state.target);
@@ -556,6 +557,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         write_supply(out,item.supply);
         out.pod(item.storage_gate_angle_degrees);
         out.pod((std::uint8_t)(item.solar_tracking_enabled?1:0));
+        out.pod(item.rocket_fuel_kg);out.pod(item.lander_fuel_kg);
     });
     write_object_vector(w,ground_resource_piles_,[](Writer& out,const GroundResourcePile& pile){
         out.pod((std::uint8_t)pile.resource); out.pod(pile.amount); write_vec3(out,pile.position); out.pod(pile.radius); out.pod(pile.condition);
@@ -565,6 +567,15 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     write_object_vector(w,utility_network_.connections(),write_utility);
     write_object_vector(w,walkway_network_.connections(),write_walkway);
 
+    // Save schema 31: docked rocket/lander hydrogen allocations on landing pads,
+    // plus the HydrogenTank ResourceKind appended without changing legacy ordinals.
+    // Save schema 30: expanded 32-contract catalog with legacy lunar sponsorship remap.
+    // Save schema 29: persistent Career / Free Play selection.
+    // Save schema 28: ordered Stage-1 facility mission-preparation workflow state.
+    // Save schema 27: Stage-1 company-site view is a persistent planning surface.
+    // Save schema 26: persistent Stage-1 rocket/lander mission plan, lunar cargo manifest and mission payment.
+    // Save schema 25: persistent Stage-1 planning economy, contracts and technology tree.
+    // Save schema 24: persistent top-level game phase (Planning / Robot Preparation / Manned Base).
     // Save schema 23: persistent Bio Dome hydroponics crop, growth and harvest state.
     // Save schema 22: persistent per-solar-panel sun-tracking enable state.
     // Save schema 20: persistent hydrogen buffer inventory in SupplyState.
@@ -579,7 +590,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     // Schema 5 already persisted exact per-robot construction logistics
     // reservations and persistent mechanical condition. This keeps carrier
     // demand accounting synchronized across save/load boundaries.
-    const std::uint8_t robot_count=(std::uint8_t)std::clamp<std::size_t>(builder_robots_.size(),1,12);
+    const std::uint8_t robot_count=(std::uint8_t)std::min<std::size_t>(builder_robots_.size(),12);
     w.pod(robot_count);
     for(std::size_t i=0;i<robot_count;++i) write_builder_robot(w,builder_robots_[i]);
     write_vec3(w,starter_stash_center_);
@@ -587,6 +598,27 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     w.pod(life_support_fraction_seconds_);
     w.pod((std::uint64_t)construction_priority_.size());
     for(auto sequence:construction_priority_)w.pod(sequence);
+
+    // Stage-1 planning state. Written for every phase so the save format stays
+    // fixed-width by schema and phase switching never changes the binary layout.
+    w.pod(planning_.funds_eur);
+    w.pod(planning_.elapsed_days);
+    w.pod(planning_.time_speed);
+    w.pod((std::uint8_t)planning_.view);
+    for(auto unlocked:planning_.technologies) w.pod(unlocked);
+    for(const auto& contract:planning_.contracts){
+        w.pod((std::uint8_t)contract.status);
+        w.pod(contract.progress_days);
+        w.pod(contract.completed_count);
+    }
+    w.pod(planning_.mission_rocket);
+    w.pod(planning_.mission_lander);
+    write_bundle(w,planning_.mission_cargo);
+    w.boolean(planning_.mission_paid);
+    w.pod(planning_.mission_paid_cost_eur);
+    w.pod((std::uint8_t)planning_.mission_step);
+    w.pod((std::uint8_t)planning_.mission_facility);
+    w.pod((std::uint8_t)active_game_mode_);
 
     w.out.flush();
     if(!w.ok()){ w.out.close(); fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
@@ -602,12 +634,19 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
 
 std::string GameApp::debug_blueprint_template_path() const {
     const fs::path executable=executable_path();
-    if(!executable.empty())
-        return (executable.parent_path()/"debug"/"0-40-32-debug-start.gmsave").string();
-    return (fs::current_path()/"debug"/"0-40-32-debug-start.gmsave").string();
+    std::vector<fs::path> candidates;
+    if(!executable.empty()){
+        candidates.push_back(executable.parent_path()/"debug"/"0-40-32-debug-start.gmsave");
+        candidates.push_back(executable.parent_path()/".."/"bin"/"debug"/"0-40-32-debug-start.gmsave");
+    }
+    candidates.push_back(fs::current_path()/"debug"/"0-40-32-debug-start.gmsave");
+    candidates.push_back(fs::current_path()/"game"/"debug-templates"/"0-40-32-debug-start.gmsave");
+    std::error_code ec;
+    for(const auto& candidate:candidates) if(fs::exists(candidate,ec) && !ec) return candidate.lexically_normal().string();
+    return candidates.empty()?std::string("debug/0-40-32-debug-start.gmsave"):candidates.front().lexically_normal().string();
 }
 
-bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,std::string& error){
+bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool complete_construction){
     Reader r{fs::path(path)};
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Template file is missing or invalid."; return false; }
@@ -633,6 +672,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     (void)r.pod<std::uint8_t>(); // storage size
     if(source_schema>=7) (void)r.pod<std::uint8_t>(); // resource size
     if(source_schema>=4) (void)r.pod<std::uint8_t>(); // game speed
+    if(source_schema>=24) (void)r.pod<std::uint8_t>(); // top-level game phase
 
     // Camera, colony state and colony resource inventory are deliberately
     // consumed but not imported. The debug option is still a NEW GAME.
@@ -694,6 +734,13 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
         if(source_schema>=17){item.supply=read_supply(in,source_schema>=20);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
         if(source_schema>=22){const auto tracking=in.pod<std::uint8_t>();if(tracking>1)in.valid=false;item.solar_tracking_enabled=tracking!=0;}
+        if(source_schema>=31){
+            item.rocket_fuel_kg=in.pod<double>();item.lander_fuel_kg=in.pod<double>();
+            if(!std::isfinite(item.rocket_fuel_kg) || !std::isfinite(item.lander_fuel_kg) ||
+               item.rocket_fuel_kg<0 || item.lander_fuel_kg<0 ||
+               item.rocket_fuel_kg>landing_pad_rocket_fuel_capacity_kg() ||
+               item.lander_fuel_kg>landing_pad_lander_fuel_capacity_kg())in.valid=false;
+        }
         sync_stored_resource_totals(item);
         return item;
     })){ error="Template structure data is damaged."; return false; }
@@ -737,34 +784,34 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         for(auto& c:walkways) c.placement_sequence=seq++;
     }
 
-    // Import only the construction layout. Every imported object starts as a
-    // fresh blueprint regardless of the source save's build progress or
-    // delivered materials. Robots, inventory, ground piles, camera and clock
-    // remain those of the newly-created game.
+    // Import only the construction layout. Stage 2 uses the template as fresh
+    // blueprints, while Stage 3 uses the exact same debug layout as an already
+    // erected base. Robots, inventory, ground piles, camera and clock remain
+    // those of the newly-created game in both cases.
     for(auto& h:habitats){
-        h.construction.step=0;
+        h.construction.step=complete_construction?kConstructionSteps:0;
         h.construction.step_elapsed=0.0f;
         h.site_buffer={};
     }
     for(auto& item:structures){
-        item.construction.step=0;
+        item.construction.step=complete_construction?kConstructionSteps:0;
         item.construction.step_elapsed=0.0f;
         item.site_buffer={};
         item.stored_boxes.clear();
         sync_stored_resource_totals(item);
     }
     for(auto& c:corridors){
-        c.construction.step=0;
+        c.construction.step=complete_construction?c.construction.total_steps:0;
         c.construction.step_elapsed=0.0f;
         c.site_buffer={};
     }
     for(auto& c:utilities){
-        c.construction.step=0;
+        c.construction.step=complete_construction?c.construction.total_steps:0;
         c.construction.step_elapsed=0.0f;
         c.site_buffer={};
     }
     for(auto& c:walkways){
-        c.construction.step=0;
+        c.construction.step=complete_construction?c.construction.total_steps:0;
         c.construction.step_elapsed=0.0f;
         c.site_buffer={};
     }
@@ -827,6 +874,14 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     const auto saved_storage_size=(StorageDomeSize)r.pod<std::uint8_t>();
     const auto saved_resource_size=source_schema>=7?(ResourceSizeTier)r.pod<std::uint8_t>():ResourceSizeTier::Standard;
     const auto saved_game_speed=source_schema>=4?(GameSpeed)r.pod<std::uint8_t>():GameSpeed::Normal;
+    GamePhase saved_game_phase=GamePhase::RobotPreparation;
+    if(source_schema>=24){
+        const auto raw_phase=r.pod<std::uint8_t>();
+        if(raw_phase<(std::uint8_t)GamePhase::Planning || raw_phase>(std::uint8_t)GamePhase::MannedBase){
+            error="Savegame game-stage value is invalid."; return false;
+        }
+        saved_game_phase=(GamePhase)raw_phase;
+    }
     if(saved_playfield<16 || saved_playfield>kNewGamePlayfieldMax){ error="Savegame playfield size is invalid."; return false; }
 
     CameraState camera_state{};
@@ -864,6 +919,13 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         if(source_schema>=16) item.storage_parent_sequence=in.pod<std::uint64_t>();
         if(source_schema>=17){item.supply=read_supply(in,source_schema>=20);item.storage_gate_angle_degrees=in.pod<float>();if(!std::isfinite(item.storage_gate_angle_degrees))in.valid=false;}
         if(source_schema>=22){const auto tracking=in.pod<std::uint8_t>();if(tracking>1)in.valid=false;item.solar_tracking_enabled=tracking!=0;}
+        if(source_schema>=31){
+            item.rocket_fuel_kg=in.pod<double>();item.lander_fuel_kg=in.pod<double>();
+            if(!std::isfinite(item.rocket_fuel_kg) || !std::isfinite(item.lander_fuel_kg) ||
+               item.rocket_fuel_kg<0 || item.lander_fuel_kg<0 ||
+               item.rocket_fuel_kg>landing_pad_rocket_fuel_capacity_kg() ||
+               item.lander_fuel_kg>landing_pad_lander_fuel_capacity_kg())in.valid=false;
+        }
         sync_stored_resource_totals(item); return item;
     })){ error="Savegame structure data is damaged."; return false; }
 
@@ -960,7 +1022,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     double saved_life_fraction=0.0;
     if(source_schema>=5){
         const auto robot_count=r.pod<std::uint8_t>();
-        if(robot_count<1 || robot_count>12) r.valid=false;
+        if(robot_count>12 || (saved_game_phase==GamePhase::RobotPreparation && robot_count<1)) r.valid=false;
         saved_robots.reserve(robot_count);
         for(std::uint8_t i=0;i<robot_count && r.valid;++i)
             saved_robots.push_back(source_schema>=21?read_builder_robot_v6(r):read_builder_robot_v5(r));
@@ -991,6 +1053,8 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         saved_life_fraction=r.pod<double>();
     }
     std::vector<std::uint64_t> saved_priority;
+    PlanningGameState saved_planning=default_planning_game_state();
+    NewGameMode saved_game_mode=NewGameMode::FreePlay;
     if(source_schema>=18){
         const auto count=r.pod<std::uint64_t>();if(count>100000)r.valid=false;
         for(std::uint64_t i=0;i<count && r.valid;++i){const auto sequence=r.pod<std::uint64_t>();
@@ -999,6 +1063,67 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         }
     }
     if(source_schema==18)std::reverse(saved_priority.begin(),saved_priority.end()); // old saves stored newest first
+    if(source_schema>=25){
+        saved_planning.funds_eur=r.pod<std::int64_t>();
+        saved_planning.elapsed_days=r.pod<double>();
+        saved_planning.time_speed=r.pod<std::uint8_t>();
+        saved_planning.view=(PlanningView)r.pod<std::uint8_t>();
+        const auto max_view=source_schema>=27?(std::uint8_t)PlanningView::Site:
+                            source_schema>=26?(std::uint8_t)PlanningView::Mission:(std::uint8_t)PlanningView::Technology;
+        if(saved_planning.funds_eur<0 || !std::isfinite(saved_planning.elapsed_days) || saved_planning.elapsed_days<0.0 ||
+           saved_planning.time_speed>3 || (std::uint8_t)saved_planning.view>max_view) r.valid=false;
+        for(auto& unlocked:saved_planning.technologies){ unlocked=r.pod<std::uint8_t>(); if(unlocked>1) r.valid=false; }
+        constexpr std::size_t kLegacyContracts=12;
+        const std::size_t saved_count=source_schema>=30?kPlanningContractCount:kLegacyContracts;
+        for(std::size_t saved_index=0;saved_index<saved_count;++saved_index){
+            // v29 slot 11 was lunar sponsorship. v30 inserts 20 commercial
+            // projects immediately before it; keep its paid/active history.
+            const std::size_t target_index=(source_schema<30 && saved_index==kLegacyContracts-1)?
+                kPlanningContractCount-1:saved_index;
+            auto& contract=saved_planning.contracts[target_index];
+            const auto status=r.pod<std::uint8_t>();
+            contract.progress_days=r.pod<double>();
+            contract.completed_count=r.pod<std::uint16_t>();
+            if(status>(std::uint8_t)PlanningContractStatus::Completed || !std::isfinite(contract.progress_days) || contract.progress_days<0.0) r.valid=false;
+            contract.status=(PlanningContractStatus)status;
+            // v0.50.11 and earlier allowed repeated customer jobs, leaving a
+            // delivered contract as Available (or Active on a later replay).
+            // v0.50.12 closes every previously delivered contract permanently.
+            if(contract.completed_count>0){
+                contract.status=PlanningContractStatus::Completed;
+                contract.progress_days=0.0;
+            }
+        }
+        if(source_schema>=26){
+            saved_planning.mission_rocket=r.pod<std::uint8_t>();
+            saved_planning.mission_lander=r.pod<std::uint8_t>();
+            saved_planning.mission_cargo=read_bundle(r);
+            saved_planning.mission_paid=r.boolean();
+            saved_planning.mission_paid_cost_eur=r.pod<std::int64_t>();
+            if(source_schema>=28){
+                saved_planning.mission_step=(MissionPreparationStep)r.pod<std::uint8_t>();
+                saved_planning.mission_facility=(MissionFacility)r.pod<std::uint8_t>();
+                if((std::uint8_t)saved_planning.mission_step>(std::uint8_t)MissionPreparationStep::Complete ||
+                   (std::uint8_t)saved_planning.mission_facility>(std::uint8_t)MissionFacility::LaunchComplex) r.valid=false;
+            }else{
+                // Pre-workflow Stage-1 saves migrate conservatively. A mission
+                // that was already paid resumes at vehicle production; unpaid
+                // missions begin at the new research review gate.
+                saved_planning.mission_step=saved_planning.mission_paid?MissionPreparationStep::Build:MissionPreparationStep::Research;
+                saved_planning.mission_facility=saved_planning.mission_paid?MissionFacility::VehicleAssembly:MissionFacility::Overview;
+            }
+            if(saved_planning.mission_rocket>=3 || saved_planning.mission_lander>=3 || saved_planning.mission_paid_cost_eur<0) r.valid=false;
+            for(std::size_t i=0;i<kMaterialResourceCount;++i){
+                const auto amount=saved_planning.mission_cargo.amount((MaterialResource)i);
+                if(amount<0 || amount>10'000'000) r.valid=false;
+            }
+        }
+    }
+    if(source_schema>=29){
+        const auto raw_mode=r.pod<std::uint8_t>();
+        if(raw_mode>(std::uint8_t)NewGameMode::FreePlay)r.valid=false;
+        else saved_game_mode=(NewGameMode)raw_mode;
+    }
     if(!r.valid){ error="Savegame ended unexpectedly."; return false; }
 
     // v0.40.11 and older stored delivered construction material on the BR-02
@@ -1065,7 +1190,14 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     for(const auto& c:utility_network_.connections()) advance_sequence(c.placement_sequence);
     for(const auto& c:walkway_network_.connections()) advance_sequence(c.placement_sequence);
 
-    if(source_schema>=2){
+    if(saved_game_phase!=GamePhase::RobotPreparation){
+        builder_robots_=std::move(saved_robots);
+        starter_stash_center_=saved_stash;
+        production_fraction_=saved_production;
+        life_support_fraction_seconds_=saved_life_fraction;
+        starting_robot_count_=1;
+        starting_carrier_count_=1;
+    }else if(source_schema>=2){
         builder_robots_=std::move(saved_robots);
         if(builder_robots_.empty()) builder_robots_.push_back(BuilderRobotState{});
         starter_stash_center_=saved_stash;
@@ -1326,6 +1458,13 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     debug_frame_enabled_=saved_debug;
     habitat_view_mode_=saved_view;
     game_speed_=saved_game_speed;
+    active_game_phase_=saved_game_phase;
+    new_game_phase_selection_=saved_game_phase;
+    active_game_mode_=saved_game_mode;
+    new_game_mode_selection_=saved_game_mode;
+    planning_=saved_planning;
+    if(source_schema<26 && saved_game_phase==GamePhase::Planning) planning_.mission_cargo=planning_minimum_mission_cargo();
+    planning_status_message_.clear();
     build_catalog_.set_category(saved_category);
     build_catalog_.clear_selection();
     placement_rotation_degrees_=saved_rotation;
@@ -1348,7 +1487,13 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     corridor_build_start_.reset(); utility_build_start_.reset(); walkway_build_start_.reset(); walkway_build_target_.reset();
     game_session_active_=true;
     save_game_name_=save_name;
-    update_supply_simulation(0.0f);
+    // Older saves could contain a successfully launched Stage-1 mission
+    // because earlier versions did not transition to Stage 2. Complete that
+    // transition on load, using the saved lunar manifest, not Free Play stock.
+    if(saved_game_phase==GamePhase::Planning && planning_.mission_step==MissionPreparationStep::Complete && planning_.mission_paid)
+        deploy_lunar_base_from_mission();
+    else
+        update_supply_simulation(0.0f);
     error.clear();
     return true;
 }

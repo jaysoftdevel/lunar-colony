@@ -1,3 +1,66 @@
+### 0.50.13 Stage-1 selectable-item behavior
+
+`GameApp::planning_double_clicked` detects a second left press on the same `(group, item)` within 410 ms and 22 logical pixels. It is called exclusively from interactive Stage-1 cards. The contract branch routes to the existing `accept_planning_contract`, `deliver_planning_contract`, or next-report action; tech nodes route to `unlock_planning_technology`. These methods still validate prerequisites, finances, contract slots and permanent completion. Mission confirmation and launch stay behind their facility-owned buttons. UI click history is transient and reset for new sessions, with no save schema changes.
+
+### 0.50.12 Stage-1 customer and mission lifecycle
+
+Contract IDs, costs and existing schema-29 `completed_count` stay stable. `planning_contract_available` rejects any progress with `completed_count>0` as well as Completed/Active status, and `deliver_planning_contract` always sets Completed. `load_game_from_file` normalizes the previous repeatable save states to Completed, preventing double-payment without introducing a save schema change. The Contract Office applies color-coded state rails/pills with textual state labels. Switching the Mission Prep tab preserves `planning_.mission_facility` and `planning_.mission_step`; the mission overview can directly resume the required facility. No configuration is reset when returning from the 3D campus or contracts. Mission state stays serialized independently from the selected view and all Stage-2 code remains unchanged.
+
+### 0.50.11 Career hand-off from Stage 1 to Stage 2
+
+`GameApp::complete_planning_mission_step()` is the one-shot Launch gate.
+It marks `planning_.mission_step=Complete`, settles any active lunar-cargo
+customer once, then calls `deploy_lunar_base_from_mission()`. This resets the
+Earth-side world and initializes the normal Stage-2 world without calling
+`reset_planning_game()`. Research/contracts, the exact paid `mission_cargo`,
+and Career/Free Play mode stay persisted. `reset_builder_robot_and_starter_stash`
+takes an optional cargo bundle; Career uses the literal shipment while direct
+Free Play uses the existing starter-resource model. Both the central resource
+counter and physical source pallets use the same shipment. Legacy completed
+Stage-1 savegames deploy during load. No save schema or new stage values.
+
+## 0.50.8 Stage-1 research visualization
+
+`GameApp::render_planning_technology_tree()` renders the existing fixed DAG
+(`kTechs`, `planning_.technologies`) in a world-space 2D research viewport.
+Per-view zoom, world-unit pan, and node selection live in `GameApp` and are
+not serialized. Connections are drawn behind cards and clipped at viewport
+boundaries by a Liang–Barsky segment clipper. Node titles and attributes are
+rendered only inside the visible graph area. The inspector owns the one-time
+research purchase action; all actual funding/prerequisite rules still use
+`planning_technology_available()` and `unlock_planning_technology()`.
+
+This is purely UI. No new renderer shaders, external assets, technology
+catalog changes, mission gates, schema migrations or gameplay dependencies.
+
+## v0.50.7 Stage-1 campus rendering
+
+- `CameraController::campus_view_projection` chooses near = clamp(distance *
+  0.055, 0.35, 32) and far = max(near + 80, distance + 420); Stage 2 retains
+  its legacy projection. This removes near/far precision loss at 100+ meter
+  orbit distances without clipping the coastal terrain.
+- The Linux GL backend generates nine deterministic, tileable 1024px color
+  textures (vegetation, sand, asphalt, concrete, water, corrugated roof,
+  facade, glass, metal) during initialization. The scene uses 3D triangle
+  normals, UVs projected from stable world coordinates and sun-direction
+  shading. Mipmaps avoid specular/texture aliasing during orbit.
+- Material vertex streaming groups triangles and submits fewer buffer uploads.
+  Ordinary geometry preserves painter order; coplanar campus mesh wire edges
+  are not overdrawn.
+- The scene has a screen-space sky gradient and non-coplanar daylight terrain
+  layers plus additional modeled campus service details.
+- There are no outside runtime assets or new system library dependencies.
+- Real PBR normal/roughness maps, photorealistic assets, true shadow-map
+  occlusion and Windows D3D texture parity remain future upgrades.
+
+## v0.50.6 Campaign selection and campus graphics
+
+`GameApp::NewGameMode` is separate from `GamePhase`: Career starts in Planning, Free Play chooses the phase, and `active_game_mode_` is serialized in save schema 29. The New Game screen fixes the Stage-1 site extent at 128 while leaving Stage-2 playfield dimensions configurable.
+
+The Stage-1 campus material renderer is isolated behind `Renderer::draw_material_triangles_3d(vertices, material, tint)` with a portable fallback to `draw_triangles_3d`. Linux OpenGL adds a secondary GLSL 1.20 program with fine procedural world-space shading for the six material classes; it flushes the regular ordered geometry stream before shader changes. Windows Direct3D 12 retains the fallback untextured geometry without introducing new mandatory platform dependencies.
+
+`planning_game.cpp` builds colored directional-faced facility geometry, a fixed grass/sand/coastal industrial campus and translucent projected shadow polygons. This is a stylized, lightweight lighting treatment rather than dynamic shadow mapping or photo-based textures. Campus ray-to-ground hit testing and clickable building footprints are unchanged.
+
 # Current navigation/access behavior (v0.41.5)
 
 ## v0.41.5 close-range carrier blueprint drop-offs
@@ -183,3 +246,29 @@ The engine platform/renderer boundary is now selected by CMake:
 - Windows 11: `platform_win32.cpp` + `renderer_d3d12.cpp` (Win32/DXGI/Direct3D 12).
 
 The `eng::Renderer` abstraction, input state, task pool and all game implementation clusters remain shared. Native window handles use `std::uintptr_t` so both X11 integer handles and 64-bit Win32 `HWND` values pass through the renderer boundary safely.
+
+
+## v0.50.3 Stage-1 mission-planning boundary
+`game/src/systems/planning_game.cpp` owns the Stage-1 mission catalog, cargo pricing, minimum-manifest calculation and commit rules. Rocket/lander hardware is Earth-side and priced as fixed mission hardware; `ResourceBundle mission_cargo` is the landed lunar payload and intentionally uses the same material types as Stage 2. The minimum manifest calls `construction_costs::*` with the real habitat/resource model meshes, so Stage-1 planning remains synchronized with Stage-2 construction balance. Save schema 26 persists the selected rocket, lander, cargo bundle, paid flag and paid price.
+
+
+## v0.50.4 Stage-1 company-site boundary
+`game/src/systems/planning_game.cpp` now also owns the procedural Earth-side launch campus used as the Stage-1 navigation surface. The site is rendered from simple engine-native 3D primitives and has no Stage-2 construction objects, resources or robots. Facility footprints are picked against the same top-down camera ground intersection used elsewhere; each facility routes to one existing planning view rather than duplicating business logic. `gameplay_controller.cpp` updates the camera only while the Company Site view is active. Save schema 27 adds the Site planning-view value without renumbering schema-26 views.
+
+
+## v0.50.5 Stage-1 mission-preparation workflow boundary
+`game/include/game/systems/planning_game.hpp` adds persistent `MissionPreparationStep` and `MissionFacility` state. `game/src/systems/planning_game.cpp` enforces the ordered Research -> Design -> Test -> Refine -> Plan -> Confirm -> Build -> Integrate -> Final Confirm -> Launch gates and maps each gate to one physical company-site facility. Facility ownership is checked before a gate can advance; research/vehicle technology, minimum Stage-2 cargo, landed-payload capacity and company funds remain hard prerequisites at their relevant gates. The existing mission price is committed only during Program Authorization, while later Build/Integrate/Final-Confirm/Launch gates prove that payment alone cannot skip operational preparation. Save schema 28 persists the workflow gate/facility and migrates schema-26/27 paid missions to Build.
+
+## v0.50.9 — Stage-1 customer-project and research-evidence integration
+
+Contract catalog IDs, advance/final payment amounts and duration data remain stable for historical saves. Existing `PlanningContractProgress` persists the progress and completion history; a project at or above duration is now *ready for explicit delivery*, not automatically paid. Research evidence is computed deterministically from `completed_count > 0`, mapped to a linked technology, with a maximum 35% discount from distinct customer projects; no new serialized fields are required. Final lunar customer delivery is a special event settled by the ordered Launch gate, not the planning timer. The Contracts view is now a selected customer-brief workflow rather than 12 compact list rows, and the Site view indicates the immediate useful action before the eventual mission gate. Schema 29 is retained; older Stage-1 contract runs may have ready-for-submission reports. Stage 2 and Stage 3 are unaffected.
+
+
+### 0.50.10 Stage-1 campaign balance and coaching
+
+- Adds a persistent context-sensitive **NEXT STEP** navigation shortcut and direct facility action on the 3D campus; never purchases or submits work without a separate click.
+- Commercial projects: faster completion for non-tutorial jobs; use **ADVANCE TO NEXT REPORT** to advance exactly to the nearest active project delivery and pause.
+- Technical evidence: first completed customer project provides a 20% discount to its target technology (distinct evidence capped at 35%). Previously completed projects still apply without a save schema change.
+- One-time first-customer completion premium (+20% final payment for projects 2–11), plus transparent investor reputation awards when unique completed projects reach 3, 6, and 9 (EUR 750K, 1.5M, and 3M). Repeat projects pay their normal price and remain available to prevent deadlocks.
+- Contract list ranks work ready for submission, active jobs and first-time relevant opportunities before repeat work; research shows a funding shortcut when unaffordable.
+- Stage-2 and Stage-3 mechanics are unchanged. Save schema 29 is preserved; old contract IDs and progress are retained.

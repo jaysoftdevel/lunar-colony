@@ -162,6 +162,8 @@ float GameApp::selection_panel_content_height() const {
         // resource panel.  Keep that row in the scrollable content instead of
         // silently drawing it below a 280 px panel.
         if(item.kind==ResourceKind::HydrogenGenerator) return 320.0f+extra;
+        if(item.kind==ResourceKind::HydrogenTank) return 354.0f+extra;
+        if(item.kind==ResourceKind::LandingPad) return 382.0f+extra;
         if(item.kind==ResourceKind::SolarPanel) return 316.0f+extra;
         return 300.0f+extra;
     }
