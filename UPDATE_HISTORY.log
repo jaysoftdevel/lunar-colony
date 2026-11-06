@@ -635,3 +635,95 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Mission preparation: active gate opens its facility; sidebar offers GO TO NEXT FACILITY.
 - Readability improvements in the research inspector and persistent status banner.
 - No Stage 2 or Stage 3 mechanic changes, no savegame schema change.
+
+0.51.0 - Lunar lander arrival and physical mission unloading
+- Stage 1 selects 1-6 builders and 1-6 carriers; robot mass is included in rocket/lander payload checks and procurement is included in mission price. Counts freeze with the paid manifest.
+- Fresh Stage-2 Career and Free Play starts arrive aboard a detailed native 3D lander, without the old corner stash. Existing colonies, debug templates and Stage 3 retain their layouts.
+- Powered terminal descent brakes lateral motion, deploys landing gear, aligns vertical thrust, hovers for a site check and touches down at 0.4 m/s before engine cutoff and a 4-second safe dwell.
+- UNLOAD in the lander status panel opens a folding boarding ramp. Robots traverse the deck/ramp and enter exclusive, separated surface bays before work is enabled.
+- An articulated telescopic crane transfers all resources in rated 2.5-tonne lifts to material stacks beside the lander. These exact physical stacks supply the existing robot logistics.
+- Landing hull, boarding ramp and crane yard are protected against robot/POV collision and overlapping construction/network routes.
+- Save schema 32 resumes descent, ramp, robot deployment and crane lifts without loss/duplication. Schemas 1-31 remain readable.
+
+0.51.1 - Powered landing-pad trader and robot export logistics
+- A completed, powered Stage-2 Landing Pad shows TRADE. The call remains active until its ship has arrived, loaded and departed; duplicate visits are prevented.
+- Sale manifest selects kg of Iron, Copper, Silicon, Plastic, Water, Food, Medical, Aluminum, separately bottled Oxygen and stored Hydrogen. Fixed gameplay buy prices and a 20 t visit capacity are shown before loading.
+- Confirming a sale reserves actual material/gas stock into physical source packing lots. Robots move those goods to the ship through the existing safety coordinator, with one receiving-bay owner and a required dock-exit phase.
+- Real surplus electrolysis can fill a separate size-scaled oxygen export buffer after the first trader call. Cabin air has priority and is never sold. Existing hydrogen tanks/generator buffers supply H2 exports; fuel already allocated to vehicles is excluded.
+- Cash reaches the shared game account once the loaded ship has taken off. Stage-2 HUD and pad status show balance, quantities, progress and last payment. Pad power loss pauses arrival/loading while preserving the active visit and cargo.
+- Save schema 33 resumes ship, reserved stock, per-rover cargo and pending payment without duplication. Old saves load with no active trader. Existing Stage-1/3 behavior and baseline construction/navigation remain intact.
+
+0.51.2 - Ship concepts, selectable deployment sites and physical stash boxes
+- Rebuilt lander and trader native geometry around the approved concepts.
+- Click touchdown and adjacent stash zone before descent; clear-ground previews and reserved apron/aisles.
+- UNLOAD drops the whole manifest atomically as separate 80-200 kg material packages; robots still traverse the opening ramp.
+- Ready lander can be deconstructed once for 5400 kg of physical salvage boxes.
+- Zone and individual packages support mouse selection; normal robots collect the packages for construction.
+- Schema 34 saves choices and salvage; legacy pallets are repacked without inventory duplication.
+- Spatially indexed resource obstacles retain exact collision predicates for large depots.
+
+0.51.3 - Complete resource status bar and wireframe ships
+- Two-row status bar shows all eight cargo resources, bottled oxygen and stored hydrogen with names, kg amounts and exact stock tooltips.
+- Retains day/cash, battery charge/rate, breathable air, water tank fill/rate and crew indicators. Shared bar height moves panels and input exclusion zones below both rows.
+- Lander/trader hulls, ramp, crane and plumes use mesh edges only, without filled faces or textures.
+- Save format and logistics/economy remain unchanged.
+
+0.51.4 - Beveled lander, compact stash marker and builder salvage
+- Rebuilt the wireframe lander around a wide, beveled rover bay and exposed tank, engine and crane assemblies.
+- Replaced the cargo-sized placement rectangle with a 2.5 m marker and nearby stacks of up to eight boxes. The marker and stacks remain selectable.
+- Builder robots travel to the lander and animate cutting while ship modules detach. The completed job deposits 5400 kg of recoverable materials.
+- Schema 35 preserves stacks and in-progress salvage and reads older saves.
+
+0.51.5 - Tighter cargo stacks and continuous rover unloading
+- Put cargo stacks into closely spaced pairs with dedicated pickup aisles.
+- Queue rovers from their cabin berths at two-second ramp intervals. A reserved apron lane feeds the bays without crossing parked rovers.
+- Save and resume the running queue. Older saves retain their parked rovers and queue the rest.
+
+0.51.6 - Red blockage highlighting and fifth-attempt rover recovery
+- Outline the structure blocking a stuck rover in red.
+- Count failed operations separately from ordinary queue waits. Each blocked unload retries as a distinct put-down.
+- Relocate after the fifth failure using a clear, unreserved endpoint. Preserve cargo, task and delivery reservations.
+
+0.51.7 - Mission structure planning and lunar base logistics
+- Start new mission cargo at zero. Select structures and apply the calculated construction materials to the payload.
+- Add buildable external oxygen tanks for connected habitats and trade.
+- Show outstanding trade cargo during loading, enable camera controls during descent and park rovers beside the ramp.
+- Replace the README with a project and feature overview. Preserve the previous README in README-HISTORY.md.
+
+0.51.8 - Trader antenna and structure connections
+- Require a completed antenna to call a trader. Existing visits can finish.
+- Remove attached corridors and supply channels during structure demolition. Recover their materials and update rover assignments.
+- Snap valid structure placements to free corridor or supply-channel ends and create a connection blueprint.
+- Remove the build-time debug save copy. Template-based tests run when the optional fixture is available.
+
+0.51.9 - Build menu groups and storage telemetry
+- Group build tiles by function with captions and separators that remain visible while paging.
+- Show completed Storage Dome usage in the status bar and flag individual domes above 85% full.
+- Refresh displayed status and inspector rates every 0.5 seconds.
+
+0.51.10 - Stage 3 debug sandbox
+- Start Stage 3 on an empty lunar field without loading the debug template.
+- Place finished structures and connections instantly in Stage 3.
+- Preserve manual saves and complete legacy Stage 3 blueprints on load.
+
+0.51.11 - Stage 3 debug mode selector
+- Restore the prebuilt Template Mode alongside the empty Sandbox Mode.
+- Add an empty field for Test Astronauts.
+- Persist the selected playable mode in Stage 3 saves.
+
+0.51.12 - Ore survey and conveyor logistics
+- Survey local ore concentrations when placing or inspecting an Ore Driller blueprint.
+- Extract four ore types and carry visible crates to a Processing Facility or Factory over a conveyor.
+- Replace direct ore production over supply channels with physical conveyor delivery.
+- Persist ore reserves and conveyor cargo.
+
+0.51.13 - Carrier pickup for ore drillers
+- Collect raw ore from outdoor driller stacks when no conveyor is built.
+- Deliver to an operating processing building or a Storage Dome with a ready gate.
+- Account for stored raw ore and preserve loaded carriers across saves.
+
+0.51.14 - Structure power switches and conveyor start preview
+- Add a persistent power switch to structure inspectors and a world info icon for powered-off structures.
+- Show grid power delivered and demanded separately from the battery charge or discharge rate.
+- Preview and lock the first conveyor section at the ore driller hull.
+- Give the solar and water driller telemetry, controls and removal hint separate rows.

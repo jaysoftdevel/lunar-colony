@@ -172,10 +172,50 @@ for the 2nd game stage, generate a lander and create an animation that shows the
 - the lander also features a crane that unloads all resources to a stash right next to the lander (which the robots will access to load needed resources)
 provide a 0.51.0 version update
 
+design a picture of a lander that could fulfill the tasks listed
+design a picture of a trader that could fulfill the tasks listed
+don't apply the lander to the current game yet, just show the generated pictures
+
+rework the status bar to show all available resources
+dont put any surfaces or textures to the lander and trader ship, only meshes
+
+in the game rework the lander and trader according to the updated layouts.
+the lander shall be deconstructable and return additional resources.
+the position where the lander is touching ground shall be selectable.
+let the stash zone be selectable via mouse.
+rework the resource stash. Create a real box for each resource item.
+don't animate the resource unloading, just drop them next to the ship into the stash zone
+
+if a robot gets stuck, highlight the causing structure in red
+if a robot cannot drop it load for the 5th time, relocate the robot
+generally if any operation cannot be performed for the 5th time, relocate the robot
+
+2nd stage:
+create a new structure for an oxygen storage (external structure)
+when the trader ship is loaded, show which resources are still need to be loaded instead of the buy/sell palette
+rework the readme, keep the history either in backlog or a separate file. Describe in the readme what this project is about and what features are included.
+enable view control also during the landers approach.
+the robots shall stop/park right next to the boarding ramp when unloading.
+1st stage:
+improve the planning of a lunar mission
+- beside the resource allocation to the lander, add a selection list which structures shall be placed and calculate the needed amount of resources
+- add a auto-add function/button to apply the needed resources to the missions payload
+- remove the previous minimal payload preallocation, start with 0 for all resources
+
+the antenna structure shall be required to be built in order to call in traders.
+remove the dependency to the debug save game from the build
+when a structure is removed, remove also all connected corridors and pipes
+structures may be attached to unconnected corridors or pipes if the base square does allow it (no overlaps/collisions)
+
+rework the order of occurance of the resource selction tiles in the build menu, make them logically ordered
+add separators and small captions labels (e.g. water/power/hydrogen/living/supply/...)
+add a storage rate indicator to the status bar showing how much % are used already. If its above 85% show an indicator icon over the storage dome.
+reduce the update of rates in state status panels to 0.5s.
+
 *** ToDo:
 
-the lander shall be deconstructable and return additional resources
-the position where the lander is touching ground shall be selectable
+
+
 
 add a game progress tree (when not in debugging mode) and display as check list at the screen border (no overlaps!)
 Stage 1:

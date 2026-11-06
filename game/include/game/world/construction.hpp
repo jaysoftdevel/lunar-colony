@@ -21,6 +21,7 @@ struct StagedConstructionState {
         : total_steps(std::max<std::uint8_t>(1,steps)) {}
 
     bool complete() const { return step >= total_steps; }
+    void finish(){ step=total_steps; step_elapsed=0; }
     float progress() const {
         const float total=static_cast<float>(std::max<std::uint8_t>(1,total_steps));
         if(complete()) return 1.0f;
@@ -58,6 +59,7 @@ struct ConstructionState {
     float step_elapsed{0.0f};
 
     bool complete() const { return step >= kConstructionSteps; }
+    void finish(){ step=kConstructionSteps; step_elapsed=0; }
     float progress() const {
         if(complete()) return 1.0f;
         const float within=std::clamp(step_elapsed/std::max(0.001f,kConstructionStepSeconds),0.0f,0.999f);

@@ -488,6 +488,7 @@ float GameApp::first_person_door_open_fraction(Vec3 door_position) const {
 }
 
 bool GameApp::first_person_spawn_valid(Vec3 p) const {
+    if(lunar_lander_segment_blocked(lander_,p,p,0.35f))return false;
     const float radius=first_person_.body_radius();
     const float half=(float)playfield_.size()*0.5f-radius;
     if(p.x<-half || p.x>half || p.z<-half || p.z>half) return false;
@@ -747,6 +748,7 @@ float GameApp::first_person_ceiling_height(Vec3 p) const {
 }
 
 bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
+    if(lunar_lander_segment_blocked(lander_,from,to,0.35f))return false;
     const float radius=first_person_.body_radius();
     const float half=(float)playfield_.size()*0.5f-radius;
     if(to.x<-half || to.x>half || to.z<-half || to.z>half) return false;
@@ -1024,15 +1026,15 @@ std::string GameApp::first_person_environment_label() const {
 }
 
 void GameApp::stored_resource_box_pose(const PlacedResource& structure,const ResourceMesh& mesh,std::size_t box_index,Vec3& base,float& half_width,float& height) const {
-    if(box_index>=structure.stored_boxes.size()){
-        base=structure.position;
-        half_width=0.20f;
-        height=0.28f;
-        return;
+    const bool raw_ore=box_index>=structure.stored_boxes.size();
+    if(raw_ore){
+        half_width=.20f;
+        height=.31f;
+    }else{
+        const auto& box=structure.stored_boxes[box_index];
+        half_width=resource_package_half_width(box.resource,box.amount);
+        height=resource_package_height(box.resource,box.amount);
     }
-    const auto& box=structure.stored_boxes[box_index];
-    half_width=resource_package_half_width(box.resource,box.amount);
-    height=resource_package_height(box.resource,box.amount);
 
     // Pallet packing is layer-major: every floor cell is occupied once before
     // a second layer starts. Within a column the exact previous box heights are
@@ -1045,8 +1047,11 @@ void GameApp::stored_resource_box_pose(const PlacedResource& structure,const Res
     float y=storage_floor;
     constexpr float stack_gap=0.02f;
     for(std::size_t previous=cell;previous<box_index;previous+=cell_count){
-        const auto& below=structure.stored_boxes[previous];
-        y+=resource_package_height(below.resource,below.amount)+stack_gap;
+        if(previous>=structure.stored_boxes.size())y+=.31f+stack_gap;
+        else{
+            const auto& below=structure.stored_boxes[previous];
+            y+=resource_package_height(below.resource,below.amount)+stack_gap;
+        }
     }
 
     // The grid itself is constrained to a conservative cylinder inside the
@@ -1073,8 +1078,8 @@ void GameApp::update_first_person_resource_hover(){
     for(std::size_t i=0;i<ground_resource_piles_.size();++i){
         const auto& pile=ground_resource_piles_[i];
         const float half=resource_package_half_width(pile.resource,pile.amount);
-        const float height=resource_package_height(pile.resource,pile.amount);
-        const Vec3 center=pile.position+Vec3{0.0f,height*0.5f+0.025f,0.0f};
+        const float height=resource_package_height(pile.resource,pile.top_package_amount());
+        const Vec3 center=pile.position+Vec3{0.0f,pile.height()-height*.5f+0.025f,0.0f};
         const float t=ray_hit_distance(origin,dir,center,std::max(half*1.35f,height*0.58f),max_reach);
         if(t<best){ best=t; first_person_hover_ground_resource_=(int)i; }
     }
@@ -1110,7 +1115,7 @@ bool GameApp::store_first_person_carried_resource(){
         const auto& mesh=resource_models_.mesh(structure);
         if(!inside_storage_hull(feet,structure,mesh,first_person_.body_radius()*0.25f)) continue;
         sync_stored_resource_totals(structure);
-        const std::int64_t free=storage_dome_capacity_kg(structure.storage_size)-structure.stored_resources.total_amount();
+        const std::int64_t free=storage_dome_capacity_kg(structure.storage_size)-storage_dome_used_kg(structure);
         if(free<first_person_carried_resource_->amount) continue;
         structure.stored_boxes.push_back({first_person_carried_resource_->resource,
                                           first_person_carried_resource_->amount,
@@ -1137,6 +1142,18 @@ void GameApp::drop_first_person_carried_resource(){
     Vec3 target=feet+forward*0.78f;
     if(!first_person_move_allowed(feet,target)) target=feet;
     target.y=first_person_floor_height(target);
+    const auto capacity=resource_package_capacity_kg(pile.resource);
+    for(auto& stack:ground_resource_piles_){
+        if(stack.resource!=pile.resource||std::abs(stack.condition-pile.condition)>.01f||
+           std::abs(stack.position.y-target.y)>.05f||distance_xz(stack.position,target)>.65f||
+           stack.amount%capacity!=0||stack.amount>=capacity*kGroundStackLayers) continue;
+        stack.amount+=pile.amount;
+        if(stack.kind==GroundPileKind::Loose) stack.kind=GroundPileKind::Stack;
+        stack.radius=resource_package_half_width(stack.resource,stack.amount);
+        first_person_carried_resource_.reset();
+        return;
+    }
+    pile.kind=GroundPileKind::Loose;
     pile.position=target;
     pile.radius=resource_package_half_width(pile.resource,pile.amount);
     ground_resource_piles_.push_back(pile);
@@ -1154,7 +1171,7 @@ void GameApp::first_person_grab_or_drop_resource(){
     if(first_person_hover_ground_resource_>=0 && (std::size_t)first_person_hover_ground_resource_<ground_resource_piles_.size()){
         const std::size_t index=(std::size_t)first_person_hover_ground_resource_;
         auto& source=ground_resource_piles_[index];
-        const std::int64_t take=std::min(source.amount,resource_package_capacity_kg(source.resource));
+        const std::int64_t take=source.top_package_amount();
         GroundResourcePile carried=source;
         carried.amount=take;
         carried.radius=resource_package_half_width(carried.resource,carried.amount);

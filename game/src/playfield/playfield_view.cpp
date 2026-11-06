@@ -19,8 +19,7 @@ void GameApp::render_empty_game_phase(Renderer& r){
     const float aspect=(float)r.width()/std::max(1,r.height());
     r.set_3d(camera_.view_projection(aspect));
 
-    // Stage 3 remains a separate reserved content surface. Stage 1 owns its
-    // mission-planning simulation and Stage 2 owns robot-preparation gameplay.
+    // Empty field reserved for future astronaut tests.
     r.draw_triangles_3d(playfield_.floor_triangles(),{0.055f,0.075f,0.088f,1});
     r.draw_lines_3d(playfield_.grid_lines(),{0.22f,0.43f,0.47f,1},1.0f);
     const float lane_half=(float)playfield_.size()*0.5f-geometry::kPlayfieldRobotPerimeterLane;
@@ -38,28 +37,29 @@ void GameApp::render_empty_game_phase(Renderer& r){
     r.draw_rect({0,0,logical_w,STATUS_BAR_H},{0.020f,0.030f,0.040f,0.96f});
     r.draw_rect({0,logical_h-BUILD_BAR_H,logical_w,BUILD_BAR_H},{0.020f,0.030f,0.040f,0.96f});
 
-    game_label(r,{18.0f,12.0f},game_phase_name(active_game_phase_),0.62f,theme_);
+    game_label(r,{18.0f,12.0f},"STAGE 3 - TEST ASTRONAUTS",0.62f,theme_);
     game_label(r,{logical_w-172.0f,13.0f},"VERSION "+std::string(version::current),0.45f,theme_,true);
     game_label(r,{18.0f,logical_h-BUILD_BAR_H+17.0f},"ESC  GAME MENU",0.47f,theme_,true);
 
-    const float panel_w=640.0f;
+    const float panel_w=std::min(640.0f,logical_w-28.0f);
     const float panel_h=146.0f;
     Rect panel{(logical_w-panel_w)*0.5f,(logical_h-panel_h)*0.5f,panel_w,panel_h};
     ui::panel(r,panel,theme_);
-    const std::string title="MANNED MOON BASE CONTENT";
-    const std::string detail="STAGE 3 IS RESERVED FOR THE FUTURE FULLY MANNED BASE";
+    const std::string title="ASTRONAUT TEST FIELD";
+    const std::string detail="RESERVED FOR FUTURE ASTRONAUT TESTS";
     const float tw=game_text_width(title,0.82f,theme_);
     game_label(r,{panel.x+(panel.w-tw)*0.5f,panel.y+34.0f},title,0.82f,theme_);
     game_label_fitted(r,{panel.x+34.0f,panel.y+79.0f,panel.w-68.0f,22.0f},detail,0.52f,theme_,true);
-    game_label_fitted(r,{panel.x+34.0f,panel.y+105.0f,panel.w-68.0f,18.0f},
-                      "This stage is isolated from Stage 2 robot gameplay.",0.44f,theme_,true);
+
 }
 
 void GameApp::render_playfield(Renderer& r){
     const float aspect=(float)r.width()/std::max(1,r.height());
     if(first_person_mode_==FirstPersonMode::Active) r.set_3d(first_person_.view_projection(aspect));
-    else r.set_3d(camera_.view_projection(aspect));
+    else r.set_3d(lander_.in_flight()?camera_.campus_view_projection(aspect):camera_.view_projection(aspect));
 
+    if(lander_.in_flight())r.draw_triangles_3d({{-900,-0.035f,-900},{900,-0.035f,-900},{900,-0.035f,900},
+        {-900,-0.035f,-900},{900,-0.035f,900},{-900,-0.035f,900}},{0.055f,0.075f,0.088f,1});
     r.draw_triangles_3d(playfield_.floor_triangles(),{0.055f,0.075f,0.088f,1});
     r.draw_lines_3d(playfield_.grid_lines(),{0.22f,0.43f,0.47f,1},1.0f);
     // Mark the inner edge of the permanent rover perimeter lane. This is a
@@ -71,12 +71,17 @@ void GameApp::render_playfield(Renderer& r){
         { lane_half,0.018f, lane_half},{-lane_half,0.018f, lane_half},
         {-lane_half,0.018f, lane_half},{-lane_half,0.018f,-lane_half}};
     r.draw_lines_3d(perimeter_lane,{0.72f,0.52f,0.18f,0.72f},1.35f);
+    if(first_person_mode_!=FirstPersonMode::Active)render_ore_deposits(r);
     render_ground_resources(r);
     render_corridors(r);
     render_utilities(r);
     render_walkways(r);
     render_habitats(r);
     render_resources(r);
+    render_lunar_lander(r);
+    render_robot_blockers(r);
+    render_stash(r);
+    render_trader(r);
     render_builder_robot(r);
     render_gate_areas(r);
 
@@ -106,8 +111,9 @@ void GameApp::render_playfield(Renderer& r){
     render_status_bar(r);
     render_progress_tree(r);
     render_build_bar(r);
+    render_ore_survey(r);
     render_selection_marquee(r);
-    if(debug_frame_enabled_) render_debug_frame(r);
+    if(debug_mode_active()) render_debug_frame(r);
     if(selection_kind_!=SelectionKind::None) render_selection_panel(r);
     render_corridor_placement_tooltip(r);
 
@@ -118,7 +124,9 @@ void GameApp::render_playfield(Renderer& r){
         (active_build && active_build->kind==BuildObjectKind::Corridor?
             (corridor_build_start_?"LMB SET CORRIDOR END / ESC CANCEL":"LMB SET CORRIDOR START / ESC CANCEL"):
         (active_build && active_build->kind==BuildObjectKind::Utility?
-            (utility_build_start_?"MOVE TARGET TO ADJUST PORT / LMB CONNECT / ESC CANCEL":"LMB SELECT SUPPLY SOURCE / ESC CANCEL"):
+            (active_build->utility_kind==UtilityKind::ConveyorBelt?
+                (utility_build_start_?"LMB SELECT PROCESSING FACILITY OR FACTORY / ESC CANCEL":"LMB SELECT ORE DRILLER / ESC CANCEL"):
+                (utility_build_start_?"MOVE TARGET TO ADJUST PORT / LMB CONNECT / ESC CANCEL":"LMB SELECT SUPPLY SOURCE / ESC CANCEL")):
         (active_build && active_build->kind==BuildObjectKind::Walkway?
             (walkway_build_start_?"MOVE TO ADJUST WALKWAY BLUEPRINT / LMB BUILD / ESC CANCEL":"LMB SET WALKWAY START / ESC CANCEL"):
         (active_build && (active_build->kind==BuildObjectKind::Habitat || active_build->kind==BuildObjectKind::Resource)?

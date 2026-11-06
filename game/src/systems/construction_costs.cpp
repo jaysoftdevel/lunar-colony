@@ -165,6 +165,8 @@ ConstructionResourcePlan structure(ResourceKind kind,const ResourceMesh& mesh){
             total=scaled(total,1.30,1.65,1.80,1.15); aluminum_share=0.52; break;
         case ResourceKind::HydrogenGenerator:
             total=scaled(total,1.05,1.95,2.05,1.30); aluminum_share=0.48; break;
+        case ResourceKind::OxygenTank:
+            total=scaled(total,1.05,1.45,1.15,1.50); aluminum_share=0.48; break;
         case ResourceKind::HydrogenTank:
             total=scaled(total,1.15,1.70,1.20,1.65); aluminum_share=0.55; break;
         case ResourceKind::Count: break;
@@ -252,6 +254,13 @@ ConstructionResourcePlan supply_channel(float length_m){
 ConstructionResourcePlan supply_channel(const std::vector<eng::Vec3>& path,std::size_t junctions){
     const RouteMetrics metrics=route_metrics(path);
     return supply_from_metrics(metrics.length_m,metrics.quarter_turns,junctions);
+}
+
+ConstructionResourcePlan conveyor_belt(const std::vector<eng::Vec3>& path){
+    const auto metrics=route_metrics(path);
+    const double m=std::max(.5,metrics.length_m);
+    const ResourceBundle total{kg(m*7+14),kg(m*.6+4),kg(m*.12+1),kg(m*1.4+4)};
+    return distribute(kSupplyConstructionSteps,total,supply_iron,supply_copper,supply_silicon,supply_plastic);
 }
 
 ConstructionResourcePlan walkway(float length_m){

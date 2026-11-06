@@ -202,6 +202,13 @@ void GameApp::render_build_icon(Renderer& renderer,BuildIcon icon,Rect q,Color c
             }
             r.draw_line({x+5,y+h-6},{x+w-5,y+h-6},c,2.0f);
             break;
+        case BuildIcon::ConveyorBelt:
+            r.draw_rect({x+12,y+5,12,10},{c.r,c.g,c.b,.45f});
+            r.draw_line({x+3,y+16},{x+w-3,y+16},c,2);
+            r.draw_line({x+3,y+26},{x+w-3,y+26},c,2);
+            for(int i=0;i<5;++i)
+                r.draw_line({x+4+i*7.0f,y+16},{x+4+i*7.0f,y+26},c,1.4f);
+            break;
         case BuildIcon::OreDriller:
             r.draw_line({cx-9,y+5},{cx-9,y+h-8},c,2.0f);
             r.draw_line({cx+4,y+5},{cx+4,y+h-8},c,2.0f);
@@ -253,6 +260,16 @@ void GameApp::render_build_icon(Renderer& renderer,BuildIcon icon,Rect q,Color c
             for(float x:{cx-13,cx+7}) for(float y:{cy-8,cy+5}) r.draw_rect({x,y,7,8},c);
             r.draw_line({cx-5,cy+15},{cx-9,cy+24},c,2);
             r.draw_line({cx+5,cy+15},{cx+9,cy+24},c,2);
+            break;
+        case BuildIcon::OxygenTank:
+            for(float xx:{x+16,x+34}){
+                r.draw_rect({xx-6,y+12,12,25},{c.r,c.g,c.b,.14f});
+                r.draw_line({xx-6,y+12},{xx-6,y+37},c,2);
+                r.draw_line({xx+6,y+12},{xx+6,y+37},c,2);
+                r.draw_line({xx-6,y+12},{xx+6,y+12},c,2);
+                r.draw_line({xx,y+5},{xx,y+12},c,2);
+            }
+            r.draw_line({x+6,y+38},{x+44,y+38},c,2);
             break;
         case BuildIcon::HydrogenTank:
             r.draw_rect({x+4,y+37,42,5},{c.r,c.g,c.b,0.14f});

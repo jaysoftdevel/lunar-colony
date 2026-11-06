@@ -449,15 +449,23 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
 
 
 void GameApp::render_ground_resources(Renderer& r){
+    ResourceBoxBatch batch;
     for(std::size_t pile_index=0;pile_index<ground_resource_piles_.size();++pile_index){
         const auto& pile=ground_resource_piles_[pile_index];
-        const float half=resource_package_half_width(pile.resource,pile.amount);
-        const float h=resource_package_height(pile.resource,pile.amount);
         const bool selected=selection_kind_==SelectionKind::GroundResource &&
             (selected_ground_resource_==(int)pile_index ||
              std::find(selected_ground_resources_.begin(),selected_ground_resources_.end(),(int)pile_index)!=selected_ground_resources_.end());
-        draw_resource_box(r,pile.position,half,h,pile.resource,selected);
+        Vec3 base=pile.position;
+        const auto capacity=pile.kind==GroundPileKind::Loose?pile.amount:resource_package_capacity_kg(pile.resource);
+        for(auto remaining=pile.amount;remaining>0;remaining-=capacity){
+            const auto amount=std::min(remaining,capacity);
+            const float half=resource_package_half_width(pile.resource,amount);
+            const float height=resource_package_height(pile.resource,amount);
+            draw_resource_box(r,base,half,height,pile.resource,selected,selected?nullptr:&batch);
+            base.y+=height+.02f;
+        }
     }
+    batch.draw(r);
 }
 
 void GameApp::render_storage_loading_gate(Renderer& r,const PlacedResource& item,float opening,bool preview) const {
@@ -507,6 +515,43 @@ void GameApp::render_workshop_gate(Renderer& r,const PlacedResource& item,bool p
     }
 }
 
+void GameApp::render_robot_blockers(Renderer& r){
+    constexpr Color red{1.0f,.08f,.10f,1.0f};
+    const auto outline=[&](Vec3 center,float rotation,float width,float depth){
+        std::vector<Vec3> boundary;
+        const float x=width*.5f+.22f,z=depth*.5f+.22f;
+        const Vec3 a{-x,.07f,-z},b{x,.07f,-z},c{x,.07f,z},d{-x,.07f,z};
+        for(const Vec3 point:{a,b,b,c,c,d,d,a}) boundary.push_back(center+rotate_y(point,rotation));
+        r.draw_lines_3d(boundary,red,4.0f);
+    };
+    std::vector<std::uint64_t> drawn;
+    for(const auto& rover:builder_robots_){
+        const auto sequence=rover.blocking_structure;
+        if(!sequence||rover.blocker_display_seconds<=0||
+           std::find(drawn.begin(),drawn.end(),sequence)!=drawn.end()) continue;
+        drawn.push_back(sequence);
+        if(sequence==kLanderBlockerSequence&&lander_.active()){
+            outline(lander_.site,0,10.7f,10.7f);
+            outline(lander_.site+Vec3{0,0,7.15f},0,4.24f,7.1f);
+            continue;
+        }
+        for(const auto& h:placed_habitats_) if(h.placement_sequence==sequence){
+            const auto& mesh=habitat_models_.mesh(h);
+            outline(h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+            r.draw_lines_3d(transformed_vertices(mesh.edges,h.position,h.rotation_degrees),red,3.3f);
+        }
+        for(const auto& item:placed_resources_) if(item.placement_sequence==sequence){
+            const auto& mesh=resource_models_.mesh(item);
+            outline(item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+            r.draw_lines_3d(transformed_vertices(mesh.edges,item.position,item.rotation_degrees),red,3.3f);
+        }
+        for(const auto& corridor:corridor_network_.connections()) if(corridor.placement_sequence==sequence)
+            r.draw_lines_3d(corridor.mesh.edges,red,3.6f);
+        for(const auto& walkway:walkway_network_.connections()) if(walkway.placement_sequence==sequence)
+            r.draw_lines_3d(walkway.mesh.edges,red,3.6f);
+    }
+}
+
 void GameApp::render_resources(Renderer& r){
     for(size_t i=0;i<placed_resources_.size();++i){
         const auto& instance=placed_resources_[i];
@@ -532,7 +577,22 @@ void GameApp::render_resources(Renderer& r){
             render_storage_gate_shutters(r,owner,instance.storage_loading_face,instance.storage_extension_open,instance.construction.progress());
         }
 
-        if(instance.kind!=ResourceKind::StorageDome || !instance.construction.complete() || instance.stored_boxes.empty()) continue;
+        if(instance.kind==ResourceKind::OreDriller && instance.construction.complete()){
+            ResourceBoxBatch raw_ore;
+            for(std::size_t ore_kind=0;ore_kind<ore::materials.size();++ore_kind){
+                const int count=ore::boxes(instance.mined_ore_kg[ore_kind]);
+                for(int box=0;box<count;++box){
+                    const float x=(static_cast<float>(ore_kind)-1.5f)*.50f;
+                    const auto base=instance.position+rotate_y({x,.035f+(box/3)*.32f,
+                        mesh.footprint_z*.5f+.28f+(box%3)*.46f},instance.rotation_degrees);
+                    draw_resource_box(r,base,.20f,.31f,ore::materials[ore_kind],false,&raw_ore);
+                }
+            }
+            raw_ore.draw(r);
+        }
+
+        if(instance.kind!=ResourceKind::StorageDome || !instance.construction.complete() ||
+           (instance.stored_boxes.empty() && stored_ore_mass_kg(instance)==0)) continue;
 
         // Every stored resource remains a physical human-portable package. The
         // same deterministic pallet pose is used by FPV picking, so the box a
@@ -542,6 +602,17 @@ void GameApp::render_resources(Renderer& r){
             Vec3 base{}; float half=0.0f,box_h=0.0f;
             stored_resource_box_pose(instance,mesh,bi,base,half,box_h);
             draw_resource_box(r,base,half,box_h,instance.stored_boxes[bi].resource,false,&boxes);
+        }
+        std::size_t raw_slot=instance.stored_boxes.size();
+        for(std::size_t kind=0;kind<ore::materials.size();++kind){
+            // Show up to a rack of small crates per ore type. The inventory
+            // panel and capacity accounting retain the exact stored mass.
+            const auto visible=std::min<std::uint32_t>(instance.stored_ore_boxes[kind],12);
+            for(std::uint32_t box=0;box<visible;++box){
+                Vec3 base{};float half=0,box_h=0;
+                stored_resource_box_pose(instance,mesh,raw_slot++,base,half,box_h);
+                draw_resource_box(r,base,half,box_h,ore::materials[kind],false,&boxes);
+            }
         }
         boxes.draw(r);
     }
@@ -575,11 +646,14 @@ void GameApp::render_utilities(Renderer& r){
             continue;
         }
 
-        const Color shell{0.24f,0.96f,0.42f,1.0f};
-        const Color details{0.22f,0.92f,0.40f,0.99f};
+        const bool conveyor=link.kind==UtilityKind::ConveyorBelt;
+        const Color shell=conveyor?Color{.82f,.64f,.33f,1}:Color{0.24f,0.96f,0.42f,1};
+        const Color details=conveyor?shell:Color{0.22f,0.92f,0.40f,0.99f};
         mesh_wireframe::draw_layer(r,link.mesh.shell,shell,2.60f*boost);
         mesh_wireframe::draw_layer(r,link.mesh.details,details,2.35f*boost);
-        r.draw_lines_3d(link.mesh.edges,selected?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f},selected?3.60f:2.85f);
+        r.draw_lines_3d(link.mesh.edges,selected?theme_.accent:shell,selected?3.60f:2.85f);
+        if(conveyor && link.ore_cargo<ore::no_cargo)
+            draw_resource_box(r,link.ore_box_position(),.23f,.34f,ore::materials[link.ore_cargo]);
     }
 }
 

@@ -88,24 +88,23 @@ void GameApp::render_new_game(Renderer& r){
     const float expl_y=mode_y+mode_h+(very_compact?4.0f:11.0f);
     ui::label_fitted(r,{left,expl_y,content_w,14.0f},
         career?"BEGIN IN STAGE 1. FUND, RESEARCH, PREPARE AND LAUNCH YOUR LUNAR PROGRAM.":
-               "SANDBOX: CHOOSE ANY STAGE AND PLAY INDEPENDENTLY OF CAMPAIGN PROGRESSION.",
+               "PLAY A STAGE INDEPENDENTLY. STAGE 3 REQUIRES THE DEBUG FRAME SETTING.",
         very_compact?0.34f:0.49f,theme_,true);
     const float stage_label_y=expl_y+(very_compact?15.0f:25.0f);
     ui::label(r,{left,stage_label_y},career?"CAMPAIGN START":"SELECT FREE-PLAY STAGE",very_compact?0.43f:0.63f,theme_);
     const float stage_y=stage_label_y+(very_compact?14.0f:23.0f);
     const float stage_w=(content_w-2*gap)/3.0f;
     const float stage_h=very_compact?27.0f:compact?35.0f:45.0f;
-    const std::array<const char*,3> stage_names{{"1  PLANNING","2  ROBOT PREPARATION","3  MANNED BASE"}};
+    const std::array<const char*,3> stage_names{{"1  PLANNING","2  ROBOT PREPARATION","3  DEBUG MODES"}};
     for(int index=0;index<3;++index){
         const auto phase=(GamePhase)(index+1);
         const bool selected=new_game_phase_selection_==phase;
         const std::string label=(selected?"> ":"")+std::string(stage_names[(std::size_t)index])+(selected?" <":"");
         const float x=left+(stage_w+gap)*(float)index;
-        if(ui::button(r,ui_input_,{x,stage_y,stage_w,stage_h},label,theme_,!career)){
+        if(ui::button(r,ui_input_,{x,stage_y,stage_w,stage_h},label,theme_,!career && (phase!=GamePhase::Debug || debug_frame_enabled_))){
             new_game_phase_selection_=phase;
             new_game_status_message_.clear();
             if(phase!=GamePhase::RobotPreparation) debug_start_template_enabled_=false;
-            if(phase==GamePhase::MannedBase) playfield_size_=kDebugTemplatePlayfieldSize;
             if(phase==GamePhase::Planning) playfield_size_=kCompanySitePlayfieldSize;
         }
     }
@@ -120,15 +119,15 @@ void GameApp::render_new_game(Renderer& r){
     const float detail_w=content_w-2*(very_compact?9.0f:17.0f);
     const float info_scale=very_compact?0.41f:compact?0.53f:0.70f;
     ui::label_fitted(r,{detail_left,details_y+8,detail_w,20},
-        planning_stage?"STAGE 1  /  SPACE COMPANY LAUNCH CENTER":robot_stage?"STAGE 2  /  ROBOTIC LUNAR DEPLOYMENT":"STAGE 3  /  MANNED MOON BASE",info_scale,theme_);
+        planning_stage?"STAGE 1  /  SPACE COMPANY LAUNCH CENTER":robot_stage?"STAGE 2  /  ROBOTIC LUNAR DEPLOYMENT":"STAGE 3  /  DEBUG MODES",info_scale,theme_);
     const float sub_y=details_y+(very_compact?27.0f:39.0f);
     if(planning_stage){
         ui::label_fitted(r,{detail_left,sub_y,detail_w,16},"FIXED COASTAL CAMPUS  /  RESEARCH  /  CONTRACTS  /  LAUNCH MISSIONS",very_compact?0.31f:0.48f,theme_,true);
         if(!very_compact && available_h>100)ui::label_fitted(r,{detail_left,sub_y+30,detail_w,16},"3D SITE CAMERA: MOUSE WHEEL ZOOM  |  MIDDLE MOUSE ORBIT  |  RIGHT MOUSE PAN",0.44f,theme_,true);
         if(!compact && available_h>140)ui::label_fitted(r,{detail_left,sub_y+72,detail_w,16},"PROGRESS THROUGH MISSION FACILITIES, TECH RESEARCH, CONTRACT FUNDING AND VEHICLE ASSEMBLY",0.43f,theme_,true);
     }else if(!robot_stage){
-        ui::label_fitted(r,{detail_left,sub_y,detail_w,16},"FIXED 128 X 128 DEBUG BASE  /  ALL STRUCTURES START FULLY BUILT",very_compact?0.32f:0.52f,theme_,true);
-        if(!very_compact && available_h>100)ui::label_fitted(r,{detail_left,sub_y+30,detail_w,16},"START DIRECTLY IN THE 3D MOON BASE WITH ITS EXISTING COMPLETED INFRASTRUCTURE",0.45f,theme_,true);
+        ui::label_fitted(r,{detail_left,sub_y,detail_w,16},"CHOOSE TEMPLATE MODE, SANDBOX MODE OR TEST ASTRONAUTS",very_compact?0.32f:0.52f,theme_,true);
+        if(!very_compact && available_h>100)ui::label_fitted(r,{detail_left,sub_y+30,detail_w,16},"CONTINUE TO THE STAGE 3 MODE SELECTOR",0.45f,theme_,true);
     }else{
         // Stage 2 is the only phase with a configurable playfield size.
         const float robot_line=very_compact?23.0f:compact?29.0f:40.0f;
@@ -167,82 +166,145 @@ void GameApp::render_new_game(Renderer& r){
         screen_=Screen::MainMenu;
         new_game_status_message_.clear();
     }
-    if(ui::button(r,ui_input_,{right-action_w,actions_y,action_w,actions_h},career?"START CAREER":"CREATE",theme_)){
-        // Career always begins in Stage 1. Free Play starts in its selected phase.
-        if(career)new_game_phase_selection_=GamePhase::Planning;
-        const bool robot_stage=new_game_phase_selection_==GamePhase::RobotPreparation;
-        const bool manned_stage=new_game_phase_selection_==GamePhase::MannedBase;
-        if((robot_stage && debug_start_template_enabled_) || manned_stage) playfield_size_=kDebugTemplatePlayfieldSize;
-        if(new_game_phase_selection_==GamePhase::Planning) playfield_size_=kCompanySitePlayfieldSize;
-        playfield_.rebuild(playfield_size_);
-        camera_.reset(playfield_size_);
-        first_person_mode_=FirstPersonMode::Off;
-        app_.set_relative_mouse_mode(false);
-        status_.reset();
-        resources_.reset();
+    const bool debug_stage=new_game_phase_selection_==GamePhase::Debug;
+    const char* action=career?"START CAREER":debug_stage?"CONTINUE":"CREATE";
+    if(ui::button(r,ui_input_,{right-action_w,actions_y,action_w,actions_h},action,theme_,
+        !debug_stage || debug_frame_enabled_)){
+        if(debug_stage){
+            new_game_status_message_.clear();
+            screen_=Screen::Stage3Modes;
+        }else start_new_game();
+    }
+}
+
+void GameApp::render_stage3_modes(Renderer& r){
+    const float w=ui_width(r),h=ui_height(r);
+    draw_new_game_backdrop(r,w,h);
+    const float panel_w=std::min(660.0f,w-24.0f);
+    const float panel_h=std::min(430.0f,h-24.0f);
+    const Rect panel{(w-panel_w)*.5f,(h-panel_h)*.5f,panel_w,panel_h};
+    ui::panel(r,panel,theme_);
+    const float left=panel.x+18,content_w=panel.w-36;
+    ui::label_fitted(r,{left,panel.y+14,content_w,25},"STAGE 3 / SELECT DEBUG MODE",.81f,theme_);
+    const float row_h=(panel_h-115)/3;
+    const float button_h=std::min(40.0f,row_h-19);
+    const auto option=[&](int row,const char* title,const char* description,bool enabled){
+        const float y=panel.y+49+row_h*(float)row;
+        const bool chosen=ui::button(r,ui_input_,{left,y,content_w,button_h},title,theme_,enabled);
+        ui::label_fitted(r,{left+3,y+button_h+3,content_w-6,14},description,.48f,theme_,true);
+        return chosen;
+    };
+    if(option(0,"TEMPLATE MODE","PREBUILT BASE AND ROVERS / NORMAL CONSTRUCTION",debug_frame_enabled_)){
+        start_new_game(Stage3Mode::Template);
+        if(screen_==Screen::Playfield)return;
+    }
+    if(option(1,"SANDBOX MODE","EMPTY 128 X 128 FIELD / INSTANT BUILD",debug_frame_enabled_)){
+        start_new_game(Stage3Mode::Sandbox);
+        return;
+    }
+    if(option(2,"TEST ASTRONAUTS","EMPTY TEST FIELD RESERVED FOR ASTRONAUT DEVELOPMENT",debug_frame_enabled_)){
+        start_new_game(Stage3Mode::AstronautTest);
+        return;
+    }
+    ui::label_fitted(r,{left,panel.y+panel.h-60,content_w,15},new_game_status_message_,.49f,theme_);
+    if(ui::button(r,ui_input_,{left,panel.y+panel.h-39,114,29},"BACK",theme_)){
+        new_game_status_message_.clear();
+        screen_=Screen::NewGame;
+    }
+}
+
+void GameApp::start_new_game(Stage3Mode stage3_mode){
+    const bool robot_stage=new_game_phase_selection_==GamePhase::RobotPreparation;
+    const bool debug_stage=new_game_phase_selection_==GamePhase::Debug;
+    if(robot_stage&&!debug_start_template_enabled_&&playfield_size_<64){
+        new_game_status_message_="CHOOSE AT LEAST 64 X 64 FOR THE LANDER AND CARGO STACKS";
+        return;
+    }
+    const bool completed_template=debug_stage && stage3_mode==Stage3Mode::Template;
+    const bool use_template=completed_template || (robot_stage && debug_start_template_enabled_);
+    if(use_template){
+        std::string error;
+        if(!load_debug_blueprint_template_from_file(debug_blueprint_template_path(),error,completed_template)){
+            new_game_status_message_="DEBUG TEMPLATE ERROR: "+error;
+            return;
+        }
+        playfield_size_=kDebugTemplatePlayfieldSize;
+    }else if(debug_stage){
+        playfield_size_=kNewGamePlayfieldDefault;
+    }else if(new_game_phase_selection_==GamePhase::Planning){
+        playfield_size_=kCompanySitePlayfieldSize;
+    }
+    playfield_.rebuild(playfield_size_);
+    camera_.reset(playfield_size_);
+    first_person_mode_=FirstPersonMode::Off;
+    app_.set_relative_mouse_mode(false);
+    status_.reset();
+    status_rate_display_={};
+    battery_net_kw_=water_net_litres_per_day_=0;
+    supply_power_delivered_kw_=supply_power_load_kw_=supply_water_load_litres_per_day_=0;
+    resources_.reset();
+    ground_resource_piles_.clear();
+    builder_robots_.clear();
+    production_fraction_.fill(0.0);
+    life_support_fraction_seconds_=0.0;
+    reset_planning_game();
+    lander_={};trader_={};trade_message_.clear();
+    if(new_game_phase_selection_==GamePhase::Planning){
+        // Stage 1 opens on the company campus at a useful oblique overview.
+        // The site remains freely orbitable/pannable/zoomable afterwards.
+        camera_.restore({134.0f,47.0f,38.0f,{0.0f,0.0f,4.0f}});
+    }
+    starter_stash_center_={};
+    construction_priority_.clear();debug_move_pick_robot_=-1;
+    first_person_carried_resource_.reset();
+    first_person_hover_ground_resource_=-1;
+    first_person_hover_storage_resource_=-1;
+    first_person_hover_storage_box_=-1;
+    pressure_doors_.clear();airlock_cycles_.clear();storage_gate_open_.clear();
+    corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
+    utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
+
+    if(!use_template){
         placed_habitats_.clear();
         placed_resources_.clear();
-        ground_resource_piles_.clear();
-        builder_robots_.clear();
-        production_fraction_.fill(0.0);
-        life_support_fraction_seconds_=0.0;
-        reset_planning_game();
-        if(new_game_phase_selection_==GamePhase::Planning){
-            // Stage 1 opens on the company campus at a useful oblique overview.
-            // The site remains freely orbitable/pannable/zoomable afterwards.
-            camera_.restore({134.0f,47.0f,38.0f,{0.0f,0.0f,4.0f}});
-        }
-        starter_stash_center_={};
-        next_blueprint_placement_sequence_=1;
-        construction_priority_.clear();debug_move_pick_robot_=-1;
-        first_person_carried_resource_.reset();
-        first_person_hover_ground_resource_=-1;
-        first_person_hover_storage_resource_=-1;
-        first_person_hover_storage_box_=-1;
         corridor_network_.clear();
-        pressure_doors_.clear();airlock_cycles_.clear();storage_gate_open_.clear();
-        corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
         utility_network_.clear();
-        utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
         walkway_network_.clear();
-
-        if(robot_stage || manned_stage){
-            reset_builder_robot_and_starter_stash();
-            if((robot_stage && debug_start_template_enabled_) || manned_stage){
-                std::string error;
-                if(!load_debug_blueprint_template_from_file(debug_blueprint_template_path(),error,manned_stage)){
-                    new_game_status_message_="DEBUG TEMPLATE ERROR: "+error;
-                    return;
-                }
-            }
-        }else{
-            // Stage 1 remains genuinely separate from the lunar-base world.
-            debug_start_template_enabled_=false;
-        }
-
-        build_catalog_.clear_selection();
-        placement_rotation_degrees_=0.0f;
-        placement_habitat_size_=HabitatSizeTier::Small;
-        placement_resource_size_=ResourceSizeTier::Small;
-        placement_storage_size_=StorageDomeSize::Small;
-        storage_gate_placement_active_=false;
-        storage_gate_placement_owner_=kNoRobotIndex;
-        habitat_view_mode_=HabitatViewMode::Default;
-        game_speed_=(robot_stage && debug_start_template_enabled_)?GameSpeed::Pause:GameSpeed::Normal;
-        clear_world_selection();
-        selection_marquee_active_=false;
-        selection_marquee_dragged_=false;
-        corridor_link_source_=-1;
-        corridor_build_start_.reset();
-        utility_build_start_.reset();
-        walkway_build_start_.reset();
-        walkway_build_target_.reset();
-        active_game_phase_=new_game_phase_selection_;
-        active_game_mode_=new_game_mode_selection_;
-        new_game_status_message_.clear();
-        game_session_active_=true;
-        screen_=Screen::Playfield;
+        next_blueprint_placement_sequence_=1;
     }
+
+    if(use_template){
+        reset_builder_robot_and_starter_stash();
+    }else if(robot_stage){
+        begin_lunar_landing(starter_resource_reserve(),starting_robot_count_,starting_carrier_count_);
+    }else{
+        debug_start_template_enabled_=false;
+    }
+
+    build_catalog_.clear_selection();
+    placement_rotation_degrees_=0.0f;
+    placement_habitat_size_=HabitatSizeTier::Small;
+    placement_resource_size_=ResourceSizeTier::Small;
+    placement_storage_size_=StorageDomeSize::Small;
+    storage_gate_placement_active_=false;
+    storage_gate_placement_owner_=kNoRobotIndex;
+    habitat_view_mode_=HabitatViewMode::Default;
+    game_speed_=(robot_stage && debug_start_template_enabled_)?GameSpeed::Pause:GameSpeed::Normal;
+    clear_world_selection();
+    if(lander_.active())selection_kind_=SelectionKind::Lander;
+    selection_marquee_active_=false;
+    selection_marquee_dragged_=false;
+    corridor_link_source_=-1;
+    corridor_build_start_.reset();
+    utility_build_start_.reset();
+    walkway_build_start_.reset();
+    walkway_build_target_.reset();
+    active_game_phase_=new_game_phase_selection_;
+    stage3_mode_=debug_stage?stage3_mode:Stage3Mode::Sandbox;
+    active_game_mode_=new_game_mode_selection_;
+    new_game_status_message_.clear();
+    game_session_active_=true;
+    screen_=Screen::Playfield;
 }
 
 } // namespace game

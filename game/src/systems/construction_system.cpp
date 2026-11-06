@@ -112,7 +112,7 @@ std::size_t GameApp::construction_dispatch_rank(const ConstructionTargetRef& can
     return manual==kNoRobotIndex?2:3; // queued followers wait for actual completion
 }
 bool GameApp::debug_robot_move_available(std::size_t index) const {
-    if(!debug_frame_enabled_ || index>=builder_robots_.size())return false;
+    if(!debug_mode_active() || index>=builder_robots_.size() || lander_.salvage_uses_robot(index))return false;
     const auto& r=builder_robots_[index];
     return r.mode==BuilderRobotMode::Idle && !r.target.valid() && r.cargo.empty() && r.logistics_reservation.empty() &&
         r.action==BuilderRobotAction::None && !r.drop_exit_pending;
@@ -175,6 +175,7 @@ void GameApp::consume_storage_inventory(const ResourceBundle& cost){
 }
 
 void GameApp::update_construction(float dt){
+    if(lander_.deploying())return;
     prune_construction_priorities();
     assign_storage_loading_faces();
     synchronize_storage_gates();
@@ -201,6 +202,12 @@ void GameApp::update_construction(float dt){
     while(remaining>0.000001f && guard++<64){
         const float step=std::min(remaining,kRobotMaxStep);
         update_builder_robot(step);
+        if(lander_.salvage_worker>=0&&lander_.salvage_seconds>=kLanderSalvageSeconds){
+            auto& worker=builder_robots_[(std::size_t)lander_.salvage_worker];
+            worker.action=BuilderRobotAction::None;
+            worker.action_elapsed=worker.action_duration=0;
+            complete_lander_salvage();
+        }
         remaining-=step;
     }
 

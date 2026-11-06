@@ -27,7 +27,7 @@ float GameApp::game_speed_multiplier() const {
 
 void GameApp::update(float dt,const InputState& in){
     input_=in;
-    supply_warning_time_+=std::max(0.0f,dt);
+    ui_time_seconds_+=std::max(0.0f,dt);
     if(dt>0.000001f){
         const float instant=1.0f/dt;
         fps_=fps_<=0.0f?instant:(fps_*0.90f+instant*0.10f);
@@ -44,10 +44,53 @@ void GameApp::update(float dt,const InputState& in){
             update_planning_game(dt);
             return;
         }
+        if(astronaut_test_active()){
+            if(in.escape_pressed) screen_=Screen::MainMenu;
+            else camera_.update(in,playfield_.size(),viewport_height_,dt);
+            return;
+        }
         if(debug_move_pick_robot_>=0 && (!debug_robot_move_available((std::size_t)debug_move_pick_robot_) || build_catalog_.selected()))debug_move_pick_robot_=-1;
         if(debug_move_pick_robot_>=0 && (in.escape_pressed || in.right_pressed)){debug_move_pick_robot_=-1;return;}
 
+        if(lander_.awaiting_site||lander_.awaiting_stash){
+            if(in.right_pressed&&lander_.awaiting_stash&&lander_.phase==LanderPhase::Approach&&lander_.elapsed==0){lander_.awaiting_site=true;lander_.awaiting_stash=false;return;}
+            if(in.escape_pressed){screen_=Screen::MainMenu;return;}
+            camera_.update(in,playfield_.size(),viewport_height_,dt);
+            if(in.left_pressed&&!mouse_over_selection_panel(in)&&(float)in.mouse_y/ui_scale_>=STATUS_BAR_H&&(float)in.mouse_y/ui_scale_<(float)viewport_height_/ui_scale_-BUILD_BAR_H){
+                Vec3 hit{};if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
+                    if(lander_.awaiting_site)confirm_lander_site(hit);else confirm_stash_site(hit);
+                }
+            }
+            return;
+        }
         const float sim_dt=dt*game_speed_multiplier();
+        update_lunar_lander(sim_dt);
+        if(active_game_phase_==GamePhase::RobotPreparation)update_trader(sim_dt);
+        if(lander_.deploying()){
+            if(in.escape_pressed){screen_=Screen::MainMenu;return;}
+            if(lander_.in_flight()){
+                const auto flight=lunar_lander_flight(lander_.elapsed);
+                const Vec3 origin=lander_.site+Vec3{flight.offset.x*.5f,flight.offset.y*.45f,0};
+                auto view=camera_.state();
+                view.target=view.target-origin;
+                camera_.restore(view);
+                auto camera_input=in;
+                if(mouse_over_selection_panel(in)) camera_input.wheel=0;
+                camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
+                view=camera_.state();
+                view.target+=origin;
+                camera_.restore(view);
+            }else{
+                auto camera_input=in;
+                if(mouse_over_selection_panel(in))camera_input.wheel=0;
+                camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
+                update_selection_panel_scroll(in);
+                const float y=(float)in.mouse_y/ui_scale_;
+                if(in.left_pressed && y>=STATUS_BAR_H && y<(float)viewport_height_/ui_scale_-BUILD_BAR_H && !mouse_over_selection_panel(in))
+                    select_world_at(in.mouse_x,in.mouse_y);
+            }
+            return;
+        }
         update_pressure_doors(dt);
         if(in.key_v_pressed){
             selection_marquee_active_=false;
@@ -232,7 +275,10 @@ void GameApp::update(float dt,const InputState& in){
         // When the pause/game menu is open, ESC is a direct resume shortcut.
         // Sub-pages still use ESC to return one level to that menu first.
         if(screen_==Screen::MainMenu && game_session_active_) screen_=Screen::Playfield;
-        else if(screen_!=Screen::MainMenu) screen_=Screen::MainMenu;
+        else if(screen_==Screen::Stage3Modes){
+            new_game_status_message_.clear();
+            screen_=Screen::NewGame;
+        }else if(screen_!=Screen::MainMenu) screen_=Screen::MainMenu;
     }
 }
 

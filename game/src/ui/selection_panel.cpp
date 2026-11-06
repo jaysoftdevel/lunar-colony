@@ -81,7 +81,22 @@ std::string oxygen_net_text(const SupplyState& supply,bool paused){
 }
 
 void GameApp::render_selection_panel(Renderer& r){
+    if(selection_kind_==SelectionKind::Stash){render_stash_panel(r);return;}
+    if(selection_kind_==SelectionKind::Lander){render_lunar_lander_panel(r);return;}
     sync_selection_panel_scroll();
+    auto& rates=selection_rate_display_;
+    const bool paused=game_speed_==GameSpeed::Pause;
+    const auto selection_key=current_selection_panel_scroll_key();
+    const bool refresh_rates=ui_time_seconds_>=rates.next_sample || rates.key!=selection_key || rates.paused!=paused;
+    if(refresh_rates){
+        rates.next_sample=ui_time_seconds_+kStatusRateRefreshSeconds;
+        rates.key=selection_key;
+        rates.paused=paused;
+    }
+    const auto sample_supply=[&](const SupplyState& supply)->const SupplyState&{
+        if(refresh_rates)rates.supply=supply;
+        return rates.supply;
+    };
     const Rect text_panel=selection_kind_==SelectionKind::GroundResource && selected_ground_resources_.size()<=1?ground_resource_panel_rect():selection_panel_rect();
     const bool scrollable_panel=selection_kind_!=SelectionKind::GroundResource || selected_ground_resources_.size()>1;
     const float panel_scroll=scrollable_panel?selection_panel_scroll_:0.0f;
@@ -104,6 +119,22 @@ void GameApp::render_selection_panel(Renderer& r){
         const float travel=std::max(0.0f,track.h-thumb_h);
         const float t=maximum>0.0f?std::clamp(selection_panel_scroll_/maximum,0.0f,1.0f):0.0f;
         r.draw_rect({track.x-1.0f,track.y+travel*t,5.0f,thumb_h},theme_.accent);
+    };
+
+    const auto power_switch=[&](bool& enabled){
+        const Rect button{text_panel.x+text_panel.w-138.0f,text_panel.y+5.0f-panel_scroll,124.0f,26.0f};
+        if(!row_visible(button.y,button.h) || !ui::button(r,ui_input_,button,enabled?"POWER OFF":"POWER ON",theme_))return false;
+        enabled=!enabled;
+        update_supply_simulation(0.0f);
+        selection_rate_display_.next_sample=ui_time_seconds_;
+        status_rate_display_.next_sample=ui_time_seconds_;
+        return true;
+    };
+    const auto structure_status=[](bool enabled,const SupplyState& supply,const char* ready)->std::string{
+        if(!enabled)return "STATUS  POWERED OFF";
+        if((supply.warnings&NoPower) && supply.power_fraction>0.0)
+            return "STATUS  POWER LIMITED  "+std::to_string((int)std::lround(100*supply.power_fraction))+"%";
+        return supply.warnings?"STATUS  SUPPLY WARNING":ready;
     };
 
     const auto warning_reasons=[&](const SupplyState& supply,bool complete,ResourceKind kind=ResourceKind::Count){
@@ -152,7 +183,7 @@ void GameApp::render_selection_panel(Renderer& r){
                 game_label(r,{x,y},line.str(),0.48f,theme_);
                 y+=19.0f;
             }
-            game_label(r,{x,p.y+content_height-28.0f},debug_frame_enabled_?"DEL  MOVE SELECTED BOXES TO STORAGE":"DEBUG REQUIRED FOR DEL",0.43f,theme_,true);
+            game_label(r,{x,p.y+content_height-28.0f},debug_mode_active()?"DEL  MOVE SELECTED BOXES TO STORAGE":"DEBUG REQUIRED FOR DEL",0.43f,theme_,true);
             return;
         }
         if(selected_ground_resource_<0 || (std::size_t)selected_ground_resource_>=ground_resource_piles_.size()) return;
@@ -166,7 +197,13 @@ void GameApp::render_selection_panel(Renderer& r){
         std::ostringstream amount,cond;
         amount<<"AMOUNT  "<<box.amount<<" KG";
         cond<<"CONDITION  "<<condition<<"% / "<<grade;
-        game_label(r,{x,p.y+9},"RESOURCE BOX",0.56f,theme_,true);
+        std::string caption="RESOURCE BOX";
+        if(box.kind!=GroundPileKind::Loose){
+            const auto capacity=resource_package_capacity_kg(box.resource);
+            const auto count=(box.amount+capacity-1)/capacity;
+            caption="RESOURCE STACK / "+std::to_string(count)+" BOXES";
+        }
+        game_label_fitted(r,{x,p.y+7,p.w-22,16},caption,0.56f,theme_,true);
         game_label(r,{x,p.y+31},material_resource_name(box.resource),0.72f,theme_);
         game_label(r,{x,p.y+55},amount.str(),0.52f,theme_);
         game_label(r,{x,p.y+76},cond.str(),0.50f,theme_,true);
@@ -174,9 +211,9 @@ void GameApp::render_selection_panel(Renderer& r){
         for(const auto& structure:placed_resources_){
             if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
             const std::int64_t used=stored_resource_box_totals(structure).total_amount();
-            if(used+box.amount<=storage_dome_capacity_kg(structure.storage_size)){ can_store=true; break; }
+            if(used+stored_ore_mass_kg(structure)+box.amount<=storage_dome_capacity_kg(structure.storage_size)){ can_store=true; break; }
         }
-        const char* action=!debug_frame_enabled_?"DEBUG REQUIRED FOR DEL":(can_store?"DEL  MOVE TO STORAGE DOME":"NO AVAILABLE STORAGE DOME");
+        const char* action=!debug_mode_active()?"DEBUG REQUIRED FOR DEL":(can_store?"DEL  MOVE TO STORAGE DOME":"NO AVAILABLE STORAGE DOME");
         game_label(r,{x,p.y+97},action,0.44f,theme_,true);
         return;
     }
@@ -212,7 +249,7 @@ void GameApp::render_selection_panel(Renderer& r){
                     if(ref.index<corridor_network_.connections().size()) return std::string("CORRIDOR #")+std::to_string(ref.index+1);
                     break;
                 case ConstructionTargetKind::Utility:
-                    if(ref.index<utility_network_.connections().size()) return std::string("SUPPLY CHANNEL #")+std::to_string(ref.index+1);
+                    if(ref.index<utility_network_.connections().size()) return std::string(utility_kind_name(utility_network_.connections()[ref.index].kind))+" #"+std::to_string(ref.index+1);
                     break;
                 case ConstructionTargetKind::Walkway:
                     if(ref.index<walkway_network_.connections().size()) return std::string("WALKWAY #")+std::to_string(ref.index+1);
@@ -242,7 +279,7 @@ void GameApp::render_selection_panel(Renderer& r){
         const std::string target_name=robot.target.valid()?target_identity(robot.target):std::string{};
         std::ostringstream state,task,operation,navigation,motion,target,build,cargo,assigned,team,recovery;
 
-        state<<"STATE  "<<builder_robot_mode_name(robot.mode);
+        state<<"STATE  "<<(trader_robot_busy(robot_index)?"TRADER / ":"")<<builder_robot_mode_name(robot.mode);
         if(robot.workshop_parked) state<<" / PARKED IN WORKSHOP BAY "<<robot.workshop_bay+1;
         else if(robot.workshop_returning) state<<" / RETURNING TO WORKSHOP";
         if(robot.action!=BuilderRobotAction::None) state<<" / "<<builder_robot_action_name(robot.action);
@@ -318,7 +355,11 @@ void GameApp::render_selection_panel(Renderer& r){
         }
         if(robot.safety.active_contract.valid) navigation<<" / CONTRACT ACTIVE";
 
-        motion<<"MOTION  "<<std::fixed<<std::setprecision(2)<<robot.current_speed_mps<<" / "<<robot.move_speed_mps<<" M/S";
+        if(refresh_rates){
+            rates.rover_speed_mps=robot.current_speed_mps;
+            rates.rover_draw_kw=robot.battery_last_draw_kw;
+        }
+        motion<<"MOTION  "<<std::fixed<<std::setprecision(2)<<rates.rover_speed_mps<<" / "<<robot.move_speed_mps<<" M/S";
         if(robot.route_active && robot.route_speed_scale<0.995f) motion<<" / REQUEST "<<(int)std::lround(std::clamp(robot.route_speed_scale,0.0f,1.0f)*100.0f)<<"%";
 
         if(robot.target.valid()){
@@ -338,6 +379,28 @@ void GameApp::render_selection_panel(Renderer& r){
 
         cargo<<"CARGO  "<<robot.cargo.total_amount()<<" / "<<robot.payload_capacity_kg<<" KG  ["<<compact_bundle(robot.cargo)<<"]";
         assigned<<"ASSIGNED  "<<robot.logistics_reservation.total_amount()<<" KG  ["<<compact_bundle(robot.logistics_reservation)<<"]";
+        for(const auto& haul:trader_.hauls)if(haul.robot==robot_index&&haul.lot<trader_.lots.size()){
+            const auto& lot=trader_.lots[haul.lot];
+            task.str("");task.clear();task<<"TASK  "<<(haul.phase==0?"COLLECT EXPORT ":haul.phase==1?"DELIVER TO TRADER ":"CLEAR TRADER LOADING BAY ")<<trade_good_name(lot.good);
+            cargo.str("");cargo.clear();cargo<<"CARGO  "<<haul.cargo<<" / "<<robot.payload_capacity_kg<<" KG  ["<<trade_good_name(lot.good)<<"]";
+            assigned.str("");assigned.clear();assigned<<"ASSIGNED  TRADER EXPORT LOT / "<<lot.remaining<<" KG AT SOURCE";
+            target.str("");target.clear();target<<"TARGET  TRADER SHIP / POWERED LANDING PAD";
+            if(robot.action!=BuilderRobotAction::None){operation.str("");operation.clear();operation<<"OPERATION  "<<builder_robot_action_name(robot.action)<<" "<<trade_good_name(lot.good);}
+        }
+
+        if(robot.ore_haul.active()){
+            const auto& haul=robot.ore_haul;
+            task.str("");task.clear();task<<"TASK  "<<(haul.loaded?"DELIVER ":"COLLECT ")<<ore::names[haul.kind];
+            cargo.str("");cargo.clear();cargo<<"CARGO  "<<(haul.loaded?ore::box_kg:0)<<" KG RAW ORE";
+            target.str("");target.clear();target<<"TARGET  "<<(haul.loaded?"ORE RECEIVER":"DRILLER OUTPUT STACK");
+        }
+
+        if(lander_.salvage_uses_robot(robot_index)){
+            task.str("");task.clear();
+            task<<"TASK  SALVAGE LUNAR LANDER";
+            target.str("");target.clear();
+            target<<"TARGET  LANDER SERVICE POINT";
+        }
 
         if(robot.support_robot_index<builder_robots_.size() && robot.support_robot_index!=robot_index)
             team<<"TEAM  COORDINATED BY "<<robot_identity(robot.support_robot_index);
@@ -345,7 +408,11 @@ void GameApp::render_selection_panel(Renderer& r){
             team<<"TEAM  SITE COORDINATOR";
         else team<<"TEAM  INDEPENDENT";
 
-        if(robot.safety.mode==robots::SafetyMode::Fault){
+        if(robot.operation_retry.relocation_pending())
+            recovery<<"5 FAILED ATTEMPTS / WAITING FOR SAFE RELOCATION";
+        else if(robot.operation_retry.failures>0)
+            recovery<<"FAILED ATTEMPTS "<<(int)robot.operation_retry.failures<<" / "<<(int)kRobotRelocationFailures;
+        else if(robot.safety.mode==robots::SafetyMode::Fault){
             const float remaining=robot.safety.fault_recovery_deadline<0?robots::kFaultRecoveryMaxWaitSeconds:
                 std::clamp(robot.safety.fault_recovery_deadline-robot_safety_time_seconds_,0.0f,robots::kFaultRecoveryMaxWaitSeconds);
             recovery<<"SAFETY FAULT / FRESH ROUTE IN "<<std::fixed<<std::setprecision(1)<<remaining<<" S / RETRIES "<<robot.safety.fault_recovery_attempts;
@@ -363,7 +430,7 @@ void GameApp::render_selection_panel(Renderer& r){
         power<<"BATTERY  "<<std::fixed<<std::setprecision(1)<<robot.battery_charge_kwh<<" / "
              <<robot.battery_capacity_kwh<<" KWH / "<<(int)std::lround(charge_fraction*100.0f)<<"%";
         if(robot.battery_charging) power<<" / CHARGING";
-        else power<<" / DRAW "<<std::setprecision(2)<<robot.battery_last_draw_kw<<" KW";
+        else power<<" / DRAW "<<std::setprecision(2)<<rates.rover_draw_kw<<" KW";
 
 
         game_label(r,{x,p.y+10},title,0.66f,theme_,true);
@@ -408,10 +475,12 @@ void GameApp::render_selection_panel(Renderer& r){
                 reset_robot.blocked_elapsed=0.0f;
                 reset_robot.watchdog_elapsed=0.0f;
                 reset_robot.recovery_attempts=0;
+                reset_robot.operation_retry={};
+                reset_robot.blocker_display_seconds=0;
                 reset_robot.safety.route_replan_required=true;
             }
         }
-        if(debug_frame_enabled_){
+        if(debug_mode_active()){
             const bool picking=debug_move_pick_robot_==(int)robot_index;
             const char* label=picking?"CANCEL DESTINATION PICK":robot.debug_move_active?"CANCEL DEBUG MOVE":"DEBUG MOVE / PICK DESTINATION";
             Rect button{x,p.y+content_height-43.0f-panel_scroll,p.w-28,30};
@@ -432,8 +501,9 @@ void GameApp::render_selection_panel(Renderer& r){
         utilities<<"SUPPLY LINKS "<<(utility_network_.endpoint_connection_count(UtilityEndpointKind::Habitat,(size_t)selected_habitat_)+walkway_network_.endpoint_connection_count(WalkwayEndpointKind::Habitat,(size_t)selected_habitat_));
         game_label(r,{x,p.y+10},"STRUCTURE IDENTITY",0.50f,theme_,true);
         game_label(r,{x,p.y+34},habitat_instance_name(h),0.66f,theme_);
+        if(power_switch(h.power_enabled))return;
         if(h.construction.complete()){
-            game_label(r,{x,p.y+60},(h.supply.warnings?"STATUS  SUPPLY WARNING":"STATUS  OPERATIONAL / SEALED"),0.58f,theme_);
+            game_label(r,{x,p.y+60},structure_status(h.power_enabled,h.supply,"STATUS  OPERATIONAL / SEALED"),0.58f,theme_);
         }else{
             std::ostringstream build;
             build<<"CONSTRUCTION  STEP "<<(int)h.construction.step<<" / "<<(int)kConstructionSteps<<"  "<<(int)std::lround(h.construction.progress()*100.0f)<<"%";
@@ -446,20 +516,21 @@ void GameApp::render_selection_panel(Renderer& r){
         game_label(r,{x,p.y+136},rot.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+160},conn.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+184},utilities.str(),0.58f,theme_,true);
-        const bool paused=game_speed_==GameSpeed::Pause;
         game_label(r,{x,p.y+202},breathable_air_text(h.supply),0.48f,theme_);
-        game_label(r,{x,p.y+220},air_rate_text(h.supply,paused),0.43f,theme_,true);
-        game_label(r,{x,p.y+238},oxygen_net_text(h.supply,paused),0.43f,theme_,true);
+        const auto& supply_rates=sample_supply(h.supply);
+        game_label(r,{x,p.y+220},air_rate_text(supply_rates,paused),0.43f,theme_,true);
+        game_label(r,{x,p.y+238},oxygen_net_text(supply_rates,paused),0.43f,theme_,true);
         std::ostringstream fill;fill<<"WATER TO FILL "<<std::fixed<<std::setprecision(1)<<h.supply.water_to_fill_litres<<" L / NETWORK "<<h.supply.network_water_to_fill_litres<<" L";
         game_label(r,{x,p.y+256},fill.str(),0.43f,theme_,true);
         if(h.kind==HabitatKind::OxygenGeneratorDome){
-            std::ostringstream process;process<<"O2 OUTPUT "<<std::fixed<<std::setprecision(3)<<(paused?0.0:h.supply.oxygen_produced_kg_per_day)<<" KG/D / WATER "<<(paused?0.0:h.supply.water_processed_litres_per_day)<<" L/D";
+            std::ostringstream process;process<<"O2 OUTPUT "<<std::fixed<<std::setprecision(3)<<(paused?0.0:supply_rates.oxygen_produced_kg_per_day)<<" KG/D / WATER "<<(paused?0.0:supply_rates.water_processed_litres_per_day)<<" L/D";
             game_label(r,{x,p.y+278},process.str(),0.43f,theme_);
-            std::ostringstream hydrogen;hydrogen<<"H2 OUTPUT "<<std::fixed<<std::setprecision(3)<<(paused?0.0:h.supply.hydrogen_produced_kg_per_day)<<" KG/D / BUFFER "<<h.supply.hydrogen_kg<<" / "<<(kOxygenGeneratorHydrogenBufferKg*(h.size==HabitatSizeTier::Small?0.5:h.size==HabitatSizeTier::Mid?1.5:h.size==HabitatSizeTier::Big?2.0:1.0))<<" KG";
+            std::ostringstream hydrogen;hydrogen<<"H2 OUTPUT "<<std::fixed<<std::setprecision(3)<<(paused?0.0:supply_rates.hydrogen_produced_kg_per_day)<<" KG/D / BUFFER "<<h.supply.hydrogen_kg<<" / "<<(kOxygenGeneratorHydrogenBufferKg*(h.size==HabitatSizeTier::Small?0.5:h.size==HabitatSizeTier::Mid?1.5:h.size==HabitatSizeTier::Big?2.0:1.0))<<" KG";
             game_label(r,{x,p.y+298},hydrogen.str(),0.42f,theme_);
-            const char* state=!h.construction.complete()?"NOT BUILT":paused?"PAUSED":h.supply.power_fraction<=0?"WAITING FOR POWER":(h.supply.warnings&NoWater)?"WAITING FOR TANK WATER":h.supply.oxygen_produced_kg_per_day>1e-8?"ELECTROLYSIS: O2 + H2":"AIR TARGET REACHED / ELECTROLYZER IDLE";
+            const char* state=!h.construction.complete()?"NOT BUILT":!h.power_enabled?"POWERED OFF":paused?"PAUSED":h.supply.power_fraction<=0?"WAITING FOR POWER":(h.supply.warnings&NoWater)?"WAITING FOR TANK WATER":supply_rates.oxygen_produced_kg_per_day>1e-8?"ELECTROLYSIS: O2 + H2":"AIR TARGET REACHED / ELECTROLYZER IDLE";
             game_label(r,{x,p.y+318},state,0.44f,theme_,true);
-            if(h.supply.hydrogen_vented_kg_per_day>1e-8){std::ostringstream vent;vent<<"H2 BUFFER FULL / VENTING "<<std::fixed<<std::setprecision(3)<<(paused?0.0:h.supply.hydrogen_vented_kg_per_day)<<" KG/D";game_label(r,{x,p.y+338},vent.str(),0.40f,theme_,true);}
+            if(supply_rates.hydrogen_vented_kg_per_day>1e-8){std::ostringstream vent;vent<<"H2 BUFFER FULL / VENTING "<<std::fixed<<std::setprecision(3)<<(paused?0.0:supply_rates.hydrogen_vented_kg_per_day)<<" KG/D";game_label(r,{x,p.y+338},vent.str(),0.40f,theme_,true);}
+            else if(trader_.oxygen_packaging)game_label(r,{x,p.y+338},"BOTTLED EXPORT O2  "+std::to_string((int)trader_oxygen_stock_amount(h.placement_sequence))+" KG",0.40f,theme_,true);
             else game_label(r,{x,p.y+338},"RATES PER GAME DAY / DEL REMOVE",0.40f,theme_,true);
         }else if(h.kind==HabitatKind::BioDome){
             const std::size_t bay_count=hydroponics_bay_count(h.size);
@@ -481,7 +552,8 @@ void GameApp::render_selection_panel(Renderer& r){
                 std::ostringstream cycle;cycle<<"PHOTOPERIOD  LIGHT 06:00-22:00 / DARK 22:00-06:00 / NOW "<<(light_phase?"LIGHT":"DARK")<<"  "<<std::fixed<<std::setprecision(1)<<phase_left<<" H LEFT";
                 game_label(r,{x,p.y+298},cycle.str(),0.37f,theme_,true);
                 std::ostringstream system;
-                if(paused) system<<"GROW SYSTEM PAUSED";
+                if(!h.power_enabled) system<<"GROW SYSTEM POWERED OFF";
+                else if(paused) system<<"GROW SYSTEM PAUSED";
                 else if(!light_phase) system<<"DARK PHASE / GROWTH REST / CLIMATE CONTROL ACTIVE";
                 else if(h.supply.power_fraction<=1e-6) system<<"WAITING FOR POWER";
                 else if(h.supply.breathability()<80.0) system<<"WAITING FOR BREATHABLE AIR >=80%";
@@ -593,15 +665,16 @@ void GameApp::render_selection_panel(Renderer& r){
     }
 
     if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 && (size_t)selected_resource_<placed_resources_.size()){
-        const auto& item=placed_resources_[(size_t)selected_resource_];
+        auto& item=placed_resources_[(size_t)selected_resource_];
         std::ostringstream pos,rot,utilities;
         pos<<"POSITION "<<std::fixed<<std::setprecision(1)<<item.position.x<<" / "<<item.position.z;
         rot<<"ROTATION "<<(int)std::round(item.rotation_degrees)<<" DEG";
         utilities<<"SUPPLY LINKS "<<(utility_network_.endpoint_connection_count(UtilityEndpointKind::Resource,(size_t)selected_resource_)+walkway_network_.endpoint_connection_count(WalkwayEndpointKind::Resource,(size_t)selected_resource_));
         game_label(r,{x,p.y+10},"STRUCTURE IDENTITY",0.50f,theme_,true);
         game_label(r,{x,p.y+34},resource_instance_name(item),0.66f,theme_);
+        if(power_switch(item.power_enabled))return;
         if(item.construction.complete()){
-            game_label(r,{x,p.y+60},(item.supply.warnings?"STATUS  SUPPLY WARNING":"STATUS  PLACED / AVAILABLE"),0.58f,theme_);
+            game_label(r,{x,p.y+60},structure_status(item.power_enabled,item.supply,"STATUS  PLACED / AVAILABLE"),0.58f,theme_);
         }else{
             std::ostringstream build;
             build<<"CONSTRUCTION  STEP "<<(int)item.construction.step<<" / "<<(int)kConstructionSteps<<"  "<<(int)std::lround(item.construction.progress()*100.0f)<<"%";
@@ -609,13 +682,17 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+73},next_material_cost(item.resource_plan,item.construction.step),0.43f,theme_,true);
         }
         warning_reasons(item.supply,item.construction.complete(),item.kind);
+        const auto& supply_rates=sample_supply(item.supply);
         if(item.kind==ResourceKind::SolarPanel || item.kind==ResourceKind::WaterDriller){
             const double factor=item.size==ResourceSizeTier::Small?0.5:1.0;
             std::ostringstream rate;rate<<std::fixed<<std::setprecision(1);
             if(item.kind==ResourceKind::SolarPanel){
                 const auto sun=status_.sun_pose();
-                const double incidence=item.solar_tracking_enabled?1.0:solar_tracking::fixed_panel_incidence_fraction(sun.direction,item.rotation_degrees);
-                rate<<"SOLAR "<<kSolarPeakKw*factor*sun.irradiance_fraction*incidence<<" / "<<kSolarPeakKw*factor<<" KW PEAK";
+                if(refresh_rates){
+                    const double incidence=item.solar_tracking_enabled?1.0:solar_tracking::fixed_panel_incidence_fraction(sun.direction,item.rotation_degrees);
+                    rates.solar_kw=item.power_enabled && item.construction.complete()?kSolarPeakKw*factor*sun.irradiance_fraction*incidence:0.0;
+                }
+                rate<<"SOLAR "<<rates.solar_kw<<" / "<<kSolarPeakKw*factor<<" KW PEAK";
                 game_label(r,{x,p.y+208},rate.str(),0.48f,theme_);
                 std::ostringstream track;
                 if(item.solar_tracking_enabled) track<<"TRACKING ON  AZ "<<std::setprecision(0)<<sun.azimuth_degrees<<" DEG / EL "<<sun.elevation_degrees<<" DEG";
@@ -625,11 +702,11 @@ void GameApp::render_selection_panel(Renderer& r){
                 game_label(r,{x,p.y+246},buffer.str(),0.42f,theme_,true);
                 Rect tracking_button{x,p.y+264+warning_extra-panel_scroll,190.0f,28.0f};
                 if(row_visible(tracking_button.y,tracking_button.h) && ui::button(r,ui_input_,tracking_button,item.solar_tracking_enabled?"SUN TRACKING: ON":"SUN TRACKING: OFF",theme_,item.construction.complete())){
-                    placed_resources_[(std::size_t)selected_resource_].solar_tracking_enabled=!item.solar_tracking_enabled;
+                    item.solar_tracking_enabled=!item.solar_tracking_enabled;
                     return;
                 }
             }else{
-                rate<<"PUMP "<<500*factor*item.supply.power_fraction<<" L/D / "<<4*factor<<" KW";
+                rate<<"PUMP "<<(paused?0.0:500*factor*supply_rates.power_fraction)<<" L/D / "<<4*factor<<" KW";
                 game_label(r,{x,p.y+208},rate.str(),0.48f,theme_);
                 std::ostringstream buffer;buffer<<std::fixed<<std::setprecision(1)<<"LOCAL BUFFER "<<item.supply.water_litres<<" / "<<water_driller_buffer_capacity_litres(item.size)<<" L";
                 game_label(r,{x,p.y+228},buffer.str(),0.42f,theme_,true);
@@ -644,9 +721,9 @@ void GameApp::render_selection_panel(Renderer& r){
         }
         if(item.kind==ResourceKind::StorageDome){
             game_label(r,{x,p.y+196},breathable_air_text(item.supply),0.48f,theme_);
-            game_label(r,{x,p.y+214},air_rate_text(item.supply,game_speed_==GameSpeed::Pause),0.43f,theme_,true);
+            game_label(r,{x,p.y+214},air_rate_text(supply_rates,paused),0.43f,theme_,true);
             const ResourceBundle stored_resources=stored_resource_box_totals(item);
-            const std::int64_t stored=stored_resources.total_amount();
+            const std::int64_t stored=stored_resources.total_amount()+stored_ore_mass_kg(item);
             std::ostringstream capacity,corridors,boxes;
             capacity<<"STORAGE (BOX SUM)  "<<stored<<" / "<<storage_dome_capacity_kg(item.storage_size)<<" KG";
             const int gates=storage_loading::gate_count(item);
@@ -655,6 +732,8 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+84},used_material_cost(item.resource_plan,item.construction.step),0.44f,theme_,true);
             game_label(r,{x,p.y+108},capacity.str(),0.56f,theme_,true);
             game_label(r,{x,p.y+130},boxes.str(),0.50f,theme_,true);
+            if(stored_ore_mass_kg(item)>0)
+                game_label(r,{x,p.y+382},"RAW ORE  "+std::to_string(stored_ore_mass_kg(item))+" KG",.45f,theme_,true);
             const auto gate_plan=construction_costs::structure(ResourceKind::StorageGate,resource_models_.mesh(ResourceKind::StorageGate,item.storage_size));
             game_label(r,{x,p.y+156},"ADD GATE COST  "+compact_bundle(gate_plan.total()),0.42f,theme_,true);
             std::string upgrades;
@@ -697,6 +776,18 @@ void GameApp::render_selection_panel(Renderer& r){
             }
             return;
         }
+        if(item.kind==ResourceKind::OxygenTank){
+            const double capacity=oxygen_tank_capacity_kg(item.size);
+            std::ostringstream inventory;
+            inventory<<std::fixed<<std::setprecision(1)<<"STORED OXYGEN  "<<item.stored_oxygen_kg<<" / "<<capacity<<" KG";
+            game_label(r,{x,p.y+90},inventory.str(),0.54f,theme_);
+            game_label(r,{x,p.y+119},"TANK FILL  "+std::to_string((int)(100*item.stored_oxygen_kg/capacity))+"%",0.51f,theme_,true);
+            game_label(r,{x,p.y+151},"COLLECTS SURPLUS FROM CONNECTED GENERATORS",0.42f,theme_,true);
+            game_label(r,{x,p.y+174},"RESERVE FEEDS CONNECTED HABITATS BELOW 95% AIR",0.40f,theme_,true);
+            game_label(r,{x,p.y+197},"AVAILABLE AS OXYGEN AT THE TRADER",0.42f,theme_,true);
+            game_label(r,{x,p.y+220},utilities.str(),0.45f,theme_,true);
+            return;
+        }
         if(item.kind==ResourceKind::HydrogenTank){
             const double capacity=hydrogen_tank_capacity_kg(item.size);
             const double fraction=capacity>0?item.supply.hydrogen_kg/capacity:0.0;
@@ -721,7 +812,7 @@ void GameApp::render_selection_panel(Renderer& r){
             if(index<service.resources.size() && service.resources[index].connected){
                 for(std::size_t j=0;j<placed_resources_.size() && j<service.resources.size();++j){
                     const auto& tank=placed_resources_[j];
-                    if(tank.kind==ResourceKind::HydrogenTank && tank.construction.complete() && service.resources[j].connected &&
+                    if(tank.kind==ResourceKind::HydrogenTank && tank.construction.complete() && tank.power_enabled && service.resources[j].connected &&
                        service.resources[j].component==service.resources[index].component) ready_hydrogen+=tank.supply.hydrogen_kg;
                 }
             }
@@ -752,21 +843,21 @@ void GameApp::render_selection_panel(Renderer& r){
                 refuel_landing_pad(index,false);return;
             }
             game_label(r,{x,p.y+296},"MOON RETURN DELTA-V 3.0 KM/S / ISP 450 S",0.41f,theme_,true);
-            game_label(r,{x,p.y+317},"NO LAUNCH OR OXIDIZER SIMULATION YET",0.40f,theme_,true);
+            game_label(r,{x,p.y+317},"RETURN VEHICLE LAUNCH NOT AVAILABLE",0.40f,theme_,true);
+            render_pad_trade(r,index,p,panel_scroll,warning_extra);
             return;
         }
         if(item.kind==ResourceKind::HydrogenGenerator){
             const double factor=item.size==ResourceSizeTier::Small?0.5:1.0;
-            const bool paused=game_speed_==GameSpeed::Pause;
             game_label(r,{x,p.y+88},used_material_cost(item.resource_plan,item.construction.step),0.44f,theme_,true);
             game_label(r,{x,p.y+112},pos.str(),0.58f,theme_,true);
             game_label(r,{x,p.y+136},rot.str(),0.58f,theme_,true);
             game_label(r,{x,p.y+160},utilities.str(),0.58f,theme_,true);
-            std::ostringstream power;power<<std::fixed<<std::setprecision(2)<<"FUEL CELL "<<(paused?0.0:item.supply.hydrogen_power_kw)<<" / "<<kHydrogenGeneratorPeakKw*factor<<" KW";
-            std::ostringstream fuel;fuel<<std::fixed<<std::setprecision(3)<<"H2 USE "<<(paused?0.0:item.supply.hydrogen_consumed_kg_per_day)<<" KG/D / "<<kHydrogenElectricalKwhPerKg<<" KWH/KG NET";
+            std::ostringstream power;power<<std::fixed<<std::setprecision(2)<<"FUEL CELL "<<(paused?0.0:supply_rates.hydrogen_power_kw)<<" / "<<kHydrogenGeneratorPeakKw*factor<<" KW";
+            std::ostringstream fuel;fuel<<std::fixed<<std::setprecision(3)<<"H2 USE "<<(paused?0.0:supply_rates.hydrogen_consumed_kg_per_day)<<" KG/D / "<<kHydrogenElectricalKwhPerKg<<" KWH/KG NET";
             game_label(r,{x,p.y+190},power.str(),0.50f,theme_);
             game_label(r,{x,p.y+212},fuel.str(),0.42f,theme_,true);
-            game_label(r,{x,p.y+234},(item.supply.warnings&NoHydrogen)?"STATE  WAITING FOR CONNECTED H2":"STATE  DISPATCH / BATTERY CHARGE READY",0.42f,theme_,true);
+            game_label(r,{x,p.y+234},!item.power_enabled?"STATE  POWERED OFF":(item.supply.warnings&NoHydrogen)?"STATE  WAITING FOR CONNECTED H2":"STATE  DISPATCH / BATTERY CHARGE READY",0.42f,theme_,true);
             game_label(r,{x,p.y+256},"H2 ARRIVES THROUGH COMPLETED SUPPLY-CHANNEL NETWORK",0.40f,theme_,true);
             game_label(r,{x,p.y+280},"DEL REMOVE / LMB SELECT OTHER",0.44f,theme_,true);
             return;
@@ -789,7 +880,20 @@ void GameApp::render_selection_panel(Renderer& r){
         game_label(r,{x,p.y+112},pos.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+136},rot.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+160},utilities.str(),0.58f,theme_,true);
-        game_label(r,{x,p.y+224},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
+        if(item.kind==ResourceKind::OreDriller){
+            const auto mix=ore::deposit(item.position);
+            for(std::size_t i=0;i<mix.size();++i){
+                std::ostringstream line;
+                line<<ore::names[i]<<"   "<<std::fixed<<std::setprecision(1)<<100*mix[i]<<"%   /   "
+                    <<ore::boxes(item.mined_ore_kg[i])<<" BOXES READY";
+                game_label(r,{x,p.y+189+21*(float)i},line.str(),.47f,theme_,true);
+            }
+            game_label(r,{x,p.y+288},"CONVEYOR TO PROCESSING FACILITY OR FACTORY",.40f,theme_,true);
+            return;
+        }
+        const float footer_y=item.kind==ResourceKind::SolarPanel?302.0f:
+                             item.kind==ResourceKind::WaterDriller?252.0f:234.0f;
+        game_label(r,{x,p.y+footer_y},"DEL REMOVE / LMB SELECT OTHER",0.50f,theme_,true);
         return;
     }
 
@@ -799,13 +903,23 @@ void GameApp::render_selection_panel(Renderer& r){
         length<<"LENGTH "<<std::fixed<<std::setprecision(1)<<utility_network_.connection_length((size_t)selected_utility_)<<" M";
         endpoints<<utility_endpoint_name(u.endpoint_a.kind);
         if(u.endpoint_a.kind!=UtilityEndpointKind::Open) endpoints<<" "<<(u.endpoint_a.index+1);
-        endpoints<<" <-> "<<utility_endpoint_name(u.endpoint_b.kind);
+        endpoints<<(u.kind==UtilityKind::ConveyorBelt?" -> ":" <-> ")<<utility_endpoint_name(u.endpoint_b.kind);
         if(u.endpoint_b.kind!=UtilityEndpointKind::Open) endpoints<<" "<<(u.endpoint_b.index+1);
         game_label(r,{x,p.y+10},"UTILITY #"+std::to_string(selected_utility_+1),0.64f,theme_,true);
         game_label(r,{x,p.y+34},utility_kind_name(u.kind),0.76f,theme_);
         const bool open_end=u.endpoint_a.kind==UtilityEndpointKind::Open || u.endpoint_b.kind==UtilityEndpointKind::Open;
         if(u.construction.complete()){
-            game_label(r,{x,p.y+60},open_end?"STATUS  DISCONNECTED / CAPPED":"STATUS  CONNECTED / ONLINE",0.58f,theme_);
+            if(u.kind==UtilityKind::ConveyorBelt){
+                const auto& drill=placed_resources_[u.endpoint_a.index];
+                const auto& receiver=placed_habitats_[u.endpoint_b.index];
+                const char* status=!drill.construction.complete() || !receiver.construction.complete()?"WAITING FOR ENDPOINT CONSTRUCTION":
+                    drill.supply.power_fraction<=0?"WAITING FOR DRILLER POWER":
+                    u.ore_cargo==ore::no_cargo?"WAITING FOR ORE BOX":
+                    u.ore_distance_m<utility_network_.connection_length((std::size_t)selected_utility_)?"TRANSPORTING ORE":"WAITING FOR PROCESSING";
+                game_label(r,{x,p.y+60},status,.51f,theme_);
+                if(u.ore_cargo<ore::no_cargo)
+                    game_label(r,{x,p.y+186},std::string(ore::names[u.ore_cargo])+" / "+std::to_string(ore::box_kg)+" KG",.46f,theme_,true);
+            }else game_label(r,{x,p.y+60},open_end?"STATUS  DISCONNECTED / CAPPED":"STATUS  CONNECTED / ONLINE",0.58f,theme_);
         }else{
             std::ostringstream build;
             build<<"CONSTRUCTION  STEP "<<(int)u.construction.step<<" / "<<(int)kSupplyConstructionSteps
@@ -873,8 +987,9 @@ void GameApp::render_selection_panel(Renderer& r){
         game_label(r,{x,p.y+156},segments.str(),0.58f,theme_,true);
         game_label(r,{x,p.y+179},endpoints.str(),0.50f,theme_,true);
         game_label(r,{x,p.y+202},breathable_air_text(c.supply),0.48f,theme_);
-        game_label(r,{x,p.y+220},air_rate_text(c.supply,game_speed_==GameSpeed::Pause),0.43f,theme_,true);
-        game_label(r,{x,p.y+238},oxygen_net_text(c.supply,game_speed_==GameSpeed::Pause),0.43f,theme_,true);
+        const auto& supply_rates=sample_supply(c.supply);
+        game_label(r,{x,p.y+220},air_rate_text(supply_rates,paused),0.43f,theme_,true);
+        game_label(r,{x,p.y+238},oxygen_net_text(supply_rates,paused),0.43f,theme_,true);
         game_label(r,{x,p.y+276},"DEL REMOVE / RATES PER GAME DAY",0.43f,theme_,true);
 
         const bool linking=corridor_link_source_==selected_corridor_;

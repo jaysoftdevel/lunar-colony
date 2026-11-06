@@ -43,7 +43,9 @@ void GameApp::render_debug_frame(Renderer& r){
     std::string gpu=r.gpu_renderer();
     if(gpu.size()>42) gpu=gpu.substr(0,39)+"...";
 
-    game_label(r,{frame.x+12,frame.y+8},"DEBUG",0.66f,theme_,true);
+    const char* title=active_game_phase_!=GamePhase::Debug?"DEBUG":
+        stage3_mode_==Stage3Mode::Template?"DEBUG / TEMPLATE":"DEBUG / SANDBOX";
+    game_label(r,{frame.x+12,frame.y+8},title,0.66f,theme_,true);
     game_label(r,{frame.x+12,frame.y+29},"VERSION " + std::string(version::current),0.68f,theme_);
     game_label(r,{frame.x+12,frame.y+50},fps.str(),0.68f,theme_);
     game_label(r,{frame.x+12,frame.y+71},playfield.str(),0.62f,theme_);

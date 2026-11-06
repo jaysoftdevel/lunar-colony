@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/engine.hpp"
+#include "game/world/ore.hpp"
 #include "game/systems/resource_management.hpp"
 #include "game/robots/safety_coordinator.hpp"
 #include <array>
@@ -38,7 +39,8 @@ enum class BuilderRobotAction : std::uint8_t {
     PutDown,
     ApplyResources,
     Welding,
-    BuildUp
+    BuildUp,
+    Dismantle
 };
 
 inline constexpr float kBuilderRobotBodyRadiusM = 0.48f;
@@ -103,6 +105,7 @@ inline const char* builder_robot_action_name(BuilderRobotAction action){
         case BuilderRobotAction::ApplyResources: return "APPLYING MATERIAL";
         case BuilderRobotAction::Welding: return "WELDING";
         case BuilderRobotAction::BuildUp: return "BUILD-UP";
+        case BuilderRobotAction::Dismantle: return "DISMANTLING";
     }
     return "";
 }
@@ -123,7 +126,21 @@ struct ConstructionTargetRef {
     bool same_as(const ConstructionTargetRef& other) const { return kind==other.kind && index==other.index; }
 };
 
+inline constexpr std::uint8_t kRobotRelocationFailures=5;
+inline constexpr std::uint64_t kLanderBlockerSequence=UINT64_MAX;
+
+struct RobotOperationRetry {
+    BuilderRobotAction action{BuilderRobotAction::None};
+    BuilderRobotMode mode{BuilderRobotMode::Idle};
+    std::uint64_t task{0};
+    std::uint8_t failures{0};
+    eng::Vec3 origin{}, goal{};
+    float relocation_cooldown{0};
+    bool relocation_pending() const { return failures>=kRobotRelocationFailures; }
+};
+
 struct BuilderRobotState {
+    ore::Haul ore_haul{};
     RobotRole role{RobotRole::Constructor};
     eng::Vec3 position{};               // wheel contact / local floor position
     float heading_degrees{0.0f};
@@ -264,6 +281,10 @@ struct BuilderRobotState {
     BuilderRobotAction watchdog_action{BuilderRobotAction::None};
     float watchdog_elapsed{0.0f};
     std::uint8_t recovery_attempts{0};
+    RobotOperationRetry operation_retry{};
+    std::uint64_t blocking_structure{0};
+    float blocker_display_seconds{0};
+    float watchdog_action_elapsed{0};
     // Persistent alternate service slot selected by the local recovery logic.
     // Unlike recovery_attempts this must not reset after a few centimetres of
     // progress, otherwise a robot can oscillate back to the same blocked work

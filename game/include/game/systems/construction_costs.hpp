@@ -14,6 +14,7 @@ ConstructionResourcePlan corridor(float length_m);
 ConstructionResourcePlan corridor(const std::vector<eng::Vec3>& path,std::size_t network_junctions=0);
 ConstructionResourcePlan supply_channel(float length_m);
 ConstructionResourcePlan supply_channel(const std::vector<eng::Vec3>& path,std::size_t junctions=0);
+ConstructionResourcePlan conveyor_belt(const std::vector<eng::Vec3>& path);
 ConstructionResourcePlan walkway(float length_m);
 
 } // namespace game::construction_costs

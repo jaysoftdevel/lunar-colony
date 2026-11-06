@@ -193,7 +193,7 @@ void GameApp::render_construction_status_frames(Renderer& r){
     for(std::size_t i=0;i<utilities.size();++i){
         const auto& c=utilities[i];
         if(c.construction.complete()) continue;
-        add_frame({ConstructionTargetKind::Utility,i},path_midpoint(c.path,1.65f),"SUPPLY CHANNEL #"+std::to_string(i+1),
+        add_frame({ConstructionTargetKind::Utility,i},path_midpoint(c.path,1.65f),std::string(utility_kind_name(c.kind))+" #"+std::to_string(i+1),
                   c.construction.progress(),c.resource_plan,c.construction.step);
     }
     const auto& walkways=walkway_network_.connections();
@@ -221,11 +221,11 @@ void GameApp::render_construction_status_frames(Renderer& r){
     if(first_person_mode_!=FirstPersonMode::Active){
         if(selection_kind_!=SelectionKind::None)occupied.push_back(selection_kind_==SelectionKind::GroundResource && selected_ground_resources_.size()<=1?ground_resource_panel_rect():selection_panel_rect());
         else occupied.push_back({PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,560,130});
-        if(debug_frame_enabled_)occupied.push_back({logical_w-360-PLAYFIELD_MARGIN,logical_h-BUILD_BAR_H-198-PLAYFIELD_MARGIN,360,198});
+        if(debug_mode_active())occupied.push_back({logical_w-360-PLAYFIELD_MARGIN,logical_h-BUILD_BAR_H-198-PLAYFIELD_MARGIN,360,198});
     }
     // Normal gameplay reserves the right-edge progression checklist so floating
     // construction frames never cover objectives or the crew-readiness milestone.
-    if(!debug_frame_enabled_)occupied.push_back(progress_tree_panel_rect());
+    if(!debug_mode_active())occupied.push_back(progress_tree_panel_rect());
     for(auto& frame:visible){
         const auto needed_lines=frame.selected?resource_lines("NEEDED",frame.needed,"NONE"):std::vector<std::string>{};
         const auto shipped_lines=frame.selected?resource_lines("SHIPPED",frame.shipped,"NONE"):std::vector<std::string>{};
@@ -306,13 +306,29 @@ void GameApp::render_construction_status_frames(Renderer& r){
 void GameApp::render_supply_indicators(Renderer& r){
     const float aspect=(float)r.width()/std::max(1,r.height());
     const Mat4 vp=first_person_mode_==FirstPersonMode::Active?first_person_.view_projection(aspect):camera_.view_projection(aspect);
-    const float pulse=0.48f+0.52f*(0.5f+0.5f*std::sin(supply_warning_time_*2.0943951f));
-    const auto draw=[&](Vec3 position,float height,const SupplyState& supply,bool inside){
+    const float pulse=0.48f+0.52f*(0.5f+0.5f*std::sin(ui_time_seconds_*2.0943951f));
+    const auto draw=[&](Vec3 position,float height,const SupplyState& supply,bool inside,bool storage_full,bool power_enabled){
         float x=0,y=0;if(!project_world_to_logical(vp,position+Vec3{0,height+1.0f,0},r.width(),r.height(),ui_scale_,x,y))return;
-        if(supply.warnings){
+        if(!power_enabled){
+            const Color info{0.34f,0.84f,1.0f,1.0f};
+            r.draw_rect({x-8,y-16,16,18},{0.02f,0.06f,0.09f,0.95f});
+            r.draw_line({x,y-13},{x,y-11},info,2.5f);
+            r.draw_line({x,y-8},{x,y-2},info,2.5f);
+        }else if(supply.warnings){
             const Color color{1.0f,0.68f,0.10f,pulse};
             r.draw_line({x,y-16},{x-10,y+3},color,2.5f);r.draw_line({x-10,y+3},{x+10,y+3},color,2.5f);r.draw_line({x+10,y+3},{x,y-16},color,2.5f);
             r.draw_line({x,y-10},{x,y-4},color,2.5f);r.draw_line({x,y-1},{x,y},color,2.5f);
+        }
+        if(storage_full){
+            const float center=(!power_enabled || supply.warnings)?x+24:x;
+            const Color amber{1.0f,0.68f,0.10f,1.0f};
+            r.draw_rect({center-10,y-15,20,18},{0.05f,0.04f,0.02f,0.93f});
+            // Crate outline with a nearly full fill bar, separate from supply warnings.
+            r.draw_line({center-8,y-13},{center+8,y-13},amber,2);
+            r.draw_line({center-8,y-13},{center-8,y+1},amber,2);
+            r.draw_line({center+8,y-13},{center+8,y+1},amber,2);
+            r.draw_line({center-8,y+1},{center+8,y+1},amber,2);
+            r.draw_rect({center-4,y-8,8,6},amber);
         }
         if(inside){
             const std::string label="AIR "+std::to_string((int)std::lround(supply.breathability()))+"%";
@@ -334,8 +350,13 @@ void GameApp::render_supply_indicators(Renderer& r){
     for(std::size_t i=0;i<placed_resources_.size();++i)priority({ConstructionTargetKind::Resource,i},placed_resources_[i].position,resource_models_.mesh(placed_resources_[i]).height);
     const auto links=[&](const auto& connections,ConstructionTargetKind kind){for(std::size_t i=0;i<connections.size();++i){const auto& path=connections[i].path;if(!path.empty())priority({kind,i},path[path.size()/2],3);}};
     links(corridor_network_.connections(),ConstructionTargetKind::Corridor);links(utility_network_.connections(),ConstructionTargetKind::Utility);links(walkway_network_.connections(),ConstructionTargetKind::Walkway);
-    for(const auto& h:placed_habitats_)if(h.construction.complete())draw(h.position,habitat_models_.mesh(h).height,h.supply,true);
-    for(const auto& q:placed_resources_)if(q.construction.complete())draw(q.position,resource_models_.mesh(q).height,q.supply,q.kind==ResourceKind::StorageDome);
+    for(const auto& h:placed_habitats_)if(h.construction.complete() || !h.power_enabled)
+        draw(h.position,habitat_models_.mesh(h).height,h.supply,h.construction.complete(),false,h.power_enabled);
+    for(const auto& q:placed_resources_)if(q.construction.complete() || !q.power_enabled){
+        const bool dome=q.kind==ResourceKind::StorageDome;
+        const bool full=dome && storage_dome_used_kg(q)>storage_dome_capacity_kg(q.storage_size)*kStorageDomeFullWarning;
+        draw(q.position,resource_models_.mesh(q).height,q.supply,dome && q.construction.complete(),full,q.power_enabled);
+    }
 }
 
 } // namespace game

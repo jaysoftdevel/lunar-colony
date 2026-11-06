@@ -125,6 +125,9 @@ public:
     bool habitat_entrance_connected(std::size_t habitat_index,std::size_t entrance_index) const;
     float connection_length(std::size_t corridor_index) const;
     void remove_corridor(std::size_t corridor_index);
+    std::vector<std::size_t> dependent_corridors(const std::vector<std::size_t>& roots) const;
+    void remove_corridors(const std::vector<std::size_t>& indices); // includes dependants
+    void append_corridor(CorridorConnection connection); // validated preview
     void remove_habitat(std::size_t habitat_index);
     void remove_resource(std::size_t resource_index);
     void update_construction(float dt,ResourceManagement& resources,bool allow_negative);

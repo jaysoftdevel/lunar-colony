@@ -111,6 +111,7 @@ struct PlacedHabitat {
     ConstructionResourcePlan resource_plan{};
     ResourceBundle site_buffer{}; // delivered construction material staged at this blueprint
     std::array<HydroponicsBay,kMaxHydroponicsBays> hydroponics{};
+    bool power_enabled{true};
 };
 
 class HabitatModelLibrary {

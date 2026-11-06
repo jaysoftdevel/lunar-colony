@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 namespace {
@@ -17,11 +18,14 @@ void require(bool pass,const std::string& message){if(!pass)throw std::runtime_e
 struct Draw {char type;std::array<float,6> v{};std::string text;eng::Color color;};
 struct Recorder:eng::Renderer {
     int w=1920,h=1080;float scale=1;bool hud=false;std::vector<Draw> draws;
+    std::vector<eng::Vec3> belt_preview_lines;
     bool initialize(void*,std::uintptr_t,int,int)override{return true;}
     void resize(int width,int height)override{w=width;h=height;}
-    void begin_frame(eng::Color)override{draws.clear();hud=false;}void end_frame()override{}
+    void begin_frame(eng::Color)override{draws.clear();belt_preview_lines.clear();hud=false;}void end_frame()override{}
     void set_3d(const eng::Mat4&)override{hud=false;}void set_2d(float s)override{scale=s;hud=true;}
-    void draw_lines_3d(const std::vector<eng::Vec3>&,eng::Color,float)override{}
+    void draw_lines_3d(const std::vector<eng::Vec3>& points,eng::Color color,float width)override{
+        if(width==1.9f && color.r==.34f && color.g==.82f && color.b==1.0f)belt_preview_lines=points;
+    }
     void draw_triangles_3d(const std::vector<eng::Vec3>&,eng::Color)override{}
     void draw_rect(eng::Rect r,eng::Color c)override{if(hud)draws.push_back({'R',{r.x,r.y,r.w,r.h,scale,0},{},c});}
     void draw_line(eng::Vec2 a,eng::Vec2 b,eng::Color c,float width)override{if(hud)draws.push_back({'L',{a.x,a.y,b.x,b.y,scale,width},{},c});}
@@ -170,17 +174,166 @@ struct UiRegression {
             }
             Recorder r;r.resize((int)size.x,(int)size.y);r.set_2d(app.ui_scale_);app.render_status_bar(r);r.check_bounds("status charge/air bars");
             std::vector<Draw> bars;std::string labels;for(const auto& d:r.draws){if(d.type=='R' && d.v[1]==33 && d.v[3]==6)bars.push_back(d);if(d.type=='T')labels+=d.text+"|";}
-            require(bars.size()==6,"missing charge/air/water indicator bars");const float charge=state==0?0:state==1?(45.0f/202.5f):1,air=state==0?0:state==1?0.25f:1;
+            require(bars.size()==8,"missing charge/air/water/storage indicator bars");const float charge=state==0?0:state==1?(45.0f/202.5f):1,air=state==0?0:state==1?0.25f:1;
             require(std::abs(bars[1].v[2]-bars[0].v[2]*charge)<0.001f,"charge bar is not actual completed-battery energy/capacity");
             require(std::abs(bars[3].v[2]-bars[2].v[2]*air)<0.001f,"air bar does not combine indoor volume correctly");
             require(std::abs(bars[5].v[2]-bars[4].v[2]*air)<0.001f,"water bar is not actual completed tank fill");
-            if(state){require(labels.find(state==1?"RATE +4.5 KW":"RATE -2.0 KW")!=std::string::npos,"power charge/discharge rate missing");require(labels.find(state==1?"RATE +123.0 L/D":"RATE -34.1 L/D")!=std::string::npos,"water fill/drain rate missing");}
+            if(state){require(labels.find(state==1?"BAT +4.5 KW":"BAT -2.0 KW")!=std::string::npos,"power charge/discharge rate missing");require(labels.find(state==1?"RATE +123.0 L/D":"RATE -34.1 L/D")!=std::string::npos,"water fill/drain rate missing");}
             require(labels.find(state==0?"AIR --":state==1?"AIR 25.0%":"AIR 100.0%")!=std::string::npos,"air label disagrees with indicator");
             require(labels.find(state==0?"POWER 0.0/0.0 KWH":state==1?"POWER 45.0/202.5 KWH":"POWER 202.5/202.5 KWH")!=std::string::npos,"power label uses stale counters or includes blueprints");
             if(!output.empty() && state==1 && zoom==2 && (size.x==1280 || size.x==3840))r.write(std::filesystem::path(output)/("status-bars-"+std::to_string((int)size.x)+".json"));
             ++cases;
         }
         std::cout<<cases<<" status-bar cases: battery capacity/charge, combined indoor air, disconnected rooms, excluded blueprints/outdoor machinery, empty/full/clamped values and resolution scaling passed\n";
+    }
+    static void storage_and_rate_display(){
+        eng::Application engine;
+        GameApp app(engine);
+        app.on_resize(1920,1080);
+        Recorder r;
+        r.set_2d(app.ui_scale_);
+        const auto text=[&](const std::string& part){
+            for(const auto& draw:r.draws)if(draw.type=='T'&&draw.text.find(part)!=std::string::npos)return true;
+            return false;
+        };
+        const auto stock=[](PlacedResource& item,std::int64_t kg){
+            item.stored_boxes={{MaterialResource::Iron,kg,1}};
+            sync_stored_resource_totals(item);
+        };
+
+        PlacedResource small;small.kind=ResourceKind::StorageDome;
+        small.construction.step=kConstructionSteps;
+        const auto small_capacity=storage_dome_capacity_kg(small.storage_size);
+        stock(small,small_capacity*85/100);
+        PlacedResource large=small;
+        large.storage_size=StorageDomeSize::Big;
+        large.position={20,0,0};
+        const auto large_capacity=storage_dome_capacity_kg(large.storage_size);
+        stock(large,large_capacity/2);
+        PlacedResource blueprint=large;
+        blueprint.position={-20,0,0};
+        blueprint.construction.step=0;
+        stock(blueprint,large_capacity);
+        app.placed_resources_={small,large,blueprint};
+        app.ground_resource_piles_={{MaterialResource::Iron,100000,{0,0,0},1,1}};
+        app.ui_input_.mouse_x=static_cast<int>(r.width()*.80f/app.ui_scale_);
+        app.ui_input_.mouse_y=20;
+        app.render_status_bar(r);
+        const auto stored=small_capacity*85/100+large_capacity/2;
+        const auto capacity=small_capacity+large_capacity;
+        std::ostringstream percent;
+        percent<<"STORAGE "<<std::fixed<<std::setprecision(1)<<100.0*stored/capacity<<"%";
+        require(text(percent.str())&&text(std::to_string(stored)+" / "+std::to_string(capacity)+" KG USED"),
+                "storage HUD ignored size, completion or physical stock");
+        r.draws.clear();
+        app.render_supply_indicators(r);
+        const auto markers=[&]{
+            int count=0;
+            for(const auto& draw:r.draws)
+                if(draw.type=='R' && draw.v[2]==20 && draw.v[3]==18)++count;
+            return count;
+        };
+        require(markers()==0,"85 percent or unfinished dome warned");
+        stock(app.placed_resources_[0],small_capacity*85/100+1);
+        app.placed_resources_[0].supply.warnings=LowAir;
+        r.draws.clear();
+        app.render_supply_indicators(r);
+        require(markers()==1,"nearly full dome has no separate storage marker");
+        stock(app.placed_resources_[0],small_capacity/2);
+        r.draws.clear();
+        app.render_supply_indicators(r);
+        require(markers()==0,"storage marker remained after unloading");
+
+        PlacedHabitat generator;generator.kind=HabitatKind::OxygenGeneratorDome;
+        generator.construction.step=kConstructionSteps;
+        generator.supply.oxygen_produced_kg_per_day=1.25;
+        app.placed_habitats_={generator,generator};
+        app.placed_habitats_[1].supply.oxygen_produced_kg_per_day=7;
+        app.selection_kind_=GameApp::SelectionKind::Habitat;
+        app.selected_habitat_=0;
+        app.battery_net_kw_=1.5;
+        app.supply_power_load_kw_=18.5;
+        app.supply_power_delivered_kw_=16.0;
+        app.status_rate_display_={};
+        const auto render_rates=[&]{
+            r.draws.clear();
+            app.render_status_bar(r);
+            app.render_selection_panel(r);
+        };
+        render_rates();
+        require(text("GRID 16.0/18.5 KW / BAT +1.5")&&text("O2 OUTPUT 1.250"),"initial rate display missing");
+        app.battery_net_kw_=6.5;
+        app.placed_habitats_[0].supply.oxygen_produced_kg_per_day=2.5;
+        app.update(.25f,{});
+        render_rates();
+        require(text("BAT +1.5")&&text("O2 OUTPUT 1.250"),"rates changed before 500 ms");
+        app.update(.25f,{});
+        render_rates();
+        require(text("BAT +6.5")&&text("O2 OUTPUT 2.500"),"rates did not refresh after 500 ms");
+        app.selected_habitat_=1;
+        render_rates();
+        require(text("O2 OUTPUT 7.000"),"new selection displayed rates from the previous item");
+        app.game_speed_=GameApp::GameSpeed::Pause;
+        render_rates();
+        require(text("RATE PAUSED")&&text("O2 OUTPUT 0.000"),"pause did not immediately reach rate displays");
+        std::cout<<"Storage occupancy, per-dome 85 percent threshold and half-second rate displays passed\n";
+    }
+    static void grouped_build_menu(){
+        eng::Application engine;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom){
+            GameApp app(engine);
+            app.ui_scale_index_=zoom;
+            app.on_resize(1280,720);
+            Recorder r;
+            r.resize(1280,720);
+            r.set_2d(app.ui_scale_);
+            for(const auto category:{BuildCategory::Habitats,BuildCategory::Structures}){
+                app.build_catalog_.set_category(category);
+                app.build_catalog_scroll_=0;
+                const auto groups=category==BuildCategory::Habitats?
+                    std::vector<std::string>{"ACCESS","AIR","LIVING","MEDICAL","INDUSTRY","STORAGE"}:
+                    std::vector<std::string>{"POWER","WATER","HYDROGEN","AIR","MINING","SUPPLY","TRADE"};
+                std::vector<std::string> seen;
+                app.ui_input_={};
+                for(int page=0;page<20;++page){
+                    r.draws.clear();
+                    app.render_build_bar(r);
+                    r.check_bounds("grouped build tiles");
+                    for(const auto& d:r.draws){
+                        if(d.type=='T'&&std::find(groups.begin(),groups.end(),d.text)!=groups.end()&&
+                           std::find(seen.begin(),seen.end(),d.text)==seen.end())seen.push_back(d.text);
+                    }
+                    app.ui_input_.mouse_x=160;
+                    app.ui_input_.mouse_y=static_cast<int>(720/app.ui_scale_)-6;
+                    app.ui_input_.wheel=-1;
+                }
+                require(seen==groups,"build group captions are missing or out of order at a supported zoom");
+            }
+        }
+        std::cout<<"Both grouped build catalogs page through all captions at every UI scale\n";
+    }
+
+    static void resource_inventory(const std::string& output){
+        eng::Application engine;int cases=0;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:layout::COMMON_RESOLUTIONS){
+            GameApp app(engine);app.ui_scale_index_=zoom;app.on_resize(size.width,size.height);app.ui_input_.mouse_x=app.ui_input_.mouse_y=-100;
+            ResourceBundle cargo;for(std::size_t i=0;i<kMaterialResourceCount;++i)cargo.amount((MaterialResource)i)=1234+(int)i;app.resources_.restore(cargo);
+            PlacedResource tank;tank.kind=ResourceKind::HydrogenTank;tank.construction.step=kConstructionSteps;tank.supply.hydrogen_kg=50;app.placed_resources_.push_back(tank);tank.construction.step=0;tank.supply.hydrogen_kg=999;app.placed_resources_.push_back(tank);
+            PlacedHabitat generator;generator.kind=HabitatKind::OxygenGeneratorDome;generator.construction.step=kConstructionSteps;generator.placement_sequence=10;generator.supply.hydrogen_kg=2.5;generator.supply.oxygen_kg=250;app.placed_habitats_.push_back(generator);generator.construction.step=0;generator.placement_sequence=11;generator.supply.hydrogen_kg=999;app.placed_habitats_.push_back(generator);
+            PlacedResource pad;pad.kind=ResourceKind::LandingPad;pad.construction.step=kConstructionSteps;pad.rocket_fuel_kg=4200;pad.lander_fuel_kg=1150;app.placed_resources_.push_back(pad);
+            app.trader_.oxygen={{10,21.5},{11,999},{99,999}};app.planning_.funds_eur=876543;
+            Recorder r;r.resize(size.width,size.height);r.set_2d(app.ui_scale_);app.render_status_bar(r);r.check_bounds("all resource status bar");
+            const auto has=[&](const std::string& text){for(const auto& d:r.draws)if(d.type=='T'&&d.text==text)return true;return false;};
+            for(const char* name:{"IRON","COPPER","SILICON","PLASTIC","WATER","FOOD","MEDICAL","ALUMINUM","OXYGEN","HYDROGEN"})require(has(name),std::string("status bar omits ")+name);
+            for(std::size_t i=0;i<kMaterialResourceCount;++i)require(has(std::to_string(1234+i)+" KG"),"status cargo amount missing");
+            require(has("21.5 KG")&&has("52.5 KG"),"gas stocks include cabin air, blueprints or orphan buffers");
+            require(has("CASH EUR 876543"),"cash omitted from status bar");
+            if(!output.empty()&&zoom==0&&size.width==1920)r.write(std::filesystem::path(output)/"all-resources.json");
+            // Exact stock tooltip belongs to the second row, including at zoom 200%.
+            app.ui_input_.mouse_x=(int)(size.width*.95f/app.ui_scale_);app.ui_input_.mouse_y=70;r.draws.clear();app.render_status_bar(r);r.check_bounds("gas stock tooltip");bool tooltip=false;for(const auto& d:r.draws)if(d.type=='T')tooltip|=d.text.find("HYDROGEN / 52.5 KG STORED")!=std::string::npos;require(tooltip,"gas tooltip missing/wrong hitbox");
+            ++cases;
+        }
+        std::cout<<cases<<" full-inventory status layouts: all ten resources, exact cargo/gas counts, exclusion of cabin air/blueprints/allocated fuel, cash and tooltip hitboxes passed\n";
     }
     static void progress_tree(){
         eng::Application engine;int cases=0;
@@ -287,10 +440,89 @@ struct UiRegression {
         std::cout<<"Bio Dome two-column dropdown table, crop removal, progress bars, photoperiod status and construction gating passed\n";
     }
 
+    static void structure_power_controls(){
+        eng::Application engine;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom){
+            GameApp app(engine);
+            app.ui_scale_index_=zoom;
+            app.on_resize(1920,1080);
+            app.playfield_.rebuild(128);
+            app.camera_.restore({30,65,0,{}});
+            app.placed_resources_.resize(1);
+            app.placed_habitats_.resize(1);
+            auto& item=app.placed_resources_.front();
+            auto& habitat=app.placed_habitats_.front();
+            item.construction.step=habitat.construction.step=kConstructionSteps;
+            Recorder r;
+            r.resize(1920,1080);
+            r.set_2d(app.ui_scale_);
+
+            const auto select=[&](GameApp::SelectionKind kind){
+                app.clear_world_selection();
+                app.selection_kind_=kind;
+                if(kind==GameApp::SelectionKind::Resource)app.selected_resource_=0;
+                else app.selected_habitat_=0;
+            };
+            const auto click=[&](const char* caption){
+                const auto button=r.button(caption);
+                app.ui_input_.mouse_x=(int)(button.x+button.w*.5f);
+                app.ui_input_.mouse_y=(int)(button.y+button.h*.5f);
+                app.ui_input_.left_pressed=true;
+                app.render_selection_panel(r);
+                app.ui_input_={};
+                r.draws.clear();
+                app.render_selection_panel(r);
+            };
+            const auto find_row=[&](const char* prefix)->const Draw&{
+                for(const auto& draw:r.draws)if(draw.type=='T' && draw.text.starts_with(prefix))return draw;
+                throw std::runtime_error(std::string("missing structure inspector row: ")+prefix);
+            };
+            select(GameApp::SelectionKind::Resource);
+            for(auto kind:{ResourceKind::SolarPanel,ResourceKind::WaterDriller}){
+                item.kind=kind;
+                item.supply.warnings=NoPower|NoWater;
+                r.draws.clear();
+                app.render_selection_panel(r);
+                const auto& footer=find_row("DEL REMOVE");
+                const auto& buffer=find_row("LOCAL BUFFER");
+                require(buffer.v[1]+buffer.v[3]<=footer.v[1],"storage buffer and removal footer overlap");
+                if(kind==ResourceKind::SolarPanel){
+                    const auto& track=find_row("TRACKING ON");
+                    const auto button=r.button("SUN TRACKING: ON");
+                    require(track.v[1]+track.v[3]<=buffer.v[1] && buffer.v[1]+buffer.v[3]<=button.y &&
+                        button.y+button.h<=footer.v[1],"solar rows or tracking button overlap");
+                }
+                click("POWER OFF");
+                require(!item.power_enabled && item.supply.power_fraction==0,"resource power-off click failed");
+                find_row("STATUS  POWERED OFF");
+                r.draws.clear();
+                app.render_supply_indicators(r);
+                require(std::count_if(r.draws.begin(),r.draws.end(),[](const auto& draw){
+                    return draw.type=='L' && draw.color.r==.34f && draw.color.g==.84f && draw.color.b==1.0f;
+                })==2,"powered-off info icon missing");
+                app.render_selection_panel(r);
+                click("POWER ON");
+                require(item.power_enabled,"resource power-on click failed");
+            }
+            select(GameApp::SelectionKind::Habitat);
+            r.draws.clear();
+            app.render_selection_panel(r);
+            click("POWER OFF");
+            require(!habitat.power_enabled && habitat.supply.power_fraction==0,"habitat power-off click failed");
+            click("POWER ON");
+            require(habitat.power_enabled,"habitat power-on click failed");
+        }
+        std::cout<<"Power switches, offline world icon and independent solar/driller rows passed\n";
+    }
+
     static void run(const std::string& output){
         order_controls();
         airlock_status();
         status_bars(output);
+        storage_and_rate_display();
+        structure_power_controls();
+        grouped_build_menu();
+        resource_inventory(output);
         progress_tree();
         scrollable_selection_panel();
         hydroponics_panel();
@@ -339,7 +571,7 @@ struct UiRegression {
         }
         {
             GameApp stages(engine);setup(stages,2,2);Recorder stage_ui;stage_ui.resize(1920,1080);stages.render(stage_ui);
-            bool planning=false,robot_stage=false,manned=false;for(const auto& d:stage_ui.draws)if(d.type=='T'){planning|=d.text.find("1  PLANNING")!=std::string::npos;robot_stage|=d.text.find("2  ROBOT PREPARATION")!=std::string::npos;manned|=d.text.find("3  MANNED BASE")!=std::string::npos;}
+            bool planning=false,robot_stage=false,manned=false;for(const auto& d:stage_ui.draws)if(d.type=='T'){planning|=d.text.find("1  PLANNING")!=std::string::npos;robot_stage|=d.text.find("2  ROBOT PREPARATION")!=std::string::npos;manned|=d.text.find("3  DEBUG MODES")!=std::string::npos;}
             require(planning&&robot_stage&&manned,"new-game stage selector is incomplete");
             require(stages.new_game_mode_selection_==GameApp::NewGameMode::Career && stages.new_game_phase_selection_==GameApp::GamePhase::Planning,
                     "new game does not default to Career / Stage 1");
@@ -495,7 +727,7 @@ struct UiRegression {
             stages.planning_.mission_facility=MissionFacility::Overview;
             stages.planning_.mission_rocket=0;
             stages.planning_.mission_lander=0;
-            stages.planning_.mission_cargo=stages.planning_minimum_mission_cargo();
+            stages.planning_.mission_cargo={};
             stages.input_={};stages.render(stage_ui);
 
             stages.input_={};stages.render(stage_ui);stage_ui.check_bounds("Stage 1 research inspector");
@@ -509,8 +741,7 @@ struct UiRegression {
                 research_gate|=d.text.find("CURRENT GATE: RESEARCH")!=std::string::npos;
             }
             require(mission_title&&workflow&&research_gate,"Stage 1 facility workflow is incomplete");
-            const auto minimum_manifest=stages.planning_minimum_mission_cargo();
-            require(stages.planning_.mission_cargo.total_amount()==minimum_manifest.total_amount(),"new Stage 1 game does not preload its minimum lunar cargo manifest");
+            require(stages.planning_.mission_cargo.empty(),"new Stage 1 mission did not start with an empty payload");
             require(stages.planning_mission_payload_kg()<=stages.planning_mission_payload_capacity_kg(),"default rocket/lander cannot carry the mandatory minimum cargo");
             require(!stages.complete_planning_mission_step(),"mission gate advanced without opening the owning facility");
             stages.planning_.technologies.fill(1);stages.planning_.funds_eur=100'000'000;
@@ -526,11 +757,19 @@ struct UiRegression {
             require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Plan,"refine gate did not advance to plan");
             require(stages.planning_.mission_facility==MissionFacility::MissionControl,"refinement did not route to Mission Control");
 
-            stages.planning_.mission_cargo.iron=std::max<std::int64_t>(0,minimum_manifest.iron-1);
-            require(!stages.complete_planning_mission_step(),"mission plan accepted cargo below the mandatory construction minimum");
-            // Cargo purchased by the campaign must arrive exactly, even when
-            // the player ships more than the minimum baseline.
-            ResourceBundle selected_manifest=minimum_manifest;
+            stages.planning_.mission_structures[(std::size_t)ResourceKind::SolarPanel]=2;
+            stages.planning_.mission_structures[(std::size_t)ResourceKind::OxygenTank]=1;
+            stages.planning_.mission_habitats[(std::size_t)HabitatKind::AirLock]=1;
+            require(!stages.complete_planning_mission_step(),"mission plan accepted a shortfall for selected structures");
+            stages.planning_.mission_cargo.water=98;
+            stages.planning_add_required_cargo();
+            const auto required=stages.planning_structure_requirements();
+            require(!required.empty()&&stages.planning_cargo_covers_structures()&&stages.planning_.mission_cargo.water==98,
+                    "auto-add did not cover the plan or overwrote manually added supplies");
+            const auto added_mass=stages.planning_.mission_cargo.total_amount();
+            stages.planning_add_required_cargo();
+            require(stages.planning_.mission_cargo.total_amount()==added_mass,"auto-add duplicated the manifest");
+            ResourceBundle selected_manifest=stages.planning_.mission_cargo;
             selected_manifest.iron+=321;
             selected_manifest.water+=98;
             selected_manifest.aluminum+=12;
@@ -558,6 +797,8 @@ struct UiRegression {
                     mid_loaded.planning_.mission_facility==MissionFacility::ProgramOffice &&
                     mid_loaded.planning_.mission_rocket==1 && mid_loaded.planning_.mission_lander==1 &&
                     mid_loaded.planning_.mission_cargo.total_amount()==selected_manifest.total_amount() &&
+                    mid_loaded.planning_.mission_habitats==stages.planning_.mission_habitats &&
+                    mid_loaded.planning_.mission_structures==stages.planning_.mission_structures &&
                     !mid_loaded.planning_.mission_paid,
                     "saved mission preparation/facility/vehicle/manifest was lost when loading");
             require(mid_loaded.planning_.contracts[0].status==PlanningContractStatus::Completed &&
@@ -569,6 +810,12 @@ struct UiRegression {
             {
                 std::ifstream source(mid_save,std::ios::binary);
                 std::vector<char> bytes{std::istreambuf_iterator<char>(source),std::istreambuf_iterator<char>()};
+                // Strip the schema-32 deployment trailer before synthesizing schema 29.
+                constexpr std::size_t lander_trailer=2+1+sizeof(float)+3*sizeof(float)+2*kMaterialResourceCount*sizeof(std::int64_t)+2;
+                require(bytes.size()>=lander_trailer,"schema-32 save missing deployment trailer");
+                constexpr std::size_t empty_trade_trailer=1+sizeof(float)+sizeof(std::uint64_t)+3*sizeof(float)+2*kTradeGoodCount*sizeof(std::int64_t)+2*sizeof(std::int64_t)+1+3*sizeof(std::uint32_t);
+                require(bytes.size()>=lander_trailer+empty_trade_trailer+16,"schema-33 fixture missing trade trailer");
+                bytes.resize(bytes.size()-(lander_trailer+empty_trade_trailer+16+10+stages.ground_resource_piles_.size()+stages.planning_.mission_habitats.size()+stages.planning_.mission_structures.size()+7));
                 constexpr std::size_t old_count=12;
                 constexpr std::size_t record_bytes=sizeof(std::uint8_t)+sizeof(double)+sizeof(std::uint16_t);
                 constexpr std::size_t trailing=2+kMaterialResourceCount*sizeof(std::int64_t)+1+sizeof(std::int64_t)+3;
@@ -644,8 +891,14 @@ struct UiRegression {
                     "lunar launch did not start Stage-2 robotic preparation");
             require(stages.active_game_mode_==GameApp::NewGameMode::Career && stages.playfield_.size()==128,
                     "campaign launch did not retain Career mode and initialize a normal lunar playfield");
-            require(stages.builder_robots_.size()==2 && stages.placed_habitats_.empty() && stages.placed_resources_.empty(),
-                    "launch did not spawn a fresh robotic construction stage");
+            require(stages.lander_.phase==LanderPhase::Approach && stages.builder_robots_.empty() && stages.ground_resource_piles_.empty() && stages.resources_.amounts().empty(),
+                    "launch must keep the paid cargo and rovers aboard during descent");
+            require(stages.prepare_default_landing(),"default landing/stash do not fit");
+            stages.update_lunar_lander(200);
+            require(stages.lander_.phase==LanderPhase::Landed && stages.unload_lunar_lander(),"lander did not await an explicit UNLOAD command after touchdown");
+            stages.update_lunar_lander(10000);
+            require(stages.lander_.phase==LanderPhase::Ready && stages.builder_robots_.size()==2 && stages.placed_habitats_.empty() && stages.placed_resources_.empty(),
+                    "lander unloading did not commission the fresh robotic stage");
             require(stages.planning_.funds_eur==before_launch+7'500'000 && stages.planning_.contracts[kPlanningContractCount-1].status==PlanningContractStatus::Completed,
                     "actual launch did not settle the lunar customer contract exactly once");
             for(std::size_t ri=0;ri<kMaterialResourceCount;++ri){
@@ -692,7 +945,7 @@ struct UiRegression {
             GameApp legacy_loaded(engine);
             require(legacy_loaded.load_game_from_file(legacy_save.string(),planning_save_error),"legacy launched save load failed: "+planning_save_error);
             require(legacy_loaded.active_game_phase_==GameApp::GamePhase::RobotPreparation &&
-                    legacy_loaded.resources_.amount(MaterialResource::Iron)==selected_manifest.iron &&
+                    legacy_loaded.lander_.remaining.iron==selected_manifest.iron && legacy_loaded.resources_.amounts().empty() &&
                     legacy_loaded.planning_.mission_step==MissionPreparationStep::Complete,
                     "previously launched Stage-1 save was not migrated into lunar Stage 2");
             std::filesystem::remove(legacy_save,planning_remove_error);
@@ -718,28 +971,197 @@ struct UiRegression {
             require(sandbox_stage.active_game_mode_==GameApp::NewGameMode::FreePlay &&
                     sandbox_stage.active_game_phase_==GameApp::GamePhase::RobotPreparation,
                     "Stage-2 Free Play failed to start its independent robot simulation");
-            require(sandbox_stage.resources_.amount(MaterialResource::Iron)==sandbox_stage.starter_resource_reserve().iron,
+            require(sandbox_stage.lander_.manifest.iron==sandbox_stage.starter_resource_reserve().iron && sandbox_stage.resources_.amounts().empty(),
                     "Free Play Stage-2 stock was overwritten by Career mission cargo");
-            GameApp manned_stage(engine);setup(manned_stage,2,2);manned_stage.new_game_mode_selection_=GameApp::NewGameMode::FreePlay;
-            manned_stage.new_game_phase_selection_=GameApp::GamePhase::MannedBase;
-            manned_stage.render(stage_ui);const auto manned_create=stage_ui.button("CREATE");
-            manned_stage.input_.mouse_x=(int)std::lround((manned_create.x+manned_create.w*0.5f)*stage_ui.scale);manned_stage.input_.mouse_y=(int)std::lround((manned_create.y+manned_create.h*0.5f)*stage_ui.scale);manned_stage.input_.left_pressed=true;manned_stage.render(stage_ui);
-            require(manned_stage.screen_==GameApp::Screen::Playfield && manned_stage.active_game_phase_==GameApp::GamePhase::MannedBase,"Stage 3 creation did not enter the manned-base content");
-            require(manned_stage.active_game_mode_==GameApp::NewGameMode::FreePlay,"Stage 3 Free Play mode was not applied");
-            require(!manned_stage.placed_habitats_.empty() && !manned_stage.placed_resources_.empty() && !manned_stage.corridor_network_.connections().empty(),"Stage 3 did not import the Stage-2 debug scenario");
-            for(const auto& h:manned_stage.placed_habitats_)require(h.construction.complete(),"Stage 3 habitat started as a blueprint");
-            for(const auto& item:manned_stage.placed_resources_)require(item.construction.complete(),"Stage 3 resource structure started as a blueprint");
-            for(const auto& c:manned_stage.corridor_network_.connections())require(c.construction.complete(),"Stage 3 corridor started as a blueprint");
-            for(const auto& u:manned_stage.utility_network_.connections())require(u.construction.complete(),"Stage 3 supply channel started as a blueprint");
-            for(const auto& w:manned_stage.walkway_network_.connections())require(w.construction.complete(),"Stage 3 walkway started as a blueprint");
-            std::string manned_save_error;require(manned_stage.save_game_to_name("manned-ui-regression",manned_save_error),"Stage 3 save failed: "+manned_save_error);
-            const auto manned_save=std::filesystem::path(manned_stage.save_game_directory())/"manned-ui-regression.gmsave";
-            GameApp manned_loaded(engine);require(manned_loaded.load_game_from_file(manned_save.string(),manned_save_error),"Stage 3 load failed: "+manned_save_error);
-            require(manned_loaded.active_game_phase_==GameApp::GamePhase::MannedBase && !manned_loaded.placed_habitats_.empty(),"Stage 3 phase/world did not survive save/load");
-            require(manned_loaded.active_game_mode_==GameApp::NewGameMode::FreePlay,"Stage 3 Free Play mode did not persist");
-            for(const auto& h:manned_loaded.placed_habitats_)require(h.construction.complete(),"Stage 3 loaded habitat lost completed construction state");
-            std::error_code manned_remove_error;std::filesystem::remove(manned_save,manned_remove_error);
-            manned_stage.input_={};manned_stage.render(stage_ui);bool placeholder=false;for(const auto& d:stage_ui.draws)if(d.type=='T')placeholder|=d.text.find("MANNED MOON BASE CONTENT")!=std::string::npos;require(!placeholder,"Stage 3 still renders the old placeholder surface");
+            GameApp sandbox(engine);
+            setup(sandbox,2,2);
+            sandbox.new_game_mode_selection_=GameApp::NewGameMode::FreePlay;
+            sandbox.new_game_phase_selection_=GameApp::GamePhase::RobotPreparation;
+            const auto click_menu=[&](const char* label){
+                sandbox.input_={};
+                sandbox.render(stage_ui);
+                const auto box=stage_ui.button(label);
+                sandbox.input_.mouse_x=(int)std::lround((box.x+box.w*.5f)*stage_ui.scale);
+                sandbox.input_.mouse_y=(int)std::lround((box.y+box.h*.5f)*stage_ui.scale);
+                sandbox.input_.left_pressed=true;
+                sandbox.render(stage_ui);
+                sandbox.input_={};
+            };
+            sandbox.debug_frame_enabled_=false;
+            click_menu("3  DEBUG MODES");
+            require(sandbox.new_game_phase_selection_==GameApp::GamePhase::RobotPreparation,
+                    "Stage 3 was selectable with debug off");
+            sandbox.debug_frame_enabled_=true;
+            click_menu("3  DEBUG MODES");
+            click_menu("CONTINUE");
+            require(sandbox.screen_==GameApp::Screen::Stage3Modes && !sandbox.game_session_active_,
+                    "Stage 3 continued directly into a session");
+            click_menu("BACK");
+            require(sandbox.screen_==GameApp::Screen::NewGame,"Stage 3 back did not return to stage selection");
+            click_menu("CONTINUE");
+            click_menu("SANDBOX MODE");
+            require(sandbox.screen_==GameApp::Screen::Playfield &&
+                    sandbox.active_game_phase_==GameApp::GamePhase::Debug && sandbox.stage3_mode_==GameApp::Stage3Mode::Sandbox &&
+                    sandbox.active_game_mode_==GameApp::NewGameMode::FreePlay &&
+                    sandbox.debug_mode_active() && sandbox.playfield_.size()==128,
+                    "Stage 3 did not start an independent debug sandbox");
+            require(sandbox.placed_habitats_.empty() && sandbox.placed_resources_.empty() &&
+                    sandbox.corridor_network_.connections().empty() && sandbox.utility_network_.connections().empty() &&
+                    sandbox.walkway_network_.connections().empty() && sandbox.builder_robots_.empty() &&
+                    sandbox.ground_resource_piles_.empty() && sandbox.resources_.amounts().empty() && !sandbox.lander_.active(),
+                    "Stage 3 started with a template or starter assets");
+
+            sandbox.camera_.restore({105.0f,75.0f,0.0f,{}});
+            const auto select_build=[&](const char* id){
+                const auto& items=sandbox.build_catalog_.items();
+                const auto item=std::find_if(items.begin(),items.end(),[&](const auto& candidate){return candidate.id==id;});
+                require(item!=items.end(),std::string("missing sandbox tool ")+id);
+                sandbox.clear_world_selection();
+                sandbox.build_catalog_.set_category(item->category);
+                sandbox.build_catalog_.select((int)(item-items.begin()));
+            };
+            const auto click_world=[&](float x,float z){
+                const auto vp=sandbox.camera_.view_projection((float)stage_ui.w/stage_ui.h);
+                const auto& m=vp.m;
+                const float w=m[3]*x+m[11]*z+m[15];
+                sandbox.input_.mouse_x=(int)std::lround((.5f+(m[0]*x+m[8]*z+m[12])/(2*w))*stage_ui.w);
+                sandbox.input_.mouse_y=(int)std::lround((.5f-(m[1]*x+m[9]*z+m[13])/(2*w))*stage_ui.h);
+                sandbox.input_.left_pressed=true;
+                sandbox.render(stage_ui);
+                sandbox.input_={};
+            };
+            select_build("crew_quarters");click_world(25,-20);
+            select_build("storage_dome");click_world(-25,22);
+            select_build("corridor");click_world(10,8);click_world(32,8);
+            select_build("supply_channel");click_world(-15,-17);click_world(5,-17);
+            select_build("walkway");click_world(-6,30);click_world(12,30);
+            require(sandbox.placed_habitats_.size()==1 && sandbox.placed_resources_.size()==1 &&
+                    sandbox.corridor_network_.connections().size()==1 && sandbox.utility_network_.connections().size()==1 &&
+                    sandbox.walkway_network_.connections().size()==1,"a Stage 3 placement tool did not commit");
+            require(sandbox.add_storage_gate_at(0,180),"Stage 3 storage gate did not place");
+            const auto built_free=[](const auto& item){return item.construction.complete() && item.resource_plan.total().empty();};
+            require(built_free(sandbox.placed_habitats_.front()) && built_free(sandbox.placed_resources_.front()) &&
+                    built_free(sandbox.placed_resources_.back()) && built_free(sandbox.corridor_network_.connections().front()) &&
+                    built_free(sandbox.utility_network_.connections().front()) && built_free(sandbox.walkway_network_.connections().front()) &&
+                    sandbox.resources_.amounts().empty(),"Stage 3 used construction sequences or charged for placement");
+
+            // A queued blueprint in an older Stage 3 save retains its invested
+            // materials when the sandbox completes it on load.
+            auto legacy=sandbox.placed_habitats_.front();
+            legacy.position={25,0,-43};
+            legacy.placement_sequence=sandbox.next_blueprint_placement_sequence_++;
+            legacy.construction.step=1;
+            legacy.resource_plan.steps[0].iron=12;
+            legacy.resource_plan.steps[1].iron=20;
+            sandbox.placed_habitats_.push_back(legacy);
+            std::string error;
+            require(sandbox.save_game_to_name("stage3-sandbox-regression",error),"Stage 3 save failed: "+error);
+            const auto save=std::filesystem::path(sandbox.save_game_directory())/"stage3-sandbox-regression.gmsave";
+            GameApp loaded(engine);
+            require(loaded.load_game_from_file(save.string(),error),"Stage 3 load failed: "+error);
+            std::filesystem::remove(save);
+            require(loaded.active_game_phase_==GameApp::GamePhase::Debug && loaded.stage3_mode_==GameApp::Stage3Mode::Sandbox && loaded.debug_mode_active() &&
+                    loaded.placed_habitats_.size()==2 && built_free(loaded.placed_habitats_.front()) &&
+                    loaded.placed_habitats_.back().construction.complete() &&
+                    loaded.placed_habitats_.back().resource_plan.total().iron==12,
+                    "Stage 3 save lost placements or migrated material costs incorrectly");
+            // Return to the selector while a live sandbox exists. A missing
+            // template must leave that session intact and allow another choice.
+            sandbox.screen_=GameApp::Screen::Stage3Modes;
+            const bool template_exists=std::filesystem::is_regular_file(sandbox.debug_blueprint_template_path());
+            click_menu("TEMPLATE MODE");
+            if(template_exists){
+                require(sandbox.screen_==GameApp::Screen::Playfield &&
+                        sandbox.stage3_mode_==GameApp::Stage3Mode::Template &&
+                        !sandbox.placed_habitats_.empty() && !sandbox.placed_resources_.empty() &&
+                        !sandbox.corridor_network_.connections().empty() && !sandbox.utility_network_.connections().empty() &&
+                        !sandbox.builder_robots_.empty() && !sandbox.lander_.active(),
+                        "Stage 3 template did not restore the prebuilt lunar base");
+                const auto all_built=[](const auto& items){
+                    return std::all_of(items.begin(),items.end(),[](const auto& item){return item.construction.complete();});
+                };
+                require(all_built(sandbox.placed_habitats_) && all_built(sandbox.placed_resources_) &&
+                        all_built(sandbox.corridor_network_.connections()) && all_built(sandbox.utility_network_.connections()) &&
+                        all_built(sandbox.walkway_network_.connections()),"template started with unfinished objects");
+                PlacedHabitat pending;
+                sandbox.finalize_placement(pending);
+                require(!pending.construction.complete(),"template skipped normal construction for new placements");
+                sandbox.placed_habitats_.push_back(pending);
+                require(sandbox.save_game_to_name("stage3-sandbox-regression",error),"Stage 3 template save failed: "+error);
+                require(loaded.load_game_from_file(save.string(),error),"Stage 3 template load failed: "+error);
+                std::filesystem::remove(save);
+                require(loaded.stage3_mode_==GameApp::Stage3Mode::Template &&
+                        !loaded.placed_habitats_.back().construction.complete(),
+                        "Stage 3 template mode or pending blueprint changed across save/load");
+            }else{
+                require(sandbox.screen_==GameApp::Screen::Stage3Modes && sandbox.game_session_active_ &&
+                        sandbox.stage3_mode_==GameApp::Stage3Mode::Sandbox && sandbox.placed_habitats_.size()==2 &&
+                        !sandbox.new_game_status_message_.empty(),"failed template load damaged the sandbox session");
+            }
+            sandbox.screen_=GameApp::Screen::Stage3Modes;
+            click_menu("TEST ASTRONAUTS");
+            require(sandbox.screen_==GameApp::Screen::Playfield && sandbox.astronaut_test_active() &&
+                    sandbox.placed_habitats_.empty() && sandbox.placed_resources_.empty() &&
+                    sandbox.builder_robots_.empty() && !sandbox.lander_.active(),
+                    "astronaut placeholder did not start on an empty field");
+            sandbox.render(stage_ui);
+            bool test_title=false,build_menu=false;
+            for(const auto& draw:stage_ui.draws)if(draw.type=='T'){
+                test_title|=draw.text=="ASTRONAUT TEST FIELD";
+                build_menu|=draw.text=="GAME SPEED";
+            }
+            require(test_title && !build_menu,"astronaut placeholder exposed colony controls");
+            require(sandbox.save_game_to_name("stage3-sandbox-regression",error),"astronaut field save failed: "+error);
+            require(loaded.load_game_from_file(save.string(),error) && loaded.astronaut_test_active(),
+                    "astronaut test mode did not survive save/load");
+            std::filesystem::remove(save);
+            std::cout<<"Stage 3 mode selection, instant sandbox placement and save/load passed"
+                     <<(template_exists?" with the restored template\n":" without a template file\n");
+
+            sandbox.screen_=GameApp::Screen::Stage3Modes;
+            click_menu("SANDBOX MODE");
+            sandbox.camera_.restore({105.0f,75.0f,0.0f,{}});
+            select_build("ore_driller");
+            click_world(-23,0);
+            select_build("processing_facility");
+            click_world(22,0);
+            select_build("conveyor_belt");
+            click_world(22,0);
+            require(!sandbox.utility_build_start_,"conveyor placement started at the receiver");
+            click_world(-23,0);
+            require(sandbox.utility_build_start_.has_value() && stage_ui.belt_preview_lines.size()>=4,
+                    "first conveyor element did not render at the snapped driller");
+            const auto start_anchor=*sandbox.utility_build_start_;
+            const auto port=sandbox.utility_network_.preview_anchor(UtilityKind::ConveyorBelt,start_anchor,{22,0,0},
+                sandbox.placed_habitats_,sandbox.habitat_models_,sandbox.placed_resources_,sandbox.resource_models_);
+            require(port.has_value(),"first conveyor element has no hull port");
+            const auto first_roller=port->position+port->normal*.25f;
+            bool attached=false;
+            for(std::size_t i=0;i+1<stage_ui.belt_preview_lines.size();i+=2){
+                const auto midpoint=(stage_ui.belt_preview_lines[i]+stage_ui.belt_preview_lines[i+1])*.5f;
+                attached|=eng::length(midpoint-first_roller)<.01f;
+            }
+            require(attached,"first conveyor section floats away from the hull");
+            click_world(22,0);
+            require(sandbox.utility_network_.connections().size()==1 &&
+                    sandbox.utility_network_.connections()[0].kind==UtilityKind::ConveyorBelt &&
+                    sandbox.utility_network_.connections()[0].construction.complete(),
+                    "conveyor build-menu placement did not create the route");
+            require(eng::length(sandbox.utility_network_.connections().front().endpoint_a.position-port->position)<.01f,
+                    "completed conveyor moved away from the selected source port");
+            sandbox.clear_world_selection();
+            sandbox.selection_kind_=GameApp::SelectionKind::Resource;
+            sandbox.selected_resource_=0;
+            sandbox.placed_resources_[0].construction.step=0;
+            sandbox.render(stage_ui);
+            stage_ui.check_bounds("ore survey overlay");
+            for(const auto* name:ore::names){
+                bool concentration=false;
+                for(const auto& draw:stage_ui.draws)
+                    if(draw.type=='T' && draw.text.find(name)!=std::string::npos &&
+                       draw.text.find('%')!=std::string::npos)concentration=true;
+                require(concentration,"missing ore survey concentration");
+            }
         }
         int site_layout_cases=0;
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:sizes){
@@ -947,7 +1369,24 @@ struct UiRegression {
             GameApp mission_ui(engine);setup(mission_ui,7,zoom);mission_ui.active_game_phase_=GameApp::GamePhase::Planning;mission_ui.reset_planning_game();mission_ui.planning_.view=PlanningView::Mission;mission_ui.planning_.mission_facility=MissionFacility::MissionControl;mission_ui.planning_.mission_step=MissionPreparationStep::Plan;
             Recorder mr;mr.resize((int)size.x,(int)size.y);mission_ui.on_resize(mr.w,mr.h);mission_ui.render(mr);mr.check_bounds("mission planning");
             bool title=false,workflow=false,manifest=false;for(const auto& d:mr.draws)if(d.type=='T'){title|=d.text.find("MISSION PREPARATION")!=std::string::npos;workflow|=d.text.find("FINAL CONFIRM")!=std::string::npos;manifest|=d.text.find("PAYLOAD")!=std::string::npos;}
-            require(title&&workflow&&manifest,"mission workflow UI vanished at supported scaling");++mission_layout_cases;
+            require(title&&workflow&&manifest,"mission workflow UI vanished at supported scaling");
+            const auto click_plan=[&](const char* caption){
+                const auto button=mr.button(caption);
+                mission_ui.input_.mouse_x=(int)((button.x+button.w*.5f)*mr.scale);
+                mission_ui.input_.mouse_y=(int)((button.y+button.h*.5f)*mr.scale);
+                mission_ui.input_.left_pressed=true;
+                mission_ui.render(mr);
+                mission_ui.input_={};
+                mission_ui.render(mr);
+                mr.check_bounds("mission structure planning");
+            };
+            click_plan("STRUCTURES");
+            click_plan("+");
+            click_plan("AUTO-ADD CARGO");
+            require(mission_ui.planning_.mission_habitats[(std::size_t)HabitatKind::AirLock]==1&&
+                    !mission_ui.planning_.mission_cargo.empty()&&mission_ui.planning_cargo_covers_structures(),
+                    "structure list or auto-add input failed");
+            ++mission_layout_cases;
         }
         std::cout<<mission_layout_cases<<" mission-planning resolution/zoom cases passed\n";
 

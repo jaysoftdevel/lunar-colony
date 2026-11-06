@@ -2,7 +2,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include "game/systems/resource_management.hpp"
+#include "game/world/habitat_mesh.hpp"
+#include "game/world/resource_mesh.hpp"
 
 namespace game {
 
@@ -47,7 +48,10 @@ struct PlanningGameState {
     // direct hand-off to the robotic-base stage.
     std::uint8_t mission_rocket{1};
     std::uint8_t mission_lander{1};
+    std::uint8_t mission_builders{1}, mission_carriers{1};
     ResourceBundle mission_cargo{};
+    std::array<std::uint8_t,(std::size_t)HabitatKind::Count> mission_habitats{};
+    std::array<std::uint8_t,(std::size_t)ResourceKind::Count> mission_structures{};
     bool mission_paid{false};
     std::int64_t mission_paid_cost_eur{0};
     MissionPreparationStep mission_step{MissionPreparationStep::Research};

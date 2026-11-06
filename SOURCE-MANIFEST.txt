@@ -9,6 +9,7 @@ IMPLEMENTATION_CLUSTERS.md
 PLATFORM-MATRIX.md
 README-WINDOWS.md
 README.md
+README-HISTORY.md
 SOURCE-MANIFEST.txt
 STAGE1-CAMPAIGN-GUIDE.md
 STAGE1-UI-CONTROLS.md
@@ -54,9 +55,11 @@ game/include/game/systems/colony_status.hpp
 game/include/game/systems/construction_costs.hpp
 game/include/game/systems/first_person_controller.hpp
 game/include/game/systems/game_progress.hpp
+game/include/game/systems/lunar_lander.hpp
 game/include/game/systems/planning_game.hpp
 game/include/game/systems/resource_management.hpp
 game/include/game/systems/solar_tracking.hpp
+game/include/game/systems/trader.hpp
 game/include/game/ui/layout.hpp
 game/include/game/ui/supply_warnings.hpp
 game/include/game/util/mesh_wireframe.hpp
@@ -98,7 +101,9 @@ game/src/features/walkway_builder.cpp
 game/src/game_app.cpp
 game/src/main.cpp
 game/src/playfield/builder_robot_renderer.cpp
+game/src/playfield/lunar_lander_renderer.cpp
 game/src/playfield/playfield_view.cpp
+game/src/playfield/trader_renderer.cpp
 game/src/playfield/world_renderer.cpp
 game/src/robots/incremental_path_planner.cpp
 game/src/robots/path_planner.cpp
@@ -118,6 +123,8 @@ game/src/systems/first_person_mode.cpp
 game/src/systems/game_progress.cpp
 game/src/systems/gameplay_controller.cpp
 game/src/systems/gate_areas.cpp
+game/src/systems/lander_stash.cpp
+game/src/systems/lunar_lander.cpp
 game/src/systems/planning_game.cpp
 game/src/systems/pressure_doors.cpp
 game/src/systems/resource_management.cpp
@@ -125,6 +132,7 @@ game/src/systems/robot_workshop.cpp
 game/src/systems/save_game.cpp
 game/src/systems/storage_extensions.cpp
 game/src/systems/supply_simulation.cpp
+game/src/systems/trader.cpp
 game/src/systems/world_selection.cpp
 game/src/ui/build_bar.cpp
 game/src/ui/build_icons.cpp
@@ -183,7 +191,9 @@ game/src/world/resources/water_purifier.cpp
 game/src/world/resources/water_storage.cpp
 game/src/world/utility_network.cpp
 game/src/world/walkway_network.cpp
+game/tests/lander_regression.cpp
 game/tests/navigation_regression.cpp
+game/tests/trader_regression.cpp
 game/tests/ui_regression.cpp
 install-deps.bat
 install-deps.sh

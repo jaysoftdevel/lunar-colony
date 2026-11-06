@@ -189,7 +189,6 @@ bool GameApp::add_storage_gate(std::size_t index,int requested){
     extension.storage_size=owner.storage_size;
     extension.storage_loading_face=(std::int8_t)face;
     extension.storage_parent_sequence=owner.placement_sequence;
-    extension.placement_sequence=next_blueprint_placement_sequence_++;
     extension.rotation_degrees=gate_rotation(owner,face);
     extension.position=gate_position(owner,face);
     for(const auto& r:placed_resources_) if(r.kind==ResourceKind::StorageGate)
@@ -197,6 +196,7 @@ bool GameApp::add_storage_gate(std::size_t index,int requested){
     ++extension.instance_serial;
     extension.resource_plan=construction_costs::structure(extension.kind,resource_models_.mesh(extension));
     if(!can_start_construction(extension.resource_plan)) return false;
+    finalize_placement(extension);
     placed_resources_.push_back(std::move(extension));
     synchronize_storage_gates();
     return true;
@@ -211,10 +211,11 @@ bool GameApp::add_storage_gate_at(std::size_t index,float local_angle){
     if(!owner.placement_sequence){placed_resources_[index].placement_sequence=next_blueprint_placement_sequence_++;owner.placement_sequence=placed_resources_[index].placement_sequence;}
     PlacedResource gate;gate.kind=ResourceKind::StorageGate;gate.storage_size=owner.storage_size;
     gate.storage_loading_face=(std::int8_t)face;gate.storage_gate_angle_degrees=local_angle;
-    gate.storage_parent_sequence=owner.placement_sequence;gate.placement_sequence=next_blueprint_placement_sequence_++;
+    gate.storage_parent_sequence=owner.placement_sequence;
     gate.position=gate_position(owner,face);gate.rotation_degrees=gate_rotation(owner,face);
     for(const auto& r:placed_resources_)if(r.kind==ResourceKind::StorageGate)gate.instance_serial=std::max(gate.instance_serial,r.instance_serial);
     ++gate.instance_serial;gate.resource_plan=construction_costs::structure(gate.kind,resource_models_.mesh(gate));
+    finalize_placement(gate);
     placed_resources_.push_back(std::move(gate));synchronize_storage_gates();return true;
 }
 

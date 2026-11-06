@@ -82,7 +82,7 @@ void CameraController::basis(Vec3& eye,Vec3& forward,Vec3& right,Vec3& up) const
         std::sin(elev)*distance_,
         std::cos(yaw)*horizontal
     };
-    if(elevation_deg_<0.5f) eye.y=0.05f;
+    if(elevation_deg_<0.5f) eye.y=target_.y+0.05f;
     forward=normalize(target_-eye);
     right={std::cos(yaw),0.0f,-std::sin(yaw)};
     up=normalize(cross(right,forward));

@@ -18,7 +18,8 @@ namespace game {
 // supply channel. A channel carries both services through one shared tray/pipe
 // assembly; individual structures simply consume the services they need.
 enum class UtilityKind {
-    SupplyChannel = 0
+    SupplyChannel = 0,
+    ConveyorBelt
 };
 
 enum class UtilityEndpointKind {
@@ -35,8 +36,7 @@ struct UtilityBuildAnchor {
     UtilityEndpointKind kind{UtilityEndpointKind::Habitat};
     std::size_t index{0};
     eng::Vec3 hit{};
-    // Optional outward surface normal supplied by network-to-network snapping.
-    // Structure anchors derive their normal from the actual mesh surface.
+    // Outward direction for network snaps or a conveyor start already picked.
     eng::Vec3 normal_hint{};
 };
 
@@ -73,6 +73,10 @@ struct UtilityServiceSnapshot {
 };
 
 struct UtilityConnection {
+    std::uint8_t ore_cargo{ore::no_cargo};
+    std::uint8_t ore_next{0};
+    float ore_distance_m{0};
+    eng::Vec3 ore_box_position() const;
     SupplyState supply{};
     UtilityKind kind{UtilityKind::SupplyChannel};
     std::uint64_t placement_sequence{0};
@@ -108,6 +112,8 @@ public:
         const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
         const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const;
 
+    std::optional<UtilityConnection> preview_conveyor_start(const UtilityEndpoint& endpoint) const;
+
     UtilityMesh preview_endpoint_mesh(const UtilityEndpoint& endpoint) const;
 
     std::optional<UtilityConnection> preview_connection(
@@ -122,6 +128,7 @@ public:
 
     float connection_length(std::size_t index) const;
     std::size_t endpoint_connection_count(UtilityEndpointKind kind,std::size_t index) const;
+    void append_connection(UtilityConnection connection); // validated preview
     void remove_connection(std::size_t index);
     void remove_habitat(std::size_t habitat_index);
     void remove_resource(std::size_t resource_index);
@@ -138,6 +145,7 @@ public:
     void update_construction(float dt,ResourceManagement& resources,bool allow_negative);
 
 private:
+    bool conveyor_source_used(std::size_t resource_index) const;
     void rebuild_supply_junctions();
     std::vector<UtilityConnection> connections_{};
     float playfield_half_extent_{32.0f};

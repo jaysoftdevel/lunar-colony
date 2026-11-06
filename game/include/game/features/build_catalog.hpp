@@ -35,7 +35,9 @@ enum class BuildIcon {
     Walkway,
     RobotWorkshop,
     HydrogenGenerator,
-    HydrogenTank
+    HydrogenTank,
+    OxygenTank,
+    ConveyorBelt
 };
 
 enum class BuildCategory {
@@ -55,6 +57,7 @@ struct BuildObjectDefinition {
     std::string id;
     std::string name;
     std::string type;
+    const char* group;
     BuildIcon icon;
     BuildCategory category{BuildCategory::Habitats};
     BuildObjectKind kind{BuildObjectKind::Habitat};

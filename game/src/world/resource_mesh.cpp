@@ -19,6 +19,25 @@ ResourceMesh scale_xz(const ResourceMesh& source,float scale){
     // Intentionally leave out.height and all Y coordinates untouched.
     return out;
 }
+ResourceMesh make_oxygen_storage(){
+    resources::Builder b;
+    b.mesh.footprint_x=8.6f;
+    b.mesh.footprint_z=7.0f;
+    b.mesh.height=4.6f;
+    b.box(b.mesh.foundation,{0,.19f,0},{8.3f,.38f,6.7f});
+    for(float x:{-1.65f,1.65f}){
+        b.cylinder_y(b.mesh.body,{x,2.03f,0},3.2f,1.25f,28);
+        b.dome(b.mesh.body,{x,3.63f,0},1.25f,7,28,false,.62f);
+        b.cylinder_y(b.mesh.details,{x,4.45f,0},.32f,.18f,12);
+        for(float y:{.72f,2.85f}) b.cylinder_y(b.mesh.details,{x,y,0},.12f,1.32f,28);
+        b.cylinder_z(b.mesh.details,{x,1.05f,-1.78f},1.4f,.12f,12);
+    }
+    b.cylinder_x(b.mesh.details,{0,1.05f,-2.4f},4.05f,.13f,12);
+    b.box(b.mesh.body,{3.27f,.92f,0},{1.3f,1.08f,2.5f});
+    b.cylinder_z(b.mesh.details,{3.26f,1.32f,-1.29f},.16f,.27f,16);
+    return std::move(b.mesh);
+}
+
 }
 
 ResourceModelLibrary::ResourceModelLibrary(){
@@ -33,6 +52,7 @@ ResourceModelLibrary::ResourceModelLibrary(){
     meshes_[(size_t)ResourceKind::RobotWorkshop]=resources::make_robot_workshop();
     meshes_[(size_t)ResourceKind::HydrogenGenerator]=resources::refine_future_resource(resources::make_hydrogen_generator(),ResourceKind::HydrogenGenerator);
     meshes_[(size_t)ResourceKind::HydrogenTank]=resources::refine_future_resource(resources::make_hydrogen_tank(),ResourceKind::HydrogenTank);
+    meshes_[(size_t)ResourceKind::OxygenTank]=make_oxygen_storage();
     storage_domes_[(size_t)StorageDomeSize::Small]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Small),ResourceKind::StorageDome);
     storage_domes_[(size_t)StorageDomeSize::Mid]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Mid),ResourceKind::StorageDome);
     storage_domes_[(size_t)StorageDomeSize::Big]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Big),ResourceKind::StorageDome);
@@ -42,7 +62,7 @@ ResourceModelLibrary::ResourceModelLibrary(){
     meshes_[(size_t)ResourceKind::StorageDome]=storage_domes_[(size_t)StorageDomeSize::Small];
     for(std::size_t i=0;i<(std::size_t)ResourceKind::Count;++i){
         const auto kind=(ResourceKind)i;
-        if(kind==ResourceKind::HydrogenTank){
+        if(kind==ResourceKind::HydrogenTank||kind==ResourceKind::OxygenTank){
             // Preserve physical vessel volume: 0.63^3 ~= 0.25, matching the
             // 2 t SMALL versus 8 t STANDARD rated cryogenic LH2 capacities.
             small_meshes_[i]=meshes_[i];

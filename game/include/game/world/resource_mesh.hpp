@@ -1,4 +1,5 @@
 #pragma once
+#include "game/world/ore.hpp"
 #include "game/world/supply_state.hpp"
 #include "engine/engine.hpp"
 #include "game/world/construction.hpp"
@@ -25,6 +26,7 @@ enum class ResourceKind {
     StorageGate,
     HydrogenGenerator,
     HydrogenTank, // Append for backward-compatible saved ResourceKind ordinals.
+    OxygenTank,
     Count
 };
 
@@ -66,6 +68,9 @@ inline constexpr double kLiquidHydrogenDensityKgPerM3=71.0;
 inline constexpr double kHydrogenTankStandardVesselRadiusM=3.35;
 inline constexpr double kHydrogenTankUsableVolumeFraction=0.75;
 inline constexpr double kHydrogenTankSmallLinearScale=0.63;
+inline constexpr double oxygen_tank_capacity_kg(ResourceSizeTier size){
+    return size==ResourceSizeTier::Small?250.0:1000.0;
+}
 inline constexpr double hydrogen_tank_capacity_kg(ResourceSizeTier size){
     return size==ResourceSizeTier::Small?2000.0:8000.0;
 }
@@ -181,7 +186,10 @@ struct StoredResourceBox {
 };
 
 struct PlacedResource {
+    ore::Mix mined_ore_kg{};
+    std::array<std::uint32_t,ore::materials.size()> stored_ore_boxes{};
     SupplyState supply{};
+    double stored_oxygen_kg{0.0}; // Separate from the pressurized supply manifold.
     // Hydrogen already transferred into the two docked vehicle fuel allocations
     // at a landing pad. Separate from H2 still inside the network storage tank.
     double rocket_fuel_kg{0.0}, lander_fuel_kg{0.0};
@@ -232,6 +240,7 @@ struct PlacedResource {
     // Non-storage outdoor structures support STANDARD + SMALL. Storage domes
     // retain their dedicated SMALL/MID/BIG/HUGE tiers.
     ResourceSizeTier size{ResourceSizeTier::Standard};
+    bool power_enabled{true};
 };
 
 inline ResourceBundle stored_resource_box_totals(const PlacedResource& placed){
@@ -244,6 +253,18 @@ inline ResourceBundle stored_resource_box_totals(const PlacedResource& placed){
 
 inline void sync_stored_resource_totals(PlacedResource& placed){
     placed.stored_resources=stored_resource_box_totals(placed);
+}
+
+inline constexpr double kStorageDomeFullWarning=0.85;
+
+inline std::int64_t stored_ore_mass_kg(const PlacedResource& placed){
+    std::int64_t amount=0;
+    for(const auto count:placed.stored_ore_boxes)amount+=ore::box_kg*count;
+    return amount;
+}
+
+inline std::int64_t storage_dome_used_kg(const PlacedResource& placed){
+    return placed.stored_resources.total_amount()+stored_ore_mass_kg(placed);
 }
 
 class ResourceModelLibrary {

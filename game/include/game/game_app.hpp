@@ -7,6 +7,8 @@
 #include "game/systems/colony_status.hpp"
 #include "game/systems/game_progress.hpp"
 #include "game/systems/planning_game.hpp"
+#include "game/systems/lunar_lander.hpp"
+#include "game/systems/trader.hpp"
 #include "game/systems/resource_management.hpp"
 #include "game/systems/builder_robot.hpp"
 #include "game/world/playfield.hpp"
@@ -27,12 +29,30 @@
 
 namespace game {
 
+enum class GroundPileKind : std::uint8_t { Loose, Stack, Stash };
+inline constexpr int kGroundStackLayers = 8;
+
 struct GroundResourcePile {
     MaterialResource resource{MaterialResource::Iron};
     std::int64_t amount{0};
     eng::Vec3 position{};
     float radius{0.45f};
     float condition{1.0f};
+    GroundPileKind kind{GroundPileKind::Loose};
+
+    std::int64_t top_package_amount() const {
+        const auto capacity=resource_package_capacity_kg(resource);
+        if(kind==GroundPileKind::Loose) return std::min(amount,capacity);
+        const auto remainder=amount%capacity;
+        return remainder>0?remainder:std::min(amount,capacity);
+    }
+    float height() const {
+        if(kind==GroundPileKind::Loose) return resource_package_height(resource,amount);
+        const auto top=top_package_amount();
+        const auto capacity=resource_package_capacity_kg(resource);
+        return (float)((amount-top)/capacity)*(resource_package_height(resource,capacity)+.02f)
+            +resource_package_height(resource,top);
+    }
 };
 
 class GameApp final : public eng::GameDelegate {
@@ -44,20 +64,24 @@ public:
 private:
     friend struct NavigationRegression;
     friend struct UiRegression;
-    enum class Screen { MainMenu, NewGame, SaveGame, LoadGame, Settings, Credits, Playfield };
+    friend struct LanderRegression;
+    friend struct TraderRegression;
+    friend struct ShipLayoutRegression;
+    enum class Screen { MainMenu, NewGame, Stage3Modes, SaveGame, LoadGame, Settings, Credits, Playfield };
     // Top-level game content. This is intentionally separate from the colony
     // progression stages used inside RobotPreparation. Each phase owns a
-    // distinct gameplay surface so future Planning and Manned Base mechanics
+    // distinct gameplay surface so future Planning and sandbox mechanics
     // can evolve without coupling them to the robot-preparation simulation.
-    enum class GamePhase : std::uint8_t { Planning = 1, RobotPreparation = 2, MannedBase = 3 };
+    enum class GamePhase : std::uint8_t { Planning = 1, RobotPreparation = 2, Debug = 3 };
     // Career begins in Stage 1; Free Play permits an independent stage start.
     // The selected mode is saved independently from the top-level game phase.
     enum class NewGameMode : std::uint8_t { Career = 0, FreePlay = 1 };
+    enum class Stage3Mode : std::uint8_t { Sandbox, Template, AstronautTest };
     enum class HabitatViewMode { Default, Full };
     enum class WorldLayoutMode { Mesh, Textured };
     enum class GameSpeed { Normal = 0, Quick, Fast, Pause };
     enum class FirstPersonMode { Off, DropPending, Active };
-    enum class SelectionKind { None, Habitat, Corridor, Resource, GroundResource, Utility, Walkway, Robot };
+    enum class SelectionKind { None, Habitat, Corridor, Resource, GroundResource, Utility, Walkway, Robot, Lander, Stash };
 
     struct SaveGameEntry {
         std::string name{};
@@ -81,16 +105,23 @@ private:
     int viewport_width_=1600;
     int viewport_height_=900;
     float fps_=0.0f;
-    float supply_warning_time_=0.0f;
+    double ui_time_seconds_=0.0;
+    static constexpr double kStatusRateRefreshSeconds=0.5;
     float ui_scale_=1.0f;
     bool debug_frame_enabled_=true;
     WorldLayoutMode world_layout_mode_{WorldLayoutMode::Mesh};
     bool game_session_active_=false;
     GamePhase active_game_phase_{GamePhase::RobotPreparation};
+    bool debug_mode_active() const { return debug_frame_enabled_ || active_game_phase_==GamePhase::Debug; }
     GamePhase new_game_phase_selection_{GamePhase::RobotPreparation};
     NewGameMode new_game_mode_selection_{NewGameMode::Career};
     NewGameMode active_game_mode_{NewGameMode::FreePlay};
+    Stage3Mode stage3_mode_{Stage3Mode::Sandbox};
+    bool astronaut_test_active() const { return active_game_phase_==GamePhase::Debug && stage3_mode_==Stage3Mode::AstronautTest; }
     PlanningGameState planning_{};
+    LunarLanderState lander_{};
+    TraderState trader_{};
+    std::string trade_message_{};
     std::string planning_status_message_{};
     int planning_contract_page_{0};
     int planning_contract_selected_{0}; // transient contract brief selection, not part of save schema
@@ -101,6 +132,7 @@ private:
     float planning_tech_pan_x_{0.0f};
     float planning_tech_pan_y_{0.0f};
     int planning_tech_selected_{0};
+    int planning_structure_page_{-1}; // -1 is the payload editor
     // A single click selects; a second click on the same card within the
     // double-click window performs its primary action. Transient UI state only.
     int planning_last_click_group_{-1};
@@ -120,7 +152,20 @@ private:
     ColonyStatus status_{};
     // Derived live telemetry; never serialized as stored resources.
     double battery_net_kw_{0},water_net_litres_per_day_{0};
-    double supply_power_load_kw_{0},supply_water_load_litres_per_day_{0};
+    double supply_power_delivered_kw_{0},supply_power_load_kw_{0},supply_water_load_litres_per_day_{0};
+    // Presentation samples only. Quantities and simulation rates remain live.
+    struct StatusRateDisplay {
+        double next_sample{0};
+        bool paused{false};
+        double battery_kw{0}, power_load_kw{0}, power_delivered_kw{0}, water_net{0}, water_load{0};
+    } status_rate_display_{};
+    struct SelectionRateDisplay {
+        double next_sample{0};
+        bool paused{false};
+        std::uint64_t key{0};
+        SupplyState supply{};
+        double solar_kw{0}, rover_speed_mps{0}, rover_draw_kw{0};
+    } selection_rate_display_{};
     ResourceManagement resources_{};
     std::vector<BuilderRobotState> builder_robots_{};
     // Monotonic simulation time used by the shared robot safety coordinator.
@@ -208,6 +253,8 @@ private:
 
     void render_menu(eng::Renderer& r);
     void render_new_game(eng::Renderer& r);
+    void render_stage3_modes(eng::Renderer& r);
+    void start_new_game(Stage3Mode stage3_mode=Stage3Mode::Sandbox);
     void render_save_game(eng::Renderer& r);
     void render_load_game(eng::Renderer& r);
     void render_settings(eng::Renderer& r);
@@ -244,6 +291,16 @@ private:
     void render_corridor_placement_tooltip(eng::Renderer& r);
     void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false) const;
     void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
+    struct StructureAttachment {
+        eng::Vec3 position;
+        std::optional<CorridorConnection> corridor;
+        std::optional<UtilityConnection> utility;
+    };
+    std::optional<StructureAttachment> preview_structure_attachment(
+        eng::Vec3 hit,const PlacedHabitat* habitat,const PlacedResource* resource) const;
+    void render_structure_attachment(eng::Renderer& r,const StructureAttachment& attachment) const;
+    void commit_structure_attachment(StructureAttachment attachment);
+    bool structure_routes_clear(eng::Vec3 position,float rotation,float width,float depth) const;
     bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees) const;
     bool resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees) const;
     bool placement_preserves_robot_escape(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z) const;
@@ -270,6 +327,10 @@ private:
     void clear_world_selection();
     void finish_selection_marquee();
     void delete_selected_world_object();
+    void remove_structure_routes(bool habitat,std::size_t index);
+    void remove_corridor_routes(const std::vector<std::size_t>& roots);
+    void remove_utility_route(std::size_t index);
+    void remap_robot_target_after_removal(ConstructionTargetKind kind,std::size_t index);
     void update_construction(float dt);
     ConstructionTargetRef selected_construction_target() const;
     std::uint64_t construction_target_sequence(const ConstructionTargetRef& target) const;
@@ -283,6 +344,50 @@ private:
 
     void reset_builder_robot_and_starter_stash(const ResourceBundle* shipped_cargo=nullptr);
     void deploy_lunar_base_from_mission();
+    void begin_lunar_landing(const ResourceBundle& manifest,int builders,int carriers);
+    void update_lunar_lander(float dt);
+    bool unload_lunar_lander();
+    bool confirm_lander_site(eng::Vec3 p);
+    bool confirm_stash_site(eng::Vec3 p);
+    bool lander_site_valid(eng::Vec3 p) const;
+    bool stash_site_valid(eng::Vec3 p) const;
+    bool prepare_default_landing();
+    bool salvage_lander();
+    bool complete_lander_salvage();
+    bool stash_ground_clear(eng::Vec3 position,float width) const;
+    std::optional<std::vector<GroundResourcePile>> plan_stash_boxes(const ResourceBundle& cargo,eng::Vec3 marker) const;
+    void migrate_boxed_lander_stash(bool legacy_grid);
+    bool drop_lander_cargo();
+    bool add_stash_boxes(const ResourceBundle& cargo,bool credit=true);
+    bool repack_lander_stash();
+    void render_stash(eng::Renderer& r);
+    void render_stash_panel(eng::Renderer& r);
+    std::string landing_message_{};
+    void render_lunar_lander(eng::Renderer& r);
+    std::size_t trader_pad_index() const;
+    bool trader_powered() const;
+    bool trade_antenna_enabled() const;
+    bool call_trader(std::size_t pad);
+    bool start_trader_sale();
+    void update_trader(float dt);
+    TradeManifest trader_available() const;
+    double& trader_oxygen_stock(std::uint64_t sequence);
+    double trader_oxygen_stock_amount(std::uint64_t sequence) const;
+    bool trader_robot_busy(std::size_t robot) const;
+    bool trader_placement_clear(eng::Vec3 position,float rotation,float width,float depth) const;
+    bool trader_position_clear(eng::Vec3 position,float radius,std::size_t ignored_resource=kNoRobotIndex,std::size_t ignored_habitat=kNoRobotIndex) const;
+    void record_robot_operation_result(BuilderRobotState& robot,bool success,std::uint64_t task=0);
+    void render_robot_blockers(eng::Renderer& r);
+    void update_ore_hauling(float dt,const std::function<bool(std::size_t,eng::Vec3)>& clear,
+        const std::function<void(std::size_t,eng::Vec3)>& move,const std::function<void(std::size_t)>& stop);
+    void update_trade_hauling(float dt,const std::function<bool(std::size_t,eng::Vec3)>& clear,
+        const std::function<void(std::size_t,eng::Vec3)>& move,const std::function<void(std::size_t)>& stop);
+    void render_trader(eng::Renderer& r);
+    void render_pad_trade(eng::Renderer& r,std::size_t pad,eng::Rect panel,float scroll,float warning_extra);
+
+    void render_lunar_lander_panel(eng::Renderer& r);
+    bool lander_placement_clear(eng::Vec3 position,float rotation,float width,float depth) const;
+    BuilderRobotState lander_robot(int ordinal) const;
     void update_builder_robot(float dt);
     float game_speed_multiplier() const;
     static const char* game_phase_name(GamePhase phase);
@@ -295,7 +400,10 @@ private:
     bool deliver_planning_contract(std::size_t index);
     bool advance_planning_to_next_report();
     bool planning_technology_available(std::size_t index) const;
-    ResourceBundle planning_minimum_mission_cargo() const;
+    ResourceBundle planning_reference_mission_cargo() const;
+    ResourceBundle planning_structure_requirements() const;
+    bool planning_cargo_covers_structures() const;
+    void planning_add_required_cargo();
     std::int64_t planning_mission_payload_kg() const;
     std::int64_t planning_mission_payload_capacity_kg() const;
     std::int64_t planning_mission_cost_eur() const;
@@ -303,6 +411,11 @@ private:
     bool purchase_planning_mission();
     bool complete_planning_mission_step();
     void update_resource_economy(float dt);
+    void update_ore_logistics(float dt);
+    bool ore_survey_location(eng::Vec3& point) const;
+    void render_ore_deposits(eng::Renderer& r) const;
+    void render_ore_survey(eng::Renderer& r) const;
+    bool conveyor_route_clear(const std::vector<eng::Vec3>& path) const;
     GameProgressSnapshot game_progress_snapshot() const;
     int crew_quarters_capacity() const;
     eng::Rect progress_tree_panel_rect() const;
@@ -329,7 +442,7 @@ private:
     ResourceBundle construction_site_reserved(const ConstructionTargetRef& target,std::size_t exclude_robot=kNoRobotIndex) const;
     ResourceBundle construction_site_remaining(const ConstructionTargetRef& target,bool include_reservations=true,std::size_t exclude_robot=kNoRobotIndex) const;
     bool robot_load_needed_resources(BuilderRobotState& robot,const ResourceBundle& need);
-    void spawn_produced_resource(MaterialResource resource,std::int64_t amount,eng::Vec3 source_position);
+    bool spawn_produced_resource(MaterialResource resource,std::int64_t amount,eng::Vec3 source_position,bool defer_if_blocked=true);
     void enter_first_person_drop_mode();
     void exit_first_person_mode();
     void update_first_person(float dt,const eng::InputState& input);
@@ -363,6 +476,14 @@ private:
     bool habitat_has_complete_corridor_connection(std::size_t habitat_index) const;
     bool habitat_exterior_access_enabled(std::size_t habitat_index,std::size_t entrance_index) const;
     ResourceBundle committed_construction_resources() const;
+    template<class Item>
+    void finalize_placement(Item& item){
+        item.placement_sequence=next_blueprint_placement_sequence_++;
+        if(active_game_phase_==GamePhase::Debug && stage3_mode_==Stage3Mode::Sandbox){
+            item.construction.finish();
+            item.resource_plan.steps={};
+        }
+    }
     bool can_start_construction(const ConstructionResourcePlan& plan) const;
     void drop_structure_resources(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used);
     void drop_path_resources(const std::vector<eng::Vec3>& path,float lateral_width,const ResourceBundle& used);
@@ -375,7 +496,7 @@ private:
     void refresh_save_games();
     bool save_game_to_name(const std::string& name,std::string& error);
     bool load_game_from_file(const std::string& path,std::string& error);
-    bool load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool complete_construction=false);
+    bool load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool completed=false);
     std::string debug_blueprint_template_path() const;
     float ui_width(const eng::Renderer& r) const { return (float)r.width()/ui_scale_; }
     float ui_height(const eng::Renderer& r) const { return (float)r.height()/ui_scale_; }

@@ -22,7 +22,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=31;
+constexpr std::uint32_t kSaveSchema=41;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -87,6 +87,12 @@ struct Reader {
     }
     bool ok() const { return valid && in.good(); }
 };
+
+bool read_power_enabled(Reader& in){
+    const auto enabled=in.pod<std::uint8_t>();
+    if(enabled>1) in.valid=false;
+    return enabled!=0;
+}
 
 void write_vec3(Writer& w,const eng::Vec3& v){ w.pod(v.x); w.pod(v.y); w.pod(v.z); }
 eng::Vec3 read_vec3(Reader& r){ return {r.pod<float>(),r.pod<float>(),r.pod<float>()}; }
@@ -543,6 +549,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         out.pod(h.placement_sequence);
         write_supply(out,h.supply);
         write_hydroponics(out,h);
+        out.boolean(h.power_enabled);
     });
     write_object_vector(w,placed_resources_,[](Writer& out,const PlacedResource& item){
         out.pod((std::uint8_t)item.kind); write_vec3(out,item.position); out.pod(item.rotation_degrees); write_construction(out,item.construction); write_plan(out,item.resource_plan); write_bundle(out,item.site_buffer);
@@ -558,6 +565,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         out.pod(item.storage_gate_angle_degrees);
         out.pod((std::uint8_t)(item.solar_tracking_enabled?1:0));
         out.pod(item.rocket_fuel_kg);out.pod(item.lander_fuel_kg);
+        out.boolean(item.power_enabled);
     });
     write_object_vector(w,ground_resource_piles_,[](Writer& out,const GroundResourcePile& pile){
         out.pod((std::uint8_t)pile.resource); out.pod(pile.amount); write_vec3(out,pile.position); out.pod(pile.radius); out.pod(pile.condition);
@@ -619,6 +627,77 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     w.pod((std::uint8_t)planning_.mission_step);
     w.pod((std::uint8_t)planning_.mission_facility);
     w.pod((std::uint8_t)active_game_mode_);
+    // Schema 32: mission rover manifest and resumable lunar deployment.
+    w.pod(planning_.mission_builders);w.pod(planning_.mission_carriers);
+    w.pod((std::uint8_t)lander_.phase);w.pod(lander_.elapsed);write_vec3(w,lander_.site);
+    write_bundle(w,lander_.manifest);write_bundle(w,lander_.remaining);
+    w.pod(lander_.builders);w.pod(lander_.carriers);
+    // Schema 33: trader visit, physically reserved lots, per-rover custody and
+    // separately bottled oxygen. Funds above remain the one shared cash account.
+    w.pod((std::uint8_t)trader_.phase);w.pod(trader_.elapsed);w.pod(trader_.pad_sequence);write_vec3(w,trader_.dock);
+    for(auto q:trader_.requested)w.pod(q);
+    for(auto q:trader_.loaded)w.pod(q);
+    w.pod(trader_.sale_value_eur);w.pod(trader_.last_payment_eur);w.boolean(trader_.oxygen_packaging);
+    w.pod((std::uint32_t)trader_.oxygen.size());
+    for(const auto& o:trader_.oxygen){w.pod(o.source_sequence);w.pod(o.kg);}
+    w.pod((std::uint32_t)trader_.lots.size());
+    for(const auto& l:trader_.lots){w.pod((std::uint8_t)l.good);w.pod(l.remaining);write_vec3(w,l.position);}
+    w.pod((std::uint32_t)trader_.hauls.size());
+    for(const auto& h:trader_.hauls){w.pod(h.robot);w.pod(h.phase);w.pod(h.lot);w.pod(h.cargo);write_vec3(w,h.service);write_vec3(w,h.exit);w.boolean(h.service_valid);}
+
+
+    // Schema 34: player-chosen landing/depot geometry and one-shot salvage.
+    write_vec3(w,lander_.stash_center);w.boolean(lander_.awaiting_site);w.boolean(lander_.awaiting_stash);w.boolean(lander_.salvaged);w.boolean(lander_.boxed);
+
+    // Schema 35: stack membership and resumable builder salvage.
+    w.boolean(lander_.salvage_requested);
+    w.pod((std::int32_t)lander_.salvage_worker);
+    w.pod(lander_.salvage_port);
+    w.pod(lander_.salvage_seconds);
+    for(const auto& pile:ground_resource_piles_) w.pod((std::uint8_t)pile.kind);
+
+    // Schema 37: selected construction manifest, parking layout and O2 reserves.
+    for(const auto count:planning_.mission_habitats) w.pod(count);
+    for(const auto count:planning_.mission_structures) w.pod(count);
+    w.boolean(lander_.legacy_parking);
+    for(const auto& item:placed_resources_)
+        if(item.kind==ResourceKind::OxygenTank) w.pod(item.stored_oxygen_kg);
+
+    // Schema 38: the selected Stage 3 debug mode.
+    const auto debug_mode=active_game_phase_==GamePhase::Debug?stage3_mode_:Stage3Mode::Sandbox;
+    w.pod(static_cast<std::uint8_t>(debug_mode));
+
+    // Schema 39: raw ore remains separate from refined inventory.
+    for(const auto& item:placed_resources_)if(item.kind==ResourceKind::OreDriller)
+        for(const auto stock:item.mined_ore_kg)w.pod(stock);
+    for(const auto& link:utility_network_.connections())if(link.kind==UtilityKind::ConveyorBelt){
+        w.pod(link.ore_cargo);
+        w.pod(link.ore_next);
+        w.pod(link.ore_distance_m);
+    }
+
+    // Schema 40: sparse storage ore and in-flight carrier cargo. Pickup
+    // reservations are rebuilt after load from the unchanged source stacks.
+    const auto raw_count=std::count_if(placed_resources_.begin(),placed_resources_.end(),[](const auto& item){
+        return item.kind==ResourceKind::StorageDome && stored_ore_mass_kg(item)>0;
+    });
+    w.pod(static_cast<std::uint32_t>(raw_count));
+    for(std::size_t i=0;i<placed_resources_.size();++i){
+        const auto& item=placed_resources_[i];
+        if(item.kind!=ResourceKind::StorageDome || stored_ore_mass_kg(item)==0)continue;
+        w.pod(static_cast<std::uint32_t>(i));
+        for(const auto boxes:item.stored_ore_boxes)w.pod(boxes);
+    }
+    const auto cargo_count=std::count_if(builder_robots_.begin(),builder_robots_.end(),[](const auto& robot){
+        return robot.ore_haul.loaded;
+    });
+    w.pod(static_cast<std::uint8_t>(cargo_count));
+    for(std::size_t i=0;i<builder_robots_.size();++i){
+        const auto& haul=builder_robots_[i].ore_haul;
+        if(!haul.loaded)continue;
+        w.pod(static_cast<std::uint8_t>(i));
+        w.pod(haul.source);w.pod(haul.destination);w.pod(haul.kind);
+    }
 
     w.out.flush();
     if(!w.ok()){ w.out.close(); fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
@@ -637,7 +716,10 @@ std::string GameApp::debug_blueprint_template_path() const {
     std::vector<fs::path> candidates;
     if(!executable.empty()){
         candidates.push_back(executable.parent_path()/"debug"/"0-40-32-debug-start.gmsave");
-        candidates.push_back(executable.parent_path()/".."/"bin"/"debug"/"0-40-32-debug-start.gmsave");
+        for(auto dir=executable.parent_path();!dir.empty();dir=dir.parent_path()){
+            candidates.push_back(dir/"game"/"debug-templates"/"0-40-32-debug-start.gmsave");
+            if(dir==dir.root_path())break;
+        }
     }
     candidates.push_back(fs::current_path()/"debug"/"0-40-32-debug-start.gmsave");
     candidates.push_back(fs::current_path()/"game"/"debug-templates"/"0-40-32-debug-start.gmsave");
@@ -646,7 +728,7 @@ std::string GameApp::debug_blueprint_template_path() const {
     return candidates.empty()?std::string("debug/0-40-32-debug-start.gmsave"):candidates.front().lexically_normal().string();
 }
 
-bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool complete_construction){
+bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool completed){
     Reader r{fs::path(path)};
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Template file is missing or invalid."; return false; }
@@ -682,7 +764,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     for(int i=0;i<6;++i) (void)r.pod<std::int32_t>();
     (void)read_bundle(r);
 
-    if(!r.valid || saved_playfield!=kDebugTemplatePlayfieldSize || playfield_.size()!=kDebugTemplatePlayfieldSize){
+    if(!r.valid || saved_playfield!=kDebugTemplatePlayfieldSize){
         error="Template requires a "+std::to_string(kDebugTemplatePlayfieldSize)+" X "+std::to_string(kDebugTemplatePlayfieldSize)+" playfield.";
         return false;
     }
@@ -701,6 +783,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
         if(source_schema>=17)h.supply=read_supply(in,source_schema>=20);
         if(source_schema>=23) read_hydroponics(in,h); else initialize_empty_hydroponics(h);
+        if(source_schema>=41) h.power_enabled=read_power_enabled(in);
         return h;
     })){ error="Template habitat data is damaged."; return false; }
 
@@ -741,6 +824,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
                item.rocket_fuel_kg>landing_pad_rocket_fuel_capacity_kg() ||
                item.lander_fuel_kg>landing_pad_lander_fuel_capacity_kg())in.valid=false;
         }
+        if(source_schema>=41) item.power_enabled=read_power_enabled(in);
         sync_stored_resource_totals(item);
         return item;
     })){ error="Template structure data is damaged."; return false; }
@@ -784,36 +868,23 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         for(auto& c:walkways) c.placement_sequence=seq++;
     }
 
-    // Import only the construction layout. Stage 2 uses the template as fresh
-    // blueprints, while Stage 3 uses the exact same debug layout as an already
-    // erected base. Robots, inventory, ground piles, camera and clock remain
-    // those of the newly-created game in both cases.
-    for(auto& h:habitats){
-        h.construction.step=complete_construction?kConstructionSteps:0;
-        h.construction.step_elapsed=0.0f;
-        h.site_buffer={};
-    }
+    // Template launches share the layout. Only Stage 3 starts it fully built.
+    const auto prepare=[&](auto& items){
+        for(auto& item:items){
+            item.construction.step=0;
+            item.construction.step_elapsed=0;
+            if(completed)item.construction.finish();
+            item.site_buffer={};
+        }
+    };
+    prepare(habitats);
+    prepare(structures);
+    prepare(corridors);
+    prepare(utilities);
+    prepare(walkways);
     for(auto& item:structures){
-        item.construction.step=complete_construction?kConstructionSteps:0;
-        item.construction.step_elapsed=0.0f;
-        item.site_buffer={};
         item.stored_boxes.clear();
         sync_stored_resource_totals(item);
-    }
-    for(auto& c:corridors){
-        c.construction.step=complete_construction?c.construction.total_steps:0;
-        c.construction.step_elapsed=0.0f;
-        c.site_buffer={};
-    }
-    for(auto& c:utilities){
-        c.construction.step=complete_construction?c.construction.total_steps:0;
-        c.construction.step_elapsed=0.0f;
-        c.site_buffer={};
-    }
-    for(auto& c:walkways){
-        c.construction.step=complete_construction?c.construction.total_steps:0;
-        c.construction.step_elapsed=0.0f;
-        c.site_buffer={};
     }
 
     for(auto& h:habitats)h.supply={};
@@ -823,14 +894,12 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     placed_habitats_=std::move(habitats);
     placed_resources_=std::move(structures);
     corridor_network_.restore_connections(std::move(corridors));
-    corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
+    corridor_network_.set_playfield_half_extent(kDebugTemplatePlayfieldSize*0.5f);
     corridor_network_.repair_invalid_topology(placed_habitats_,habitat_models_);
     corridor_network_.synchronize_structure_interfaces(placed_habitats_,habitat_models_,placed_resources_,resource_models_);
-    assign_storage_loading_faces();
-    synchronize_storage_gates();
     pressure_doors_.clear();airlock_cycles_.clear();storage_gate_open_.clear();
     utility_network_.restore_connections(std::move(utilities));
-    utility_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
+    utility_network_.set_playfield_half_extent(kDebugTemplatePlayfieldSize*0.5f);
     walkway_network_.restore_connections(std::move(walkways));
 
     next_blueprint_placement_sequence_=1;
@@ -843,6 +912,9 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     for(const auto& c:corridor_network_.connections()) advance_sequence(c.placement_sequence);
     for(const auto& c:utility_network_.connections()) advance_sequence(c.placement_sequence);
     for(const auto& c:walkway_network_.connections()) advance_sequence(c.placement_sequence);
+
+    assign_storage_loading_faces();
+    synchronize_storage_gates();
 
     error.clear();
     return true;
@@ -877,7 +949,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     GamePhase saved_game_phase=GamePhase::RobotPreparation;
     if(source_schema>=24){
         const auto raw_phase=r.pod<std::uint8_t>();
-        if(raw_phase<(std::uint8_t)GamePhase::Planning || raw_phase>(std::uint8_t)GamePhase::MannedBase){
+        if(raw_phase<(std::uint8_t)GamePhase::Planning || raw_phase>(std::uint8_t)GamePhase::Debug){
             error="Savegame game-stage value is invalid."; return false;
         }
         saved_game_phase=(GamePhase)raw_phase;
@@ -899,6 +971,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         if(source_schema>=13) h.placement_sequence=in.pod<std::uint64_t>();
         if(source_schema>=17)h.supply=read_supply(in,source_schema>=20);
         if(source_schema>=23) read_hydroponics(in,h); else initialize_empty_hydroponics(h);
+        if(source_schema>=41) h.power_enabled=read_power_enabled(in);
         return h;
     })){ error="Savegame habitat data is damaged."; return false; }
 
@@ -926,6 +999,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
                item.rocket_fuel_kg>landing_pad_rocket_fuel_capacity_kg() ||
                item.lander_fuel_kg>landing_pad_lander_fuel_capacity_kg())in.valid=false;
         }
+        if(source_schema>=41) item.power_enabled=read_power_enabled(in);
         sync_stored_resource_totals(item); return item;
     })){ error="Savegame structure data is damaged."; return false; }
 
@@ -1022,7 +1096,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     double saved_life_fraction=0.0;
     if(source_schema>=5){
         const auto robot_count=r.pod<std::uint8_t>();
-        if(robot_count>12 || (saved_game_phase==GamePhase::RobotPreparation && robot_count<1)) r.valid=false;
+        if(robot_count>12 || (saved_game_phase==GamePhase::RobotPreparation && source_schema<32 && robot_count<1)) r.valid=false;
         saved_robots.reserve(robot_count);
         for(std::uint8_t i=0;i<robot_count && r.valid;++i)
             saved_robots.push_back(source_schema>=21?read_builder_robot_v6(r):read_builder_robot_v5(r));
@@ -1055,6 +1129,8 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     std::vector<std::uint64_t> saved_priority;
     PlanningGameState saved_planning=default_planning_game_state();
     NewGameMode saved_game_mode=NewGameMode::FreePlay;
+    LunarLanderState saved_lander{};
+    TraderState saved_trader{};
     if(source_schema>=18){
         const auto count=r.pod<std::uint64_t>();if(count>100000)r.valid=false;
         for(std::uint64_t i=0;i<count && r.valid;++i){const auto sequence=r.pod<std::uint64_t>();
@@ -1124,7 +1200,186 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         if(raw_mode>(std::uint8_t)NewGameMode::FreePlay)r.valid=false;
         else saved_game_mode=(NewGameMode)raw_mode;
     }
-    if(!r.valid){ error="Savegame ended unexpectedly."; return false; }
+    if(source_schema>=32){
+        saved_planning.mission_builders=r.pod<std::uint8_t>();saved_planning.mission_carriers=r.pod<std::uint8_t>();
+        const auto count_valid=[](std::uint8_t n){return n>=1 && n<=6;};
+        if(!count_valid(saved_planning.mission_builders)||!count_valid(saved_planning.mission_carriers))r.valid=false;
+        saved_lander.phase=(LanderPhase)r.pod<std::uint8_t>();saved_lander.elapsed=r.pod<float>();saved_lander.site=read_vec3(r);
+        saved_lander.legacy_parking=source_schema<37&&saved_lander.phase>=LanderPhase::OpeningRamp;
+        saved_lander.manifest=read_bundle(r);saved_lander.remaining=read_bundle(r);
+        saved_lander.builders=r.pod<std::uint8_t>();saved_lander.carriers=r.pod<std::uint8_t>();
+        if((std::uint8_t)saved_lander.phase>(std::uint8_t)LanderPhase::Ready || !std::isfinite(saved_lander.elapsed) ||
+           saved_lander.elapsed<0 || saved_lander.elapsed>kLanderDescentSeconds || !count_valid(saved_lander.builders) || !count_valid(saved_lander.carriers) ||
+           !std::isfinite(saved_lander.site.x)||!std::isfinite(saved_lander.site.y)||!std::isfinite(saved_lander.site.z))r.valid=false;
+        for(std::size_t i=0;i<kMaterialResourceCount;++i){auto material=(MaterialResource)i;
+            if(saved_lander.manifest.amount(material)<0 || saved_lander.manifest.amount(material)>10'000'000 ||
+               saved_lander.remaining.amount(material)<0 || saved_lander.remaining.amount(material)>saved_lander.manifest.amount(material))r.valid=false;
+        }
+        if(saved_lander.active()){
+            const auto total=(std::size_t)(saved_lander.builders+saved_lander.carriers);
+            if(saved_game_phase!=GamePhase::RobotPreparation || saved_robots.size()>total ||
+               (saved_lander.phase<=LanderPhase::OpeningRamp && !saved_robots.empty()) ||
+               (saved_lander.phase==LanderPhase::DeployingRobots && saved_robots.size()>=total) ||
+               (saved_lander.phase>=LanderPhase::UnloadingCargo && saved_robots.size()!=total) ||
+               (saved_lander.phase==LanderPhase::Ready && !saved_lander.remaining.empty()))r.valid=false;
+            float maximum=kLanderDescentSeconds;
+            if(saved_lander.phase==LanderPhase::Settling)maximum=4;
+            if(saved_lander.phase==LanderPhase::OpeningRamp)maximum=kLanderRampSeconds;
+            if(saved_lander.phase==LanderPhase::DeployingRobots){
+                const int first=(int)saved_robots.size();
+                if(source_schema==36){
+                    maximum=lunar_lander_deployment_seconds(saved_lander,first);
+                }else if(source_schema<36){
+                    // Older saves time only the current rover. Keep already parked
+                    // rovers in place and queue the remaining berths on load.
+                    const auto bay=lunar_lander_robot_bay(saved_lander,first)-saved_lander.site;
+                    maximum=11.0f+(bay.x+11.5f-bay.z)/1.5f;
+                    if(saved_lander.elapsed<=maximum) saved_lander.elapsed=0;
+                }
+            }
+            if(saved_lander.phase==LanderPhase::UnloadingCargo)maximum=kLanderCraneSeconds;
+            if(saved_lander.elapsed>maximum || (source_schema<34&&(std::abs(saved_lander.site.x)>saved_playfield*.5f-13.5f || std::abs(saved_lander.site.z)>saved_playfield*.5f-12.0f)))r.valid=false;
+        }else if(saved_game_phase==GamePhase::RobotPreparation && saved_robots.empty())r.valid=false;
+    }
+    if(source_schema>=33){
+        const auto valid_position=[](eng::Vec3 p){return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&std::abs(p.x)<100000&&std::abs(p.y)<100000&&std::abs(p.z)<100000;};
+        saved_trader.phase=(TradePhase)r.pod<std::uint8_t>();saved_trader.elapsed=r.pod<float>();saved_trader.pad_sequence=r.pod<std::uint64_t>();saved_trader.dock=read_vec3(r);
+        for(auto& q:saved_trader.requested)q=r.pod<std::int64_t>();
+        for(auto& q:saved_trader.loaded)q=r.pod<std::int64_t>();
+        saved_trader.sale_value_eur=r.pod<std::int64_t>();saved_trader.last_payment_eur=r.pod<std::int64_t>();saved_trader.oxygen_packaging=r.boolean();
+        if((std::uint8_t)saved_trader.phase>(std::uint8_t)TradePhase::Complete||!std::isfinite(saved_trader.elapsed)||saved_trader.elapsed<0||saved_trader.elapsed>24||!valid_position(saved_trader.dock)||saved_trader.sale_value_eur<0||saved_trader.sale_value_eur>2000000||saved_trader.last_payment_eur<0||saved_trader.last_payment_eur>2000000)r.valid=false;
+        std::int64_t total=0;TradeManifest custody{};
+        for(std::size_t i=0;i<kTradeGoodCount;++i){auto q=saved_trader.requested[i],l=saved_trader.loaded[i];if(q<0||q>kTraderCapacityKg||l<0||l>q)r.valid=false;else total+=q;custody[i]=l;}
+        if(total>kTraderCapacityKg)r.valid=false;
+        const auto oxygen_count=r.pod<std::uint32_t>();if(oxygen_count>100000)r.valid=false;
+        for(std::uint32_t i=0;i<oxygen_count&&r.valid;++i){OxygenExportStock o;o.source_sequence=r.pod<std::uint64_t>();o.kg=r.pod<double>();if(!o.source_sequence||!std::isfinite(o.kg)||o.kg<0||o.kg>1000)r.valid=false;for(const auto& old:saved_trader.oxygen)if(old.source_sequence==o.source_sequence)r.valid=false;saved_trader.oxygen.push_back(o);}
+        const auto lot_count=r.pod<std::uint32_t>();if(lot_count>20000)r.valid=false;
+        for(std::uint32_t i=0;i<lot_count&&r.valid;++i){TradeLot l;l.good=(TradeGood)r.pod<std::uint8_t>();l.remaining=r.pod<std::int64_t>();l.position=read_vec3(r);if((std::size_t)l.good>=kTradeGoodCount||l.remaining<0||l.remaining>kTraderCapacityKg||!valid_position(l.position))r.valid=false;else custody[(std::size_t)l.good]+=l.remaining;saved_trader.lots.push_back(l);}
+        const auto haul_count=r.pod<std::uint32_t>();if(haul_count>12)r.valid=false;
+        for(std::uint32_t i=0;i<haul_count&&r.valid;++i){TradeHaul h;h.robot=r.pod<std::uint8_t>();h.phase=r.pod<std::uint8_t>();h.lot=r.pod<std::uint32_t>();h.cargo=r.pod<std::int64_t>();h.service=read_vec3(r);h.exit=read_vec3(r);h.service_valid=r.boolean();
+            if(h.robot>=saved_robots.size()||h.phase>2||h.lot>=saved_trader.lots.size()||h.cargo<0||h.cargo>3600||!valid_position(h.service)||!valid_position(h.exit)||(h.phase!=1&&h.cargo!=0)||(h.phase==1&&h.cargo==0))r.valid=false;
+            for(const auto& old:saved_trader.hauls)if(old.robot==h.robot)r.valid=false;
+            if(r.valid)custody[(std::size_t)saved_trader.lots[h.lot].good]+=h.cargo;
+            saved_trader.hauls.push_back(h);
+        }
+        if(saved_trader.active()){
+            bool pad_found=false;for(const auto& p:structures)if(p.kind==ResourceKind::LandingPad&&p.placement_sequence==saved_trader.pad_sequence&&p.construction.complete())pad_found=true;
+            if(saved_game_phase!=GamePhase::RobotPreparation||!saved_trader.pad_sequence||!pad_found)r.valid=false;
+            if(saved_trader.phase==TradePhase::Loading&&custody!=saved_trader.requested)r.valid=false;
+            if(saved_trader.phase==TradePhase::Departing&&(saved_trader.loaded!=saved_trader.requested||custody!=saved_trader.requested||!saved_trader.hauls.empty()))r.valid=false;
+        }
+    }
+    if(source_schema>=34){
+        saved_lander.stash_center=read_vec3(r);saved_lander.awaiting_site=r.boolean();saved_lander.awaiting_stash=r.boolean();saved_lander.salvaged=r.boolean();saved_lander.boxed=r.boolean();
+        const auto p=saved_lander.stash_center;
+        if(!std::isfinite(p.x)||!std::isfinite(p.y)||!std::isfinite(p.z)||std::abs(p.x)>saved_playfield||std::abs(p.z)>saved_playfield||
+           (saved_lander.salvaged&&(saved_lander.phase!=LanderPhase::Ready||!saved_lander.remaining.empty())) ||
+           (saved_lander.awaiting_site&&saved_lander.phase!=LanderPhase::Approach))r.valid=false;
+    }else if(saved_lander.has_depot()){
+        saved_lander.stash_center=saved_lander.site+eng::Vec3{-10.9f,0,0};saved_lander.awaiting_stash=true;
+    }
+    if(source_schema>=35){
+        saved_lander.salvage_requested=r.boolean();
+        saved_lander.salvage_worker=r.pod<std::int32_t>();
+        saved_lander.salvage_port=r.pod<std::uint8_t>();
+        saved_lander.salvage_seconds=r.pod<float>();
+        const int worker=saved_lander.salvage_worker;
+        if(!std::isfinite(saved_lander.salvage_seconds)||saved_lander.salvage_seconds<0||
+           saved_lander.salvage_seconds>kLanderSalvageSeconds||saved_lander.salvage_port>=kLanderSalvagePortCount||
+           worker<-1||(worker>=0&&(!saved_lander.salvage_requested||(std::size_t)worker>=saved_robots.size()||
+               saved_robots[(std::size_t)worker].role!=RobotRole::Constructor))||
+           (saved_lander.salvage_requested&&(!saved_lander.active()||saved_lander.phase!=LanderPhase::Ready||
+               saved_lander.awaiting_stash||!saved_lander.remaining.empty()))) r.valid=false;
+        for(auto& pile:piles){
+            pile.kind=(GroundPileKind)r.pod<std::uint8_t>();
+            if(pile.kind>GroundPileKind::Stash||
+               (pile.kind!=GroundPileKind::Loose&&((std::size_t)pile.resource>=kMaterialResourceCount||
+                pile.amount<=0||pile.amount>kGroundStackLayers*resource_package_capacity_kg(pile.resource)))) r.valid=false;
+        }
+    }
+    if(source_schema>=37){
+        const auto read_counts=[&](auto& counts){
+            for(auto& count:counts){
+                count=r.pod<std::uint8_t>();
+                if(count>12) r.valid=false;
+            }
+        };
+        read_counts(saved_planning.mission_habitats);
+        read_counts(saved_planning.mission_structures);
+        if(saved_planning.mission_structures[(std::size_t)ResourceKind::StorageGate]) r.valid=false;
+        saved_lander.legacy_parking=r.boolean();
+        if(saved_lander.phase==LanderPhase::DeployingRobots&&
+           saved_lander.elapsed>lunar_lander_deployment_seconds(saved_lander,(int)saved_robots.size())) r.valid=false;
+        for(auto& item:structures) if(item.kind==ResourceKind::OxygenTank){
+            item.stored_oxygen_kg=r.pod<double>();
+            if(!std::isfinite(item.stored_oxygen_kg)||item.stored_oxygen_kg<0||
+               item.stored_oxygen_kg>oxygen_tank_capacity_kg(item.size)+1e-6) r.valid=false;
+        }
+    }else if(saved_lander.active()&&!saved_lander.awaiting_site&&!saved_lander.legacy_parking){
+        const float half=saved_playfield*.5f-1;
+        saved_lander.legacy_parking=std::abs(saved_lander.site.x)+8>half||saved_lander.site.z+14.9f>half||
+            (saved_lander.boxed&&!lunar_lander_deployment_clear(saved_lander,saved_lander.stash_center,0,2.5f,2.5f,1));
+    }
+    const auto stage3_mode=source_schema>=38?static_cast<Stage3Mode>(r.pod<std::uint8_t>()):Stage3Mode::Sandbox;
+    if(stage3_mode>Stage3Mode::AstronautTest ||
+       (stage3_mode!=Stage3Mode::Sandbox && saved_game_phase!=GamePhase::Debug))r.valid=false;
+    if(source_schema>=39){
+        for(auto& item:structures)if(item.kind==ResourceKind::OreDriller){
+            for(auto& stock:item.mined_ore_kg){
+                stock=r.pod<double>();
+                if(!std::isfinite(stock) || stock<0 || stock>ore::stock_capacity_kg+ore::box_kg)r.valid=false;
+            }
+        }
+    }
+    std::vector<bool> linked_drills(structures.size(),false);
+    for(auto& link:utilities){
+        if(link.kind==UtilityKind::SupplyChannel)continue;
+        if(source_schema<39 || link.kind!=UtilityKind::ConveyorBelt ||
+           link.endpoint_a.kind!=UtilityEndpointKind::Resource || link.endpoint_a.index>=structures.size() ||
+           structures[link.endpoint_a.index].kind!=ResourceKind::OreDriller || linked_drills[link.endpoint_a.index] ||
+           link.endpoint_b.kind!=UtilityEndpointKind::Habitat || link.endpoint_b.index>=habitats.size() ||
+           (habitats[link.endpoint_b.index].kind!=HabitatKind::ProcessingFacility && habitats[link.endpoint_b.index].kind!=HabitatKind::Factory) ||
+           link.path.size()<2){r.valid=false;break;}
+        linked_drills[link.endpoint_a.index]=true;
+        link.ore_cargo=r.pod<std::uint8_t>();
+        link.ore_next=r.pod<std::uint8_t>();
+        link.ore_distance_m=r.pod<float>();
+        float length=0;
+        for(std::size_t i=1;i<link.path.size();++i)
+            length+=std::hypot(link.path[i].x-link.path[i-1].x,link.path[i].z-link.path[i-1].z);
+        if(!std::isfinite(length) || length<=0 || link.ore_cargo>ore::no_cargo || link.ore_next>=ore::no_cargo ||
+           !std::isfinite(link.ore_distance_m) || link.ore_distance_m<0 || link.ore_distance_m>length+.01f ||
+           (link.ore_cargo==ore::no_cargo && link.ore_distance_m!=0))r.valid=false;
+    }
+    if(source_schema>=40){
+        const auto raw_count=r.pod<std::uint32_t>();
+        if(raw_count>structures.size())r.valid=false;
+        for(std::uint32_t row=0;row<raw_count && r.valid;++row){
+            const auto i=r.pod<std::uint32_t>();
+            if(i>=structures.size() || structures[i].kind!=ResourceKind::StorageDome ||
+               stored_ore_mass_kg(structures[i])>0){r.valid=false;break;}
+            auto& dome=structures[i];
+            for(auto& count:dome.stored_ore_boxes)count=r.pod<std::uint32_t>();
+            if(stored_ore_mass_kg(dome)==0 || storage_dome_used_kg(dome)>storage_dome_capacity_kg(dome.storage_size))r.valid=false;
+        }
+        const auto cargo_count=r.pod<std::uint8_t>();
+        if(cargo_count>saved_robots.size())r.valid=false;
+        for(std::uint8_t row=0;row<cargo_count && r.valid;++row){
+            const auto i=r.pod<std::uint8_t>();
+            if(i>=saved_robots.size() || saved_robots[i].role!=RobotRole::Carrier ||
+               saved_robots[i].ore_haul.loaded || saved_robots[i].target.valid() || !saved_robots[i].cargo.empty() ||
+               std::any_of(saved_trader.hauls.begin(),saved_trader.hauls.end(),[&](const auto& haul){return haul.robot==i;})){
+                r.valid=false;break;
+            }
+            auto& haul=saved_robots[i].ore_haul;
+            haul.source=r.pod<std::uint64_t>();
+            haul.destination=r.pod<std::uint64_t>();
+            haul.kind=r.pod<std::uint8_t>();
+            haul.loaded=true;
+            if(!haul.source || !haul.active())r.valid=false;
+        }
+    }
+    if(!r.valid){ error="Savegame ended unexpectedly or contains invalid deployment/trader data."; return false; }
 
     // v0.40.11 and older stored delivered construction material on the BR-02
     // coordinator. Move that authoritative buffer onto the blueprint itself so
@@ -1160,10 +1415,39 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         for(auto& robot:saved_robots) robot.site_buffer={};
     }
 
+    if(saved_game_phase==GamePhase::Debug && stage3_mode==Stage3Mode::Sandbox){
+        // Older Stage 3 saves may contain queued blueprints. Preserve invested
+        // materials and staged cargo, but waive unspent recipe costs.
+        const auto finish_pending=[&](auto& items,ConstructionTargetKind kind){
+            for(std::size_t index=0;index<items.size();++index){
+                auto& item=items[index];
+                if(item.construction.complete())continue;
+                for(std::size_t step=item.construction.step;step<item.resource_plan.steps.size();++step)
+                    item.resource_plan.steps[step]={};
+                item.construction.finish();
+                for(auto& robot:saved_robots){
+                    if(!robot.target.same_as({kind,index}) || !robot.cargo_committed_to_build)continue;
+                    add_bundle(item.site_buffer,robot.cargo);
+                    robot.cargo={};
+                    robot.cargo_committed_to_build=false;
+                    robot.logistics_reservation={};
+                    robot.target={};
+                    robot.mode=BuilderRobotMode::Idle;
+                }
+            }
+        };
+        finish_pending(habitats,ConstructionTargetKind::Habitat);
+        finish_pending(structures,ConstructionTargetKind::Resource);
+        finish_pending(corridors,ConstructionTargetKind::Corridor);
+        finish_pending(utilities,ConstructionTargetKind::Utility);
+        finish_pending(walkways,ConstructionTargetKind::Walkway);
+    }
+
     playfield_size_=saved_playfield;
     playfield_.rebuild(saved_playfield);
     camera_.restore(camera_state);
     status_.restore(colony);
+    status_rate_display_={};
     resources_.restore(resource_state);
     placed_habitats_=std::move(habitats);
     placed_resources_=std::move(structures);
@@ -1190,7 +1474,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     for(const auto& c:utility_network_.connections()) advance_sequence(c.placement_sequence);
     for(const auto& c:walkway_network_.connections()) advance_sequence(c.placement_sequence);
 
-    if(saved_game_phase!=GamePhase::RobotPreparation){
+    if(saved_game_phase!=GamePhase::RobotPreparation || saved_lander.active()){
         builder_robots_=std::move(saved_robots);
         starter_stash_center_=saved_stash;
         production_fraction_=saved_production;
@@ -1459,11 +1743,17 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     habitat_view_mode_=saved_view;
     game_speed_=saved_game_speed;
     active_game_phase_=saved_game_phase;
+    stage3_mode_=stage3_mode;
     new_game_phase_selection_=saved_game_phase;
     active_game_mode_=saved_game_mode;
     new_game_mode_selection_=saved_game_mode;
     planning_=saved_planning;
-    if(source_schema<26 && saved_game_phase==GamePhase::Planning) planning_.mission_cargo=planning_minimum_mission_cargo();
+    lander_=saved_lander;landing_message_.clear();
+    trader_=std::move(saved_trader);trade_message_.clear();
+    if(lander_.salvage_requested) landing_message_=lander_.salvage_seconds>=kLanderSalvageSeconds?
+        "CLEAR SPACE NEAR THE STASH MARKER":"SALVAGE QUEUED / WAITING FOR A BUILDER";
+    if(lander_.active()){starting_robot_count_=lander_.builders;starting_carrier_count_=lander_.carriers;robot_enclosure_legacy_scan_pending_=false;}
+    planning_structure_page_=-1;
     planning_status_message_.clear();
     build_catalog_.set_category(saved_category);
     build_catalog_.clear_selection();
@@ -1485,6 +1775,9 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     selection_marquee_dragged_=false;
     corridor_link_source_=-1;
     corridor_build_start_.reset(); utility_build_start_.reset(); walkway_build_start_.reset(); walkway_build_target_.reset();
+    if((source_schema==34||source_schema==35)&&lander_.has_depot()&&lander_.boxed&&!lander_.awaiting_stash)
+        migrate_boxed_lander_stash(source_schema==34);
+    if(lander_.active())selection_kind_=SelectionKind::Lander;
     game_session_active_=true;
     save_game_name_=save_name;
     // Older saves could contain a successfully launched Stage-1 mission

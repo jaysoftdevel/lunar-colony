@@ -234,7 +234,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     if(input_.left_pressed && affordable &&
        corridor_network_.connect_corridors((std::size_t)corridor_link_source_,(std::size_t)target,placed_habitats_,habitat_models_,placed_resources_,resource_models_)){
         for(const auto& c:corridor_network_.connections())if(!gate_route_clear(c.path,geometry::kCorridorHalfWidth+0.2f)){corridor_network_.restore_connections(previous_corridors);return;}
-        corridor_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
+        finalize_placement(corridor_network_.mutable_connections().back());
         selected_corridor_=(int)corridor_network_.connections().size()-1;
         selected_habitat_=-1;
         selected_resource_=-1;
@@ -411,7 +411,8 @@ void GameApp::render_corridor_placement(Renderer& r){
                 fail("CORRIDOR MERGE BLOCKED","The merged corridor network would enter a reserved gate or service clearance area.");
                 return;
             }
-            corridor_network_.mutable_connections().back().placement_sequence=next_blueprint_placement_sequence_++;
+            if(corridor_network_.connections().size()>previous_corridors.size())
+                finalize_placement(corridor_network_.mutable_connections().back());
             selected_corridor_=(int)corridor_network_.connections().size()-1;
             selected_habitat_=-1;
             selection_kind_=SelectionKind::Corridor;

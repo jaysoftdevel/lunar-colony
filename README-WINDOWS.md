@@ -49,11 +49,7 @@ The Release executable is created as:
 build/windows/bin/game.exe
 ```
 
-The debug construction template is copied beside it under:
-
-```text
-build/windows/bin/debug/0-40-32-debug-start.gmsave
-```
+Debug-template starts read the optional save from the source tree or the executable's `debug/` directory at runtime. Building the executable does not require that save.
 
 `dev.bat` provides the common command wrapper (`build`, `rebuild`, `run`, `test`, `clean`, `deps`). `build-windows.bat` and `build-windows.ps1` remain compatibility wrappers for the earlier Windows-only workflow.
 

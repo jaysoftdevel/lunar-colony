@@ -796,7 +796,7 @@ bool GameApp::planning_double_clicked(int group,int item){
 
 void GameApp::reset_planning_game(){
     planning_=default_planning_game_state();
-    planning_.mission_cargo=planning_minimum_mission_cargo();
+    planning_structure_page_=-1;
     planning_contract_page_=0;
     planning_contract_selected_=0;
     planning_contract_research_page_=0;
@@ -824,7 +824,7 @@ bool GameApp::planning_contract_available(std::size_t index) const {
     return mask_unlocked(planning_,kContracts[index].required_tech);
 }
 
-ResourceBundle GameApp::planning_minimum_mission_cargo() const {
+ResourceBundle GameApp::planning_reference_mission_cargo() const {
     // Minimum practical Stage-2 shipment: enough hardware/material stock to
     // establish power + water, a pressurized crew-ready core, rover service,
     // and the mandatory landing infrastructure. This deliberately follows the
@@ -865,8 +865,48 @@ ResourceBundle GameApp::planning_minimum_mission_cargo() const {
     return total;
 }
 
+ResourceBundle GameApp::planning_structure_requirements() const {
+    ResourceBundle required;
+    const auto add=[&](const ResourceBundle& per_structure,std::uint8_t count){
+        for(const auto material:kConstructionMaterialResources)
+            required.amount(material)+=per_structure.amount(material)*count;
+    };
+    for(std::size_t i=0;i<planning_.mission_habitats.size();++i){
+        const auto count=planning_.mission_habitats[i];
+        if(!count) continue;
+        const auto kind=(HabitatKind)i;
+        constexpr auto size=HabitatSizeTier::Standard;
+        add(construction_costs::habitat(kind,size,habitat_models_.mesh(kind,size)).total(),count);
+    }
+    for(std::size_t i=0;i<planning_.mission_structures.size();++i){
+        const auto count=planning_.mission_structures[i];
+        if(!count) continue;
+        const auto kind=(ResourceKind)i;
+        add(construction_costs::structure(kind,resource_models_.mesh(kind,ResourceSizeTier::Standard)).total(),count);
+    }
+    return required;
+}
+
+bool GameApp::planning_cargo_covers_structures() const {
+    const auto required=planning_structure_requirements();
+    for(const auto material:kConstructionMaterialResources)
+        if(planning_.mission_cargo.amount(material)<required.amount(material)) return false;
+    return true;
+}
+
+void GameApp::planning_add_required_cargo(){
+    if(planning_.mission_step!=MissionPreparationStep::Plan) return;
+    const auto required=planning_structure_requirements();
+    for(const auto material:kConstructionMaterialResources){
+        auto& amount=planning_.mission_cargo.amount(material);
+        amount=std::max(amount,required.amount(material));
+    }
+    planning_status_message_="Payload updated for the selected structures.";
+}
+
 std::int64_t GameApp::planning_mission_payload_kg() const {
-    return std::max<std::int64_t>(0,planning_.mission_cargo.total_amount());
+    return std::max<std::int64_t>(0,planning_.mission_cargo.total_amount())+
+        planning_.mission_builders*kMissionBuilderMassKg+planning_.mission_carriers*kMissionCarrierMassKg;
 }
 
 std::int64_t GameApp::planning_mission_payload_capacity_kg() const {
@@ -878,7 +918,8 @@ std::int64_t GameApp::planning_mission_payload_capacity_kg() const {
 std::int64_t GameApp::planning_mission_cost_eur() const {
     const auto ri=std::min<std::size_t>(planning_.mission_rocket,kRockets.size()-1);
     const auto li=std::min<std::size_t>(planning_.mission_lander,kLanders.size()-1);
-    std::int64_t total=kRockets[ri].cost_eur+kLanders[li].cost_eur;
+    std::int64_t total=kRockets[ri].cost_eur+kLanders[li].cost_eur+
+        planning_.mission_builders*85'000+planning_.mission_carriers*110'000;
     for(std::size_t i=0;i<kMaterialResourceCount;++i){
         const auto resource=(MaterialResource)i;
         const auto kg=std::max<std::int64_t>(0,planning_.mission_cargo.amount(resource));
@@ -897,11 +938,7 @@ bool GameApp::planning_mission_requirements_met() const {
     const auto li=std::min<std::size_t>(planning_.mission_lander,kLanders.size()-1);
     if(!mask_unlocked(planning_,kRockets[ri].required_tech) || !mask_unlocked(planning_,kLanders[li].required_tech)) return false;
     if(!planning_.technologies[14] || !planning_.technologies[15]) return false;
-    const auto minimum=planning_minimum_mission_cargo();
-    for(std::size_t i=0;i<kMaterialResourceCount;++i){
-        const auto resource=(MaterialResource)i;
-        if(planning_.mission_cargo.amount(resource)<minimum.amount(resource)) return false;
-    }
+    if(!planning_cargo_covers_structures()) return false;
     if(planning_mission_payload_kg()>planning_mission_payload_capacity_kg()) return false;
     return planning_.funds_eur>=planning_mission_cost_eur();
 }
@@ -923,12 +960,16 @@ void GameApp::deploy_lunar_base_from_mission(){
     // research and contract history) but replace the Earth company campus
     // with a completely fresh robotic lunar-base simulation.
     const ResourceBundle shipped=planning_.mission_cargo;
+    trader_={};trade_message_.clear();
     playfield_size_=kNewGamePlayfieldDefault;
     playfield_.rebuild(playfield_size_);
     camera_.reset(playfield_size_);
     first_person_mode_=FirstPersonMode::Off;
     app_.set_relative_mouse_mode(false);
     status_.reset();
+    status_rate_display_={};
+    battery_net_kw_=water_net_litres_per_day_=0;
+    supply_power_delivered_kw_=supply_power_load_kw_=supply_water_load_litres_per_day_=0;
     resources_.reset();
     placed_habitats_.clear();
     placed_resources_.clear();
@@ -951,9 +992,7 @@ void GameApp::deploy_lunar_base_from_mission(){
     storage_gate_open_.clear();
     production_fraction_.fill(0.0);
     life_support_fraction_seconds_=0.0;
-    starting_robot_count_=1;
-    starting_carrier_count_=1;
-    reset_builder_robot_and_starter_stash(&shipped);
+    begin_lunar_landing(shipped,planning_.mission_builders,planning_.mission_carriers);
     build_catalog_.clear_selection();
     placement_rotation_degrees_=0.0f;
     placement_habitat_size_=HabitatSizeTier::Small;
@@ -972,6 +1011,7 @@ void GameApp::deploy_lunar_base_from_mission(){
     walkway_build_start_.reset();
     walkway_build_target_.reset();
     debug_start_template_enabled_=false;
+    selection_kind_=SelectionKind::Lander;
     active_game_phase_=GamePhase::RobotPreparation;
     new_game_phase_selection_=GamePhase::RobotPreparation;
     new_game_mode_selection_=active_game_mode_;
@@ -988,13 +1028,8 @@ bool GameApp::complete_planning_mission_step(){
     }
     const auto ri=std::min<std::size_t>(planning_.mission_rocket,kRockets.size()-1);
     const auto li=std::min<std::size_t>(planning_.mission_lander,kLanders.size()-1);
-    const auto minimum=planning_minimum_mission_cargo();
-    auto cargo_ready=[&](){
-        for(std::size_t i=0;i<kMaterialResourceCount;++i){
-            const auto m=(MaterialResource)i;
-            if(planning_.mission_cargo.amount(m)<minimum.amount(m)) return false;
-        }
-        return planning_mission_payload_kg()<=planning_mission_payload_capacity_kg();
+    const auto cargo_ready=[&]{
+        return planning_cargo_covers_structures()&&planning_mission_payload_kg()<=planning_mission_payload_capacity_kg();
     };
 
     switch(step){
@@ -1031,7 +1066,7 @@ bool GameApp::complete_planning_mission_step(){
             return true;
         case MissionPreparationStep::Plan:
             if(!cargo_ready()){
-                planning_status_message_="Mission plan blocked: minimum Stage-2 cargo is missing or the selected vehicle pair cannot land the manifest.";
+                planning_status_message_="Mission plan blocked: add cargo for your selected structures and check vehicle payload capacity.";
                 return false;
             }
             planning_.elapsed_days+=7.0;
@@ -1084,7 +1119,7 @@ bool GameApp::complete_planning_mission_step(){
                 if(customer.completed_count<std::numeric_limits<std::uint16_t>::max()) ++customer.completed_count;
                 planning_status_message_="MISSION LAUNCHED. Lunar cargo customer delivery accepted: "+money(kContracts.back().finish_eur)+" final payout received.";
             }else{
-                planning_status_message_="MISSION LAUNCHED. The robotic lunar-base shipment has arrived on the Moon.";
+                planning_status_message_="MISSION LAUNCHED. Lunar lander entering powered final approach.";
             }
             deploy_lunar_base_from_mission();
             return true;
@@ -1365,14 +1400,14 @@ void GameApp::render_planning_game(Renderer& r){
         ui::panel(r,brief,theme_);
         game_label_fitted(r,{board.x+14,board.y+9,board.w-28,23},"CUSTOMER CONTRACTS",compact?0.58f:0.73f,theme_);
         const auto budget=campaign_budget_audit();
-        const auto minimum_manifest=planning_minimum_mission_cargo();
+        const auto minimum_manifest=planning_reference_mission_cargo();
         std::int64_t minimum_delivery_cost=0;
         for(std::size_t ri=0;ri<kMaterialResourceCount;++ri)
             minimum_delivery_cost+=minimum_manifest.amount((MaterialResource)ri)*
                 (kResourcePurchaseEurPerKg[ri]+kCargoIntegrationEurPerKg);
         const auto total_required=budget.full_research_cost+budget.maximum_vehicle_cost+minimum_delivery_cost;
         game_label_fitted(r,{board.x+14,board.y+36,board.w-28,17},
-                          "PROGRAM COST " + money(total_required) + "  /  CONTRACT FUNDING " +
+                          "REFERENCE PROGRAM COST " + money(total_required) + "  /  CONTRACT FUNDING " +
                           money(budget.commercial_income) + "  [EXCLUDES LAUNCH BONUS]",
                           0.35f,theme_,true);
         // Overview of the relationship to the rest of the first stage.
@@ -1675,13 +1710,12 @@ void GameApp::render_planning_game(Renderer& r){
             planning_.mission_facility=MissionFacility::Overview;
         if(ui::button(r,ui_input_,{facility.x+12,facility.y+facility.h-42,facility.w-24,30},compact?"COMPANY SITE":"RETURN TO COMPANY SITE",theme_)) planning_.view=PlanningView::Site;
 
-        const auto minimum=planning_minimum_mission_cargo();
+        const auto required_cargo=planning_structure_requirements();
         const auto rocket_index=std::min<std::size_t>(planning_.mission_rocket,kRockets.size()-1);
         const auto lander_index=std::min<std::size_t>(planning_.mission_lander,kLanders.size()-1);
         const auto& rocket=kRockets[rocket_index];
         const auto& lander=kLanders[lander_index];
-        bool cargo_ready=true;
-        for(std::size_t i=0;i<kMaterialResourceCount;++i){ const auto m=(MaterialResource)i; cargo_ready&=planning_.mission_cargo.amount(m)>=minimum.amount(m); }
+        const bool cargo_ready=planning_cargo_covers_structures();
         const bool capacity_ready=planning_mission_payload_kg()<=planning_mission_payload_capacity_kg();
 
         auto headline=[&](const std::string& title,const std::string& text){
@@ -1708,21 +1742,28 @@ void GameApp::render_planning_game(Renderer& r){
             const float col_w=(work.w-28.0f-gap*(float)(cols-1))/(float)cols;
             const float row_h=compact?34.0f:43.0f;
             if(editable){
-                if(ui::button(r,ui_input_,{work.x+work.w-230,y-2,128,28},"LOAD MINIMUM",theme_)){
-                    for(std::size_t i=0;i<kMaterialResourceCount;++i){ const auto m=(MaterialResource)i; planning_.mission_cargo.amount(m)=std::max(planning_.mission_cargo.amount(m),minimum.amount(m)); }
-                    planning_status_message_="Minimum Stage-2 construction and survival manifest loaded.";
-                }
+                if(ui::button(r,ui_input_,{work.x+work.w-230,y-2,128,28},"AUTO-ADD CARGO",theme_,!required_cargo.empty()))
+                    planning_add_required_cargo();
                 if(ui::button(r,ui_input_,{work.x+work.w-94,y-2,78,28},"CLEAR",theme_)){ planning_.mission_cargo={}; planning_status_message_="Mission cargo cleared."; }
             }
-            const float top=y+32.0f;
+            const float bot_y=y+30.0f;
+            for(int role=0;role<2;++role){
+                auto& count=role==0?planning_.mission_builders:planning_.mission_carriers;
+                const float x=work.x+14+(work.w-28)*0.5f*(float)role;
+                const float w=(work.w-28)*0.5f-6;
+                game_label_fitted(r,{x,bot_y+6,w-72,14},std::string(role==0?"BUILDERS  ":"CARRIERS  ")+std::to_string(count),compact?0.25f:0.32f,theme_);
+                if(ui::button(r,ui_input_,{x+w-68,bot_y,30,25},"-",theme_,editable&&count>1))--count;
+                if(ui::button(r,ui_input_,{x+w-34,bot_y,30,25},"+",theme_,editable&&count<6))++count;
+            }
+            const float top=y+62.0f;
             for(std::size_t i=0;i<kMaterialResourceCount;++i){
                 const int col=(int)i/rows,row=(int)i%rows;
                 const auto m=(MaterialResource)i;
-                const auto current=planning_.mission_cargo.amount(m),required=minimum.amount(m);
+                const auto current=planning_.mission_cargo.amount(m),required=required_cargo.amount(m);
                 const float x=work.x+14.0f+(col_w+gap)*(float)col;
                 const float yy=top+row_h*(float)row;
                 r.draw_rect({x,yy,col_w,row_h-4.0f},current>=required?Color{0.047f,0.071f,0.076f,0.96f}:Color{0.076f,0.050f,0.050f,0.96f});
-                game_label_fitted(r,{x+6,yy+5,col_w-(editable?118.0f:12.0f),14},std::string(material_resource_name(m))+"  "+mass_text(current)+" / MIN "+mass_text(required),compact?0.23f:0.29f,theme_,true);
+                game_label_fitted(r,{x+6,yy+5,col_w-(editable?118.0f:12.0f),14},std::string(material_resource_name(m))+"  "+mass_text(current)+" / NEED "+mass_text(required),compact?0.23f:0.29f,theme_,true);
                 if(editable){
                     const std::int64_t step=(m==MaterialResource::Food || m==MaterialResource::Medical)?100:1000;
                     if(ui::button(r,ui_input_,{x+col_w-108,yy+4,48,row_h-12},"-",theme_,current>0)) planning_.mission_cargo.amount(m)=std::max<std::int64_t>(0,current-step);
@@ -1732,6 +1773,42 @@ void GameApp::render_planning_game(Renderer& r){
             const float sy=top+row_h*(float)rows+2.0f;
             game_label_fitted(r,{work.x+14,sy,work.w-28,16},"PAYLOAD "+mass_text(planning_mission_payload_kg())+" / "+mass_text(planning_mission_payload_capacity_kg())+"   |   MISSION "+money(planning_mission_cost_eur()),compact?0.27f:0.33f,theme_,true);
             return sy+22.0f;
+        };
+
+        const auto draw_structure_plan=[&](float y){
+            std::vector<const BuildObjectDefinition*> structures;
+            for(const auto& item:build_catalog_.items())
+                if(item.kind==BuildObjectKind::Habitat||item.kind==BuildObjectKind::Resource) structures.push_back(&item);
+
+            constexpr float row_h=23;
+            const int rows=std::clamp((int)((work.y+work.h-y-86)/row_h),1,10);
+            const int last_page=std::max(0,((int)structures.size()-1)/rows);
+            planning_structure_page_=std::clamp(planning_structure_page_,0,last_page);
+            const int first=planning_structure_page_*rows;
+            for(int i=0;i<rows&&first+i<(int)structures.size();++i){
+                const auto& item=*structures[(std::size_t)(first+i)];
+                auto& quantity=item.kind==BuildObjectKind::Habitat?planning_.mission_habitats[(std::size_t)item.habitat_kind]
+                    :planning_.mission_structures[(std::size_t)item.resource_kind];
+                const float yy=y+row_h*(float)i;
+                const float right=work.x+work.w-14;
+                r.draw_rect({work.x+14,yy,work.w-28,row_h-2},quantity?Color{.051f,.101f,.105f,1}:theme_.panel2);
+                game_label_fitted(r,{work.x+20,yy+3,work.w-140,14},item.name,.35f,theme_);
+                if(ui::button(r,ui_input_,{right-99,yy,28,21},"-",theme_,quantity>0)) --quantity;
+                game_label_fitted(r,{right-65,yy+3,30,14},std::to_string(quantity),.35f,theme_);
+                if(ui::button(r,ui_input_,{right-29,yy,28,21},"+",theme_,quantity<12)) ++quantity;
+            }
+            const float footer=y+rows*row_h+5;
+            if(ui::button(r,ui_input_,{work.x+14,footer,30,22},"<",theme_,planning_structure_page_>0)) --planning_structure_page_;
+            if(ui::button(r,ui_input_,{work.x+100,footer,30,22},">",theme_,planning_structure_page_<last_page)) ++planning_structure_page_;
+            game_label_fitted(r,{work.x+48,footer+4,48,14},std::to_string(planning_structure_page_+1)+"/"+std::to_string(last_page+1),.30f,theme_);
+            const auto needed=planning_structure_requirements();
+            if(ui::button(r,ui_input_,{work.x+work.w-152,footer,138,22},"AUTO-ADD CARGO",theme_,!needed.empty()))
+                planning_add_required_cargo();
+            std::string line="NEEDED: ";
+            for(const auto material:kConstructionMaterialResources)
+                line+=std::string(material_resource_symbol(material))+" "+std::to_string(needed.amount(material))+" KG  ";
+            game_label_fitted(r,{work.x+14,footer+30,work.w-28,16},line,.35f,theme_);
+            game_label_fitted(r,{work.x+14,footer+50,work.w-28,16},"STANDARD SIZES / SMALL STORAGE DOME / ADD LINKS AND SUPPLIES IN PAYLOAD",.28f,theme_,true);
         };
 
         if(selected_facility==MissionFacility::Overview){
@@ -1780,12 +1857,22 @@ void GameApp::render_planning_game(Renderer& r){
             if(planning_.mission_step==MissionPreparationStep::Test){ if(action_button("RUN QUALIFICATION TESTS  (+24 D)",true,y)) complete_planning_mission_step(); }
             else game_label_fitted(r,{work.x+14,y,work.w-28,32},std::string("TEST gate is not active. Current gate: ")+mission_step_name(planning_.mission_step)+".",0.33f,theme_,true);
         }else if(selected_facility==MissionFacility::MissionControl){
-            headline("MISSION CONTROL - FLIGHT PLAN","Finalize the lunar cargo manifest and operational flight profile. The plan must fit both the transfer vehicle and lunar lander.");
-            float y=work.y+76.0f;
+            headline("MISSION CONTROL - FLIGHT PLAN","Plan lunar structures and load the materials needed to build them.");
             const bool editable=planning_.mission_step==MissionPreparationStep::Plan;
-            y=draw_manifest(y,editable);
-            if(editable && action_button("FREEZE MISSION PLAN  (+7 D)",cargo_ready&&capacity_ready,y)) complete_planning_mission_step();
-            else if(!editable) game_label_fitted(r,{work.x+14,y,work.w-28,28},std::string("PLAN gate is not active. Current gate: ")+mission_step_name(planning_.mission_step)+".",0.31f,theme_,true);
+            if(editable){
+                if(ui::button(r,ui_input_,{work.x+14,work.y+57,112,24},"PAYLOAD",theme_,planning_structure_page_>=0))
+                    planning_structure_page_=-1;
+                if(ui::button(r,ui_input_,{work.x+132,work.y+57,112,24},"STRUCTURES",theme_,planning_structure_page_<0))
+                    planning_structure_page_=0;
+            }
+            float y=work.y+(editable?88.0f:76.0f);
+            if(editable&&planning_structure_page_>=0){
+                draw_structure_plan(y);
+            }else{
+                y=draw_manifest(y,editable);
+                if(editable && action_button("FREEZE MISSION PLAN  (+7 D)",cargo_ready&&capacity_ready,y)) complete_planning_mission_step();
+                else if(!editable) game_label_fitted(r,{work.x+14,y,work.w-28,28},std::string("PLAN gate is not active. Current gate: ")+mission_step_name(planning_.mission_step)+".",0.31f,theme_,true);
+            }
         }else if(selected_facility==MissionFacility::ProgramOffice){
             headline("PROGRAM AUTHORIZATION","Review contracts, company funds and the frozen mission plan. Formal authorization commits the mission budget and unlocks hardware production.");
             if(ui::button(r,ui_input_,{work.x+work.w-142,work.y+8,128,28},"CONTRACTS",theme_)) planning_.view=PlanningView::Contracts;

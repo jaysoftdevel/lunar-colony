@@ -2,6 +2,16 @@
 #include "game/world/gate_area.hpp"
 namespace game {
 bool GameApp::gate_route_clear(const std::vector<eng::Vec3>& path,float margin) const {
+    if(lander_.active())for(std::size_t i=1;i<path.size();++i){
+        const auto a=path[i-1],b=path[i],d=b-a;
+        const float angle=std::atan2(d.x,d.z)*180.0f/3.14159265359f;
+        const float length=std::hypot(d.x,d.z);
+        if(!lander_placement_clear((a+b)*0.5f,angle,2*margin,length+2*margin))return false;
+    }
+    if(trader_.active())for(std::size_t i=1;i<path.size();++i){
+        const auto a=path[i-1],b=path[i],d=b-a;
+        if(!trader_placement_clear((a+b)*0.5f,std::atan2(d.x,d.z)*180/3.14159265f,2*margin,std::hypot(d.x,d.z)+2*margin))return false;
+    }
     std::vector<gate_area::Area> pads;
     for(std::size_t i=0;i<placed_habitats_.size();++i){auto a=gate_area::habitat(placed_habitats_[i],habitat_models_.mesh(placed_habitats_[i]),i,corridor_network_.connections());pads.insert(pads.end(),a.begin(),a.end());}
     for(std::size_t i=0;i<placed_resources_.size();++i){auto a=gate_area::storage(placed_resources_[i],resource_models_.mesh(placed_resources_[i]),i,corridor_network_.connections());pads.insert(pads.end(),a.begin(),a.end());}

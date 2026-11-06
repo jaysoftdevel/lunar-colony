@@ -37,6 +37,7 @@ inline const char* resource_name(ResourceKind kind){
         case ResourceKind::RobotWorkshop: return "ROBOT WORKSHOP";
         case ResourceKind::StorageGate: return "STORAGE GATE";
         case ResourceKind::HydrogenGenerator: return "HYDROGEN GENERATOR";
+        case ResourceKind::OxygenTank: return "OXYGEN STORAGE TANK";
         case ResourceKind::HydrogenTank: return "HYDROGEN STORAGE TANK";
         default: return "RESOURCE STRUCTURE";
     }

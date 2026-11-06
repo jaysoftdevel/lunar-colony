@@ -75,18 +75,12 @@ struct Builder {
     }
 };
 
-float channel_y(UtilityKind){ return geometry::kSupplyChannelY; }
+float channel_y(UtilityKind kind){ return kind==UtilityKind::ConveyorBelt?ore::belt_height:geometry::kSupplyChannelY; }
 
 Vec3 flat_dir(Vec3 v){
     v.y=0.0f;
     if(length(v)<0.001f) return {1.0f,0.0f,0.0f};
     return normalize(v);
-}
-
-bool resource_supports(UtilityKind,ResourceKind){
-    // A supply channel carries the common base services. Every external
-    // resource structure can therefore join the colony supply backbone.
-    return true;
 }
 
 Vec3 structure_center(const UtilityBuildAnchor& a,
@@ -224,7 +218,8 @@ std::optional<UtilityEndpoint> surface_endpoint(const UtilityBuildAnchor& anchor
     // structure snapping convenient while still allowing fine adjustment along
     // the target hull before the second click. When the pointer is exactly at
     // the center, fall back to the opposite structure so a stable port exists.
-    Vec3 outward=anchor.hit-center;
+    Vec3 outward=utility==UtilityKind::ConveyorBelt && length(anchor.normal_hint)>0.001f?
+        anchor.normal_hint:anchor.hit-center;
     outward.y=0.0f;
     if(length(outward)<0.08f){ outward=toward-center; outward.y=0.0f; }
     if(length(outward)<0.001f) outward={1,0,0};
@@ -450,10 +445,11 @@ bool power_segments_overlap(Vec3 a,Vec3 b,Vec3 c,Vec3 d){
     return segment_distance_xz(a,b,c,d)<0.52f;
 }
 
-bool power_path_compatible(const std::vector<Vec3>& path,const std::vector<UtilityConnection>& existing){
+bool power_path_compatible(UtilityKind kind,const std::vector<Vec3>& path,const std::vector<UtilityConnection>& existing){
     for(std::size_t i=0;i+1<path.size();++i){
         for(const auto& cable:existing){
-            
+            // Conveyors are raised above the flush supply trays.
+            if(cable.kind!=kind)continue;
             for(std::size_t j=0;j+1<cable.path.size();++j){
                 if(power_segments_overlap(path[i],path[i+1],cable.path[j],cable.path[j+1])) return false;
             }
@@ -469,7 +465,16 @@ bool segment_intersection_point_xz(Vec3 a,Vec3 b,Vec3 c,Vec3 d,Vec3& out){
     const float rx=b.x-a.x,rz=b.z-a.z;
     const float sx=d.x-c.x,sz=d.z-c.z;
     const float denom=rx*sz-rz*sx;
-    if(std::abs(denom)<1.0e-5f) return false;
+    if(std::abs(denom)<1.0e-5f){
+        // Collinear terminal extensions have a shared ring but no crossing angle.
+        if(std::hypot(rx,rz)<.001f || std::hypot(sx,sz)<.001f)return false;
+        for(const auto x:{a,b})for(const auto y:{c,d}){
+            if(distance_xz(x,y)>.001f || std::abs(x.y-y.y)>.001f)continue;
+            out=x;
+            return true;
+        }
+        return false;
+    }
     const float qx=c.x-a.x,qz=c.z-a.z;
     const float t=(qx*sz-qz*sx)/denom;
     const float u=(qx*rz-qz*rx)/denom;
@@ -488,6 +493,7 @@ std::vector<Vec3> power_intersections(const std::vector<Vec3>& path,const std::v
     for(std::size_t i=0;i+1<path.size();++i){
         for(const auto& cable:existing){
             
+            if(cable.kind!=UtilityKind::SupplyChannel)continue;
             for(std::size_t j=0;j+1<cable.path.size();++j){
                 Vec3 p{};
                 if(segment_intersection_point_xz(path[i],path[i+1],cable.path[j],cable.path[j+1],p)) append_unique_point(points,p);
@@ -514,13 +520,20 @@ float path_length(const std::vector<Vec3>& path){
     return total;
 }
 
-bool route_valid(UtilityKind /*kind*/,const std::vector<Vec3>& path,const UtilityEndpoint& a,const UtilityEndpoint& b,
+bool route_valid(UtilityKind kind,const std::vector<Vec3>& path,const UtilityEndpoint& a,const UtilityEndpoint& b,
                  const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
                  const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                  const std::vector<UtilityConnection>& existing){
     if(path.size()<2) return false;
     if(!path_clear(path,a,b,habitats,habitat_library,resources,resource_library)) return false;
-    return power_path_compatible(path,existing);
+    if(kind==UtilityKind::ConveyorBelt){
+        for(const auto& link:existing){
+            if(link.kind!=kind)continue;
+            for(std::size_t i=1;i<path.size();++i)for(std::size_t j=1;j<link.path.size();++j)
+                if(segment_distance_xz(path[i-1],path[i],link.path[j-1],link.path[j])<2*ore::belt_half_width)return false;
+        }
+    }
+    return power_path_compatible(kind,path,existing);
 }
 
 struct UtilityGridNode {
@@ -801,8 +814,29 @@ void add_open_supply_cap(Builder& b,const UtilityEndpoint& ep){
     b.cylinder_between(b.mesh.details,ep.position-n*0.06f,ep.position+n*0.10f,0.25f,12,true);
 }
 
-UtilityMesh make_mesh(UtilityKind /*kind*/,const UtilityEndpoint& a,const UtilityEndpoint& b,const std::vector<Vec3>& path,const std::vector<Vec3>& junctions={}){
+UtilityMesh make_mesh(UtilityKind kind,const UtilityEndpoint& a,const UtilityEndpoint& b,const std::vector<Vec3>& path,const std::vector<Vec3>& junctions={}){
     Builder builder;
+    if(kind==UtilityKind::ConveyorBelt){
+        float next_roller=.25f;
+        for(std::size_t i=1;i<path.size();++i){
+            const auto delta=path[i]-path[i-1];
+            const float span=length(delta);
+            if(span<.001f)continue;
+            const auto tangent=delta*(1/span);
+            const auto forward=flat_dir(delta);
+            const Vec3 side{-forward.z,0,forward.x};
+            const auto center=(path[i]+path[i-1])*.5f;
+            builder.oriented_box(builder.mesh.shell,center-Vec3{0,.06f,0},tangent,{0,1,0},side,
+                {span,.10f,2*ore::belt_half_width},true);
+            for(;next_roller<span;next_roller+=.55f){
+                const auto point=path[i-1]+tangent*next_roller;
+                builder.mesh.edges.push_back(point-side*ore::belt_half_width);
+                builder.mesh.edges.push_back(point+side*ore::belt_half_width);
+            }
+            next_roller-=span;
+        }
+        return builder.mesh;
+    }
     // Attached endpoints use the combined structure port. Endpoints left behind
     // by structure deletion remain as capped, disconnected service stubs.
     const auto is_junction=[&](const UtilityEndpoint& ep){
@@ -857,6 +891,7 @@ bool utility_anchors_already_connected(const UtilityBuildAnchor& a,const Utility
     if(connections.empty() || a.kind==UtilityEndpointKind::Open || b.kind==UtilityEndpointKind::Open) return false;
     UtilityDisjointSets sets(connections.size());
     for(std::size_t i=0;i<connections.size();++i) for(std::size_t j=i+1;j<connections.size();++j){
+        if(connections[i].kind!=UtilityKind::SupplyChannel || connections[j].kind!=UtilityKind::SupplyChannel)continue;
         const bool same_owner=utility_endpoint_same_owner(connections[i].endpoint_a,connections[j].endpoint_a) ||
                               utility_endpoint_same_owner(connections[i].endpoint_a,connections[j].endpoint_b) ||
                               utility_endpoint_same_owner(connections[i].endpoint_b,connections[j].endpoint_a) ||
@@ -866,6 +901,7 @@ bool utility_anchors_already_connected(const UtilityBuildAnchor& a,const Utility
     std::vector<std::size_t> ca,cb;
     auto add=[&](std::vector<std::size_t>& dst,std::size_t i){ const auto c=sets.find(i); if(std::find(dst.begin(),dst.end(),c)==dst.end()) dst.push_back(c); };
     for(std::size_t i=0;i<connections.size();++i){
+        if(connections[i].kind!=UtilityKind::SupplyChannel)continue;
         if(utility_endpoint_matches_anchor(connections[i].endpoint_a,a) || utility_endpoint_matches_anchor(connections[i].endpoint_b,a)) add(ca,i);
         if(utility_endpoint_matches_anchor(connections[i].endpoint_a,b) || utility_endpoint_matches_anchor(connections[i].endpoint_b,b)) add(cb,i);
     }
@@ -878,10 +914,15 @@ bool utility_anchors_already_connected(const UtilityBuildAnchor& a,const Utility
 bool UtilityNetwork::anchor_compatible(UtilityKind kind,const UtilityBuildAnchor& anchor,
                                        const std::vector<PlacedHabitat>& habitats,
                                        const std::vector<PlacedResource>& resources) const {
-    if(anchor.kind==UtilityEndpointKind::Open || anchor.kind==UtilityEndpointKind::Corridor) return true;
-    if(anchor.kind==UtilityEndpointKind::Habitat) return anchor.index<habitats.size();
-    if(anchor.index>=resources.size()) return false;
-    return resource_supports(kind,resources[anchor.index].kind);
+    if(kind==UtilityKind::ConveyorBelt){
+        if(anchor.kind==UtilityEndpointKind::Resource)
+            return anchor.index<resources.size() && resources[anchor.index].kind==ResourceKind::OreDriller;
+        if(anchor.kind!=UtilityEndpointKind::Habitat || anchor.index>=habitats.size())return false;
+        const auto type=habitats[anchor.index].kind;
+        return type==HabitatKind::ProcessingFacility || type==HabitatKind::Factory;
+    }
+    if(anchor.kind==UtilityEndpointKind::Open || anchor.kind==UtilityEndpointKind::Corridor)return true;
+    return anchor.kind==UtilityEndpointKind::Habitat?anchor.index<habitats.size():anchor.index<resources.size();
 }
 
 std::optional<UtilityEndpoint> UtilityNetwork::preview_anchor(
@@ -896,6 +937,24 @@ std::optional<UtilityEndpoint> UtilityNetwork::preview_anchor(
     return surface_endpoint(anchor,toward,kind,habitats,habitat_library,resources,resource_library);
 }
 
+bool UtilityNetwork::conveyor_source_used(std::size_t resource_index) const {
+    return std::any_of(connections_.begin(),connections_.end(),[&](const auto& link){
+        return link.kind==UtilityKind::ConveyorBelt && link.endpoint_a.index==resource_index;
+    });
+}
+
+std::optional<UtilityConnection> UtilityNetwork::preview_conveyor_start(const UtilityEndpoint& endpoint) const {
+    if(endpoint.kind==UtilityEndpointKind::Resource && conveyor_source_used(endpoint.index))return std::nullopt;
+
+    UtilityConnection sample;
+    sample.kind=UtilityKind::ConveyorBelt;
+    sample.endpoint_a=endpoint;
+    sample.endpoint_b={UtilityEndpointKind::Open,0,endpoint.position+endpoint.normal*2.35f,endpoint.normal};
+    sample.path={endpoint.position,sample.endpoint_b.position};
+    sample.mesh=make_mesh(sample.kind,sample.endpoint_a,sample.endpoint_b,sample.path);
+    return sample;
+}
+
 UtilityMesh UtilityNetwork::preview_endpoint_mesh(const UtilityEndpoint& endpoint) const {
     Builder builder;
     if(endpoint.kind==UtilityEndpointKind::Open) add_open_supply_cap(builder,endpoint);
@@ -907,6 +966,10 @@ std::optional<UtilityConnection> UtilityNetwork::preview_connection(
     UtilityKind kind,const UtilityBuildAnchor& a,const UtilityBuildAnchor& b,
     const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
     const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const {
+    if(kind==UtilityKind::ConveyorBelt){
+        if(a.kind!=UtilityEndpointKind::Resource || b.kind!=UtilityEndpointKind::Habitat)return std::nullopt;
+        if(conveyor_source_used(a.index))return std::nullopt;
+    }
     if(same_anchor(a,b)) return std::nullopt;
     if(!anchor_compatible(kind,a,habitats,resources) || !anchor_compatible(kind,b,habitats,resources)) return std::nullopt;
 
@@ -923,7 +986,7 @@ std::optional<UtilityConnection> UtilityNetwork::preview_connection(
     out.endpoint_a=*ea;
     out.endpoint_b=*eb;
     out.path=path;
-    out.junctions=power_intersections(path,connections_);
+    if(kind==UtilityKind::SupplyChannel)out.junctions=power_intersections(path,connections_);
     out.mesh=make_mesh(kind,*ea,*eb,path,out.junctions);
     return out;
 }
@@ -940,22 +1003,28 @@ bool UtilityNetwork::build_connection(
     // Supply channels are one shared manifold. If both requested structures are
     // already in the same manifold, the request is satisfied without laying a
     // second parallel/overlapping tray.
-    if(utility_anchors_already_connected(a,b,connections_)) return true;
+    if(kind==UtilityKind::SupplyChannel && utility_anchors_already_connected(a,b,connections_)) return true;
     auto preview=preview_connection(kind,a,b,habitats,habitat_library,resources,resource_library);
     if(!preview) return false;
+    const auto same_endpoint=[](const UtilityEndpoint& left,const UtilityEndpoint& right){
+        if(left.kind!=right.kind || left.index!=right.index)return false;
+        return left.kind!=UtilityEndpointKind::Open || distance_xz(left.position,right.position)<.18f;
+    };
     for(const auto& existing:connections_){
-        const bool same=(existing.endpoint_a.kind==preview->endpoint_a.kind && existing.endpoint_a.index==preview->endpoint_a.index &&
-                         existing.endpoint_b.kind==preview->endpoint_b.kind && existing.endpoint_b.index==preview->endpoint_b.index) ||
-                        (existing.endpoint_a.kind==preview->endpoint_b.kind && existing.endpoint_a.index==preview->endpoint_b.index &&
-                         existing.endpoint_b.kind==preview->endpoint_a.kind && existing.endpoint_b.index==preview->endpoint_a.index);
-        if(same) return true;
+        if(existing.kind!=kind)continue;
+        if((same_endpoint(existing.endpoint_a,preview->endpoint_a) && same_endpoint(existing.endpoint_b,preview->endpoint_b)) ||
+           (same_endpoint(existing.endpoint_a,preview->endpoint_b) && same_endpoint(existing.endpoint_b,preview->endpoint_a)))
+            return true;
     }
-    float route_length=0.0f;
-    for(std::size_t i=0;i+1<preview->path.size();++i) route_length+=distance_xz(preview->path[i],preview->path[i+1]);
-    preview->resource_plan=construction_costs::supply_channel(preview->path,preview->junctions.size());
-    connections_.push_back(std::move(*preview));
-    rebuild_supply_junctions();
+    preview->resource_plan=kind==UtilityKind::ConveyorBelt?construction_costs::conveyor_belt(preview->path):
+        construction_costs::supply_channel(preview->path,preview->junctions.size());
+    append_connection(std::move(*preview));
     return true;
+}
+
+void UtilityNetwork::append_connection(UtilityConnection connection){
+    connections_.push_back(std::move(connection));
+    rebuild_supply_junctions();
 }
 
 void UtilityNetwork::update_construction(float dt,ResourceManagement& resources,bool allow_negative){
@@ -977,6 +1046,7 @@ float UtilityNetwork::connection_length(std::size_t index) const {
 std::size_t UtilityNetwork::endpoint_connection_count(UtilityEndpointKind kind,std::size_t index) const {
     std::size_t count=0;
     for(const auto& c:connections_){
+        if(c.kind!=UtilityKind::SupplyChannel)continue;
         if((c.endpoint_a.kind==kind && c.endpoint_a.index==index) || (c.endpoint_b.kind==kind && c.endpoint_b.index==index)) ++count;
     }
     return count;
@@ -1082,16 +1152,16 @@ UtilityServiceSnapshot UtilityNetwork::evaluate_services(
 
     for(std::size_t i=0;i<u_count;++i){
         const auto& link=connections_[i];
-        if(!link.construction.complete()) continue;
+        if(link.kind!=UtilityKind::SupplyChannel || !link.construction.complete()) continue;
         active_edge[u_node(i)]=true;
         attach_utility_endpoint(i,link.endpoint_a);
         attach_utility_endpoint(i,link.endpoint_b);
     }
     // Supply-channel centerline crossings are real shared manifolds.
     for(std::size_t i=0;i<u_count;++i){
-        if(!connections_[i].construction.complete()) continue;
+        if(connections_[i].kind!=UtilityKind::SupplyChannel || !connections_[i].construction.complete()) continue;
         for(std::size_t j=i+1;j<u_count;++j){
-            if(!connections_[j].construction.complete()) continue;
+            if(connections_[j].kind!=UtilityKind::SupplyChannel || !connections_[j].construction.complete()) continue;
             bool joined=false;
             for(std::size_t a=0;a+1<connections_[i].path.size() && !joined;++a)
                 for(std::size_t b=0;b+1<connections_[j].path.size();++b)
@@ -1152,7 +1222,7 @@ UtilityServiceSnapshot UtilityNetwork::evaluate_services(
         if(active_edge[n]) components[sets.find(n)].network=true;
 
     for(std::size_t i=0;i<r_count;++i){
-        if(!resources[i].construction.complete()) continue;
+        if(!resources[i].construction.complete() || !resources[i].power_enabled) continue;
         auto& component=components[sets.find(r_node(i))];
         switch(resources[i].kind){
             case ResourceKind::SolarPanel: ++component.solar; break;
@@ -1163,7 +1233,7 @@ UtilityServiceSnapshot UtilityNetwork::evaluate_services(
         }
     }
 
-    const auto state_for=[&](std::size_t node){
+    const auto state_for=[&](std::size_t node,bool power_enabled){
         const std::size_t root=sets.find(node);
         const auto& component=components[root];
         UtilityServiceState state;
@@ -1171,19 +1241,21 @@ UtilityServiceSnapshot UtilityNetwork::evaluate_services(
         state.component=component.network?root:kNoUtilityComponent;
         // Topology describes potential service sources. The live supply solver
         // subsequently replaces these flags with dispatched power/tank water.
-        state.power=component.network && (component.solar>0 || component.power_storage>0);
+        state.power=power_enabled && component.network && (component.solar>0 || component.power_storage>0);
         state.water=state.power && component.water_driller>=1;
         return state;
     };
-    for(std::size_t i=0;i<h_count;++i) snapshot.habitats[i]=state_for(h_node(i));
-    for(std::size_t i=0;i<r_count;++i) snapshot.resources[i]=state_for(r_node(i));
+    for(std::size_t i=0;i<h_count;++i) snapshot.habitats[i]=state_for(h_node(i),habitats[i].power_enabled);
+    for(std::size_t i=0;i<r_count;++i) snapshot.resources[i]=state_for(r_node(i),resources[i].power_enabled);
     return snapshot;
 }
 
 void UtilityNetwork::rebuild_supply_junctions(){
     for(auto& c:connections_) c.junctions.clear();
     for(std::size_t i=0;i<connections_.size();++i){
+        if(connections_[i].kind!=UtilityKind::SupplyChannel)continue;
         for(std::size_t j=i+1;j<connections_.size();++j){
+            if(connections_[j].kind!=UtilityKind::SupplyChannel)continue;
             const auto points=power_intersections(connections_[i].path,connections_[j].path);
             for(const Vec3 p:points){
                 append_unique_point(connections_[i].junctions,p);
@@ -1194,7 +1266,21 @@ void UtilityNetwork::rebuild_supply_junctions(){
     for(auto& c:connections_) c.mesh=make_mesh(c.kind,c.endpoint_a,c.endpoint_b,c.path,c.junctions);
 }
 
-const char* utility_kind_name(UtilityKind){ return "SUPPLY CHANNEL"; }
+eng::Vec3 UtilityConnection::ore_box_position() const {
+    float remaining=ore_distance_m;
+    for(std::size_t i=1;i<path.size();++i){
+        const auto segment=path[i]-path[i-1];
+        const float horizontal=distance_xz(path[i],path[i-1]);
+        if(horizontal<=.0001f)continue;
+        if(remaining<=horizontal)return path[i-1]+segment*(remaining/horizontal);
+        remaining-=horizontal;
+    }
+    return path.empty()?eng::Vec3{}:path.back();
+}
+
+const char* utility_kind_name(UtilityKind kind){
+    return kind==UtilityKind::ConveyorBelt?"CONVEYOR BELT":"SUPPLY CHANNEL";
+}
 const char* utility_endpoint_name(UtilityEndpointKind kind){
     switch(kind){
         case UtilityEndpointKind::Habitat: return "HABITAT";

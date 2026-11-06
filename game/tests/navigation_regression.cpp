@@ -292,6 +292,94 @@ struct NavigationRegression {
         for(const auto& h:app.placed_habitats_)std::cout<<"air h kind="<<(int)h.kind<<" air="<<h.supply.breathability()<<" power="<<h.supply.power_fraction<<" component water="<<h.supply.network_water_to_fill_litres<<"\n";
     }
 
+    static void operation_relocation(){
+        eng::Application engine;
+        GameApp stuck(engine);
+        stuck.playfield_.rebuild(64);
+        stuck.robot_enclosure_legacy_scan_pending_=false;
+        PlacedResource blocker;
+        blocker.kind=ResourceKind::PowerStorage;
+        blocker.construction.step=kConstructionSteps;
+        blocker.placement_sequence=41;
+        stuck.placed_resources_.push_back(blocker);
+        blocker.position={22,0,22};
+        blocker.placement_sequence=42;
+        stuck.placed_resources_.push_back(blocker);
+        BuilderRobotState rover;
+        rover.role=RobotRole::Carrier;
+        rover.cargo.iron=200;
+        rover.battery_charge_kwh=kCarrierRobotBatteryCapacityKwh;
+        stuck.builder_robots_.push_back(rover);
+        auto& trapped=stuck.builder_robots_[0];
+        for(int frame=0;frame<16*90&&trapped.operation_retry.failures<4;++frame)
+            stuck.update_builder_robot(1.f/90);
+        require(trapped.operation_retry.failures==4&&distance(trapped.position,{})<.01f,
+                "rover relocated before four blocked retries or failed to count them");
+        require(trapped.blocking_structure==41&&trapped.blocker_display_seconds>0,
+                "blocked rover did not identify the actual battery footprint");
+        struct BlockerCapture:Recorder {
+            bool red=false,unrelated=false;
+            void draw_lines_3d(const std::vector<eng::Vec3>& vertices,eng::Color color,float) override {
+                red|=!vertices.empty()&&color.r>.95f&&color.g<.15f&&color.b<.15f;
+                for(const auto point:vertices) unrelated|=point.x>15||point.z>15;
+            }
+        } capture;
+        stuck.render_robot_blockers(capture);
+        require(capture.red&&!capture.unrelated,"wrong structure received the red outline");
+        for(int frame=0;frame<5*90&&distance(trapped.position,{})<.01f;++frame)
+            stuck.update_builder_robot(1.f/90);
+        require(distance(trapped.position,{})>=2&&trapped.operation_retry.failures==0&&trapped.cargo.iron==200,
+                "fifth blocked attempt did not extract the rover with its cargo intact");
+
+        GameApp delivery(engine);
+        delivery.playfield_.rebuild(64);
+        PlacedResource job;
+        job.kind=ResourceKind::SolarPanel;
+        job.placement_sequence=77;
+        job.resource_plan.total_steps=kConstructionSteps;
+        for(auto& cost:job.resource_plan.steps) cost.iron=200;
+        delivery.placed_resources_.push_back(job);
+        const ConstructionTargetRef target{ConstructionTargetKind::Resource,0};
+        rover.mode=BuilderRobotMode::Delivering;
+        rover.target=target;
+        rover.cargo.iron=200;
+        rover.logistics_reservation.iron=200;
+        rover.cargo_committed_to_build=true;
+        rover.starter_exit_completed=true;
+        rover.position=delivery.construction_drop_position(target);
+        delivery.builder_robots_.push_back(rover);
+        BuilderRobotState obstruction;
+        obstruction.battery_charge_kwh=0;
+        obstruction.position=delivery.construction_drop_package_position(target,0);
+        delivery.builder_robots_.push_back(obstruction);
+        auto& carrier=delivery.builder_robots_[0];
+        const Vec3 dock=carrier.position;
+        // Keep the obstruction in the crate's landing volume. Normally
+        // delivery asks an idle rover there to clear the drop automatically.
+        const auto tick_blocked_drop=[&]{
+            delivery.builder_robots_[1]=obstruction;
+            delivery.update_builder_robot(1.f/90);
+        };
+        for(int frame=0;frame<30*90&&carrier.operation_retry.failures<4;++frame)
+            tick_blocked_drop();
+        require(carrier.operation_retry.failures==4&&carrier.operation_retry.action==BuilderRobotAction::PutDown,
+                "failed drop fixture: count="+std::to_string(carrier.operation_retry.failures)+
+                " operation="+builder_robot_action_name(carrier.operation_retry.action)+
+                " cargo="+std::to_string(carrier.cargo.iron)+
+                " deposited="+std::to_string(delivery.placed_resources_[0].site_buffer.iron)+
+                " movement="+std::to_string(distance(carrier.position,dock))+
+                " obstruction="+std::to_string(distance(delivery.builder_robots_[1].position,obstruction.position)));
+        require(distance(carrier.position,dock)<.3f&&carrier.cargo.iron==200,
+                "four failed drops moved the rover or changed cargo");
+        for(int frame=0;frame<10*90&&distance(carrier.position,dock)<.3f;++frame)
+            tick_blocked_drop();
+        require(distance(carrier.position,dock)>=2&&carrier.operation_retry.failures==0&&
+                carrier.cargo.iron==200&&carrier.logistics_reservation.iron==200&&
+                delivery.placed_resources_[0].site_buffer.empty(),
+                "fifth failed drop did not preserve cargo and reservation on relocation");
+        std::cout<<"Operation recovery: red blocker outline, four retries, fifth-failure extraction and exact cargo custody passed\n";
+    }
+
     static void global_routes(){
         std::vector<Box> boxes;PathPlannerCallbacks cb;cb.floor_height=[](Vec3){return 0.f;};
         cb.point_clear=[&](Vec3 p){if(std::abs(p.x)>40 || std::abs(p.z)>40)return false;for(const auto& b:boxes)if(p.x>=b.x0 && p.x<=b.x1 && p.z>=b.z0 && p.z<=b.z1)return false;return true;};
@@ -865,6 +953,255 @@ struct NavigationRegression {
         wait_parking(offline,"supply-and-power-enabled workshop");
         std::cout<<"Workshop supply gating, compact parking, task dispatch, ramp clearance, reachability, save/load and multi-workshop allocation passed\n";
     }
+    static void ore_carrier(){
+        eng::Application engine;
+        for(const bool use_dome:{false,true}){
+            GameApp app(engine);
+            app.playfield_.rebuild(128);
+            app.active_game_phase_=GameApp::GamePhase::Debug;
+            app.game_session_active_=true;
+            app.utility_network_.set_playfield_half_extent(64);
+            PlacedResource drill;
+            drill.kind=ResourceKind::OreDriller;drill.position={-20,0,-8};drill.construction.finish();
+            drill.placement_sequence=1;
+            drill.mined_ore_kg[0]=ore::box_kg;
+            app.placed_resources_.push_back(drill);
+            app.next_blueprint_placement_sequence_=3;
+            if(use_dome){
+                PlacedResource dome;
+                dome.kind=ResourceKind::StorageDome;dome.position={18,0,-9};dome.construction.finish();
+                dome.placement_sequence=2;
+                app.placed_resources_.push_back(dome);
+                require(app.add_storage_gate_at(1,0),"could not build storage ore loading gate");
+                require(storage_loading::has_ready_gate(app.placed_resources_[1]),"ore storage gate was not ready");
+            }else{
+                PlacedHabitat plant;
+                plant.kind=HabitatKind::ProcessingFacility;plant.position={20,0,-10};plant.construction.finish();
+                plant.placement_sequence=2;
+                plant.supply.volume_m3=100;plant.supply.oxygen_kg=100*kOxygenKgPerM3;
+                plant.supply.power_fraction=1;
+                app.placed_habitats_.push_back(plant);
+            }
+            BuilderRobotState carrier;
+            carrier.role=RobotRole::Carrier;
+            carrier.position={-20,0,10};
+            carrier.starter_exit_completed=true;
+            carrier.battery_capacity_kwh=kCarrierRobotBatteryCapacityKwh;
+            carrier.battery_charge_kwh=carrier.battery_capacity_kwh;
+            carrier.move_speed_mps=kCarrierRobotTransitSpeedMps;
+            app.builder_robots_.push_back(carrier);
+
+            if(!use_dome){
+                const UtilityBuildAnchor source{UtilityEndpointKind::Resource,0,drill.position};
+                const UtilityBuildAnchor intake{UtilityEndpointKind::Habitat,0,app.placed_habitats_[0].position};
+                require(app.utility_network_.build_connection(UtilityKind::ConveyorBelt,source,intake,
+                    app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_),
+                    "could not create the conveyor exclusion fixture");
+                app.utility_network_.mutable_connections().front().construction.finish();
+                app.update_builder_robot(1.f/90.f);
+                require(!app.builder_robots_[0].ore_haul.active(),"carrier took over a driller with a built conveyor");
+                app.utility_network_.remove_connection(0);
+            }
+
+            bool picked_up=false;
+            for(int step=0;step<6000;++step){
+                app.update_builder_robot(1.f/90.f);
+                const auto& rover=app.builder_robots_[0];
+                if(rover.ore_haul.loaded && !picked_up){
+                    picked_up=true;
+                    require(app.resources_.amounts().empty() && app.placed_resources_[0].mined_ore_kg[0]==0,
+                            "pickup duplicated ore or credited raw material");
+                    std::string error;
+                    require(app.save_game_to_name("ore-carrier-regression",error),error);
+                    const auto path=std::filesystem::path(app.save_game_directory())/"ore-carrier-regression.gmsave";
+                    GameApp resumed(engine);
+                    require(resumed.load_game_from_file(path.string(),error),error);
+                    std::filesystem::remove(path);
+                    require(resumed.builder_robots_[0].ore_haul.loaded &&
+                            resumed.builder_robots_[0].ore_haul.kind==0 &&
+                            resumed.placed_resources_[0].mined_ore_kg[0]==0,"save lost loaded carrier ore");
+                }
+                if(picked_up && !rover.ore_haul.active())break;
+            }
+            require(picked_up && !app.builder_robots_[0].ore_haul.active(),
+                    use_dome?"carrier did not deliver to storage":"carrier did not deliver to processing");
+            if(use_dome){
+                require(app.placed_resources_[1].stored_ore_boxes[0]==1 && app.resources_.amounts().empty() &&
+                        storage_dome_used_kg(app.placed_resources_[1])==ore::box_kg,"storage ore capacity or accounting mismatch");
+                std::string error;
+                require(app.save_game_to_name("ore-carrier-regression",error),error);
+                const auto path=std::filesystem::path(app.save_game_directory())/"ore-carrier-regression.gmsave";
+                GameApp resumed(engine);
+                require(resumed.load_game_from_file(path.string(),error),error);
+                std::filesystem::remove(path);
+                require(resumed.placed_resources_[1].stored_ore_boxes[0]==1 && resumed.resources_.amounts().empty(),
+                        "stored raw ore did not survive save/load");
+            }else{
+                require(app.resources_.amount(MaterialResource::Iron)==ore::refined_box_kg,
+                        "carrier did not credit one refined crate");
+            }
+        }
+        std::cout<<"Ore carrier physical pickup, processing delivery, storage delivery, and save/load passed\n";
+    }
+
+    static void conveyor_ore(){
+        eng::Application engine;
+        GameApp app(engine);
+        app.playfield_.rebuild(128);
+        app.active_game_phase_=GameApp::GamePhase::Debug;
+        app.game_session_active_=true;
+        auto& network=app.utility_network_;
+        network.set_playfield_half_extent(64);
+        PlacedResource drill;
+        drill.kind=ResourceKind::OreDriller;drill.position={-20,0,0};drill.construction.finish();
+        drill.supply.power_fraction=1;
+        PlacedHabitat plant;plant.kind=HabitatKind::ProcessingFacility;plant.position={18,0,0};plant.construction.finish();
+        plant.supply.volume_m3=100;plant.supply.oxygen_kg=100*kOxygenKgPerM3;
+        app.placed_resources_={drill};app.placed_habitats_={plant};
+        const auto ore_mix=ore::deposit(drill.position);
+        const auto another_mix=ore::deposit({22,0,18});
+        double sum=0;
+        for(const auto share:ore_mix){require(share>0&&share<1,"invalid ore concentration");sum+=share;}
+        require(std::abs(sum-1)<1e-9&&ore_mix!=another_mix,"ore survey does not vary by location");
+        const UtilityBuildAnchor source{UtilityEndpointKind::Resource,0,drill.position};
+        const UtilityBuildAnchor intake{UtilityEndpointKind::Habitat,0,plant.position};
+        const auto build=[&](UtilityKind kind,const auto& a,const auto& b){
+            return network.build_connection(kind,a,b,app.placed_habitats_,app.habitat_models_,
+                app.placed_resources_,app.resource_models_);
+        };
+        require(!build(UtilityKind::ConveyorBelt,intake,source),"belt accepted a reversed route");
+        app.placed_habitats_[0].kind=HabitatKind::CrewQuarters;
+        require(!build(UtilityKind::ConveyorBelt,source,intake),"belt accepted an unrelated habitat");
+        app.placed_habitats_[0].kind=HabitatKind::Factory;
+        require(build(UtilityKind::ConveyorBelt,source,intake),"driller could not connect to factory");
+        require(!build(UtilityKind::ConveyorBelt,source,intake),"driller accepted a duplicate conveyor");
+        require(app.conveyor_route_clear(network.connections()[0].path) &&
+                !network.connections()[0].resource_plan.total().empty() && !network.connections()[0].mesh.edges.empty(),
+                "conveyor route lacks clearance, mesh or construction costs");
+        network.mutable_connections()[0].construction.finish();
+        const auto services=network.evaluate_services(app.corridor_network_,app.placed_habitats_,app.placed_resources_);
+        require(!services.resources[0].connected && !services.habitats[0].connected,"conveyor carried utilities");
+
+        require(build(UtilityKind::SupplyChannel,source,intake) && network.connections().size()==2,
+                "conveyor prevented an independent power channel between its endpoints");
+        auto& belt=network.mutable_connections().front();
+        app.update_ore_logistics(240);
+        require(app.resources_.amounts().empty() && belt.ore_cargo<ore::no_cargo &&
+                belt.ore_distance_m>0,"raw ore was credited or no cargo was sent");
+        const auto cargo=belt.ore_cargo;
+        const auto distance=belt.ore_distance_m;
+        const auto stock=app.placed_resources_[0].mined_ore_kg;
+        require(std::count_if(stock.begin(),stock.end(),[](double kg){return ore::boxes(kg)>0;})>=2,
+                "powered driller did not produce distinct ore boxes");
+
+        std::string error;
+        require(app.save_game_to_name("conveyor-regression",error),error);
+        const auto save=std::filesystem::path(app.save_game_directory())/"conveyor-regression.gmsave";
+        GameApp restored(engine);
+        require(restored.load_game_from_file(save.string(),error),error);
+        std::filesystem::remove(save);
+        const auto& restored_belt=restored.utility_network_.connections().front();
+        require(restored_belt.ore_cargo==cargo && restored_belt.ore_distance_m==distance &&
+                restored.placed_resources_[0].mined_ore_kg==stock,"ore custody was lost on save/load");
+
+        app.placed_habitats_[0].supply.power_fraction=1;
+        app.update_ore_logistics(1);
+        require(app.resources_.amount(ore::materials[cargo])==ore::refined_box_kg &&
+                belt.ore_cargo==ore::no_cargo && app.ground_resource_piles_.size()==1,
+                "powered receiver did not process the arriving crate exactly once");
+        app.update_ore_logistics(1);
+        require(belt.ore_cargo<ore::no_cargo && belt.ore_distance_m<network.connection_length(0),
+                "second ore crate did not travel on the belt");
+        const auto next=belt.ore_cargo;
+        const double before=app.placed_resources_[0].mined_ore_kg[next];
+        app.remove_utility_route(0);
+        require(network.connections().size()==1 && network.connections()[0].kind==UtilityKind::SupplyChannel &&
+                app.placed_resources_[0].mined_ore_kg[next]==before+ore::box_kg,
+                "removing a conveyor lost its in-flight crate");
+        std::cout<<"Ore deposits, directed conveyors, utility isolation, crate delivery, deletion and save/load passed\n";
+    }
+
+    static void structure_routes(){
+        eng::Application engine;
+        GameApp app(engine);
+        app.playfield_.rebuild(128);
+        auto& corridors=app.corridor_network_;
+        auto& utilities=app.utility_network_;
+        auto& habitats=app.placed_habitats_;
+        auto& resources=app.placed_resources_;
+        corridors.set_playfield_half_extent(64);
+        utilities.set_playfield_half_extent(64);
+
+        const auto open_corridor=[](Vec3 position){return CorridorBuildAnchor{CorridorEndpointKind::OpenDoor,0,position};};
+        const auto open_pipe=[](Vec3 position){return UtilityBuildAnchor{UtilityEndpointKind::Open,0,position};};
+        require(corridors.build_corridor(open_corridor({-20,0,-20}),open_corridor({0,0,-20}),
+            habitats,app.habitat_models_,resources,app.resource_models_),"standalone corridor rejected");
+        require(utilities.build_connection(UtilityKind::SupplyChannel,open_pipe({-25,0,20}),open_pipe({-5,0,20}),
+            habitats,app.habitat_models_,resources,app.resource_models_),"standalone pipe rejected");
+        require(utilities.build_connection(UtilityKind::SupplyChannel,open_pipe({5,0,35}),open_pipe({25,0,35}),
+            habitats,app.habitat_models_,resources,app.resource_models_),"second standalone pipe rejected");
+        require(utilities.connections().size()==2,"unrelated open pipes treated as duplicates");
+
+        PlacedHabitat habitat;habitat.kind=HabitatKind::OxygenGeneratorDome;habitat.size=HabitatSizeTier::Small;
+        habitat.rotation_degrees=30;
+        const auto& hm=app.habitat_models_.mesh(habitat);
+        const auto& cm=corridors.connections().front();
+        const auto base=world_math::footprint({},habitat.rotation_degrees,hm.footprint_x,hm.footprint_z);
+        const auto target=cm.path.back()+Vec3{world_math::projected_radius(base,{1,0})+6.05f,0,0};
+        require(!app.placement_valid(habitat.kind,habitat.size,{-8,0,-20},habitat.rotation_degrees),
+                "habitat overlapped a corridor");
+        app.ground_resource_piles_.push_back({MaterialResource::Iron,100,target,.6f,1});
+        require(!app.preview_structure_attachment(target,&habitat,nullptr),"corridor snap ignored a blocked base");
+        app.ground_resource_piles_.clear();
+        auto corridor_snap=app.preview_structure_attachment(target,&habitat,nullptr);
+        require(corridor_snap&&corridor_snap->corridor,"rotated habitat did not attach to free corridor end");
+        habitat.position=corridor_snap->position;habitat.placement_sequence=app.next_blueprint_placement_sequence_++;
+        habitats.push_back(habitat);
+        app.commit_structure_attachment(std::move(*corridor_snap));
+        require(corridors.connections().size()==2 && corridors.connections()[0].endpoint_b.suppress_open_door &&
+            corridors.connections()[1].endpoint_b.kind==CorridorEndpointKind::Habitat,"corridor terminal did not connect");
+
+        PlacedResource antenna;antenna.kind=ResourceKind::Antenna;antenna.size=ResourceSizeTier::Small;
+        const auto& am=app.resource_models_.mesh(antenna);
+        require(!app.resource_placement_valid(antenna.kind,antenna.size,antenna.storage_size,{-15,0,20},0),
+                "outdoor structure overlapped an existing pipe");
+        auto pipe_snap=app.preview_structure_attachment({-5+am.footprint_x*.5f+1.5f,0,20},nullptr,&antenna);
+        require(pipe_snap&&pipe_snap->utility,"outdoor structure did not attach to free pipe end");
+        antenna.position=pipe_snap->position;antenna.placement_sequence=app.next_blueprint_placement_sequence_++;
+        resources.push_back(antenna);
+        app.commit_structure_attachment(std::move(*pipe_snap));
+        require(utilities.connections().size()==3 && utilities.connections()[2].endpoint_b.kind==UtilityEndpointKind::Resource &&
+                !utilities.connections()[0].junctions.empty(),"pipe terminal did not merge");
+
+        require(utilities.build_connection(UtilityKind::SupplyChannel,
+            {UtilityEndpointKind::Corridor,1,{3,0,-18.5f},{0,0,1}},open_pipe({3,0,-9}),
+            habitats,app.habitat_models_,resources,app.resource_models_),"corridor service run rejected");
+        utilities.mutable_connections().back().site_buffer.iron=27;
+        app.builder_robots_.resize(2);
+        app.builder_robots_[0].target={ConstructionTargetKind::Utility,3};
+        app.builder_robots_[0].logistics_reservation.iron=5;
+        app.builder_robots_[1].target={ConstructionTargetKind::Utility,2};
+        app.selection_kind_=GameApp::SelectionKind::Habitat;
+        app.selected_habitat_=0;
+        app.delete_selected_world_object();
+        require(habitats.empty() && corridors.connections().size()==1 &&
+                !corridors.connections()[0].endpoint_b.suppress_open_door,"demolition left the corridor attached or host unsealed");
+        require(utilities.connections().size()==3 && !app.builder_robots_[0].target.valid() &&
+                app.builder_robots_[0].logistics_reservation.empty() &&
+                app.builder_robots_[1].target.index==2,"demolition kept a pipe on a deleted corridor or broke a surviving assignment");
+        std::int64_t recovered=0;
+        for(const auto& pile:app.ground_resource_piles_)if(pile.resource==MaterialResource::Iron)recovered+=pile.amount;
+        require(recovered==27,"removed pipe material was lost or duplicated");
+
+        app.selection_kind_=GameApp::SelectionKind::Resource;
+        app.selected_resource_=0;
+        app.delete_selected_world_object();
+        require(resources.empty() && utilities.connections().size()==2 &&
+                utilities.connections()[0].junctions.empty() &&
+                !app.builder_robots_[1].target.valid(),"outdoor demolition left a pipe attached or removed an unrelated run");
+        std::cout<<"Structure routes: rotated snap, footprint rejection, corridor cap and pipe junctions, demolition, material recovery and robot remapping passed\n";
+    }
+
     static void interaction(){
         eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);
         // Every angle and every dome tier uses an identical rigid local mesh.
@@ -1517,12 +1854,109 @@ struct NavigationRegression {
         for(auto kind:{ResourceKind::SolarPanel,ResourceKind::PowerStorage,ResourceKind::WaterDriller,ResourceKind::WaterStorage}){PlacedResource r;r.kind=kind;r.construction.step=kConstructionSteps;r.position={(float)flow.placed_resources_.size()*10,0,0};flow.placed_resources_.push_back(r);}
         for(std::size_t i=1;i<4;++i){UtilityConnection u;u.endpoint_a.kind=u.endpoint_b.kind=UtilityEndpointKind::Resource;u.endpoint_a.index=i-1;u.endpoint_b.index=i;u.path={flow.placed_resources_[i-1].position,flow.placed_resources_[i].position};u.construction.step=u.construction.total_steps;flow.utility_network_.mutable_connections().push_back(u);}
         flow.update_supply_simulation(10);require(std::abs(flow.battery_net_kw_-9.5)<1e-6 && std::abs(flow.supply_power_load_kw_-4)<1e-6,"measured battery rate or electrical load wrong");require(std::abs(flow.water_net_litres_per_day_-500)<1e-6,"measured tank filling rate wrong");
-        clock.hour=0;flow.status_.restore(clock);flow.update_supply_simulation(1);require(std::abs(flow.battery_net_kw_+4)<1e-6,"night discharge rate wrong");
+        clock.hour=0;flow.status_.restore(clock);
+        const double solar_buffer=flow.placed_resources_[0].supply.energy_kwh;
+        flow.update_supply_simulation(1);
+        require(std::abs(flow.battery_net_kw_)<1e-6 && std::abs(flow.supply_power_delivered_kw_-4)<1e-6 &&
+            std::abs(flow.placed_resources_[0].supply.energy_kwh-solar_buffer+.4)<1e-6,
+            "solar buffer should supply nighttime load ahead of the battery");
+        flow.placed_resources_[0].supply.energy_kwh=0;
+        flow.update_supply_simulation(1);
+        require(std::abs(flow.battery_net_kw_+4)<1e-6,"night discharge rate wrong");
         for(int i=0;i<2;++i){PlacedHabitat h;h.kind=i?HabitatKind::CrewQuarters:HabitatKind::OxygenGeneratorDome;h.position={(float)i*20,0,20};h.construction.step=kConstructionSteps;flow.placed_habitats_.push_back(h);UtilityConnection u;u.endpoint_a.kind=UtilityEndpointKind::Resource;u.endpoint_a.index=3;u.endpoint_b.kind=UtilityEndpointKind::Habitat;u.endpoint_b.index=i;u.path={{30,0,0},h.position};u.construction.step=u.construction.total_steps;flow.utility_network_.mutable_connections().push_back(u);}
         clock.hour=12;clock.crew_current=6;flow.status_.restore(clock);flow.placed_resources_[2].construction.step=0;flow.placed_resources_[3].supply.water_litres=100;flow.update_supply_simulation(1);
         require(std::abs(flow.water_net_litres_per_day_+44.25)<1e-6 && std::abs(flow.supply_water_load_litres_per_day_-44.25)<1e-6,"tank consumption/doubled electrolysis rate wrong");
         const auto water=flow.placed_resources_[3].supply.water_litres;flow.update_supply_simulation(0);require(flow.battery_net_kw_==0 && flow.water_net_litres_per_day_==0 && flow.placed_resources_[3].supply.water_litres==water,"paused telemetry consumed resources or kept stale rate");
         std::cout<<"FIFO until completion/removal, ready corridor/pipe precedence, prerequisite escape, save roundtrip and measured charge/fill/drain/load rates passed\n";
+    }
+    static void power_switches(){
+        eng::Application engine;
+        GameApp app(engine);
+        app.active_game_phase_=GameApp::GamePhase::Debug;
+        app.playfield_.rebuild(128);
+        app.utility_network_.set_playfield_half_extent(64);
+        auto clock=app.status_.state();
+        clock.hour=12;
+        clock.crew_current=0;
+        app.status_.restore(clock);
+
+        const auto add_resource=[&](ResourceKind kind,Vec3 position){
+            PlacedResource item;
+            item.kind=kind;
+            item.position=position;
+            item.construction.step=kConstructionSteps;
+            item.placement_sequence=app.placed_resources_.size()+1;
+            app.placed_resources_.push_back(item);
+        };
+        add_resource(ResourceKind::SolarPanel,{-25,0,0});
+        add_resource(ResourceKind::PowerStorage,{-25,0,-22});
+        add_resource(ResourceKind::OreDriller,{-5,0,0});
+        for(auto kind:{HabitatKind::ProcessingFacility,HabitatKind::Factory}){
+            PlacedHabitat item;
+            item.kind=kind;
+            item.position={18,0,(float)app.placed_habitats_.size()*22};
+            item.construction.step=kConstructionSteps;
+            item.placement_sequence=app.placed_habitats_.size()+4;
+            app.placed_habitats_.push_back(item);
+        }
+
+        const auto connect=[&](UtilityBuildAnchor a,UtilityBuildAnchor b){
+            require(app.utility_network_.build_connection(UtilityKind::SupplyChannel,a,b,
+                app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_),
+                "power-switch fixture link rejected");
+            auto& link=app.utility_network_.mutable_connections().back();
+            link.construction.step=link.construction.total_steps;
+            link.placement_sequence=6+app.utility_network_.connections().size();
+        };
+        const auto resource=[&](std::size_t i){return UtilityBuildAnchor{UtilityEndpointKind::Resource,i,app.placed_resources_[i].position};};
+        const auto habitat=[&](std::size_t i){return UtilityBuildAnchor{UtilityEndpointKind::Habitat,i,app.placed_habitats_[i].position};};
+        connect(resource(0),resource(1));
+        connect(resource(0),resource(2));
+        connect(resource(2),habitat(0));
+        connect(habitat(0),habitat(1));
+
+        auto& solar=app.placed_resources_[0];
+        auto& battery=app.placed_resources_[1];
+        auto& drill=app.placed_resources_[2];
+        auto& processor=app.placed_habitats_[0];
+        const auto near=[](double a,double b){return std::abs(a-b)<1e-6;};
+        app.update_supply_simulation(1);
+        require(near(app.supply_power_delivered_kw_,16) && near(app.supply_power_load_kw_,18) &&
+            near(drill.supply.power_fraction,16.0/18.0) && near(app.battery_net_kw_,0),
+            "brownout telemetry hid available power or charged without surplus");
+
+        processor.power_enabled=false;
+        auto services=app.update_supply_simulation(1);
+        require(near(app.supply_power_load_kw_,12) && near(app.supply_power_delivered_kw_,12) &&
+            near(app.battery_net_kw_,3.8) && processor.supply.power_fraction==0 &&
+            !services.habitats[0].power && services.habitats[1].power,
+            "load shedding failed or powered-off habitat cut power to downstream factory");
+
+        solar.power_enabled=false;
+        battery.power_enabled=false;
+        const double stored=battery.supply.energy_kwh;
+        app.update_supply_simulation(1);
+        require(near(app.supply_power_delivered_kw_,0) && near(app.battery_net_kw_,0) &&
+            near(battery.supply.energy_kwh,stored) && drill.supply.power_fraction==0,
+            "disabled generation or storage supplied electricity");
+
+        std::string error;
+        const auto save=std::filesystem::path(app.save_game_directory())/"power-switch-regression.gmsave";
+        require(app.save_game_to_name("power-switch-regression",error),error);
+        GameApp loaded(engine);
+        const bool restored=loaded.load_game_from_file(save.string(),error);
+        std::filesystem::remove(save);
+        require(restored,error);
+        require(!loaded.placed_resources_[0].power_enabled && !loaded.placed_resources_[1].power_enabled &&
+            loaded.placed_resources_[2].power_enabled && !loaded.placed_habitats_[0].power_enabled &&
+            loaded.placed_habitats_[1].power_enabled && near(loaded.placed_resources_[1].supply.energy_kwh,stored),
+            "power switches or retained battery inventory changed after save/load");
+
+        battery.power_enabled=true;
+        app.update_supply_simulation(.1f);
+        require(near(app.supply_power_delivered_kw_,10) && near(app.battery_net_kw_,-10) && drill.supply.power_fraction>0,
+            "battery failed to discharge after switching back on");
+        std::cout<<"Brownout telemetry, load shedding, passive network links, and power state save/load passed\n";
     }
     static void supply_network(){
         // Pass uploads must retain draw order, style and nonoverlapping ranges.
@@ -2161,6 +2595,7 @@ int main(int argc,char** argv){
         if(argc>1 && std::string(argv[1])=="global-routes") game::NavigationRegression::global_routes();
         else if(argc>2 && std::string(argv[1])=="saved-route") game::NavigationRegression::saved_route(argv[2]);
         else if(argc>2 && std::string(argv[1])=="profile") game::NavigationRegression::profile(argv[2]);
+        else if(argc>1 && std::string(argv[1])=="operation-relocation") game::NavigationRegression::operation_relocation();
         else if(argc>1 && std::string(argv[1])=="fault-recovery"){
             fault_recovery_case("single fault",1);
             fault_recovery_case("simultaneous fleet faults",12);
@@ -2169,6 +2604,9 @@ int main(int argc,char** argv){
             fault_recovery_case("bounded recovery search",1,false,false,true);
             fault_bounds_case();
         }
+        else if(argc>1 && std::string(argv[1])=="ore-carrier") game::NavigationRegression::ore_carrier();
+        else if(argc>1 && std::string(argv[1])=="conveyor-ore") game::NavigationRegression::conveyor_ore();
+        else if(argc>1 && std::string(argv[1])=="structure-routes") game::NavigationRegression::structure_routes();
         else if(argc>1 && std::string(argv[1])=="interaction") game::NavigationRegression::interaction();
         else if(argc>1 && std::string(argv[1])=="oxygen") game::NavigationRegression::oxygen();
         else if(argc>1 && std::string(argv[1])=="progression") game::NavigationRegression::progression();
@@ -2180,6 +2618,7 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="airlock-cycle") game::NavigationRegression::airlock_cycle();
         else if(argc>1 && std::string(argv[1])=="airlock") game::NavigationRegression::airlock_connections();
         else if(argc>1 && std::string(argv[1])=="hydroponics") game::NavigationRegression::hydroponics();
+        else if(argc>1 && std::string(argv[1])=="power-switches") game::NavigationRegression::power_switches();
         else if(argc>1 && std::string(argv[1])=="queue-flow") game::NavigationRegression::queue_and_flow();
         else if(argc>1 && std::string(argv[1])=="network") game::NavigationRegression::supply_network();
         else if(argc>1 && std::string(argv[1])=="supply") game::NavigationRegression::supply();

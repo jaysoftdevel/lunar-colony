@@ -46,6 +46,7 @@ bool GameApp::placement_preserves_robot_escape(Vec3 position,float rotation_degr
         return std::abs(local.x)<=sx*0.5f+inflate && std::abs(local.z)<=sz*0.5f+inflate;
     };
     auto blocked=[&](Vec3 p){
+        if(lunar_lander_segment_blocked(lander_,p,p,kPlacementRobotRadius))return true;
         if(inside_rotated(p,position,rotation_degrees,footprint_x,footprint_z,kPlacementRobotRadius)) return true;
         for(const auto& h:placed_habitats_){
             if(!h.construction.complete()) continue;
@@ -132,6 +133,127 @@ bool GameApp::placement_preserves_robot_escape(Vec3 position,float rotation_degr
     return true;
 }
 
+bool GameApp::structure_routes_clear(Vec3 position,float rotation,float width,float depth) const {
+    const auto base=footprint(position,rotation,width,depth);
+    const auto clear=[&](const auto& connections,float half_width,float gap){
+        for(const auto& run:connections)for(std::size_t i=1;i<run.path.size();++i){
+            const auto a=run.path[i-1],b=run.path[i],d=b-a;
+            const float run_length=std::hypot(d.x,d.z);
+            if(run_length<0.0001f)continue;
+            const float angle=std::atan2(d.x,d.z)*180.0f/3.14159265359f;
+            if(overlaps(base,footprint((a+b)*.5f,angle,2*half_width,run_length),gap))return false;
+        }
+        return true;
+    };
+    return clear(corridor_network_.connections(),geometry::kCorridorHalfWidth,geometry::kRouteClearance) &&
+        clear(utility_network_.connections(),geometry::kSupplyJunctionWidth*.5f,.10f) &&
+        clear(walkway_network_.connections(),geometry::kWalkwayHalfWidth,.10f);
+}
+
+std::optional<GameApp::StructureAttachment> GameApp::preview_structure_attachment(
+    Vec3 hit,const PlacedHabitat* habitat,const PlacedResource* resource) const {
+    const auto base=habitat ? [&]{
+        const auto& mesh=habitat_models_.mesh(*habitat);
+        return footprint({},habitat->rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+    }() : [&]{
+        const auto& mesh=resource_models_.mesh(*resource);
+        return footprint({},resource->rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+    }();
+
+    struct FreeEnd {Vec3 center,position;float distance;std::size_t index;bool corridor;};
+    std::vector<FreeEnd> ends;
+    const auto consider=[&](const auto& run,std::size_t index,bool first,bool corridor){
+        if(run.path.size()<2)return;
+        const auto end=first?run.path.front():run.path.back();
+        auto outward=end-(first?run.path[1]:run.path[run.path.size()-2]);
+        outward.y=0;
+        if(length(outward)<.001f)return;
+        outward=normalize(outward);
+        const float reach=projected_radius(base,{outward.x,outward.z});
+        auto center=end+outward*(reach+(corridor?geometry::kStructureConnectionReserve+2.6f:1.5f));
+        center.y=0;
+        const float distance=distance_xz(hit,center);
+        if(distance>2.75f)return;
+        if(!corridor){
+            // Supply branches use Open endpoints too. A point shared with another
+            // run is a junction, not a free terminal.
+            const auto& utilities=utility_network_.connections();
+            for(std::size_t i=0;i<utilities.size();++i){
+                if(i==index)continue;
+                const auto& path=utilities[i].path;
+                for(std::size_t j=1;j<path.size();++j)
+                    if(point_segment_distance_xz(end,path[j-1],path[j])<.15f)return;
+            }
+        }
+        ends.push_back({center,end,distance,index,corridor});
+    };
+    if(habitat || resource->kind==ResourceKind::StorageDome){
+        const auto& corridors=corridor_network_.connections();
+        for(std::size_t i=0;i<corridors.size();++i){
+            const auto& run=corridors[i];
+            if(run.endpoint_a.kind==CorridorEndpointKind::OpenDoor&&!run.endpoint_a.suppress_open_door)consider(run,i,true,true);
+            if(run.endpoint_b.kind==CorridorEndpointKind::OpenDoor&&!run.endpoint_b.suppress_open_door)consider(run,i,false,true);
+        }
+    }
+    const auto& utilities=utility_network_.connections();
+    for(std::size_t i=0;i<utilities.size();++i){
+        const auto& run=utilities[i];
+        if(run.kind!=UtilityKind::SupplyChannel)continue;
+        if(run.endpoint_a.kind==UtilityEndpointKind::Open)consider(run,i,true,false);
+        if(run.endpoint_b.kind==UtilityEndpointKind::Open)consider(run,i,false,false);
+    }
+    if(ends.empty())return std::nullopt;
+    std::stable_sort(ends.begin(),ends.end(),[](const auto& a,const auto& b){return a.distance<b.distance;});
+
+    auto habitats=placed_habitats_;
+    auto resources=placed_resources_;
+    if(habitat)habitats.push_back(*habitat);
+    else resources.push_back(*resource);
+    for(const auto& end:ends){
+        if(habitat){
+            habitats.back().position=end.center;
+            if(!placement_valid(habitat->kind,habitat->size,end.center,habitat->rotation_degrees))continue;
+        }else{
+            resources.back().position=end.center;
+            if(!resource_placement_valid(resource->kind,resource->size,resource->storage_size,end.center,resource->rotation_degrees))continue;
+        }
+        const auto index=habitat?habitats.size()-1:resources.size()-1;
+        StructureAttachment result{end.center,{},{}};
+        if(end.corridor){
+            const CorridorBuildAnchor from{CorridorEndpointKind::Corridor,end.index,end.position};
+            const CorridorBuildAnchor to{habitat?CorridorEndpointKind::Habitat:CorridorEndpointKind::Resource,index,end.position};
+            auto route=corridor_network_.preview_built_corridor(from,to,habitats,habitat_models_,resources,resource_models_);
+            if(!route || !corridor_gate_layout_clear(*route))continue;
+            route->resource_plan=construction_costs::corridor(route->path,1);
+            result.corridor=std::move(route);
+        }else{
+            const UtilityBuildAnchor from{UtilityEndpointKind::Open,0,end.position};
+            const UtilityBuildAnchor to{habitat?UtilityEndpointKind::Habitat:UtilityEndpointKind::Resource,index,end.center};
+            auto route=utility_network_.preview_connection(UtilityKind::SupplyChannel,from,to,habitats,habitat_models_,resources,resource_models_);
+            if(!route || !gate_route_clear(route->path,geometry::kSupplyTrayWidth*.5f+.2f))continue;
+            route->resource_plan=construction_costs::supply_channel(route->path,route->junctions.size());
+            result.utility=std::move(route);
+        }
+        return result;
+    }
+    return std::nullopt;
+}
+
+void GameApp::render_structure_attachment(Renderer& r,const StructureAttachment& attachment) const {
+    const auto& edges=attachment.corridor?attachment.corridor->mesh.edges:attachment.utility->mesh.edges;
+    r.draw_lines_3d(edges,theme_.accent,2.0f);
+}
+
+void GameApp::commit_structure_attachment(StructureAttachment attachment){
+    if(attachment.corridor){
+        finalize_placement(*attachment.corridor);
+        corridor_network_.append_corridor(std::move(*attachment.corridor));
+    }else{
+        finalize_placement(*attachment.utility);
+        utility_network_.append_connection(std::move(*attachment.utility));
+    }
+}
+
 bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 position,float rotation_degrees) const {
     const HabitatMesh& candidate=habitat_models_.mesh(kind,size);
     const float half_field=(float)playfield_.size()*0.5f;
@@ -144,6 +266,7 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
     if(position.x-hx<-build_limit || position.x+hx>build_limit ||
        position.z-hz<-build_limit || position.z+hz>build_limit) return false;
 
+    if(!lander_placement_clear(position,rotation_degrees,ground_x,ground_z) || !trader_placement_clear(position,rotation_degrees,ground_x,ground_z))return false;
     const auto candidate_box=footprint(position,rotation_degrees,ground_x,ground_z);
     constexpr float clearance=geometry::kStructurePlacementGap;
     for(const auto& placed:placed_habitats_){
@@ -168,16 +291,7 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
         const auto pile_box=footprint(pile.position,0.0f,diameter,diameter);
         if(overlaps(candidate_box,pile_box,0.12f)) return false;
     }
-    // Structures cannot be placed over an already-built/planned pressure
-    // corridor.  Use the footprint circumradius so rotated long buildings are
-    // conservative rather than leaving a corner cutting through the shell.
-    const float corridor_clearance=0.5f*std::sqrt(candidate.footprint_x*candidate.footprint_x+
-                                                   candidate.footprint_z*candidate.footprint_z)+
-                                   geometry::kCorridorHalfWidth+geometry::kRouteClearance;
-    for(const auto& corridor:corridor_network_.connections()){
-        for(std::size_t i=0;i+1<corridor.path.size();++i)
-            if(point_segment_distance_xz(position,corridor.path[i],corridor.path[i+1])<corridor_clearance) return false;
-    }
+    if(!structure_routes_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return false;
     PlacedHabitat candidate_item;candidate_item.kind=kind;candidate_item.size=size;candidate_item.position=position;candidate_item.rotation_degrees=rotation_degrees;
     if(!gate_layout_clear(&candidate_item,nullptr))return false;
     if(!placement_preserves_robot_escape(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z)) return false;
@@ -196,10 +310,19 @@ void GameApp::render_habitat_placement(Renderer& r){
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
     Vec3 snapped{std::round(hit.x),0.0f,std::round(hit.z)};
     const HabitatSizeTier size=placement_habitat_size_;
+    PlacedHabitat candidate;
+    candidate.kind=selected->habitat_kind;
+    candidate.size=size;
+    candidate.rotation_degrees=placement_rotation_degrees_;
+    auto attachment=preview_structure_attachment(hit,&candidate,nullptr);
+    if(attachment)snapped=attachment->position;
     const auto plan=construction_costs::habitat(selected->habitat_kind,size,habitat_models_.mesh(selected->habitat_kind,size));
-    const bool valid=placement_valid(selected->habitat_kind,size,snapped,placement_rotation_degrees_) && can_start_construction(plan);
+    const bool valid=(attachment || placement_valid(selected->habitat_kind,size,snapped,placement_rotation_degrees_)) &&
+        can_start_construction(plan);
 
     render_habitat_mesh(r,habitat_models_.mesh(selected->habitat_kind,size),snapped,placement_rotation_degrees_,true,valid);
+
+    if(valid && attachment)render_structure_attachment(r,*attachment);
 
     if(valid && input_.left_pressed){
         PlacedHabitat placed;
@@ -209,12 +332,13 @@ void GameApp::render_habitat_placement(Renderer& r){
             if(existing.kind==placed.kind && existing.size==size) serial=std::max(serial,existing.instance_serial+1);
         }
         placed.instance_serial=serial;
-        placed.placement_sequence=next_blueprint_placement_sequence_++;
         placed.position=snapped;
         placed.rotation_degrees=placement_rotation_degrees_;
         placed.size=size;
         placed.resource_plan=plan;
+        finalize_placement(placed);
         placed_habitats_.push_back(std::move(placed));
+        if(attachment)commit_structure_attachment(std::move(*attachment));
         build_catalog_.clear_selection();
         placement_rotation_degrees_=0.0f;
         placement_habitat_size_=HabitatSizeTier::Small;

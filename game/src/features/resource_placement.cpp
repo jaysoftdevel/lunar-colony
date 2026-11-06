@@ -43,6 +43,7 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
     if(position.x-hx<-build_limit || position.x+hx>build_limit ||
        position.z-hz<-build_limit || position.z+hz>build_limit) return false;
 
+    if(!lander_placement_clear(position,rotation_degrees,ground_x,ground_z) || !trader_placement_clear(position,rotation_degrees,ground_x,ground_z))return false;
     const auto candidate_box=footprint(position,rotation_degrees,ground_x,ground_z);
     constexpr float clearance=geometry::kStructurePlacementGap;
     for(const auto& placed:placed_habitats_){
@@ -67,12 +68,7 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
         const auto pile_box=footprint(pile.position,0.0f,diameter,diameter);
         if(overlaps(candidate_box,pile_box,0.12f)) return false;
     }
-    // No structure may be placed through an existing pressure corridor.
-    const float corridor_radius=0.5f*std::sqrt(candidate.footprint_x*candidate.footprint_x+
-                                                candidate.footprint_z*candidate.footprint_z)+
-                                geometry::kCorridorHalfWidth+geometry::kRouteClearance;
-    for(const auto& c:corridor_network_.connections()) for(std::size_t i=0;i+1<c.path.size();++i)
-        if(point_segment_distance_xz(position,c.path[i],c.path[i+1])<corridor_radius) return false;
+    if(!structure_routes_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return false;
 
     if(kind==ResourceKind::RobotWorkshop){
         PlacedResource item;item.kind=kind;item.size=ResourceSizeTier::Standard;
@@ -101,12 +97,6 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
         if(!workshop_accessible(item)) return false;
     }
 
-    // Storage domes also keep their pressure/storage shell clear of service trays.
-    if(kind==ResourceKind::StorageDome){
-        const float radius=std::max(candidate.footprint_x,candidate.footprint_z)*0.5f;
-        for(const auto& u:utility_network_.connections()) for(std::size_t i=0;i+1<u.path.size();++i)
-            if(point_segment_distance_xz(position,u.path[i],u.path[i+1])<radius+0.45f) return false;
-    }
     PlacedResource candidate_item;candidate_item.kind=kind;candidate_item.size=size;candidate_item.storage_size=storage_size;candidate_item.position=position;candidate_item.rotation_degrees=rotation_degrees;
     if(!gate_layout_clear(nullptr,&candidate_item))return false;
     if(!placement_preserves_robot_escape(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z)) return false;
@@ -216,17 +206,27 @@ void GameApp::render_resource_placement(Renderer& r){
     const StorageDomeSize storage_size=selected->resource_kind==ResourceKind::StorageDome?placement_storage_size_:StorageDomeSize::Small;
     const ResourceSizeTier resource_size=(selected->resource_kind==ResourceKind::StorageDome || selected->resource_kind==ResourceKind::RobotWorkshop)?ResourceSizeTier::Standard:placement_resource_size_;
     float rotation=placement_rotation_degrees_;
-    const Vec3 snapped=selected->resource_kind==ResourceKind::StorageDome?snap_storage_dome(hit,storage_size,rotation):Vec3{std::round(hit.x),0.0f,std::round(hit.z)};
+    Vec3 snapped=selected->resource_kind==ResourceKind::StorageDome?snap_storage_dome(hit,storage_size,rotation):Vec3{std::round(hit.x),0.0f,std::round(hit.z)};
+    PlacedResource candidate;
+    candidate.kind=selected->resource_kind;
+    candidate.size=resource_size;
+    candidate.storage_size=storage_size;
+    candidate.rotation_degrees=placement_rotation_degrees_;
+    auto attachment=preview_structure_attachment(hit,nullptr,&candidate);
+    if(attachment){snapped=attachment->position;rotation=candidate.rotation_degrees;}
     const auto& mesh=selected->resource_kind==ResourceKind::StorageDome?
         resource_models_.mesh(selected->resource_kind,storage_size):resource_models_.mesh(selected->resource_kind,resource_size);
     const auto plan=construction_costs::structure(selected->resource_kind,mesh);
-    const bool valid=resource_placement_valid(selected->resource_kind,resource_size,storage_size,snapped,rotation) && can_start_construction(plan);
+    const bool valid=(attachment || resource_placement_valid(selected->resource_kind,resource_size,storage_size,snapped,rotation)) &&
+        can_start_construction(plan);
     render_resource_mesh(r,mesh,snapped,rotation,true,valid);
 
     if(selected->resource_kind==ResourceKind::RobotWorkshop){
         PlacedResource item;item.kind=ResourceKind::RobotWorkshop;item.position=snapped;item.rotation_degrees=rotation;
         render_workshop_gate(r,item,true,valid);
     }
+
+    if(valid && attachment)render_structure_attachment(r,*attachment);
 
     if(valid && input_.left_pressed){
         PlacedResource placed;
@@ -239,13 +239,14 @@ void GameApp::render_resource_placement(Renderer& r){
             if(same_size) serial=std::max(serial,existing.instance_serial+1);
         }
         placed.instance_serial=serial;
-        placed.placement_sequence=next_blueprint_placement_sequence_++;
         placed.position=snapped;
         placed.rotation_degrees=rotation;
         placed.storage_size=storage_size;
         placed.size=resource_size;
         placed.resource_plan=plan;
+        finalize_placement(placed);
         placed_resources_.push_back(std::move(placed));
+        if(attachment)commit_structure_attachment(std::move(*attachment));
         build_catalog_.clear_selection();
         placement_rotation_degrees_=0.0f;
         placement_resource_size_=ResourceSizeTier::Small;

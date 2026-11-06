@@ -20,7 +20,7 @@ const char* GameApp::game_phase_name(GamePhase phase){
     switch(phase){
         case GamePhase::Planning: return "STAGE 1 - PLANNING";
         case GamePhase::RobotPreparation: return "STAGE 2 - PREPARING BASE WITH ROBOTS";
-        case GamePhase::MannedBase: return "STAGE 3 - FULL MANNED MOON BASE";
+        case GamePhase::Debug: return "STAGE 3 - DEBUG";
     }
     return "UNKNOWN GAME STAGE";
 }
@@ -29,7 +29,7 @@ const char* GameApp::game_phase_short_name(GamePhase phase){
     switch(phase){
         case GamePhase::Planning: return "PLANNING";
         case GamePhase::RobotPreparation: return "ROBOT BASE PREPARATION";
-        case GamePhase::MannedBase: return "MANNED MOON BASE";
+        case GamePhase::Debug: return "DEBUG";
     }
     return "UNKNOWN";
 }
@@ -54,6 +54,7 @@ void GameApp::render(Renderer& r){
     r.begin_frame({0.018f,0.024f,0.032f,1});
     if(screen_==Screen::Playfield){
         if(active_game_phase_==GamePhase::Planning) render_planning_game(r);
+        else if(astronaut_test_active())render_empty_game_phase(r);
         else render_playfield(r);
     } else {
         // Menus always use the normal desktop pointer. The crosshair is reserved
@@ -63,6 +64,7 @@ void GameApp::render(Renderer& r){
         switch(screen_){
             case Screen::MainMenu: render_menu(r); break;
             case Screen::NewGame: render_new_game(r); break;
+            case Screen::Stage3Modes: render_stage3_modes(r); break;
             case Screen::SaveGame: render_save_game(r); break;
             case Screen::LoadGame: render_load_game(r); break;
             case Screen::Settings: render_settings(r); break;

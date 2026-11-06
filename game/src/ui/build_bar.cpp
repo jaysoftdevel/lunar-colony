@@ -1,6 +1,7 @@
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
 #include <algorithm>
+#include <string_view>
 
 namespace game {
 using namespace eng;
@@ -20,6 +21,13 @@ constexpr int CATEGORY_COUNT=(int)(sizeof(CATEGORIES)/sizeof(CATEGORIES[0]));
 }
 
 void GameApp::render_build_bar(Renderer& r){
+    if(lander_.deploying()||lander_.awaiting_site||lander_.awaiting_stash){
+        const float w=ui_width(r),y=ui_height(r)-BUILD_BAR_H;
+        r.draw_rect({0,y,w,BUILD_BAR_H},theme_.panel);
+        const char* message=lander_.awaiting_site?"CLICK TOUCHDOWN SITE  /  GREEN OUTLINE = CLEAR  /  ESC MENU":lander_.awaiting_stash?"CLICK STASH MARKER BESIDE SHIP  /  RIGHT CLICK TO CHANGE LANDING SITE  /  ESC MENU":"LUNAR DEPLOYMENT  /  SELECT LANDER FOR FLIGHT STATUS AND UNLOAD  /  ESC MENU";
+        game_label_fitted(r,{18,y+16,w-36,22},message,0.49f,theme_,true);
+        return;
+    }
     const float logical_w=ui_width(r);
     const float logical_h=ui_height(r);
     const float y=logical_h-BUILD_BAR_H;
@@ -75,30 +83,47 @@ void GameApp::render_build_bar(Renderer& r){
         if(items[i].category==build_catalog_.category()) visible.push_back((int)i);
     }
 
-    const float icon_size=BUILD_ICON_SIZE,icon_gap=BUILD_ICON_GAP;
-    const float natural=visible.empty()?0:(float)visible.size()*icon_size+(float)(visible.size()-1)*icon_gap;
-    const bool paged=natural>build_area_w;
+    constexpr float icon_size=BUILD_ICON_SIZE,icon_gap=BUILD_ICON_GAP,section_gap=18.0f;
+    const int count=(int)visible.size();
+    const auto group=[&](int slot){return std::string_view(items[(std::size_t)visible[(std::size_t)slot]].group);};
+    const auto gap=[&](int slot){return group(slot)==group(slot-1)?icon_gap:section_gap;};
+    const auto width=[&](int first,int end){
+        float total=first<end?icon_size:0;
+        for(int i=first+1;i<end;++i)total+=gap(i)+icon_size;
+        return total;
+    };
+    const bool paged=width(0,count)>build_area_w;
     const float arrow_space=paged?30.0f:0.0f;
     const float available=std::max(0.0f,build_area_w-2*arrow_space);
-    const int capacity=std::max(1,(int)((available+icon_gap)/(icon_size+icon_gap)));
-    const int maximum=std::max(0,(int)visible.size()-capacity);
-    build_catalog_scroll_=std::clamp(build_catalog_scroll_,0,maximum);
+    int maximum=std::max(0,count-1);
+    while(maximum>0 && width(maximum-1,count)<=available)--maximum;
+    build_catalog_scroll_=std::clamp(build_catalog_scroll_,0,paged?maximum:0);
     const bool over_catalog=Rect{build_left,y,build_area_w,BUILD_BAR_H}.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
     if(paged && over_catalog && ui_input_.wheel!=0)build_catalog_scroll_=std::clamp(build_catalog_scroll_+(ui_input_.wheel<0?1:-1),0,maximum);
     if(paged){
-        if(ui::button(r,ui_input_,{build_left,y+24,25,32},"<",theme_,build_catalog_scroll_>0))--build_catalog_scroll_;
-        if(ui::button(r,ui_input_,{build_right-25,y+24,25,32},">",theme_,build_catalog_scroll_<maximum))++build_catalog_scroll_;
+        if(ui::button(r,ui_input_,{build_left,y+30,25,32},"<",theme_,build_catalog_scroll_>0))--build_catalog_scroll_;
+        if(ui::button(r,ui_input_,{build_right-25,y+30,25,32},">",theme_,build_catalog_scroll_<maximum))++build_catalog_scroll_;
     }
-    const int first=paged?build_catalog_scroll_:0;
-    const int shown=std::min(capacity,(int)visible.size()-first);
-    const float total=shown>0?(float)shown*icon_size+(float)(shown-1)*icon_gap:0;
-    const float start_x=build_left+arrow_space+std::max(0.0f,(available-total)*0.5f);
-    const float icon_y=y+(BUILD_BAR_H-icon_size)*0.5f;
+    const int first=build_catalog_scroll_;
+    int end=first;
+    while(end<count && width(first,end+1)<=available)++end;
+    float tile_x=build_left+arrow_space+std::max(0.0f,(available-width(first,end))*0.5f);
+    const float icon_y=y+22.0f;
 
     int hovered_item=-1;
-    for(int slot=0;slot<shown;++slot){
-        const int item_index=visible[(std::size_t)(first+slot)];
-        const Rect box={start_x+(icon_size+icon_gap)*(float)slot,icon_y,icon_size,icon_size};
+    for(int slot=first;slot<end;++slot){
+        if(slot>first)tile_x+=icon_size+gap(slot);
+        const int item_index=visible[(std::size_t)slot];
+        const Rect box={tile_x,icon_y,icon_size,icon_size};
+        if(slot==first || group(slot)!=group(slot-1)){
+            int group_end=slot+1;
+            while(group_end<end && group(group_end)==group(slot))++group_end;
+            if(slot>first){
+                const float divider=tile_x-section_gap*.5f;
+                r.draw_line({divider,y+8},{divider,y+72},theme_.border,1.4f);
+            }
+            game_label_fitted(r,{tile_x,y+5,width(slot,group_end),13},items[(std::size_t)item_index].group,.38f,theme_,true);
+        }
         const bool hover=box.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
         const bool selected=item_index==build_catalog_.selected_index();
         if(hover) hovered_item=item_index;

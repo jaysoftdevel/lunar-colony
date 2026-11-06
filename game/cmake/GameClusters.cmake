@@ -42,6 +42,8 @@ configure_game_cluster(game_cluster_interaction)
 add_library(game_cluster_rendering OBJECT
     src/playfield/world_renderer.cpp
     src/playfield/builder_robot_renderer.cpp
+    src/playfield/lunar_lander_renderer.cpp
+    src/playfield/trader_renderer.cpp
 )
 configure_game_cluster(game_cluster_rendering)
 
@@ -88,7 +90,11 @@ add_library(game_cluster_simulation OBJECT
     src/systems/colony_status.cpp
     src/systems/game_progress.cpp
     src/systems/planning_game.cpp
+    src/systems/lunar_lander.cpp
+    src/systems/lander_stash.cpp
+    src/systems/trader.cpp
     src/systems/supply_simulation.cpp
+    src/systems/ore_logistics.cpp
     src/systems/save_game.cpp
 )
 configure_game_cluster(game_cluster_simulation)

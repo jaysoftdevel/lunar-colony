@@ -370,3 +370,41 @@ Windows compilation cannot be executed in this Linux environment because MSVC, t
 - One-time first-customer completion premium (+20% final payment for projects 2–11), plus transparent investor reputation awards when unique completed projects reach 3, 6, and 9 (EUR 750K, 1.5M, and 3M). Repeat projects pay their normal price and remain available to prevent deadlocks.
 - Contract list ranks work ready for submission, active jobs and first-time relevant opportunities before repeat work; research shows a funding shortcut when unaffordable.
 - Stage-2 and Stage-3 mechanics are unchanged. Save schema 29 is preserved; old contract IDs and progress are retained.
+
+
+## v0.51.0 lunar deployment validation
+
+- Compiled every game translation unit with C++20/GCC 13, the real RVO2 sources and real UI/task-pool code. Tests link a headless Application adapter; this environment lacks native X11/OpenGL development dependencies, so a graphical executable/GPU playback was not run.
+- `lander_regression`: powered terminal-descent altitude/velocity/acceleration, continuous phase joins, final speed and engine cutoff; explicit UNLOAD through the actual status-panel button; articulated ramp sequencing and rover height/pitch; collision-free exclusive unloading for all 12 robots; exact per-material 2.5 t crane transfers and physical depot accounting; save/resume during approach, ramp opening, rover deployment, partial cargo unloading and completion; frame-size independence; placement/network reservations; every UI scale; depot pickup and a full paid solar-panel construction replay using normal robot logistics.
+- Existing `ui_regression`: 475 resolution/zoom/screen cases, 46 warning cases and 25 mission-planning layouts; one-shot Career launch, paid manifest handoff, legacy contract migration, Free Play and Stage-3 template/save round-trips pass.
+- Existing navigation fleet scenarios (straight, corners, new obstacle, occupied service point, opposing rovers, narrow lane and six-way crossing), geometry regression (120 habitat rotation/size cases), colony progression and hydrogen tank/refueling/isolation/save regressions pass.
+- Captured the actual native lander/rover/crane geometry at approach, ramp transit, cargo unloading and deployment completion, then visually reviewed software-projected renders. This is geometry/layout validation, not a substitute for native GPU playback.
+- Guidance reference: NASA SPLICE powered-descent and final vertical-landing description, https://www.nasa.gov/safe-and-precise-landing-integrated-capabilities-evolution-splice/. The animation represents terminal descent from 220 m, not the complete lunar orbital descent.
+
+
+## v0.51.1 trader validation
+
+- C++20 build: all game translation units compile, using the real RVO2, UI and task pool with the existing headless Application adapter. Native X11/OpenGL playback remains untested in this environment.
+- `trader_regression` passes: actual TRADE-button click and latch; unfinished/unpowered pads rejected; duplicate calls and invalid/empty/oversized sales rejected; live water-consuming O2 bottling and preserved cabin atmosphere; exact H2 and material reservation; multiple robot trips with physical pickup/delivery and safe receiving-bay exit; completed Storage Gate exports; save/resume during approach, reservation, rover cargo, departure and paid completion; payment only after departure and exactly once; repeat visits; all UI zoom levels.
+- Existing UI regression passes 475 resolution/zoom/screen cases, 46 structure-warning cases and 25 mission-planning layouts. Existing lander deployment/solar-construction replay, hydrogen tank/refueling/save checks, and fleet navigation scenarios pass.
+- Software-projected captures of the native trader meshes were visually reviewed for approach, docked loading and departure. These checks verify geometry and layout, not native GPU behavior.
+
+## v0.51.2 ship layouts and physical stash validation
+
+- All game translation units compile with C++20, Wall/Wextra/Wpedantic against the real RVO2, task pool and UI, using a headless platform adapter. Native display/GPU libraries are unavailable here; native GPU playback is untested.
+- Lander regression passes mouse touchdown/stash picks, off-map/overlap rejection, no descent until both choices, instant exact manifest box drop, per-material package caps and nonoverlap, ramp fleet deployment, individual box/zone picking, single-use 5400 kg salvage and hull collision removal.
+- Save/resume passes waiting, boxed and salvaged depots; a schema-33 aggregate-depot fixture repacks with exact physical/ledger equality. The complete default 204454 kg reserve fits its selected depot, unloads and round-trips its individual boxes.
+- A real builder/carrier replay completes a solar panel using boxed depot stock after salvage. Existing fleet scenarios, 120 habitat rotation/size cases, 16 storage approaches and hydrogen/refueling/isolation/save checks pass.
+- Trader regression passes powered call, live gas mass balance, real ground/storage robot hauling, mid-haul save/load, departure/payment-once, repeat visits and trade UI zoom levels. Existing UI regression passes 475 resolution/zoom/screen cases, 46 warnings and 25 mission-planning layouts.
+- Captured actual native lander and trader triangle meshes and visually reviewed software-projected views; this validates geometry/layout only.
+- Update installer checked for exact source equality after applying to v0.51.1, paths with spaces, preservation of existing saves, idempotence, and zero-write rejection of conflicts and wrong versions. Installer does not build.
+
+## v0.51.3 complete inventory HUD and wireframe ships
+
+- Compiled all game translation units with C++20, Wall/Wextra/Wpedantic against the real RVO2, task pool and UI with the headless platform adapter. Save schema remains 34. Native GPU playback is untested here.
+- UI regression passes 80 additional full-inventory layouts (all 16 common resolutions and five zoom levels): all eight cargo resource names, exact kg amounts, bottled O2, tank/generator H2, cash and second-row gas tooltip hitboxes. Fixture excludes cabin air, blueprint stock, orphan gas buffers and vehicle-allocated fuel from available gas totals.
+- Existing 75 battery/air/water cases pass actual tank/charge fractions and rates. Existing 475 screen/resolution/zoom cases, 46 warnings, 25 progression layouts, inspector scrolling, Bio Dome controls and Stage-1/2/3 mission flows pass. The progress checklist compacts vertically at high zoom to clear the enlarged status bar and build catalog.
+- Lander regression checks nonempty wire geometry and no filled-triangle submissions during approach, landed, ramp-opening, robot deployment and ready phases. Existing placement, instant boxed cargo, salvage, save migration and real crate-fed construction replay pass.
+- Trader regression checks nonempty wire geometry and no filled ship surfaces during approach, docked, loading and departure. Existing real robot transport, gas mass balance, mid-haul save/load, cash transfer-once, repeat visits and UI controls pass.
+- Visually reviewed software-projected captures of the actual status bar drawing commands and both native ship edge meshes. This is layout/geometry review, not native GPU playback.
+- Update installer verified against v0.51.2 for exact source equality, paths with spaces, save preservation, repeat-apply idempotence and zero-write conflict/wrong-version rejection; no build runs during installation.

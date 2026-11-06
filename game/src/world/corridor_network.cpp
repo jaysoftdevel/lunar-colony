@@ -542,14 +542,8 @@ bool CorridorNetwork::connect_corridors(std::size_t corridor_a,std::size_t corri
                                         const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library){
     auto c=preview_corridor_link(corridor_a,corridor_b,habitats,library,resources,resource_library);
     if(!c) return false;
-    for(const CorridorEndpoint* ep:{&c->endpoint_a,&c->endpoint_b}){
-        if(ep->kind!=CorridorEndpointKind::Corridor || ep->index>=connections_.size()) continue;
-        insert_shared_path_vertex(connections_[ep->index],
-                                  ep->surface_matched_junction?ep->host_position:ep->position);
-    }
     c->resource_plan=construction_costs::corridor(c->path,network_junction_count(*c));
-    connections_.push_back(std::move(*c));
-    rebuild_all_meshes(connections_);
+    append_corridor(std::move(*c));
     return true;
 }
 
@@ -650,28 +644,46 @@ float CorridorNetwork::connection_length(std::size_t corridor_index) const {
 
 
 
-void CorridorNetwork::remove_corridor(std::size_t corridor_index){
-    if(corridor_index>=connections_.size()) return;
-
-    std::vector<bool> removed(connections_.size(),false);
-    removed[corridor_index]=true;
-
-    // Network links can depend on another corridor by index. Remove those
-    // dependants recursively so no dangling junction endpoint survives.
-    bool changed=true;
-    while(changed){
-        changed=false;
-        for(std::size_t i=0;i<connections_.size();++i){
-            if(removed[i]) continue;
-            for(const CorridorEndpoint* ep:{&connections_[i].endpoint_a,&connections_[i].endpoint_b}){
-                if(ep->kind==CorridorEndpointKind::Corridor && ep->index<removed.size() && removed[ep->index]){
-                    removed[i]=true;
-                    changed=true;
-                    break;
-                }
-            }
-        }
+void CorridorNetwork::append_corridor(CorridorConnection connection){
+    for(const auto* endpoint:{&connection.endpoint_a,&connection.endpoint_b}){
+        if(endpoint->kind!=CorridorEndpointKind::Corridor) continue;
+        insert_shared_path_vertex(connections_[endpoint->index],
+            endpoint->surface_matched_junction?endpoint->host_position:endpoint->position);
     }
+    connections_.push_back(std::move(connection));
+    rebuild_all_meshes(connections_);
+}
+
+void CorridorNetwork::remove_corridor(std::size_t corridor_index){
+    remove_corridors(dependent_corridors({corridor_index}));
+}
+
+std::vector<std::size_t> CorridorNetwork::dependent_corridors(const std::vector<std::size_t>& roots) const {
+    std::vector<std::vector<std::size_t>> dependants(connections_.size());
+    for(std::size_t i=0;i<connections_.size();++i){
+        const auto& connection=connections_[i];
+        for(const auto* endpoint:{&connection.endpoint_a,&connection.endpoint_b})
+            if(endpoint->kind==CorridorEndpointKind::Corridor && endpoint->index<dependants.size())
+                dependants[endpoint->index].push_back(i);
+    }
+    std::vector<bool> removed(connections_.size(),false);
+    std::vector<std::size_t> indices;
+    const auto mark=[&](std::size_t i){
+        if(i>=removed.size() || removed[i])return;
+        removed[i]=true;
+        indices.push_back(i);
+    };
+    for(const auto root:roots) mark(root);
+    for(std::size_t i=0;i<indices.size();++i)
+        for(const auto dependant:dependants[indices[i]]) mark(dependant);
+    std::sort(indices.begin(),indices.end());
+    return indices;
+}
+
+void CorridorNetwork::remove_corridors(const std::vector<std::size_t>& indices){
+    if(indices.empty())return;
+    std::vector<bool> removed(connections_.size(),false);
+    for(const auto index:indices) removed[index]=true;
 
     const std::size_t invalid=std::numeric_limits<std::size_t>::max();
     std::vector<std::size_t> remap(connections_.size(),invalid);
@@ -688,6 +700,15 @@ void CorridorNetwork::remove_corridor(std::size_t corridor_index){
         }
     }
     connections_=std::move(kept);
+    // Re-seal any surviving host end whose extension was removed.
+    for(auto& c:connections_)
+        for(auto* endpoint:{&c.endpoint_a,&c.endpoint_b})
+            if(endpoint->kind==CorridorEndpointKind::OpenDoor) endpoint->suppress_open_door=false;
+    for(const auto& c:connections_)
+        for(const auto* endpoint:{&c.endpoint_a,&c.endpoint_b})
+            if(endpoint->kind==CorridorEndpointKind::Corridor && endpoint->index<connections_.size())
+                consume_close_open_end(connections_[endpoint->index],
+                    endpoint->surface_matched_junction?endpoint->host_position:endpoint->position);
     rebuild_all_meshes(connections_);
 }
 

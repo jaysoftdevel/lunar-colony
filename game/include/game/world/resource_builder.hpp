@@ -195,6 +195,7 @@ inline ResourceMesh refine_future_resource(ResourceMesh source,ResourceKind kind
                 b.cylinder_y(b.mesh.details,{c.x,1.62f,c.z},0.22f,0.14f,8,true);
             }
             break;
+        case ResourceKind::OxygenTank: break;
         case ResourceKind::HydrogenTank:
             // External cryogenic pump skid and low-height service hookups;
             // avoid mounting pipes through the new spherical vessel skin.

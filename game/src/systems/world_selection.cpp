@@ -48,6 +48,8 @@ NetworkSnap nearest_network_snap(Vec3 hit,const ConnectionList& links,float radi
     NetworkSnap best;
     best.distance=radius;
     for(std::size_t i=0;i<links.size();++i){
+        if constexpr(requires {links[i].kind==UtilityKind::SupplyChannel;})
+            if(links[i].kind!=UtilityKind::SupplyChannel)continue;
         const auto& path=links[i].path;
         for(std::size_t p=0;p+1<path.size();++p){
             const Vec3 q=closest_point_segment_xz(hit,path[p],path[p+1]);
@@ -133,6 +135,8 @@ Vec3 point_along_path(const std::vector<Vec3>& path,float fraction,Vec3* tangent
 }
 
 float GameApp::selection_panel_content_height() const {
+    if(selection_kind_==SelectionKind::Lander)return 470.0f;
+    if(selection_kind_==SelectionKind::Stash)return 250;
     float extra=0;
     const float warning_font=eng::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_);
     if(selection_kind_==SelectionKind::Robot) return 416.0f;
@@ -157,14 +161,25 @@ float GameApp::selection_panel_content_height() const {
         const auto& item=placed_resources_[(std::size_t)selected_resource_];
         const float width=item.kind==ResourceKind::StorageDome?485.0f:410.0f;
         if(item.construction.complete())extra=supply_warning_extra_height(supply_warning_lines(item.supply,width-28.0f,warning_font,item.kind));
-        if(item.kind==ResourceKind::StorageDome) return 408.0f+extra;
+        if(item.kind==ResourceKind::StorageDome) return 416.0f+extra;
+        if(item.kind==ResourceKind::OreDriller) return 338.0f+extra;
         // The fuel-cell telemetry has one more row than the generic outdoor
         // resource panel.  Keep that row in the scrollable content instead of
         // silently drawing it below a 280 px panel.
         if(item.kind==ResourceKind::HydrogenGenerator) return 320.0f+extra;
-        if(item.kind==ResourceKind::HydrogenTank) return 354.0f+extra;
-        if(item.kind==ResourceKind::LandingPad) return 382.0f+extra;
-        if(item.kind==ResourceKind::SolarPanel) return 316.0f+extra;
+        if(item.kind==ResourceKind::OxygenTank||item.kind==ResourceKind::HydrogenTank) return 354.0f+extra;
+        if(item.kind==ResourceKind::LandingPad){
+            if(trader_.active()&&item.placement_sequence==trader_.pad_sequence){
+                if(trader_.phase==TradePhase::Loading||trader_.phase==TradePhase::Departing){
+                    int rows=0;
+                    for(std::size_t i=0;i<kTradeGoodCount;++i) rows+=trader_.requested[i]>trader_.loaded[i];
+                    return 535.0f+20.0f*std::max(rows,1)+extra;
+                }
+                return 885.0f+extra;
+            }
+            return 442.0f+extra;
+        }
+        if(item.kind==ResourceKind::SolarPanel) return 326.0f+extra;
         return 300.0f+extra;
     }
     return 290.0f;
@@ -205,6 +220,8 @@ std::uint64_t GameApp::current_selection_panel_scroll_key() const {
                 for(int index:selected_ground_resources_) mix((std::uint64_t)(index+2));
             }else mix((std::uint64_t)(selected_ground_resource_+2));
             break;
+        case SelectionKind::Stash: break;
+        case SelectionKind::Lander: break;
         case SelectionKind::None: break;
     }
     return key;
@@ -231,7 +248,7 @@ Rect GameApp::ground_resource_panel_rect() const {
     const auto& pile=ground_resource_piles_[(std::size_t)selected_ground_resource_];
     const float aspect=(float)viewport_width_/std::max(1,viewport_height_);
     const Mat4 m=camera_.view_projection(aspect);
-    const Vec3 p=pile.position+Vec3{0.0f,resource_package_height(pile.resource,pile.amount)+0.18f,0.0f};
+    const Vec3 p=pile.position+Vec3{0.0f,pile.height()+0.18f,0.0f};
     const float cx=m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12];
     const float cy=m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13];
     const float cw=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];
@@ -257,6 +274,7 @@ bool GameApp::mouse_over_selection_panel(const InputState& input) const {
 }
 
 void GameApp::clear_world_selection(){
+    selection_rate_display_={};
     selection_kind_=SelectionKind::None;
     selection_panel_scroll_=0.0f;
     selection_panel_scroll_key_=0;
@@ -386,7 +404,7 @@ std::optional<UtilityBuildAnchor> GameApp::utility_anchor_at(Vec3 hit,UtilityKin
     // a resource or habitat, snap to the closest compatible structure even if
     // it is just outside the footprint. The original cursor hit is retained for
     // exact mesh-surface port placement.
-    if(kind==UtilityKind::SupplyChannel){
+    {
         constexpr float SNAP_MARGIN=2.25f;
         float best=SNAP_MARGIN;
         std::optional<UtilityBuildAnchor> snapped;
@@ -407,6 +425,8 @@ std::optional<UtilityBuildAnchor> GameApp::utility_anchor_at(Vec3 hit,UtilityKin
         }
         if(snapped) return snapped;
     }
+
+    if(kind==UtilityKind::ConveyorBelt)return std::nullopt;
 
     // Existing supply runs and pressurized corridors are both valid service
     // manifold starts/ends. A corridor carries the same water/power backbone
@@ -553,12 +573,41 @@ void GameApp::select_world_at(int screen_x,int screen_y){
         selected_ground_resource_=-1; selected_ground_resources_.clear();
         return;
     }
-    const int ground_resource=pick_ground_resource(hit);
+    int ground_resource=-1;
+    // Hit the visible height of a crate column, including its upper boxes.
+    const Vec3 eye=camera_.eye_position(),ray=hit-eye;
+    float closest=1.0f;
+    for(std::size_t i=0;i<ground_resource_piles_.size();++i){
+        const auto& stack=ground_resource_piles_[i];
+        if(stack.kind==GroundPileKind::Loose) continue;
+        const float radius=stack.radius+.08f;
+        const float origin[]={eye.x,eye.y,eye.z},direction[]={ray.x,ray.y,ray.z};
+        const float lower[]={stack.position.x-radius,stack.position.y,stack.position.z-radius};
+        const float upper[]={stack.position.x+radius,stack.position.y+stack.height(),stack.position.z+radius};
+        float enter=0,exit=closest;
+        for(int axis=0;axis<3&&enter<=exit;++axis){
+            if(std::abs(direction[axis])<.00001f){
+                if(origin[axis]<lower[axis]||origin[axis]>upper[axis]) enter=closest+1;
+                continue;
+            }
+            float a=(lower[axis]-origin[axis])/direction[axis],b=(upper[axis]-origin[axis])/direction[axis];
+            if(a>b) std::swap(a,b);
+            enter=std::max(enter,a);
+            exit=std::min(exit,b);
+        }
+        if(enter<=exit){closest=enter;ground_resource=(int)i;}
+    }
+    if(ground_resource<0) ground_resource=pick_ground_resource(hit);
     if(ground_resource>=0){
         selection_kind_=SelectionKind::GroundResource;
         selected_ground_resource_=ground_resource;
         selected_ground_resources_.assign(1,ground_resource);
         selected_habitat_=-1; selected_corridor_=-1; selected_resource_=-1; selected_utility_=-1; selected_walkway_=-1;
+        return;
+    }
+    if(lander_.has_depot()&&lander_.boxed&&world_math::distance_xz(hit,lander_.stash_center)<=kStashMarkerRadius){
+        clear_world_selection();
+        selection_kind_=SelectionKind::Stash;
         return;
     }
     const int utility=pick_utility(hit);
@@ -593,6 +642,9 @@ void GameApp::select_world_at(int screen_x,int screen_y){
         selected_walkway_=-1;
         selected_ground_resource_=-1; selected_ground_resources_.clear();
         return;
+    }
+    if(lander_.active() && lunar_lander_segment_blocked(lander_,hit,hit,0.0f)){
+        clear_world_selection();selection_kind_=SelectionKind::Lander;return;
     }
     const int habitat=pick_habitat(hit);
     if(habitat>=0){
@@ -643,7 +695,7 @@ void GameApp::finish_selection_marquee(){
     selected_ground_resources_.clear();
     for(std::size_t i=0;i<ground_resource_piles_.size();++i){
         const auto& pile=ground_resource_piles_[i];
-        const Vec3 center=pile.position+Vec3{0.0f,resource_package_height(pile.resource,pile.amount)*0.5f,0.0f};
+        const Vec3 center=pile.position+Vec3{0.0f,pile.height()*0.5f,0.0f};
         float sx=0.0f,sy=0.0f;
         if(!project_world_to_screen(vp,center,viewport_width_,viewport_height_,sx,sy)) continue;
         if(sx>=min_x && sx<=max_x && sy>=min_y && sy<=max_y) selected_ground_resources_.push_back((int)i);
@@ -766,7 +818,7 @@ ResourceBundle GameApp::store_resource_bundle(const ResourceBundle& recovered,fl
             for(auto& structure:placed_resources_){
                 if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
                 sync_stored_resource_totals(structure);
-                const std::int64_t free=storage_dome_capacity_kg(structure.storage_size)-structure.stored_resources.total_amount();
+                const std::int64_t free=storage_dome_capacity_kg(structure.storage_size)-storage_dome_used_kg(structure);
                 if(free<=0) continue;
                 destination=&structure;
                 free_capacity=free;
@@ -792,7 +844,7 @@ void GameApp::recover_removed_resources(Vec3 position,float rotation_degrees,flo
     // Debug mode represents instant logistics: recovered construction material is
     // boxed and routed directly into completed Storage Domes. In normal gameplay
     // it remains on the ground and must be handled by the logistics layer later.
-    if(debug_frame_enabled_){
+    if(debug_mode_active()){
         const ResourceBundle stored=store_resource_bundle(used,0.90f);
         const ResourceBundle remainder=bundle_difference(used,stored);
         if(!remainder.empty()) drop_structure_resources(position,rotation_degrees,footprint_x,footprint_z,remainder);
@@ -807,7 +859,7 @@ bool GameApp::move_ground_resource_to_storage(std::size_t pile_index){
     for(auto& structure:placed_resources_){
         if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
         sync_stored_resource_totals(structure);
-        const std::int64_t used=structure.stored_resources.total_amount();
+        const std::int64_t used=storage_dome_used_kg(structure);
         if(used+pile.amount>storage_dome_capacity_kg(structure.storage_size)) continue;
 
         // Preserve the selected amount exactly, but normalize legacy/oversized
@@ -829,6 +881,75 @@ bool GameApp::move_ground_resource_to_storage(std::size_t pile_index){
     return false;
 }
 
+void GameApp::remap_robot_target_after_removal(ConstructionTargetKind kind,std::size_t index){
+    for(auto& robot:builder_robots_){
+        if(robot.target.kind!=kind) continue;
+        if(robot.target.index>index){--robot.target.index;continue;}
+        if(robot.target.index!=index) continue;
+        if(robot.role==RobotRole::Constructor && !robot.cargo.empty()){
+            if(!robot.cargo_committed_to_build) resources_.consume(robot.cargo,true);
+            recover_removed_resources(robot.position,0,0.6f,0.6f,robot.cargo);
+            robot.cargo={};robot.cargo_committed_to_build=false;
+        }
+        robot.target={};robot.logistics_reservation={};robot.support_robot_index=kNoRobotIndex;
+        robot.action=BuilderRobotAction::None;robot.interaction_position_valid=false;robot.drop_exit_pending=false;
+        robot.mode=robot.cargo.empty()?BuilderRobotMode::Idle:BuilderRobotMode::DepotTransfer;
+        robot.safety.cached_route.clear();robot.safety.route_replan_required=true;
+    }
+}
+
+void GameApp::remove_utility_route(std::size_t index){
+    const auto removed=utility_network_.connections()[index];
+    if(removed.kind==UtilityKind::ConveyorBelt && removed.ore_cargo<ore::no_cargo &&
+       removed.endpoint_a.index<placed_resources_.size())
+        placed_resources_[removed.endpoint_a.index].mined_ore_kg[removed.ore_cargo]+=ore::box_kg;
+    walkway_network_.remove_utility(index);
+    utility_network_.remove_connection(index);
+    remap_robot_target_after_removal(ConstructionTargetKind::Utility,index);
+    drop_path_resources(removed.path,1.4f,
+        bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer));
+}
+
+void GameApp::remove_corridor_routes(const std::vector<std::size_t>& roots){
+    const auto removed=corridor_network_.dependent_corridors(roots);
+    if(removed.empty())return;
+    for(std::size_t i=utility_network_.connections().size();i-->0;){
+        const auto& run=utility_network_.connections()[i];
+        const auto attached=[&](const UtilityEndpoint& endpoint){
+            return endpoint.kind==UtilityEndpointKind::Corridor &&
+                std::binary_search(removed.begin(),removed.end(),endpoint.index);
+        };
+        if(attached(run.endpoint_a)||attached(run.endpoint_b))remove_utility_route(i);
+    }
+    for(auto it=removed.rbegin();it!=removed.rend();++it){
+        const auto index=*it;
+        const auto& run=corridor_network_.connections()[index];
+        walkway_network_.remove_corridor(index);
+        utility_network_.remove_corridor(index);
+        remap_robot_target_after_removal(ConstructionTargetKind::Corridor,index);
+        drop_path_resources(run.path,2.6f,
+            bundle_sum(run.resource_plan.consumed(run.construction.step),run.site_buffer));
+    }
+    corridor_network_.remove_corridors(removed);
+}
+
+void GameApp::remove_structure_routes(bool habitat,std::size_t index){
+    const auto utility_kind=habitat?UtilityEndpointKind::Habitat:UtilityEndpointKind::Resource;
+    for(std::size_t i=utility_network_.connections().size();i-->0;){
+        const auto& run=utility_network_.connections()[i];
+        const auto attached=[&](const UtilityEndpoint& endpoint){return endpoint.kind==utility_kind&&endpoint.index==index;};
+        if(attached(run.endpoint_a)||attached(run.endpoint_b))remove_utility_route(i);
+    }
+    const auto corridor_kind=habitat?CorridorEndpointKind::Habitat:CorridorEndpointKind::Resource;
+    std::vector<std::size_t> roots;
+    for(std::size_t i=0;i<corridor_network_.connections().size();++i){
+        const auto& run=corridor_network_.connections()[i];
+        const auto attached=[&](const CorridorEndpoint& endpoint){return endpoint.kind==corridor_kind&&endpoint.index==index;};
+        if(attached(run.endpoint_a)||attached(run.endpoint_b))roots.push_back(i);
+    }
+    remove_corridor_routes(roots);
+}
+
 void GameApp::delete_selected_world_object(){
     if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 &&
        (std::size_t)selected_resource_<placed_resources_.size() && placed_resources_[selected_resource_].kind==ResourceKind::StorageDome){
@@ -845,22 +966,28 @@ void GameApp::delete_selected_world_object(){
         }
     }
     switch(selection_kind_){
+        case SelectionKind::Lander: salvage_lander();return;
+        case SelectionKind::Stash: return;
         case SelectionKind::Habitat:
             if(selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size()){
                 const std::size_t index=(std::size_t)selected_habitat_;
                 const auto removed=placed_habitats_[index];
                 const auto mesh=habitat_models_.mesh(removed);
                 const ResourceBundle used=bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer);
+                remove_structure_routes(true,index);
                 corridor_network_.remove_habitat(index);
                 utility_network_.remove_habitat(index);
                 walkway_network_.remove_habitat(index);
                 placed_habitats_.erase(placed_habitats_.begin()+(std::ptrdiff_t)index);
+                if(index<airlock_cycles_.size())airlock_cycles_.erase(airlock_cycles_.begin()+(std::ptrdiff_t)index);
+                remap_robot_target_after_removal(ConstructionTargetKind::Habitat,index);
                 recover_removed_resources(removed.position,removed.rotation_degrees,mesh.footprint_x,mesh.footprint_z,used);
             }
             break;
         case SelectionKind::Resource:
             if(selected_resource_>=0 && (std::size_t)selected_resource_<placed_resources_.size()){
                 const std::size_t index=(std::size_t)selected_resource_;
+                if(trader_.active() && placed_resources_[index].placement_sequence==trader_.pad_sequence)return;
                 auto removed=placed_resources_[index];
                 sync_stored_resource_totals(removed);
                 const auto mesh=resource_models_.mesh(removed);
@@ -891,6 +1018,7 @@ void GameApp::delete_selected_world_object(){
                     resources_.add(subtract);
                 }
 
+                remove_structure_routes(false,index);
                 corridor_network_.remove_resource(index);
                 utility_network_.remove_resource(index);
                 walkway_network_.remove_resource(index);
@@ -900,25 +1028,14 @@ void GameApp::delete_selected_world_object(){
                         if(robot.workshop_index==index){robot.workshop_index=kNoRobotIndex;robot.workshop_bay=-1;robot.workshop_parked=false;}
                         else if(robot.workshop_index>index) --robot.workshop_index;
                     }
-                    if(robot.target.kind!=ConstructionTargetKind::Resource) continue;
-                    if(robot.target.index>index){--robot.target.index;continue;}
-                    if(robot.target.index!=index) continue;
-                    if(robot.role==RobotRole::Constructor && !robot.cargo.empty()){
-                        if(!robot.cargo_committed_to_build) resources_.consume(robot.cargo,true);
-                        recover_removed_resources(robot.position,0,0.6f,0.6f,robot.cargo);
-                        robot.cargo={};robot.cargo_committed_to_build=false;
-                    }
-                    robot.target={};robot.logistics_reservation={};robot.support_robot_index=kNoRobotIndex;
-                    robot.action=BuilderRobotAction::None;robot.interaction_position_valid=false;robot.drop_exit_pending=false;
-                    robot.mode=robot.cargo.empty()?BuilderRobotMode::Idle:BuilderRobotMode::DepotTransfer;
-                    robot.safety.cached_route.clear();robot.safety.route_replan_required=true;
                 }
+                remap_robot_target_after_removal(ConstructionTargetKind::Resource,index);
                 synchronize_storage_gates();
                 recover_removed_resources(removed.position,removed.rotation_degrees,mesh.footprint_x,mesh.footprint_z,construction_used);
             }
             break;
         case SelectionKind::GroundResource:
-            if(!debug_frame_enabled_) return;
+            if(!debug_mode_active()) return;
             if(selected_ground_resources_.size()>1){
                 auto indices=selected_ground_resources_;
                 std::sort(indices.begin(),indices.end(),std::greater<int>());
@@ -937,25 +1054,13 @@ void GameApp::delete_selected_world_object(){
         case SelectionKind::Corridor:
             if(selected_corridor_>=0 && (std::size_t)selected_corridor_<corridor_network_.connections().size()){
                 const std::size_t index=(std::size_t)selected_corridor_;
-                const auto removed=corridor_network_.connections()[index];
-                const ResourceBundle used=bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer);
-                walkway_network_.remove_corridor(index);
-                utility_network_.remove_corridor(index);
-                corridor_network_.remove_corridor(index);
-                // Routed construction is recovered where it physically existed.
-                // Even in debug mode these boxes remain on the deleted corridor
-                // footprint until explicitly moved to Storage Dome inventory.
-                drop_path_resources(removed.path,2.6f,used);
+                remove_corridor_routes({index});
             }
             break;
         case SelectionKind::Utility:
             if(selected_utility_>=0 && (std::size_t)selected_utility_<utility_network_.connections().size()){
                 const std::size_t index=(std::size_t)selected_utility_;
-                const auto removed=utility_network_.connections()[index];
-                const ResourceBundle used=bundle_sum(removed.resource_plan.consumed(removed.construction.step),removed.site_buffer);
-                walkway_network_.remove_utility(index);
-                utility_network_.remove_connection(index);
-                drop_path_resources(removed.path,1.4f,used);
+                remove_utility_route(index);
             }
             break;
         case SelectionKind::Walkway:

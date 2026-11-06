@@ -52,9 +52,10 @@ void add_segment_prism(MeshBits& m,Vec3 a,Vec3 b,float width,float depth){
     for(const auto& q:e){ m.edges.push_back(p[q[0]]); m.edges.push_back(p[q[1]]); }
 }
 
-std::vector<Vec3> transform(const std::vector<Vec3>& in,Vec3 position,float heading){
+std::vector<Vec3> transform(const std::vector<Vec3>& in,Vec3 position,float heading,float pitch=0){
     std::vector<Vec3> out; out.reserve(in.size());
-    for(const auto& v:in) out.push_back(world_math::rotate_y(v,heading)+position);
+    const float a=pitch*3.14159265359f/180,c=std::cos(a),s=std::sin(a);
+    for(const auto& v:in) out.push_back(world_math::rotate_y({v.x,v.y*c-v.z*s,v.y*s+v.z*c},heading)+position);
     return out;
 }
 
@@ -137,6 +138,7 @@ RobotArmPose robot_arm_pose(const BuilderRobotState& robot){
             pose.gripper_open=0.055f; pose.tool_extension=0.12f;
             break;
         }
+        case BuilderRobotAction::Dismantle:
         case BuilderRobotAction::Welding:{
             const float deploy=segment(t,0.0f,0.14f);
             const float retract=segment(t,0.86f,1.0f);
@@ -170,6 +172,7 @@ RobotArmPose robot_arm_pose(const BuilderRobotState& robot){
 void GameApp::render_builder_robot(Renderer& r){
     // Starter logistics pad remains as a visual depot even after the initial
     // reserve is moved away. Six constructor bays and six carrier bays are marked beside it.
+    if(!lander_.has_depot()){
     const Vec3 c=starter_stash_center_;
     const float y=0.025f;
     // The depot outline covers the complete starter-pallet row. It uses the
@@ -204,6 +207,7 @@ void GameApp::render_builder_robot(Renderer& r){
         }
     }
 
+    }
     MeshBits body,carrier_body,wheels,suspension,sensors,carrier_sensors;
     add_box(body,{0,0.58f,0},{0.82f,0.48f,1.34f});
     add_box(body,{0,0.79f,-0.18f},{0.68f,0.22f,0.70f});
@@ -314,8 +318,18 @@ void GameApp::render_builder_robot(Renderer& r){
         }
     }
 
-    for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
-        const auto& robot=builder_robots_[robot_index];
+    const bool deploying=lander_.phase==LanderPhase::DeployingRobots;
+    const auto parked=builder_robots_.size();
+    const auto rendered=deploying?(std::size_t)(lander_.builders+lander_.carriers):parked;
+    for(std::size_t robot_index=0;robot_index<rendered;++robot_index){
+        auto robot=robot_index<parked?builder_robots_[robot_index]:lander_robot((int)robot_index);
+        float pitch=0;
+        if(robot_index>=parked){
+            const auto pose=lunar_lander_robot_pose(lander_,(int)robot_index,(int)parked);
+            robot.position=robot.visual_position=pose.position;
+            robot.heading_degrees=robot.visual_heading_degrees=pose.heading;
+            pitch=pose.pitch;
+        }
         const float phase=action_fraction(robot);
         MeshBits cargo,arm,gripper;
         const bool cargo_in_bay=robot.cargo.total_amount()>0 &&
@@ -353,21 +367,21 @@ void GameApp::render_builder_robot(Renderer& r){
         const bool carrier=robot.role==RobotRole::Carrier;
         const auto& chassis=carrier?carrier_body:body;
         const auto& sensor_mesh=carrier?carrier_sensors:sensors;
-        r.draw_triangles_3d(transform(chassis.tris,pos,heading),carrier?Color{0.34f,0.48f,0.56f,1.0f}:Color{0.58f,0.61f,0.60f,1.0f});
-        r.draw_triangles_3d(transform(wheels.tris,pos,heading),{0.08f,0.10f,0.11f,1.0f});
-        r.draw_triangles_3d(transform(suspension.tris,pos,heading),{0.35f,0.37f,0.36f,1.0f});
-        r.draw_triangles_3d(transform(arm.tris,pos,arm_heading),carrier?Color{0.28f,0.56f,0.68f,1.0f}:Color{0.72f,0.46f,0.14f,1.0f});
-        r.draw_triangles_3d(transform(gripper.tris,pos,arm_heading),{0.23f,0.25f,0.24f,1.0f});
-        r.draw_triangles_3d(transform(sensor_mesh.tris,pos,heading),carrier?Color{0.18f,0.50f,0.62f,1.0f}:Color{0.30f,0.40f,0.43f,1.0f});
-        if(!cargo.tris.empty()) r.draw_triangles_3d(transform(cargo.tris,pos,heading),{0.28f,0.48f,0.56f,0.95f});
+        r.draw_triangles_3d(transform(chassis.tris,pos,heading,pitch),carrier?Color{0.34f,0.48f,0.56f,1.0f}:Color{0.58f,0.61f,0.60f,1.0f});
+        r.draw_triangles_3d(transform(wheels.tris,pos,heading,pitch),{0.08f,0.10f,0.11f,1.0f});
+        r.draw_triangles_3d(transform(suspension.tris,pos,heading,pitch),{0.35f,0.37f,0.36f,1.0f});
+        r.draw_triangles_3d(transform(arm.tris,pos,arm_heading,pitch),carrier?Color{0.28f,0.56f,0.68f,1.0f}:Color{0.72f,0.46f,0.14f,1.0f});
+        r.draw_triangles_3d(transform(gripper.tris,pos,arm_heading,pitch),{0.23f,0.25f,0.24f,1.0f});
+        r.draw_triangles_3d(transform(sensor_mesh.tris,pos,heading,pitch),carrier?Color{0.18f,0.50f,0.62f,1.0f}:Color{0.30f,0.40f,0.43f,1.0f});
+        if(!cargo.tris.empty()) r.draw_triangles_3d(transform(cargo.tris,pos,heading,pitch),{0.28f,0.48f,0.56f,0.95f});
         const Color edge{0.04f,0.06f,0.07f,1.0f};
-        r.draw_lines_3d(transform(chassis.edges,pos,heading),edge,1.15f);
-        r.draw_lines_3d(transform(wheels.edges,pos,heading),{0.30f,0.34f,0.34f,1.0f},1.0f);
-        r.draw_lines_3d(transform(suspension.edges,pos,heading),edge,1.0f);
-        r.draw_lines_3d(transform(arm.edges,pos,arm_heading),edge,1.10f);
-        r.draw_lines_3d(transform(gripper.edges,pos,arm_heading),edge,0.95f);
-        r.draw_lines_3d(transform(sensor_mesh.edges,pos,heading),carrier?Color{0.24f,0.84f,0.96f,1.0f}:Color{0.18f,0.76f,0.92f,1.0f},1.25f);
-        if(!cargo.edges.empty()) r.draw_lines_3d(transform(cargo.edges,pos,heading),{0.12f,0.22f,0.24f,1.0f},1.0f);
+        r.draw_lines_3d(transform(chassis.edges,pos,heading,pitch),edge,1.15f);
+        r.draw_lines_3d(transform(wheels.edges,pos,heading,pitch),{0.30f,0.34f,0.34f,1.0f},1.0f);
+        r.draw_lines_3d(transform(suspension.edges,pos,heading,pitch),edge,1.0f);
+        r.draw_lines_3d(transform(arm.edges,pos,arm_heading,pitch),edge,1.10f);
+        r.draw_lines_3d(transform(gripper.edges,pos,arm_heading,pitch),edge,0.95f);
+        r.draw_lines_3d(transform(sensor_mesh.edges,pos,heading,pitch),carrier?Color{0.24f,0.84f,0.96f,1.0f}:Color{0.18f,0.76f,0.92f,1.0f},1.25f);
+        if(!cargo.edges.empty()) r.draw_lines_3d(transform(cargo.edges,pos,heading,pitch),{0.12f,0.22f,0.24f,1.0f},1.0f);
 
         const Vec3 tool_world=world_math::rotate_y(pose.tool,arm_heading)+pos;
         const bool carrying_handled=
@@ -378,8 +392,14 @@ void GameApp::render_builder_robot(Renderer& r){
             const float half=resource_package_half_width(robot.action_material,robot.action_amount)*0.72f;
             const float height=resource_package_height(robot.action_material,robot.action_amount)*0.72f;
             add_box(handled,pose.tool+Vec3{0,-height*0.58f,0.10f},{half*2.0f,height,half*2.0f});
-            r.draw_triangles_3d(transform(handled.tris,pos,arm_heading),resource_color(robot.action_material));
-            r.draw_lines_3d(transform(handled.edges,pos,arm_heading),edge,0.9f);
+            r.draw_triangles_3d(transform(handled.tris,pos,arm_heading,pitch),resource_color(robot.action_material));
+            r.draw_lines_3d(transform(handled.edges,pos,arm_heading,pitch),edge,0.9f);
+        }
+        if(robot.ore_haul.loaded && robot.ore_haul.active() && robot.action!=BuilderRobotAction::PutDown){
+            MeshBits crate;
+            add_box(crate,{0,.98f,.10f},{.46f,.34f,.46f});
+            r.draw_triangles_3d(transform(crate.tris,pos,heading,pitch),ore::colors[robot.ore_haul.kind]);
+            r.draw_lines_3d(transform(crate.edges,pos,heading,pitch),edge,1.3f);
         }
         if(robot.action==BuilderRobotAction::ApplyResources){
             const Vec3 nozzle=tool_world+world_math::rotate_y({0,0,pose.tool_extension},arm_heading);
@@ -393,7 +413,7 @@ void GameApp::render_builder_robot(Renderer& r){
             }
             r.draw_lines_3d(feed,{0.74f,0.72f,0.48f,0.70f},1.1f);
         }
-        if(robot.action==BuilderRobotAction::Welding){
+        if(robot.action==BuilderRobotAction::Welding||robot.action==BuilderRobotAction::Dismantle){
             const float active=segment(phase,0.14f,0.86f)*(1.0f-segment(phase,0.86f,1.0f));
             if(active>0.05f){
                 std::vector<Vec3> sparks;
@@ -412,8 +432,8 @@ void GameApp::render_builder_robot(Renderer& r){
             MeshBits lifted;
             if(phase>0.12f && phase<0.82f){
                 add_box(lifted,pose.tool+Vec3{0,-0.10f,0.12f},{0.52f,0.12f,0.38f});
-                r.draw_triangles_3d(transform(lifted.tris,pos,arm_heading),{0.52f,0.58f,0.57f,0.96f});
-                r.draw_lines_3d(transform(lifted.edges,pos,arm_heading),edge,1.0f);
+                r.draw_triangles_3d(transform(lifted.tris,pos,arm_heading,pitch),{0.52f,0.58f,0.57f,0.96f});
+                r.draw_lines_3d(transform(lifted.edges,pos,arm_heading,pitch),edge,1.0f);
             }
             const Vec3 guide_a=tool_world+world_math::rotate_y({-0.20f,-0.38f,0},arm_heading);
             const Vec3 guide_b=tool_world+world_math::rotate_y({0.20f,-0.38f,0},arm_heading);
@@ -430,7 +450,7 @@ void GameApp::render_builder_robot(Renderer& r){
                              {pos.x-rr,yy,pos.z+rr},{pos.x-rr,yy,pos.z-rr}},sel,2.2f);
         }
 
-        if(debug_frame_enabled_ && robot.target.valid()){
+        if(debug_mode_active() && robot.target.valid()){
             const Vec3 target=construction_target_position(robot.target);
             r.draw_lines_3d({pos+Vec3{0,1.35f,0},target+Vec3{0,0.08f,0}},
                             {0.94f,0.68f,0.18f,0.75f},1.2f);
