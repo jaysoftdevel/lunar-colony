@@ -2036,7 +2036,7 @@ void GameApp::update_builder_robot(float dt){
 
     // Reserved export crates remain physical obstacles until their actual pickup.
     if(trader_.phase==TradePhase::Loading)for(const auto& lot:trader_.lots)
-        if(lot.remaining>0)cached_resource_obstacles.push_back({lot.position,0.36f});
+        if(lot.remaining>0 && !lot.conveyor_sequence)cached_resource_obstacles.push_back({lot.position,0.36f});
 
     std::unordered_map<std::uint64_t,std::vector<std::size_t>> resource_bins;
     float resource_max_radius=0;
@@ -6645,6 +6645,24 @@ bool GameApp::spawn_produced_resource(MaterialResource resource,std::int64_t amo
     return true;
 }
 
+bool GameApp::consume_colony_stock(MaterialResource material,std::int64_t amount){
+    ResourceBundle cost{};
+    cost.amount(material)=amount;
+    if(!resources_.consume(cost,false))return false;
+    for(auto it=ground_resource_piles_.begin();it!=ground_resource_piles_.end() && amount>0;){
+        if(it->resource!=material){++it;continue;}
+        const auto take=std::min(it->amount,amount);
+        it->amount-=take;amount-=take;
+        if(it->amount<=0)it=ground_resource_piles_.erase(it);
+        else ++it;
+    }
+    if(amount>0){
+        cost.amount(material)=amount;
+        consume_storage_inventory(cost);
+    }
+    return true;
+}
+
 void GameApp::update_resource_economy(float dt){
     if(dt<=0.0f) return;
     // One in-game day is 240 real seconds. Production figures below are kg per
@@ -6764,6 +6782,7 @@ void GameApp::update_resource_economy(float dt){
 
     // Crew consumables (kg/day). Water is net make-up after high recovery;
     // food is edible mass; medical is a low continuous reserve draw.
+    if(astronaut_test_active())return;
     life_support_fraction_seconds_+=dt;
     if(life_support_fraction_seconds_>=1.0){
         const double seconds=life_support_fraction_seconds_;
@@ -6785,17 +6804,7 @@ void GameApp::update_resource_economy(float dt){
             if(production_fraction_[idx]<=-1.0){
                 const auto consume=(std::int64_t)std::floor(-production_fraction_[idx]);
                 production_fraction_[idx]+=(double)consume;
-                ResourceBundle cost{}; cost.amount(material)=consume;
-                if(resources_.consume(cost,false)){
-                    std::int64_t remaining=consume;
-                    for(auto it=ground_resource_piles_.begin();it!=ground_resource_piles_.end() && remaining>0;){
-                        if(it->resource!=material){ ++it; continue; }
-                        const auto take=std::min<std::int64_t>(it->amount,remaining);
-                        it->amount-=take; remaining-=take;
-                        if(it->amount<=0) it=ground_resource_piles_.erase(it); else ++it;
-                    }
-                    if(remaining>0){ ResourceBundle stored{}; stored.amount(material)=remaining; consume_storage_inventory(stored); }
-                }
+                consume_colony_stock(material,consume);
             }
         }
         (void)use;

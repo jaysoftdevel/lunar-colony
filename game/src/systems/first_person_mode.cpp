@@ -623,7 +623,8 @@ float GameApp::first_person_floor_height(Vec3 p) const {
     for(const auto& h:placed_habitats_){
         if(!h.construction.complete()) continue;
         const auto& mesh=habitat_models_.mesh(h);
-        if(inside_habitat_hull(p,h,mesh,0.02f)){
+        if(near_rotated_footprint(p,h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z,.5f) &&
+           inside_habitat_hull(p,h,mesh,0.02f)){
             // Every crew-accessible habitat owns one authoritative internal
             // deck level. This prevents benches, crop racks or foundation caps
             // from being mistaken for the floor and keeps all size tiers equal
@@ -647,7 +648,8 @@ float GameApp::first_person_floor_height(Vec3 p) const {
     for(const auto& item:placed_resources_){
         if(!item.construction.complete() || item.kind!=ResourceKind::StorageDome) continue;
         const auto& mesh=resource_models_.mesh(item);
-        if(inside_storage_hull(p,item,mesh,0.02f))
+        if(near_rotated_footprint(p,item.position,item.rotation_degrees,mesh.footprint_x,mesh.footprint_z,.5f) &&
+           inside_storage_hull(p,item,mesh,0.02f))
             return item.position.y+storage_basement_height(mesh);
     }
 
@@ -747,18 +749,59 @@ float GameApp::first_person_ceiling_height(Vec3 p) const {
     return ceiling;
 }
 
-bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
+const SupplyState* GameApp::astronaut_air_at(Vec3 p,bool& airlock) const {
+    airlock=false;
+    for(const auto& h:placed_habitats_){
+        if(!h.construction.complete())continue;
+        const auto& mesh=habitat_models_.mesh(h);
+        if(near_rotated_footprint(p,h.position,h.rotation_degrees,mesh.footprint_x,mesh.footprint_z,.5f) &&
+           inside_habitat_hull(p,h,mesh,0.f)){
+            airlock=h.kind==HabitatKind::AirLock;
+            return &h.supply;
+        }
+    }
+    for(const auto& r:placed_resources_){
+        if(r.kind!=ResourceKind::StorageDome || !r.construction.complete())continue;
+        const auto& mesh=resource_models_.mesh(r);
+        if(near_rotated_footprint(p,r.position,r.rotation_degrees,mesh.footprint_x,mesh.footprint_z,.5f) &&
+           inside_storage_hull(p,r,mesh,0.f))return &r.supply;
+    }
+    const auto in_run=[&](Vec3 a,Vec3 b,float half){
+        const auto d=b-a;
+        const float length_sq=d.x*d.x+d.z*d.z;
+        if(length_sq<1e-5f)return false;
+        const float t=((p.x-a.x)*d.x+(p.z-a.z)*d.z)/length_sq;
+        return t>=0.f && t<=1.f && dist_xz_local(p,a+d*t)<=half;
+    };
+    for(const auto& c:corridor_network_.connections()){
+        if(!c.construction.complete())continue;
+        for(std::size_t i=1;i<c.path.size();++i)
+            if(in_run(c.path[i-1],c.path[i],geometry::kCorridorHalfWidth))return &c.supply;
+        for(const auto* e:{&c.endpoint_a,&c.endpoint_b})
+            if((e->kind==CorridorEndpointKind::Habitat || e->kind==CorridorEndpointKind::Resource) &&
+               in_run(e->position,e->door.wall_position,geometry::kDockSleeveHalfWidth))return &c.supply;
+    }
+    return nullptr;
+}
+
+bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to,CrewTraversal traversal) const {
     if(lunar_lander_segment_blocked(lander_,from,to,0.35f))return false;
     const float radius=first_person_.body_radius();
     const float half=(float)playfield_.size()*0.5f-radius;
     if(to.x<-half || to.x>half || to.z<-half || to.z>half) return false;
+
+    const bool planning=traversal==CrewTraversal::Plan;
+    const bool crew=traversal!=CrewTraversal::Player;
+    const auto opening=[&](const CorridorDoor& d){return planning?1.f:first_person_door_open_fraction(d.wall_position);};
 
     // Closed/partly open leaves are physical seals. Use the same opening and
     // travel as rendering, so an avatar cannot step through a closed outline.
     for(std::size_t i=0;i<placed_habitats_.size();++i){
         if(!placed_habitats_[i].construction.complete()) continue;
         for(const auto& d:habitat_doors(i)){
-            const float fraction=first_person_door_open_fraction(d.wall_position);
+            float fraction=opening(d);
+            if(!planning && placed_habitats_[i].kind==HabitatKind::AirLock && !airlock_powered(i) &&
+               std::abs(dot(from-d.wall_position,d.normal))>=radius+pressure_door::kThickness*.5f)fraction=0.f;
             if(airlock::internal(d)?airlock::bulkhead_blocks(d,fraction,from,to,radius,first_person_.body_height(),habitat_models_.mesh(placed_habitats_[i]).footprint_x/10.0f):
                pressure_door::blocks(d,fraction,from,to,radius))return false;
         }
@@ -766,7 +809,7 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
     for(std::size_t i=0;i<placed_resources_.size();++i){
         if(!placed_resources_[i].construction.complete()) continue;
         for(const auto& d:storage_dome_doors(i))
-            if(pressure_door::blocks(d,first_person_door_open_fraction(d.wall_position),from,to,radius)) return false;
+            if(pressure_door::blocks(d,opening(d),from,to,radius)) return false;
     }
 
     struct CorridorOccupancy {
@@ -867,11 +910,22 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to) const {
     const int samples=std::clamp((int)std::ceil(move_distance/0.06f),1,12);
     Vec3 previous=from;
     CorridorOccupancy previous_corridor=corridor_occupancy(previous);
+    bool previous_airlock=false;
+    bool previous_inside=crew && astronaut_air_at(previous,previous_airlock);
 
     for(int sample=1;sample<=samples;++sample){
         const float t=(float)sample/(float)samples;
         const Vec3 current=from+(to-from)*t;
         if(current.x<-half || current.x>half || current.z<-half || current.z>half) return false;
+        if(crew){
+            bool current_airlock=false;
+            const bool current_inside=astronaut_air_at(current,current_airlock)!=nullptr;
+            // Docking sleeves and ordinary pressure doors may join two inside
+            // volumes. Only an airlock may join a pressure volume to vacuum.
+            if(previous_inside!=current_inside && !previous_airlock && !current_airlock)return false;
+            previous_inside=current_inside;
+            previous_airlock=current_airlock;
+        }
 
         // Non-enterable machinery/resources are solid from every direction.
         // Body-ring sampling prevents the camera/body from clipping them while

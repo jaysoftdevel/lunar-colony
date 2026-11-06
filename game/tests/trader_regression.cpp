@@ -105,8 +105,117 @@ struct TraderRegression {
         require(loaded->start_trader_sale()&&std::abs(loaded->placed_resources_[index].stored_oxygen_kg-(stored-3))<1e-9,
                 "oxygen tank sale did not reserve exact stock");
     }
+    static void conveyor_trade(eng::Application& engine){
+        GameApp app(engine);
+        setup(app);
+        PlacedResource drill;
+        drill.kind=ResourceKind::OreDriller;
+        drill.position={-52,0,-29};
+        app.finalize_placement(drill);
+        drill.construction.finish();
+        drill.supply.power_fraction=1;
+        app.placed_resources_.push_back(drill);
+        const auto di=app.placed_resources_.size()-1;
+        PlacedResource dome;
+        dome.kind=ResourceKind::StorageDome;
+        dome.position={-29,0,-28};
+        app.finalize_placement(dome);
+        dome.construction.finish();
+        app.placed_resources_.push_back(dome);
+        const auto si=app.placed_resources_.size()-1;
+
+        const auto build=[&](std::size_t from,std::size_t to){
+            const auto start=app.placed_resources_[from].position;
+            const auto finish=app.placed_resources_[to].position;
+            return app.utility_network_.build_connection(UtilityKind::ConveyorBelt,
+                {UtilityEndpointKind::Resource,from,start},{UtilityEndpointKind::Resource,to,finish},
+                app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+        };
+        require(!build(di,0) && !build(0,si) && !build(si,di),"invalid conveyor direction accepted");
+        require(build(di,si),"ore driller could not connect to storage");
+        auto& belts=app.utility_network_.mutable_connections();
+        const auto intake=belts.size()-1;
+        app.finalize_placement(belts[intake]);
+        belts[intake].construction.finish();
+        require(build(si,0),"storage could not connect to the landing pad");
+        const auto export_belt=belts.size()-1;
+        app.finalize_placement(belts[export_belt]);
+        belts[export_belt].construction.finish();
+        require(!build(si,0) && app.conveyor_route_clear(belts[intake].path) &&
+                app.conveyor_route_clear(belts[export_belt].path),"conveyor path or source occupancy invalid");
+        require(!app.utility_network_.evaluate_services(app.corridor_network_,app.placed_habitats_,
+                app.placed_resources_).resources[si].connected,"cargo belts became utility links");
+
+        auto& stock=app.placed_resources_[si];
+        stock.stored_ore_boxes[0]=storage_dome_capacity_kg(stock.storage_size)/ore::box_kg;
+        app.placed_resources_[di].mined_ore_kg[0]=ore::box_kg;
+        app.update_ore_logistics(app.utility_network_.connection_length(intake)/ore::belt_speed_mps+1);
+        require(belts[intake].ore_cargo==0,"full dome did not hold the arriving ore crate");
+        stock.stored_ore_boxes[0]=1;
+        app.update_ore_logistics(.1f);
+        require(stock.stored_ore_boxes[0]==2 && belts[intake].ore_cargo==ore::no_cargo &&
+                app.resources_.amount(MaterialResource::Iron)==6000,
+                "dome conveyor did not accept raw ore without crediting refined stock");
+
+        stock.stored_boxes={{MaterialResource::Iron,180,1.f}};
+        sync_stored_resource_totals(stock);
+        ResourceBundle added;
+        added.iron=180;
+        app.resources_.add(added);
+        require(!storage_loading::has_ready_gate(stock) && app.call_trader(0),
+                "conveyor-fed storage fixture has a gate or could not call a trader");
+        app.update_trader(24);
+        const auto raw=(std::size_t)TradeGood::IronOre;
+        require(app.trader_available()[raw]==10 && app.trader_available()[0]==6180,"belt stock missing from sale manifest");
+        app.trader_.requested[raw]=1;
+        require(!app.start_trader_sale() && stock.stored_ore_boxes[0]==2,"partial raw ore box was reserved");
+        app.trader_.requested[raw]=10;
+        app.trader_.requested[0]=180;
+        require(app.start_trader_sale() && app.trader_.lots.size()==2 &&
+                stock.stored_boxes.empty() && !stock.stored_ore_boxes[0] &&
+                app.resources_.amount(MaterialResource::Iron)==6000,"reservation did not prefer the belt-fed stock");
+
+        const auto belt_sequence=belts[export_belt].placement_sequence;
+        app.update_trade_hauling(.1f,[](auto,auto){return true;},[](auto,auto){},[](auto){});
+        require(app.trader_.hauls.empty(),"a rover was dispatched for belt cargo");
+        app.update_trader(.5f);
+        require(app.trader_.lots.front().conveyor_sequence==belt_sequence &&
+                app.trader_.lots.front().conveyor_distance_m>0 && app.trader_.loaded[0]==0,
+                "cargo was credited before reaching the pad");
+        auto loaded=resume(app,"conveyor-trader");
+        const auto distance=loaded->trader_.lots.front().conveyor_distance_m;
+        require(distance==app.trader_.lots.front().conveyor_distance_m &&
+                loaded->trader_.lots.front().conveyor_sequence==belt_sequence,
+                "in-flight trader cargo did not survive save/load");
+        loaded->placed_resources_[0].supply.power_fraction=0;
+        loaded->update_trader(600);
+        require(loaded->trader_.loaded[0]==0 && loaded->trader_.lots.front().conveyor_distance_m==distance,
+                "belt loaded a trader without pad power");
+        loaded->update_supply_simulation(0);
+        loaded->update_trader(600);
+        require(loaded->trader_.phase==TradePhase::Departing && loaded->trader_.loaded==loaded->trader_.requested,
+                "belt-only shipment did not finish with the exact manifest");
+        const auto cash=loaded->planning_.funds_eur;
+        loaded->update_trader(18);
+        require(loaded->planning_.funds_eur==cash+180*trade_price_eur(TradeGood::Iron)+10*trade_price_eur(TradeGood::IronOre),
+                "belt cargo was not paid once at departure");
+
+        app.remove_utility_route(export_belt);
+        require(app.trader_.lots.front().conveyor_sequence==0 && app.trader_.lots.front().conveyor_distance_m==0 &&
+                app.trader_.lots.front().remaining==180 && app.trader_.lots.back().remaining==10,
+                "removing an active belt lost or duplicated reserved goods");
+        app.update_trade_hauling(.1f,[](auto,auto){return true;},[](auto,auto){},[](auto){});
+        require(!app.trader_.hauls.empty(),"removed belt cargo was not offered to rovers");
+        for(int i=0;i<600*90 && app.trader_.phase==TradePhase::Loading;++i){
+            app.update_trader(1.f/90);
+            app.update_construction(1.f/90);
+        }
+        require(app.trader_.phase==TradePhase::Departing && app.trader_.loaded==app.trader_.requested,
+                "rover fallback did not finish both lots after removing the export belt");
+        std::cout<<"Conveyor trade PASS: raw storage, capacity backpressure, separate ore sale, cargo custody, power and belt removal\n";
+    }
     static void run(){
-        eng::Application engine;oxygen_storage(engine);auto a=std::make_unique<GameApp>(engine);setup(*a);
+        eng::Application engine;oxygen_storage(engine);conveyor_trade(engine);auto a=std::make_unique<GameApp>(engine);setup(*a);
         a->placed_resources_[0].construction.step=0;require(!a->call_trader(0),"unfinished pad called trader");a->placed_resources_[0].construction.step=kConstructionSteps;
         a->placed_resources_[0].supply.power_fraction=0;require(!a->call_trader(0),"unpowered pad called trader");a->update_supply_simulation(0);
         a->placed_resources_.pop_back();

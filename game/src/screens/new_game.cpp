@@ -202,7 +202,7 @@ void GameApp::render_stage3_modes(Renderer& r){
         start_new_game(Stage3Mode::Sandbox);
         return;
     }
-    if(option(2,"TEST ASTRONAUTS","EMPTY TEST FIELD RESERVED FOR ASTRONAUT DEVELOPMENT",debug_frame_enabled_)){
+    if(option(2,"TEST ASTRONAUTS","FOUR CREW ROLES / INSTANT BUILD / POWERED AIR LOCKS",debug_frame_enabled_)){
         start_new_game(Stage3Mode::AstronautTest);
         return;
     }
@@ -301,6 +301,7 @@ void GameApp::start_new_game(Stage3Mode stage3_mode){
     walkway_build_target_.reset();
     active_game_phase_=new_game_phase_selection_;
     stage3_mode_=debug_stage?stage3_mode:Stage3Mode::Sandbox;
+    if(astronaut_test_active())reset_astronaut_test();
     active_game_mode_=new_game_mode_selection_;
     new_game_status_message_.clear();
     game_session_active_=true;

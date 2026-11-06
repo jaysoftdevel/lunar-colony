@@ -47,6 +47,11 @@ struct UtilityEndpoint {
     eng::Vec3 normal{1.0f,0.0f,0.0f};
 };
 
+enum class ConveyorRoute { Invalid, OreProcessor, OreStorage, Trade };
+
+ConveyorRoute conveyor_route(const UtilityEndpoint& source,const UtilityEndpoint& receiver,
+                            const std::vector<PlacedHabitat>& habitats,const std::vector<PlacedResource>& resources);
+
 struct UtilityMesh {
     std::vector<eng::Vec3> shell;
     std::vector<eng::Vec3> details;
@@ -76,7 +81,8 @@ struct UtilityConnection {
     std::uint8_t ore_cargo{ore::no_cargo};
     std::uint8_t ore_next{0};
     float ore_distance_m{0};
-    eng::Vec3 ore_box_position() const;
+    eng::Vec3 cargo_position(float distance) const;
+    eng::Vec3 ore_box_position() const { return cargo_position(ore_distance_m); }
     SupplyState supply{};
     UtilityKind kind{UtilityKind::SupplyChannel};
     std::uint64_t placement_sequence{0};

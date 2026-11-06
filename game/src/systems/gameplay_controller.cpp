@@ -27,6 +27,22 @@ float GameApp::game_speed_multiplier() const {
 
 void GameApp::update(float dt,const InputState& in){
     input_=in;
+
+    // Keep the press pending until release. A right-button drag belongs to
+    // the camera, and an active placement tool owns its cancellation click.
+    const bool selection_click=(in.right_pressed || right_click_pending_) &&
+        screen_==Screen::Playfield && active_game_phase_!=GamePhase::Planning &&
+        first_person_mode_==FirstPersonMode::Off && !in.key_v_pressed && !in.escape_pressed &&
+        !storage_gate_placement_active_ && !build_catalog_.selected() && corridor_link_source_<0 &&
+        debug_move_pick_robot_<0 && !lander_.awaiting_site && !lander_.awaiting_stash;
+    right_click_pending_=selection_click && in.right_down && !in.mouse_dx && !in.mouse_dy;
+    if(selection_click && !in.right_down){
+        clear_world_selection();
+        selected_astronaut_=-1;
+        selection_marquee_active_=false;
+        selection_marquee_dragged_=false;
+    }
+
     ui_time_seconds_+=std::max(0.0f,dt);
     if(dt>0.000001f){
         const float instant=1.0f/dt;
@@ -42,11 +58,6 @@ void GameApp::update(float dt,const InputState& in){
             if(planning_.view==PlanningView::Site)
                 camera_.update(in,playfield_.size(),viewport_height_,dt);
             update_planning_game(dt);
-            return;
-        }
-        if(astronaut_test_active()){
-            if(in.escape_pressed) screen_=Screen::MainMenu;
-            else camera_.update(in,playfield_.size(),viewport_height_,dt);
             return;
         }
         if(debug_move_pick_robot_>=0 && (!debug_robot_move_available((std::size_t)debug_move_pick_robot_) || build_catalog_.selected()))debug_move_pick_robot_=-1;
@@ -103,6 +114,7 @@ void GameApp::update(float dt,const InputState& in){
         if(first_person_mode_==FirstPersonMode::DropPending){
             status_.update(sim_dt);
             update_construction(sim_dt);
+            if(astronaut_test_active())update_astronaut_test(sim_dt);
             if(in.escape_pressed){ exit_first_person_mode(); return; }
             camera_.update(in,playfield_.size(),viewport_height_,dt);
             const float logical_y=(float)in.mouse_y/ui_scale_;
@@ -130,6 +142,7 @@ void GameApp::update(float dt,const InputState& in){
             status_.update(sim_dt);
             update_construction(sim_dt);
             update_first_person(dt,in);
+            if(astronaut_test_active())update_astronaut_test(sim_dt);
             return;
         }
 
@@ -181,6 +194,10 @@ void GameApp::update(float dt,const InputState& in){
             }
             if(corridor_link_source_>=0){
                 corridor_link_source_=-1;
+                return;
+            }
+            if(astronaut_test_active() && selected_astronaut_>=0){
+                selected_astronaut_=-1;
                 return;
             }
             screen_=Screen::MainMenu;
@@ -250,6 +267,13 @@ void GameApp::update(float dt,const InputState& in){
         const bool over_world=logical_y>=STATUS_BAR_H && logical_y<((float)viewport_height_/ui_scale_-BUILD_BAR_H);
         const bool selection_idle=!storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 &&
                                   !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_;
+        if(astronaut_test_active()){
+            update_astronaut_test(sim_dt);
+            if(selection_idle && over_world && !over_selection_panel && handle_astronaut_click(in)){
+                selection_marquee_active_=false;
+                return;
+            }
+        }
         if(debug_move_pick_robot_>=0 && in.left_pressed && over_world && !mouse_over_selection_panel(in)){
             Vec3 hit{};
             if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit) &&

@@ -98,7 +98,9 @@ void GameApp::render_utility_placement(Renderer& r){
     };
 
     if(conveyor && !utility_build_start_){
-        const bool has_source=hover && hover->kind==UtilityEndpointKind::Resource;
+        const bool has_source=hover && hover->kind==UtilityEndpointKind::Resource &&
+            (placed_resources_[hover->index].kind==ResourceKind::OreDriller ||
+             placed_resources_[hover->index].kind==ResourceKind::StorageDome);
         if(has_source)highlight_anchor(*hover);
         const auto port=draw_conveyor_start(has_source?*hover:UtilityBuildAnchor{UtilityEndpointKind::Open,0,hit});
         if(input_.left_pressed && port){
@@ -179,7 +181,7 @@ void GameApp::render_utility_placement(Renderer& r){
         endpoint_marker(r,preview->endpoint_b,shell);
     }else{
         const auto source=conveyor?draw_conveyor_start(*utility_build_start_):std::nullopt;
-        if(hover && (!conveyor || hover->kind==UtilityEndpointKind::Habitat)){
+        if(hover){
             const Vec3 a=source?source->position:utility_build_start_->hit+Vec3{0,0.30f,0};
             const Vec3 b=hover->hit+Vec3{0,0.30f,0};
             r.draw_lines_3d({a,b},{1.0f,0.28f,0.22f,0.90f},2.2f);

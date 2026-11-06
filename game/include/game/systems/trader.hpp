@@ -5,12 +5,22 @@
 #include <functional>
 #include <vector>
 namespace game {
-inline constexpr std::size_t kTradeGoodCount=10;
+inline constexpr std::size_t kLegacyTradeGoodCount=10;
+inline constexpr std::size_t kTradeGoodCount=14;
+inline constexpr float kTradeManifestExtraHeight=54.f*((kTradeGoodCount-kLegacyTradeGoodCount)/2);
+inline constexpr std::int64_t kTradeConveyorCrateKg=100;
 inline constexpr std::int64_t kTraderCapacityKg=20000;
 enum class TradePhase:std::uint8_t {Idle,Approach,Docked,Loading,Departing,Complete};
-enum class TradeGood:std::uint8_t {Iron,Copper,Silicon,Plastic,Water,Food,Medical,Aluminum,Oxygen,Hydrogen};
+enum class TradeGood:std::uint8_t {Iron,Copper,Silicon,Plastic,Water,Food,Medical,Aluminum,Oxygen,Hydrogen,IronOre,CopperOre,SiliconOre,AluminumOre};
 using TradeManifest=std::array<std::int64_t,kTradeGoodCount>;
-struct TradeLot {TradeGood good{TradeGood::Iron};std::int64_t remaining{0};eng::Vec3 position{};};
+struct TradeLot {
+    TradeGood good{TradeGood::Iron};
+    std::int64_t remaining{0};
+    eng::Vec3 position{};
+    // A belt parcel stays in this lot's custody until it reaches the pad.
+    std::uint64_t conveyor_sequence{};
+    float conveyor_distance_m{};
+};
 struct TradeHaul {
     std::uint8_t robot{0},phase{0}; // 0 collect, 1 deliver, 2 clear receiving dock
     std::uint32_t lot{0};std::int64_t cargo{0};

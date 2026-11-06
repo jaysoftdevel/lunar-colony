@@ -32,11 +32,14 @@ void GameApp::update_ore_logistics(float dt){
     auto& connections=utility_network_.mutable_connections();
     for(std::size_t index=0;index<connections.size();++index){
         auto& belt=connections[index];
-        if(belt.kind!=UtilityKind::ConveyorBelt || !belt.construction.complete() ||
-           belt.endpoint_a.index>=placed_resources_.size() || belt.endpoint_b.index>=placed_habitats_.size())continue;
+        if(belt.kind!=UtilityKind::ConveyorBelt || !belt.construction.complete())continue;
+        const auto route=conveyor_route(belt.endpoint_a,belt.endpoint_b,placed_habitats_,placed_resources_);
+        if(route!=ConveyorRoute::OreProcessor && route!=ConveyorRoute::OreStorage)continue;
         auto& drill=placed_resources_[belt.endpoint_a.index];
-        const auto& receiver=placed_habitats_[belt.endpoint_b.index];
-        if(!drill.construction.complete() || drill.supply.power_fraction<=0 || !receiver.construction.complete())continue;
+        auto* dome=route==ConveyorRoute::OreStorage?&placed_resources_[belt.endpoint_b.index]:nullptr;
+        const auto* plant=route==ConveyorRoute::OreProcessor?&placed_habitats_[belt.endpoint_b.index]:nullptr;
+        if(!drill.construction.complete() || drill.supply.power_fraction<=0 ||
+           (dome && !dome->construction.complete()) || (plant && !plant->construction.complete()))continue;
         if(belt.ore_cargo==ore::no_cargo){
             for(std::size_t offset=0;offset<ore::materials.size();++offset){
                 const auto kind=(belt.ore_next+offset)%ore::materials.size();
@@ -51,15 +54,18 @@ void GameApp::update_ore_logistics(float dt){
         if(belt.ore_cargo==ore::no_cargo)continue;
         const float length=utility_network_.connection_length(index);
         belt.ore_distance_m=std::min(length,belt.ore_distance_m+ore::belt_speed_mps*dt);
-        if(belt.ore_distance_m<length || receiver.supply.power_fraction<=0 || receiver.supply.breathability()<95)continue;
-
-        // Process the arriving crate at the receiving end. Raw ore is never
-        // booked into construction stock. Refined product uses the existing
-        // outdoor pallet output and waits if rover traffic blocks the drop.
-        const auto& port=belt.endpoint_b;
-        const Vec3 side{-port.normal.z,0,port.normal.x};
-        const Vec3 output=port.position+port.normal*2.0f+side*1.7f;
-        if(!spawn_produced_resource(ore::materials[belt.ore_cargo],ore::refined_box_kg,output,false))continue;
+        if(belt.ore_distance_m<length)continue;
+        if(dome){
+            if(storage_dome_used_kg(*dome)+ore::box_kg>storage_dome_capacity_kg(dome->storage_size))continue;
+            ++dome->stored_ore_boxes[belt.ore_cargo];
+        }else{
+            if(plant->supply.power_fraction<=0 || plant->supply.breathability()<95)continue;
+            // Only a processor converts ore into construction stock.
+            const auto& port=belt.endpoint_b;
+            const Vec3 side{-port.normal.z,0,port.normal.x};
+            const Vec3 output=port.position+port.normal*2.0f+side*1.7f;
+            if(!spawn_produced_resource(ore::materials[belt.ore_cargo],ore::refined_box_kg,output,false))continue;
+        }
         belt.ore_cargo=ore::no_cargo;
         belt.ore_distance_m=0;
     }

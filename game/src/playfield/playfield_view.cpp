@@ -15,44 +15,6 @@ using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
-void GameApp::render_empty_game_phase(Renderer& r){
-    const float aspect=(float)r.width()/std::max(1,r.height());
-    r.set_3d(camera_.view_projection(aspect));
-
-    // Empty field reserved for future astronaut tests.
-    r.draw_triangles_3d(playfield_.floor_triangles(),{0.055f,0.075f,0.088f,1});
-    r.draw_lines_3d(playfield_.grid_lines(),{0.22f,0.43f,0.47f,1},1.0f);
-    const float lane_half=(float)playfield_.size()*0.5f-geometry::kPlayfieldRobotPerimeterLane;
-    const std::vector<Vec3> perimeter_lane{
-        {-lane_half,0.018f,-lane_half},{ lane_half,0.018f,-lane_half},
-        { lane_half,0.018f,-lane_half},{ lane_half,0.018f, lane_half},
-        { lane_half,0.018f, lane_half},{-lane_half,0.018f, lane_half},
-        {-lane_half,0.018f, lane_half},{-lane_half,0.018f,-lane_half}};
-    r.draw_lines_3d(perimeter_lane,{0.72f,0.52f,0.18f,0.72f},1.35f);
-
-    app_.set_cursor_visible(true);
-    r.set_2d(ui_scale_);
-    const float logical_w=ui_width(r);
-    const float logical_h=ui_height(r);
-    r.draw_rect({0,0,logical_w,STATUS_BAR_H},{0.020f,0.030f,0.040f,0.96f});
-    r.draw_rect({0,logical_h-BUILD_BAR_H,logical_w,BUILD_BAR_H},{0.020f,0.030f,0.040f,0.96f});
-
-    game_label(r,{18.0f,12.0f},"STAGE 3 - TEST ASTRONAUTS",0.62f,theme_);
-    game_label(r,{logical_w-172.0f,13.0f},"VERSION "+std::string(version::current),0.45f,theme_,true);
-    game_label(r,{18.0f,logical_h-BUILD_BAR_H+17.0f},"ESC  GAME MENU",0.47f,theme_,true);
-
-    const float panel_w=std::min(640.0f,logical_w-28.0f);
-    const float panel_h=146.0f;
-    Rect panel{(logical_w-panel_w)*0.5f,(logical_h-panel_h)*0.5f,panel_w,panel_h};
-    ui::panel(r,panel,theme_);
-    const std::string title="ASTRONAUT TEST FIELD";
-    const std::string detail="RESERVED FOR FUTURE ASTRONAUT TESTS";
-    const float tw=game_text_width(title,0.82f,theme_);
-    game_label(r,{panel.x+(panel.w-tw)*0.5f,panel.y+34.0f},title,0.82f,theme_);
-    game_label_fitted(r,{panel.x+34.0f,panel.y+79.0f,panel.w-68.0f,22.0f},detail,0.52f,theme_,true);
-
-}
-
 void GameApp::render_playfield(Renderer& r){
     const float aspect=(float)r.width()/std::max(1,r.height());
     if(first_person_mode_==FirstPersonMode::Active) r.set_3d(first_person_.view_projection(aspect));
@@ -84,6 +46,7 @@ void GameApp::render_playfield(Renderer& r){
     render_trader(r);
     render_builder_robot(r);
     render_gate_areas(r);
+    if(astronaut_test_active())render_test_astronauts(r);
 
     if(first_person_mode_==FirstPersonMode::Active){
         r.set_2d(ui_scale_);
@@ -113,9 +76,10 @@ void GameApp::render_playfield(Renderer& r){
     render_build_bar(r);
     render_ore_survey(r);
     render_selection_marquee(r);
-    if(debug_mode_active()) render_debug_frame(r);
+    if(debug_mode_active() && !astronaut_test_active()) render_debug_frame(r);
     if(selection_kind_!=SelectionKind::None) render_selection_panel(r);
     render_corridor_placement_tooltip(r);
+    if(astronaut_test_active())render_astronaut_status(r,camera_.view_projection(aspect));
 
     if(selection_kind_==SelectionKind::None){
     const BuildObjectDefinition* active_build=build_catalog_.selected();
@@ -125,19 +89,32 @@ void GameApp::render_playfield(Renderer& r){
             (corridor_build_start_?"LMB SET CORRIDOR END / ESC CANCEL":"LMB SET CORRIDOR START / ESC CANCEL"):
         (active_build && active_build->kind==BuildObjectKind::Utility?
             (active_build->utility_kind==UtilityKind::ConveyorBelt?
-                (utility_build_start_?"LMB SELECT PROCESSING FACILITY OR FACTORY / ESC CANCEL":"LMB SELECT ORE DRILLER / ESC CANCEL"):
+                (utility_build_start_?
+                    (placed_resources_[utility_build_start_->index].kind==ResourceKind::StorageDome?
+                        "LMB SELECT LANDING PAD / ESC CANCEL":"LMB SELECT PROCESSOR, FACTORY OR STORAGE DOME / ESC CANCEL"):
+                    "LMB SELECT ORE DRILLER OR STORAGE DOME / ESC CANCEL"):
                 (utility_build_start_?"MOVE TARGET TO ADJUST PORT / LMB CONNECT / ESC CANCEL":"LMB SELECT SUPPLY SOURCE / ESC CANCEL")):
         (active_build && active_build->kind==BuildObjectKind::Walkway?
             (walkway_build_start_?"MOVE TO ADJUST WALKWAY BLUEPRINT / LMB BUILD / ESC CANCEL":"LMB SET WALKWAY START / ESC CANCEL"):
         (active_build && (active_build->kind==BuildObjectKind::Habitat || active_build->kind==BuildObjectKind::Resource)?
             "LMB PLACE / WHEEL SIZE / N-M ROTATE / ESC CANCEL":
-        (active_build?"LMB PLACE / N-M ROTATE / ESC CANCEL":"LMB SELECT / DRAG SELECT RESOURCE BOXES / WHEEL ZOOM / MMB ORBIT / RMB PAN / V FPV / ESC MENU")))));
+        (active_build?"LMB PLACE / N-M ROTATE / ESC CANCEL":astronaut_test_active()?
+            "LMB SELECT CREW / LMB SET WAYPOINT / RMB DESELECT / RMB DRAG PAN / WHEEL ZOOM / MMB ORBIT":
+            "LMB SELECT / DRAG SELECT RESOURCE BOXES / RMB DESELECT / RMB DRAG PAN / WHEEL ZOOM / MMB ORBIT / V FPV / ESC MENU")))));
     const auto control_lines=ui::wrap_text(controls,406,ui::font_scale(0.52f*GAME_FONT_BOOST,theme_));
-    Rect info={PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,430,34.0f+13.0f*(float)control_lines.size()};
+    const bool crew_test=astronaut_test_active();
+    Rect info={PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,430,
+               34.0f+13.0f*(float)control_lines.size()+(crew_test?17.f:0.f)};
     r.draw_rect(info,{0.025f,0.035f,0.045f,0.88f});
-    game_label(r,{info.x+12,info.y+8},"PLAYFIELD "+std::to_string(playfield_.size())+" X "+std::to_string(playfield_.size()),0.78f,theme_);
+    game_label(r,{info.x+12,info.y+8},astronaut_test_active()?"STAGE 3 - TEST ASTRONAUTS":"PLAYFIELD "+std::to_string(playfield_.size())+" X "+std::to_string(playfield_.size()),0.78f,theme_);
     for(std::size_t i=0;i<control_lines.size();++i)game_label(r,{info.x+12,info.y+28+13*(float)i},control_lines[i],0.52f,theme_,true);
 
+    if(crew_test){
+        std::ostringstream stock;
+        stock<<std::fixed<<std::setprecision(1)<<"SPAWN CACHE  O2 "<<astronaut_cache_.oxygen_kg<<" KG / FOOD "
+             <<astronaut_cache_.food_kg<<" KG / WATER "<<astronaut_cache_.water_litres<<" L";
+        game_label_fitted(r,{info.x+12,info.y+info.h-21,406,15},stock.str(),.46f,theme_,true);
+    }else{
     Rect robot_info={info.x,info.y+info.h+6.0f,560,40};
     r.draw_rect(robot_info,{0.025f,0.035f,0.045f,0.88f});
     std::size_t working=0,constructors=0,carriers=0;
@@ -159,6 +136,7 @@ void GameApp::render_playfield(Renderer& r){
         }
     }
     game_label_fitted(r,{robot_info.x+12,robot_info.y+11,robot_info.w-24,16},robot_line.str(),0.47f,theme_);
+    }
     }
 }
 

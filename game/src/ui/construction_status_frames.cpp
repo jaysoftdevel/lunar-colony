@@ -1,4 +1,5 @@
 #include "game/game_app.hpp"
+#include "game/util/world_math.hpp"
 #include "game/ui/layout.hpp"
 #include "game/world/world_labels.hpp"
 #include <algorithm>
@@ -114,6 +115,58 @@ bool overlaps(const Rect& a,const Rect& b,float pad=4.0f){
     return a.x < b.x+b.w+pad && a.x+a.w+pad > b.x &&
            a.y < b.y+b.h+pad && a.y+a.h+pad > b.y;
 }
+}
+
+void GameApp::render_astronaut_status(Renderer& r,const Mat4& view_projection) const {
+    if(selected_astronaut_<0)return;
+    const auto& actor=test_astronauts_[selected_astronaut_];
+    const auto pose=astronaut_rest_pose(actor);
+    const Vec3 anchor=astronaut_resting(actor)?
+        pose.feet+world_math::rotate_y({0,.53f,.75f},pose.heading_degrees):actor.position+Vec3{0,kAstronautMeshHeight+.08f,0};
+    float x=0,y=0;
+    if(!project_world_to_logical(view_projection,anchor,r.width(),r.height(),ui_scale_,x,y))return;
+
+    const float logical_w=ui_width(r),logical_h=ui_height(r);
+    constexpr float width=318.f,height=126.f,gap=10.f;
+    if(y<STATUS_BAR_H+height+gap || y>=logical_h-BUILD_BAR_H || x<0.f || x>logical_w)return;
+    const Rect panel{std::clamp(x-width*.5f,8.f,logical_w-width-8.f),y-height-gap,width,height};
+    r.draw_line({x,y},{std::clamp(x,panel.x,panel.x+panel.w),panel.y+panel.h},theme_.accent,1.f);
+    ui::panel(r,panel,theme_);
+
+    const auto& role=kAstronautRoles[selected_astronaut_];
+    const char* activity="IDLE";
+    switch(actor.activity){
+        case AstronautActivity::Shelter:activity=actor.destination?"HEADING INDOORS":"SHELTERING";break;
+        case AstronautActivity::Duty:{
+            constexpr std::array<const char*,4> jobs{"CHECKING STOCK","MONITORING SYSTEMS","CROP DUTY","SICK BAY DUTY"};
+            activity=actor.destination?"HEADING TO DUTY":jobs[selected_astronaut_];break;
+        }
+        case AstronautActivity::ToBed:activity="HEADING TO BED";break;
+        case AstronautActivity::Sleeping:activity="SLEEPING IN QUARTERS";break;
+        case AstronautActivity::Knockout:activity="KNOCKOUT / EXHAUSTED";break;
+        case AstronautActivity::Resupply:activity="RETURNING FOR SUIT AIR";break;
+        default:break;
+    }
+    if(actor.health<=0.f)activity="DECEASED";
+    if(actor.destination){
+        if(actor.waiting_for_door)activity="WAITING AT DOOR";
+        else if(actor.activity==AstronautActivity::Manual)
+            activity=actor.speed>.025f?"WALKING":"WAITING FOR CLEARANCE";
+    }
+    game_label_fitted(r,{panel.x+11,panel.y+8,width-22,16},role.name,.52f,theme_);
+    game_label_fitted(r,{panel.x+11,panel.y+28,width-22,14},
+                      std::string(role.job)+(actor.suited?" / EVA SUIT":" / HABITAT COVERALL"),.42f,theme_,true);
+    game_label_fitted(r,{panel.x+11,panel.y+47,width-22,14},
+                      "HEALTH "+std::to_string((int)std::lround(actor.health*100.f))+"%",.42f,theme_);
+    r.draw_rect({panel.x+105,panel.y+50,width-116,8},theme_.panel2);
+    r.draw_rect({panel.x+105,panel.y+50,(width-116)*actor.health,8},{.28f,.80f,.50f,1.f});
+    const auto percent=[](double value){return std::to_string((int)std::lround(value*100.0))+"%";};
+    game_label_fitted(r,{panel.x+11,panel.y+65,width-22,14},
+                      "HUNGER "+percent(actor.hunger)+"    THIRST "+percent(actor.thirst),.42f,theme_);
+    game_label_fitted(r,{panel.x+11,panel.y+84,width-22,14},
+                      "FATIGUE "+percent(actor.fatigue/kCrewExhausted)+"    SUIT AIR "+
+                      percent(actor.suit_oxygen_kg/kSuitOxygenCapacityKg),.42f,theme_);
+    game_label_fitted(r,{panel.x+11,panel.y+103,width-22,15},std::string("ACTIVITY  ")+activity,.42f,theme_);
 }
 
 void GameApp::render_construction_status_frames(Renderer& r){

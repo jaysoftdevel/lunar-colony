@@ -294,6 +294,7 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
     if(!structure_routes_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return false;
     PlacedHabitat candidate_item;candidate_item.kind=kind;candidate_item.size=size;candidate_item.position=position;candidate_item.rotation_degrees=rotation_degrees;
     if(!gate_layout_clear(&candidate_item,nullptr))return false;
+    if(!astronaut_placement_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return false;
     if(!placement_preserves_robot_escape(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z)) return false;
     return true;
 }

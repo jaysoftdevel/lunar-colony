@@ -910,15 +910,33 @@ void GameApp::render_selection_panel(Renderer& r){
         const bool open_end=u.endpoint_a.kind==UtilityEndpointKind::Open || u.endpoint_b.kind==UtilityEndpointKind::Open;
         if(u.construction.complete()){
             if(u.kind==UtilityKind::ConveyorBelt){
-                const auto& drill=placed_resources_[u.endpoint_a.index];
-                const auto& receiver=placed_habitats_[u.endpoint_b.index];
-                const char* status=!drill.construction.complete() || !receiver.construction.complete()?"WAITING FOR ENDPOINT CONSTRUCTION":
-                    drill.supply.power_fraction<=0?"WAITING FOR DRILLER POWER":
-                    u.ore_cargo==ore::no_cargo?"WAITING FOR ORE BOX":
-                    u.ore_distance_m<utility_network_.connection_length((std::size_t)selected_utility_)?"TRANSPORTING ORE":"WAITING FOR PROCESSING";
+                const auto route=conveyor_route(u.endpoint_a,u.endpoint_b,placed_habitats_,placed_resources_);
+                const char* status="ENDPOINTS DISCONNECTED";
+                std::string cargo;
+                if(route==ConveyorRoute::Trade){
+                    const auto lot=std::find_if(trader_.lots.begin(),trader_.lots.end(),[&](const auto& item){
+                        return u.placement_sequence && item.conveyor_sequence==u.placement_sequence && item.remaining>0;
+                    });
+                    status="WAITING FOR A RESERVED SALE";
+                    if(lot!=trader_.lots.end()){
+                        status=trader_powered()?"LOADING TRADER CARGO":"WAITING FOR LANDING PAD POWER";
+                        cargo=std::string(trade_good_name(lot->good))+" / "+std::to_string(lot->remaining)+" KG TO LOAD";
+                    }
+                }else if(route!=ConveyorRoute::Invalid){
+                    const auto& drill=placed_resources_[u.endpoint_a.index];
+                    const bool to_storage=route==ConveyorRoute::OreStorage;
+                    const bool receiver_built=to_storage?placed_resources_[u.endpoint_b.index].construction.complete():
+                                                        placed_habitats_[u.endpoint_b.index].construction.complete();
+                    status=!drill.construction.complete() || !receiver_built?"WAITING FOR ENDPOINT CONSTRUCTION":
+                        drill.supply.power_fraction<=0?"WAITING FOR DRILLER POWER":
+                        u.ore_cargo==ore::no_cargo?"WAITING FOR ORE BOX":
+                        u.ore_distance_m<utility_network_.connection_length((std::size_t)selected_utility_)?"TRANSPORTING ORE":
+                        to_storage?"WAITING FOR STORAGE SPACE":"WAITING FOR PROCESSING";
+                    if(u.ore_cargo<ore::no_cargo)
+                        cargo=std::string(ore::names[u.ore_cargo])+" / "+std::to_string(ore::box_kg)+" KG";
+                }
                 game_label(r,{x,p.y+60},status,.51f,theme_);
-                if(u.ore_cargo<ore::no_cargo)
-                    game_label(r,{x,p.y+186},std::string(ore::names[u.ore_cargo])+" / "+std::to_string(ore::box_kg)+" KG",.46f,theme_,true);
+                if(!cargo.empty())game_label(r,{x,p.y+186},cargo,.46f,theme_,true);
             }else game_label(r,{x,p.y+60},open_end?"STATUS  DISCONNECTED / CAPPED":"STATUS  CONNECTED / ONLINE",0.58f,theme_);
         }else{
             std::ostringstream build;

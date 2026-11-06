@@ -28,6 +28,8 @@ configure_game_cluster(game_cluster_app)
 add_library(game_cluster_interaction OBJECT
     src/playfield/playfield_view.cpp
     src/systems/gameplay_controller.cpp
+    src/systems/astronaut_test.cpp
+    src/systems/astronaut_duties.cpp
     src/systems/world_selection.cpp
     src/systems/camera_controller.cpp
     src/systems/first_person_controller.cpp
@@ -42,6 +44,7 @@ configure_game_cluster(game_cluster_interaction)
 add_library(game_cluster_rendering OBJECT
     src/playfield/world_renderer.cpp
     src/playfield/builder_robot_renderer.cpp
+    src/playfield/astronaut_renderer.cpp
     src/playfield/lunar_lander_renderer.cpp
     src/playfield/trader_renderer.cpp
 )

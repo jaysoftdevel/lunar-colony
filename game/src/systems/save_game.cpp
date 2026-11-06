@@ -1,5 +1,6 @@
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
+#include "game/util/world_math.hpp"
 #include "game/version.hpp"
 #include "game/world/geometry_standards.hpp"
 #include <algorithm>
@@ -22,7 +23,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=41;
+constexpr std::uint32_t kSaveSchema=45;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -641,7 +642,10 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     w.pod((std::uint32_t)trader_.oxygen.size());
     for(const auto& o:trader_.oxygen){w.pod(o.source_sequence);w.pod(o.kg);}
     w.pod((std::uint32_t)trader_.lots.size());
-    for(const auto& l:trader_.lots){w.pod((std::uint8_t)l.good);w.pod(l.remaining);write_vec3(w,l.position);}
+    for(const auto& l:trader_.lots){
+        w.pod((std::uint8_t)l.good);w.pod(l.remaining);write_vec3(w,l.position);
+        w.pod(l.conveyor_sequence);w.pod(l.conveyor_distance_m);
+    }
     w.pod((std::uint32_t)trader_.hauls.size());
     for(const auto& h:trader_.hauls){w.pod(h.robot);w.pod(h.phase);w.pod(h.lot);w.pod(h.cargo);write_vec3(w,h.service);write_vec3(w,h.exit);w.boolean(h.service_valid);}
 
@@ -697,6 +701,31 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         if(!haul.loaded)continue;
         w.pod(static_cast<std::uint8_t>(i));
         w.pod(haul.source);w.pod(haul.destination);w.pod(haul.kind);
+    }
+
+    // Schema 44 records individual needs, sleeping assignments and emergency supplies.
+    if(astronaut_test_active()){
+        for(const auto& actor:test_astronauts_){
+            write_vec3(w,actor.position);
+            w.pod(actor.heading_degrees);
+            w.pod(actor.health);
+            w.boolean(actor.destination.has_value());
+            if(actor.destination)write_vec3(w,*actor.destination);
+            w.pod(actor.suit_oxygen_kg);
+            w.pod(actor.food_pack_kg);
+            w.pod(actor.hunger);
+            w.pod(actor.thirst);
+            w.pod(actor.fatigue);
+            w.pod((std::uint8_t)actor.activity);
+            w.pod(actor.bed_owner);
+            w.pod(actor.bed_slot);
+            w.boolean(actor.suited);
+            w.pod(actor.entry_step);
+            if(actor.entry_step<2)for(const auto& p:actor.entry_waypoints)write_vec3(w,p);
+        }
+        w.pod(astronaut_cache_.oxygen_kg);
+        w.pod(astronaut_cache_.food_kg);
+        w.pod(astronaut_cache_.water_litres);
     }
 
     w.out.flush();
@@ -1244,8 +1273,10 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     if(source_schema>=33){
         const auto valid_position=[](eng::Vec3 p){return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&std::abs(p.x)<100000&&std::abs(p.y)<100000&&std::abs(p.z)<100000;};
         saved_trader.phase=(TradePhase)r.pod<std::uint8_t>();saved_trader.elapsed=r.pod<float>();saved_trader.pad_sequence=r.pod<std::uint64_t>();saved_trader.dock=read_vec3(r);
-        for(auto& q:saved_trader.requested)q=r.pod<std::int64_t>();
-        for(auto& q:saved_trader.loaded)q=r.pod<std::int64_t>();
+        // Schema 45 adds four raw ores and resumable belt parcels.
+        const std::size_t trade_good_count=source_schema>=45?kTradeGoodCount:kLegacyTradeGoodCount;
+        for(std::size_t i=0;i<trade_good_count;++i)saved_trader.requested[i]=r.pod<std::int64_t>();
+        for(std::size_t i=0;i<trade_good_count;++i)saved_trader.loaded[i]=r.pod<std::int64_t>();
         saved_trader.sale_value_eur=r.pod<std::int64_t>();saved_trader.last_payment_eur=r.pod<std::int64_t>();saved_trader.oxygen_packaging=r.boolean();
         if((std::uint8_t)saved_trader.phase>(std::uint8_t)TradePhase::Complete||!std::isfinite(saved_trader.elapsed)||saved_trader.elapsed<0||saved_trader.elapsed>24||!valid_position(saved_trader.dock)||saved_trader.sale_value_eur<0||saved_trader.sale_value_eur>2000000||saved_trader.last_payment_eur<0||saved_trader.last_payment_eur>2000000)r.valid=false;
         std::int64_t total=0;TradeManifest custody{};
@@ -1254,12 +1285,43 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         const auto oxygen_count=r.pod<std::uint32_t>();if(oxygen_count>100000)r.valid=false;
         for(std::uint32_t i=0;i<oxygen_count&&r.valid;++i){OxygenExportStock o;o.source_sequence=r.pod<std::uint64_t>();o.kg=r.pod<double>();if(!o.source_sequence||!std::isfinite(o.kg)||o.kg<0||o.kg>1000)r.valid=false;for(const auto& old:saved_trader.oxygen)if(old.source_sequence==o.source_sequence)r.valid=false;saved_trader.oxygen.push_back(o);}
         const auto lot_count=r.pod<std::uint32_t>();if(lot_count>20000)r.valid=false;
-        for(std::uint32_t i=0;i<lot_count&&r.valid;++i){TradeLot l;l.good=(TradeGood)r.pod<std::uint8_t>();l.remaining=r.pod<std::int64_t>();l.position=read_vec3(r);if((std::size_t)l.good>=kTradeGoodCount||l.remaining<0||l.remaining>kTraderCapacityKg||!valid_position(l.position))r.valid=false;else custody[(std::size_t)l.good]+=l.remaining;saved_trader.lots.push_back(l);}
+        std::unordered_map<std::uint64_t,float> trade_belt_lengths;
+        if(source_schema>=45)for(const auto& belt:utilities){
+            if(belt.kind!=UtilityKind::ConveyorBelt || !belt.placement_sequence || !belt.construction.complete() ||
+               conveyor_route(belt.endpoint_a,belt.endpoint_b,habitats,structures)!=ConveyorRoute::Trade ||
+               structures[belt.endpoint_b.index].placement_sequence!=saved_trader.pad_sequence)continue;
+            float length=0.f;
+            for(std::size_t j=1;j<belt.path.size();++j)length+=world_math::distance_xz(belt.path[j-1],belt.path[j]);
+            trade_belt_lengths.emplace(belt.placement_sequence,length);
+        }
+        for(std::uint32_t i=0;i<lot_count&&r.valid;++i){
+            TradeLot l;
+            l.good=(TradeGood)r.pod<std::uint8_t>();l.remaining=r.pod<std::int64_t>();l.position=read_vec3(r);
+            if(source_schema>=45){l.conveyor_sequence=r.pod<std::uint64_t>();l.conveyor_distance_m=r.pod<float>();}
+            const auto good=(std::size_t)l.good;
+            if(good>=trade_good_count || l.remaining<0 || l.remaining>kTraderCapacityKg || !valid_position(l.position))
+                r.valid=false;
+            else custody[good]+=l.remaining;
+            if(l.conveyor_sequence){
+                const auto belt=trade_belt_lengths.find(l.conveyor_sequence);
+                if(belt==trade_belt_lengths.end() || (good>=kMaterialResourceCount && good<kLegacyTradeGoodCount) ||
+                   !std::isfinite(l.conveyor_distance_m) || l.conveyor_distance_m<0.f || l.conveyor_distance_m>belt->second ||
+                   (!l.remaining && l.conveyor_distance_m!=0.f) ||
+                   (l.conveyor_distance_m>0.f && std::any_of(saved_trader.lots.begin(),saved_trader.lots.end(),[&](const auto& old){
+                        return old.conveyor_sequence==l.conveyor_sequence && old.remaining>0;
+                    })))r.valid=false;
+            }else if(l.conveyor_distance_m!=0.f)r.valid=false;
+            saved_trader.lots.push_back(l);
+        }
         const auto haul_count=r.pod<std::uint32_t>();if(haul_count>12)r.valid=false;
         for(std::uint32_t i=0;i<haul_count&&r.valid;++i){TradeHaul h;h.robot=r.pod<std::uint8_t>();h.phase=r.pod<std::uint8_t>();h.lot=r.pod<std::uint32_t>();h.cargo=r.pod<std::int64_t>();h.service=read_vec3(r);h.exit=read_vec3(r);h.service_valid=r.boolean();
             if(h.robot>=saved_robots.size()||h.phase>2||h.lot>=saved_trader.lots.size()||h.cargo<0||h.cargo>3600||!valid_position(h.service)||!valid_position(h.exit)||(h.phase!=1&&h.cargo!=0)||(h.phase==1&&h.cargo==0))r.valid=false;
             for(const auto& old:saved_trader.hauls)if(old.robot==h.robot)r.valid=false;
-            if(r.valid)custody[(std::size_t)saved_trader.lots[h.lot].good]+=h.cargo;
+            if(r.valid){
+                const auto& lot=saved_trader.lots[h.lot];
+                if(lot.conveyor_sequence)r.valid=false;
+                else custody[(std::size_t)lot.good]+=h.cargo;
+            }
             saved_trader.hauls.push_back(h);
         }
         if(saved_trader.active()){
@@ -1331,16 +1393,14 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
             }
         }
     }
-    std::vector<bool> linked_drills(structures.size(),false);
+    std::vector<bool> conveyor_sources(structures.size(),false);
     for(auto& link:utilities){
         if(link.kind==UtilityKind::SupplyChannel)continue;
-        if(source_schema<39 || link.kind!=UtilityKind::ConveyorBelt ||
-           link.endpoint_a.kind!=UtilityEndpointKind::Resource || link.endpoint_a.index>=structures.size() ||
-           structures[link.endpoint_a.index].kind!=ResourceKind::OreDriller || linked_drills[link.endpoint_a.index] ||
-           link.endpoint_b.kind!=UtilityEndpointKind::Habitat || link.endpoint_b.index>=habitats.size() ||
-           (habitats[link.endpoint_b.index].kind!=HabitatKind::ProcessingFacility && habitats[link.endpoint_b.index].kind!=HabitatKind::Factory) ||
-           link.path.size()<2){r.valid=false;break;}
-        linked_drills[link.endpoint_a.index]=true;
+        const auto route=conveyor_route(link.endpoint_a,link.endpoint_b,habitats,structures);
+        if(source_schema<39 || link.kind!=UtilityKind::ConveyorBelt || route==ConveyorRoute::Invalid ||
+           (source_schema<45 && route!=ConveyorRoute::OreProcessor) ||
+           conveyor_sources[link.endpoint_a.index] || link.path.size()<2){r.valid=false;break;}
+        conveyor_sources[link.endpoint_a.index]=true;
         link.ore_cargo=r.pod<std::uint8_t>();
         link.ore_next=r.pod<std::uint8_t>();
         link.ore_distance_m=r.pod<float>();
@@ -1349,7 +1409,8 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
             length+=std::hypot(link.path[i].x-link.path[i-1].x,link.path[i].z-link.path[i-1].z);
         if(!std::isfinite(length) || length<=0 || link.ore_cargo>ore::no_cargo || link.ore_next>=ore::no_cargo ||
            !std::isfinite(link.ore_distance_m) || link.ore_distance_m<0 || link.ore_distance_m>length+.01f ||
-           (link.ore_cargo==ore::no_cargo && link.ore_distance_m!=0))r.valid=false;
+           (link.ore_cargo==ore::no_cargo && link.ore_distance_m!=0) ||
+           (route==ConveyorRoute::Trade && link.ore_cargo!=ore::no_cargo))r.valid=false;
     }
     if(source_schema>=40){
         const auto raw_count=r.pod<std::uint32_t>();
@@ -1380,6 +1441,68 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         }
     }
     if(!r.valid){ error="Savegame ended unexpectedly or contains invalid deployment/trader data."; return false; }
+
+    decltype(test_astronauts_) saved_astronauts{};
+    AstronautCache saved_cache{};
+    if(source_schema>=42 && stage3_mode==Stage3Mode::AstronautTest){
+        const float half=saved_playfield*.5f-kAstronautFieldMargin;
+        const auto valid_ground=[&](eng::Vec3 p){
+            return std::isfinite(p.y) && p.y>=0.f && p.y<=30.f && std::isfinite(p.x) && std::isfinite(p.z) &&
+                   std::abs(p.x)<=half && std::abs(p.z)<=half;
+        };
+        const auto valid_amount=[](double value,double maximum){
+            return std::isfinite(value) && value>=0.0 && value<=maximum;
+        };
+        const std::size_t count=source_schema>=43?saved_astronauts.size():2;
+        for(std::size_t i=0;i<count;++i){
+            auto& actor=saved_astronauts[i];
+            actor.position=read_vec3(r);
+            actor.heading_degrees=r.pod<float>();
+            if(source_schema>=43)actor.health=r.pod<float>();
+            if(r.boolean())actor.destination=read_vec3(r);
+            if(source_schema>=44){
+                actor.suit_oxygen_kg=r.pod<double>();
+                actor.food_pack_kg=r.pod<double>();
+                actor.hunger=r.pod<float>();
+                actor.thirst=r.pod<float>();
+                actor.fatigue=r.pod<float>();
+                actor.activity=(AstronautActivity)r.pod<std::uint8_t>();
+                actor.bed_owner=r.pod<std::uint64_t>();
+                actor.bed_slot=r.pod<std::uint8_t>();
+                actor.suited=r.boolean();
+                actor.entry_step=r.pod<std::uint8_t>();
+                if(actor.entry_step<2)for(auto& p:actor.entry_waypoints){
+                    p=read_vec3(r);
+                    if(!valid_ground(p))r.valid=false;
+                }
+                if(actor.entry_step>2 || (actor.entry_step<2 && !actor.destination))r.valid=false;
+                if(!valid_amount(actor.suit_oxygen_kg,kSuitOxygenCapacityKg+1e-9) ||
+                   !valid_amount(actor.food_pack_kg,1.0) || !valid_amount(actor.hunger,1.f) ||
+                   !valid_amount(actor.thirst,1.f) || !valid_amount(actor.fatigue,kCrewExhausted) ||
+                   actor.activity>AstronautActivity::Resupply || actor.bed_slot>=8)r.valid=false;
+            }else if(actor.destination)actor.activity=AstronautActivity::Manual;
+            if(!valid_ground(actor.position) || !std::isfinite(actor.heading_degrees) ||
+               actor.heading_degrees<0.f || actor.heading_degrees>=360.f ||
+               !std::isfinite(actor.health) || actor.health<0.f || actor.health>1.f ||
+               (actor.destination && !valid_ground(*actor.destination)))r.valid=false;
+            for(std::size_t j=0;j<i;++j){
+                const auto& other=saved_astronauts[j];
+                if(actor.activity==AstronautActivity::Sleeping || other.activity==AstronautActivity::Sleeping)continue;
+                const float spacing=source_schema>=44?kIndoorAstronautSeparation:kAstronautSeparation;
+                if(world_math::distance_xz(actor.position,other.position)<spacing-.001f)r.valid=false;
+            }
+        }
+        if(source_schema>=44){
+            saved_cache.oxygen_kg=r.pod<double>();
+            saved_cache.food_kg=r.pod<double>();
+            saved_cache.water_litres=r.pod<double>();
+            const AstronautCache limits{};
+            if(!valid_amount(saved_cache.oxygen_kg,limits.oxygen_kg) ||
+               !valid_amount(saved_cache.food_kg,limits.food_kg) ||
+               !valid_amount(saved_cache.water_litres,limits.water_litres))r.valid=false;
+        }
+        if(!r.valid){error="Savegame astronaut state is damaged.";return false;}
+    }
 
     // v0.40.11 and older stored delivered construction material on the BR-02
     // coordinator. Move that authoritative buffer onto the blueprint itself so
@@ -1744,6 +1867,30 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     game_speed_=saved_game_speed;
     active_game_phase_=saved_game_phase;
     stage3_mode_=stage3_mode;
+    selected_astronaut_=-1;
+    if(astronaut_test_active()){
+        astronaut_schedule_seconds_=0.f;
+        astronaut_cache_=saved_cache;
+        if(source_schema>=43)test_astronauts_=std::move(saved_astronauts);
+        else{
+            reset_astronaut_test();
+            if(source_schema==42){
+                camera_.restore(camera_state);
+                test_astronauts_[0]=std::move(saved_astronauts[0]);
+                test_astronauts_[1]=std::move(saved_astronauts[1]);
+                for(std::size_t i=2;i<test_astronauts_.size();++i){
+                    auto& p=test_astronauts_[i].position;
+                    // Legacy saves had only two crew members. Keep their
+                    // positions and shift the new spawn if either is there.
+                    const auto overlaps_crew=[&](const auto& other){
+                        return world_math::distance_xz(p,other.position)<kAstronautSeparation;
+                    };
+                    while(std::any_of(test_astronauts_.begin(),test_astronauts_.begin()+i,overlaps_crew))p.z+=1.f;
+                }
+            }
+        }
+    }
+
     new_game_phase_selection_=saved_game_phase;
     active_game_mode_=saved_game_mode;
     new_game_mode_selection_=saved_game_mode;
@@ -1787,6 +1934,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         deploy_lunar_base_from_mission();
     else
         update_supply_simulation(0.0f);
+    if(astronaut_test_active())update_astronaut_suits();
     error.clear();
     return true;
 }

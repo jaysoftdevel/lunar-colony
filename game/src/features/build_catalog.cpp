@@ -52,7 +52,7 @@ BuildCatalog::BuildCatalog(){
         resource("oxygen_tank","Oxygen Storage Tank","Outdoor / O2 Reserve / Trade","AIR",BuildIcon::OxygenTank,BuildCategory::Structures,ResourceKind::OxygenTank),
 
         resource("ore_driller","Ore Driller","Resource / Ore Extraction","MINING",BuildIcon::OreDriller,BuildCategory::Structures,ResourceKind::OreDriller),
-        {"conveyor_belt","Conveyor Belt","Mining / Ore Driller to Processing Facility or Factory","MINING",
+        {"conveyor_belt","Conveyor Belt","Ore to processing or storage / Storage to trader pad","MINING",
          BuildIcon::ConveyorBelt,BuildCategory::Structures,BuildObjectKind::Utility,HabitatKind::AirLock,
          HabitatSizeTier::Standard,ResourceKind::OreDriller,UtilityKind::ConveyorBelt},
 

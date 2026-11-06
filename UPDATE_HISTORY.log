@@ -727,3 +727,31 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Show grid power delivered and demanded separately from the battery charge or discharge rate.
 - Preview and lock the first conveyor section at the ore driller hull.
 - Give the solar and water driller telemetry, controls and removal hint separate rows.
+
+0.51.15 - Stage 3 astronaut test
+- Spawn one EVA astronaut and one astronaut in habitat coveralls using the preview meshes.
+- Select either crew member by mouse and send them to a ground waypoint with the longer walking cycle and passing clearance.
+- Display the selected astronaut's role, test vitals and current activity above the character.
+- Restore crew positions, headings and outstanding waypoints from schema 42 saves.
+
+0.51.16 - Crew roles and powered airlock access
+- Give the engineer, biologist, medic and worker distinct suit and coverall colors.
+- Show health on the overhead crew panel.
+- Enable instant construction in Test Astronauts.
+- Route crew through powered airlocks and keep EVA suits on until indoor air reaches full indicated pressure.
+- Set EVA walk speed to 70% of coverall speed and preserve the expanded crew in saves.
+
+0.51.17 - Autonomous crew and life support
+- Send astronauts through powered airlocks to breathable shelter and profession-specific stations.
+- Track each crew member’s oxygen, food, water and fatigue, with a finite spawn cache and suit air.
+- Reserve usable bunks and let exhausted crew sleep in place when beds are unavailable.
+- Make quarters aisles walkable for passing and preserve the crew’s needs and assignments in saves.
+
+0.51.18 - Right-click deselection
+- Clear the selected astronaut or structure on a right-click.
+- Keep right-drag for camera panning and retain active placement cancellation.
+
+0.51.19 - Conveyor storage and trader shipping
+- Send raw ore boxes from Ore Drillers into Storage Domes.
+- Load reserved packaged goods and raw ore from Storage Domes onto the trader through a connected Landing Pad.
+- Resume belt shipments from save and hand reserved parcels to rovers when their belt is removed.

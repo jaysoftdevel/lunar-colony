@@ -451,7 +451,10 @@ bool power_path_compatible(UtilityKind kind,const std::vector<Vec3>& path,const 
             // Conveyors are raised above the flush supply trays.
             if(cable.kind!=kind)continue;
             for(std::size_t j=0;j+1<cable.path.size();++j){
-                if(power_segments_overlap(path[i],path[i+1],cable.path[j],cable.path[j+1])) return false;
+                if(kind==UtilityKind::ConveyorBelt){
+                    if(segment_distance_xz(path[i],path[i+1],cable.path[j],cable.path[j+1])<2*ore::belt_half_width)
+                        return false;
+                }else if(power_segments_overlap(path[i],path[i+1],cable.path[j],cable.path[j+1]))return false;
             }
         }
     }
@@ -911,12 +914,30 @@ bool utility_anchors_already_connected(const UtilityBuildAnchor& a,const Utility
 
 } // namespace
 
+ConveyorRoute conveyor_route(const UtilityEndpoint& source,const UtilityEndpoint& receiver,
+                            const std::vector<PlacedHabitat>& habitats,const std::vector<PlacedResource>& resources){
+    if(source.kind!=UtilityEndpointKind::Resource || source.index>=resources.size())return ConveyorRoute::Invalid;
+    const auto from=resources[source.index].kind;
+    if(receiver.kind==UtilityEndpointKind::Resource && receiver.index<resources.size()){
+        const auto to=resources[receiver.index].kind;
+        if(from==ResourceKind::OreDriller && to==ResourceKind::StorageDome)return ConveyorRoute::OreStorage;
+        if(from==ResourceKind::StorageDome && to==ResourceKind::LandingPad)return ConveyorRoute::Trade;
+    }
+    if(from==ResourceKind::OreDriller && receiver.kind==UtilityEndpointKind::Habitat && receiver.index<habitats.size()){
+        const auto to=habitats[receiver.index].kind;
+        if(to==HabitatKind::ProcessingFacility || to==HabitatKind::Factory)return ConveyorRoute::OreProcessor;
+    }
+    return ConveyorRoute::Invalid;
+}
+
 bool UtilityNetwork::anchor_compatible(UtilityKind kind,const UtilityBuildAnchor& anchor,
                                        const std::vector<PlacedHabitat>& habitats,
                                        const std::vector<PlacedResource>& resources) const {
     if(kind==UtilityKind::ConveyorBelt){
-        if(anchor.kind==UtilityEndpointKind::Resource)
-            return anchor.index<resources.size() && resources[anchor.index].kind==ResourceKind::OreDriller;
+        if(anchor.kind==UtilityEndpointKind::Resource && anchor.index<resources.size()){
+            const auto type=resources[anchor.index].kind;
+            return type==ResourceKind::OreDriller || type==ResourceKind::StorageDome || type==ResourceKind::LandingPad;
+        }
         if(anchor.kind!=UtilityEndpointKind::Habitat || anchor.index>=habitats.size())return false;
         const auto type=habitats[anchor.index].kind;
         return type==HabitatKind::ProcessingFacility || type==HabitatKind::Factory;
@@ -939,7 +960,8 @@ std::optional<UtilityEndpoint> UtilityNetwork::preview_anchor(
 
 bool UtilityNetwork::conveyor_source_used(std::size_t resource_index) const {
     return std::any_of(connections_.begin(),connections_.end(),[&](const auto& link){
-        return link.kind==UtilityKind::ConveyorBelt && link.endpoint_a.index==resource_index;
+        return link.kind==UtilityKind::ConveyorBelt && link.endpoint_a.kind==UtilityEndpointKind::Resource &&
+               link.endpoint_a.index==resource_index;
     });
 }
 
@@ -967,8 +989,8 @@ std::optional<UtilityConnection> UtilityNetwork::preview_connection(
     const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
     const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const {
     if(kind==UtilityKind::ConveyorBelt){
-        if(a.kind!=UtilityEndpointKind::Resource || b.kind!=UtilityEndpointKind::Habitat)return std::nullopt;
-        if(conveyor_source_used(a.index))return std::nullopt;
+        if(conveyor_route({a.kind,a.index},{b.kind,b.index},habitats,resources)==ConveyorRoute::Invalid ||
+           conveyor_source_used(a.index))return std::nullopt;
     }
     if(same_anchor(a,b)) return std::nullopt;
     if(!anchor_compatible(kind,a,habitats,resources) || !anchor_compatible(kind,b,habitats,resources)) return std::nullopt;
@@ -1266,8 +1288,7 @@ void UtilityNetwork::rebuild_supply_junctions(){
     for(auto& c:connections_) c.mesh=make_mesh(c.kind,c.endpoint_a,c.endpoint_b,c.path,c.junctions);
 }
 
-eng::Vec3 UtilityConnection::ore_box_position() const {
-    float remaining=ore_distance_m;
+eng::Vec3 UtilityConnection::cargo_position(float remaining) const {
     for(std::size_t i=1;i<path.size();++i){
         const auto segment=path[i]-path[i-1];
         const float horizontal=distance_xz(path[i],path[i-1]);

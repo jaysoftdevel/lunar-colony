@@ -1,5 +1,6 @@
 #include "game/game_app.hpp"
 #include "game/world/gate_area.hpp"
+#include "game/util/world_math.hpp"
 namespace game {
 bool GameApp::gate_route_clear(const std::vector<eng::Vec3>& path,float margin) const {
     if(lander_.active())for(std::size_t i=1;i<path.size();++i){
@@ -19,6 +20,21 @@ bool GameApp::gate_route_clear(const std::vector<eng::Vec3>& path,float margin) 
     return true;
 }
 bool GameApp::corridor_gate_layout_clear(const CorridorConnection& connection) const {
+    if(astronaut_test_active()){
+        for(const auto& actor:test_astronauts_){
+            bool airlock=false;
+            if(astronaut_air_at(actor.position,airlock))continue;
+            const auto intersects=[&](eng::Vec3 a,eng::Vec3 b,float half_width){
+                return world_math::point_segment_distance_xz(actor.position,a,b)<
+                       half_width+kAstronautFieldMargin;
+            };
+            for(std::size_t i=1;i<connection.path.size();++i)
+                if(intersects(connection.path[i-1],connection.path[i],geometry::kCorridorHalfWidth))return false;
+            for(const auto* endpoint:{&connection.endpoint_a,&connection.endpoint_b})
+                if((endpoint->kind==CorridorEndpointKind::Habitat || endpoint->kind==CorridorEndpointKind::Resource) &&
+                   intersects(endpoint->position,endpoint->door.wall_position,geometry::kDockSleeveHalfWidth))return false;
+        }
+    }
     if(!gate_route_clear(connection.path,geometry::kCorridorHalfWidth+0.2f))return false;
     for(const auto* e:{&connection.endpoint_a,&connection.endpoint_b}){
         if(e->kind!=CorridorEndpointKind::Habitat && e->kind!=CorridorEndpointKind::Resource)continue;

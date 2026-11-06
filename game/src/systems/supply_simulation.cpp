@@ -230,7 +230,7 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         g.power=g.load_kw>0?std::clamp(available_kw/g.load_kw,0.0,1.0):1.0;
     }
     std::size_t occupied=0;for(auto& h:placed_habitats_)if(h.construction.complete() && h.kind!=HabitatKind::OxygenGeneratorDome)++occupied;
-    const double crew_per_occupied=occupied?(double)std::max(0,status_.crew_current())/(double)occupied:0.0;
+    const double crew_per_occupied=occupied && !astronaut_test_active()?(double)std::max(0,status_.crew_current())/(double)occupied:0.0;
     for(auto& h:placed_habitats_)if(h.construction.complete() && h.kind!=HabitatKind::OxygenGeneratorDome){
         h.supply.oxygen_demand_kg_per_day+=crew_per_occupied*kCrewOxygenKgPerDay;
         h.supply.water_demand_litres_per_day+=crew_per_occupied*kCrewWaterLitresPerDay;
@@ -239,6 +239,38 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     // The loss is proportional to the oxygen actually present, so an empty
     // structure does not consume a full-pressure leak budget while filling.
     for(auto* s:nodes)if(s->volume_m3>0.05 && s->breathability()>=99.0)s->oxygen_demand_kg_per_day+=s->oxygen_kg*kPressurizedOxygenLeakFractionPerDay;
+    std::vector<std::size_t> parent(nodes.size());std::iota(parent.begin(),parent.end(),0);
+    const auto root=[&](std::size_t i){while(parent[i]!=i)i=parent[i];return i;};
+    for(const auto& link:services.links)if(link.first<nodes.size() && link.second<nodes.size())parent[root(link.first)]=root(link.second);
+    struct CrewIntake {SupplyState* air{};Component* service{};bool at_cache{};};
+    std::array<CrewIntake,kAstronautRoles.size()> intake{};
+    if(astronaut_test_active()){
+        std::vector<Component*> service_by_node(nodes.size());
+        for(auto& [key,g]:groups){
+            (void)key;
+            for(auto i:g.habitats)service_by_node[root(i)]=&g;
+            for(auto i:g.resources)service_by_node[root(placed_habitats_.size()+i)]=&g;
+        }
+        update_astronaut_suits();
+        for(std::size_t i=0;i<test_astronauts_.size();++i){
+            const auto& actor=test_astronauts_[i];
+            bool in_lock=false;
+            const auto* air=astronaut_air_at(actor.position,in_lock);
+            const auto it=std::find(nodes.begin(),nodes.end(),air);
+            if(it!=nodes.end() && !in_lock){
+                intake[i].air=*it;
+                intake[i].service=service_by_node[root((std::size_t)(it-nodes.begin()))];
+                if(!actor.suited && actor.health>0.f)(*it)->oxygen_demand_kg_per_day+=kCrewOxygenKgPerDay;
+                if(actor.health>0.f)(*it)->water_demand_litres_per_day+=kCrewWaterLitresPerDay;
+            }
+            intake[i].at_cache=!air && std::hypot(actor.position.x,actor.position.z)<=kCrewCacheRadius;
+        }
+    }
+    const auto take=[](double& stock,double wanted){
+        const double delivered=std::min(stock,wanted);
+        stock-=delivered;
+        return delivered;
+    };
     // Substeps use actual game time and simultaneous, donor/receiver-limited air flux.
     // No frame-rate-dependent overdraw or same-tick propagation through an entire chain.
     double remaining=std::max(0.0f,dt);
@@ -431,6 +463,52 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
                 }
             }
         }
+        if(astronaut_test_active())for(std::size_t i=0;i<test_astronauts_.size();++i){
+            auto& actor=test_astronauts_[i];
+            if(actor.health<=0.f)continue;
+            auto& source=intake[i];
+            const double air_need=kCrewOxygenKgPerDay*days;
+            const double water_need=kCrewWaterLitresPerDay*days;
+            const double food_need=kCrewFoodKgPerDay*days;
+            const bool breathable=source.air && source.air->breathability()>=kCrewBreathableAir;
+            const bool powered=source.service && source.service->power>=.99;
+            // Leave the cabin's last breathable margin in the room. Beyond
+            // that limit the crew must breathe from their own finite tanks.
+            const auto cabin_oxygen=[&](double wanted){
+                const double minimum=source.air->volume_m3*kOxygenKgPerM3*(kCrewBreathableAir/100.0);
+                const double supplied=std::min(wanted,std::max(0.0,source.air->oxygen_kg-minimum));
+                source.air->oxygen_kg-=supplied;
+                return supplied;
+            };
+            double air=breathable && !actor.suited?cabin_oxygen(air_need):0.0;
+            if(source.at_cache){
+                actor.suit_oxygen_kg+=take(astronaut_cache_.oxygen_kg,kSuitOxygenCapacityKg-actor.suit_oxygen_kg);
+            }else if(breathable && powered){
+                double refill=std::min(kSuitOxygenCapacityKg-actor.suit_oxygen_kg,4.0*air_need);
+                for(auto tank:source.service->oxygen_tanks){
+                    const double amount=take(placed_resources_[tank].stored_oxygen_kg,refill);
+                    actor.suit_oxygen_kg+=amount;refill-=amount;
+                }
+                actor.suit_oxygen_kg+=cabin_oxygen(refill);
+            }
+            air+=take(actor.suit_oxygen_kg,std::max(0.0,air_need-air));
+
+            double water=powered && source.air?take_water(*source.service,water_need):0.0;
+            if(source.at_cache)water+=take(astronaut_cache_.water_litres,water_need-water);
+            if(source.air && actor.food_pack_kg<food_need && consume_colony_stock(MaterialResource::Food,1))
+                actor.food_pack_kg+=1.0;
+            double food=take(actor.food_pack_kg,food_need);
+            if(source.at_cache)food+=take(astronaut_cache_.food_kg,food_need-food);
+            actor.hunger=std::clamp(actor.hunger+(float)(days*(1.0-2.0*food/food_need)),0.f,1.f);
+            actor.thirst=std::clamp(actor.thirst+(float)(2.0*days*(1.0-2.0*water/water_need)),0.f,1.f);
+            float fatigue_rate=1.2f;
+            if(actor.activity==AstronautActivity::Sleeping)fatigue_rate=-3.6f;
+            if(actor.activity==AstronautActivity::Knockout)fatigue_rate=-1.8f;
+            actor.fatigue=std::clamp(actor.fatigue+fatigue_rate*(float)days,0.f,kCrewExhausted);
+            const double damage=48.0*std::max(0.0,1.0-air/air_need) +
+                (actor.thirst>=1.f?1.0:0.0)+(actor.hunger>=1.f?.35:0.0);
+            actor.health=std::max(0.f,actor.health-(float)(damage*days));
+        }
         for(auto* s:nodes){
             if(s->volume_m3<=0.05 || s->oxygen_kg<=0 || s->breathability()<99.0)continue;
             const double leaked=s->oxygen_kg*kPressurizedOxygenLeakFractionPerDay*days;
@@ -490,9 +568,6 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         }
     }
     for(auto* s:nodes)s->water_to_fill_litres=std::max(0.0,s->volume_m3*kOxygenKgPerM3-s->oxygen_kg)*kWaterPerOxygen;
-    std::vector<std::size_t> parent(nodes.size());std::iota(parent.begin(),parent.end(),0);
-    const auto root=[&](std::size_t i){while(parent[i]!=i)i=parent[i];return i;};
-    for(const auto& link:services.links)if(link.first<nodes.size() && link.second<nodes.size())parent[root(link.first)]=root(link.second);
     std::vector<double> needed(nodes.size(),0);for(std::size_t i=0;i<nodes.size();++i)needed[root(i)]+=nodes[i]->water_to_fill_litres;
     for(std::size_t i=0;i<nodes.size();++i)nodes[i]->network_water_to_fill_litres=needed[root(i)];
     if(dt>0){
@@ -514,6 +589,8 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     supply_water_load_litres_per_day_=dt>0?consumed_water/((double)dt/240.0):0;
     auto state=status_.state();state.power_current=(int)std::floor(stored_power);state.power_capacity=(int)power_capacity;
     state.water_current=(int)std::floor(stored_water);state.water_capacity=(int)water_capacity;
+    if(astronaut_test_active())state.crew_current=(int)std::count_if(test_astronauts_.begin(),test_astronauts_.end(),
+        [](const auto& actor){return actor.health>0.f;});
     state.crew_capacity=std::max(state.crew_current,crew_quarters_capacity());
     status_.restore(state);
     last_supply_services_=services;

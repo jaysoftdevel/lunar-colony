@@ -175,7 +175,7 @@ float GameApp::selection_panel_content_height() const {
                     for(std::size_t i=0;i<kTradeGoodCount;++i) rows+=trader_.requested[i]>trader_.loaded[i];
                     return 535.0f+20.0f*std::max(rows,1)+extra;
                 }
-                return 885.0f+extra;
+                return 885.0f+extra+kTradeManifestExtraHeight;
             }
             return 442.0f+extra;
         }
@@ -903,6 +903,16 @@ void GameApp::remove_utility_route(std::size_t index){
     if(removed.kind==UtilityKind::ConveyorBelt && removed.ore_cargo<ore::no_cargo &&
        removed.endpoint_a.index<placed_resources_.size())
         placed_resources_[removed.endpoint_a.index].mined_ore_kg[removed.ore_cargo]+=ore::box_kg;
+    if(removed.kind==UtilityKind::ConveyorBelt && removed.placement_sequence){
+        for(auto& lot:trader_.lots)if(lot.conveyor_sequence==removed.placement_sequence){
+            // Reservation stays intact. Offer the source package to the
+            // rover dispatcher if its belt is dismantled mid-sale.
+            lot.conveyor_sequence=0;
+            lot.conveyor_distance_m=0.f;
+            lot.position=removed.endpoint_a.position+removed.endpoint_a.normal*2.5f;
+            lot.position.y=0.f;
+        }
+    }
     walkway_network_.remove_utility(index);
     utility_network_.remove_connection(index);
     remap_robot_target_after_removal(ConstructionTargetKind::Utility,index);

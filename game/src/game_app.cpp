@@ -54,7 +54,6 @@ void GameApp::render(Renderer& r){
     r.begin_frame({0.018f,0.024f,0.032f,1});
     if(screen_==Screen::Playfield){
         if(active_game_phase_==GamePhase::Planning) render_planning_game(r);
-        else if(astronaut_test_active())render_empty_game_phase(r);
         else render_playfield(r);
     } else {
         // Menus always use the normal desktop pointer. The crosshair is reserved

@@ -15,6 +15,13 @@ void draw(eng::Renderer& r,const Builder& b,Vec3 p,float yaw=0,float s=1,Color c
     r.draw_triangles_3d(pose(b.mesh.details,p,yaw,s),{.75f,.56f,.22f,1});
     r.draw_lines_3d(pose(b.mesh.edges,p,yaw,s),{.09f,.13f,.16f,1},1);
 }
+Color package_color(TradeGood good){
+    const auto index=(std::size_t)good;
+    if(index>=kLegacyTradeGoodCount && index<kTradeGoodCount)return ore::colors[index-kLegacyTradeGoodCount];
+    if(good==TradeGood::Oxygen)return {.70f,.80f,.92f,1};
+    if(good==TradeGood::Hydrogen)return {.30f,.62f,.86f,1};
+    return {.72f,.45f,.20f,1};
+}
 void package(Builder& b,TradeGood good,Vec3 p,float scale=1){
     if(good==TradeGood::Oxygen||good==TradeGood::Hydrogen){
         for(float x:{-.13f,.13f}){b.cylinder_y(b.mesh.body,p+Vec3{x,.28f*scale,0},.52f*scale,.105f*scale,10);b.box(b.mesh.details,p+Vec3{x,.57f*scale,0},{.07f,.08f,.07f});}
@@ -24,14 +31,29 @@ void package(Builder& b,TradeGood good,Vec3 p,float scale=1){
 void GameApp::render_trader(eng::Renderer& r){
     // Reserved source crates and rover-deck cargo are views of the authoritative
     // lot/haul records, not extra resource objects that can be picked up twice.
+    auto pickup=trader_.dock;
     if(trader_.phase==TradePhase::Loading){
         for(std::size_t i=0;i<trader_.lots.size();++i){
             const auto& l=trader_.lots[i];if(l.remaining<=0)continue;
+            if(l.conveyor_sequence){
+                if(l.conveyor_distance_m<=0.f)continue;
+                const auto& connections=utility_network_.connections();
+                const auto belt=std::find_if(connections.begin(),connections.end(),[&](const auto& link){
+                    return link.kind==UtilityKind::ConveyorBelt && link.placement_sequence==l.conveyor_sequence;
+                });
+                if(belt==connections.end())continue;
+                const auto position=belt->cargo_position(l.conveyor_distance_m);
+                Builder crate;
+                package(crate,l.good,{});
+                draw(r,crate,position,0,1,package_color(l.good));
+                if(world_math::distance_xz(position,belt->endpoint_b.position)<2.f)pickup=belt->endpoint_b.position;
+                continue;
+            }
             // Several materials can share one source packing bay. Draw its
             // aggregate package once, avoiding overlapping duplicate meshes.
-            bool drawn=false;for(std::size_t j=0;j<i;++j)if(trader_.lots[j].remaining>0&&eng::length(trader_.lots[j].position-l.position)<.1f)drawn=true;
+            bool drawn=false;for(std::size_t j=0;j<i;++j)if(trader_.lots[j].remaining>0&&!trader_.lots[j].conveyor_sequence&&eng::length(trader_.lots[j].position-l.position)<.1f)drawn=true;
             if(drawn)continue;
-            Builder crate;package(crate,l.good,{});draw(r,crate,l.position,0,1,l.good==TradeGood::Oxygen?Color{.70f,.80f,.92f,1}:l.good==TradeGood::Hydrogen?Color{.30f,.62f,.86f,1}:Color{.72f,.45f,.20f,1});
+            Builder crate;package(crate,l.good,{});draw(r,crate,l.position,0,1,package_color(l.good));
         }
         for(const auto& h:trader_.hauls)if(h.cargo>0&&h.robot<builder_robots_.size()){
             const auto& robot=builder_robots_[h.robot];Builder cargo;package(cargo,trader_.lots[h.lot].good,{0,.82f,.12f});draw(r,cargo,robot.visual_initialized?robot.visual_position:robot.position,robot.heading_degrees);
@@ -68,9 +90,9 @@ void GameApp::render_trader(eng::Renderer& r){
     for(int i=0;i<crates;++i)ship.box(ship.mesh.details,{-2.25f+(float)(i%2)*1.5f,1.9f+.62f*(float)(i/6),-1.7f+(float)((i/2)%3)*1.5f},{1.22f,.56f,1.16f});
     draw(r,ship,origin,pad.rotation_degrees,size,{.77f,.79f,.78f,1},true);
     if(height<.1f){
-        Builder crane;const Vec3 pivot=pad.position+Vec3{0,4.7f*size,0},head=trader_.dock+Vec3{0,3.4f,0};
+        Builder crane;const Vec3 pivot=pad.position+Vec3{0,4.7f*size,0},head=pickup+Vec3{0,3.4f,0};
         crane.cylinder_between(crane.mesh.details,pivot,head,.10f,8);
-        crane.cylinder_between(crane.mesh.foundation,head,trader_.dock+Vec3{0,1.1f,0},.025f,6);
+        crane.cylinder_between(crane.mesh.foundation,head,pickup+Vec3{0,1.1f,0},.025f,6);
         draw(r,crane,{},0,1,{.72f,.75f,.78f,1},true);
         const auto q=trader_.dock;const float half=1.2f;
         r.draw_lines_3d({{q.x-half,.035f,q.z-half},{q.x+half,.035f,q.z-half},{q.x+half,.035f,q.z-half},{q.x+half,.035f,q.z+half},{q.x+half,.035f,q.z+half},{q.x-half,.035f,q.z+half},{q.x-half,.035f,q.z+half},{q.x-half,.035f,q.z-half}},{.25f,.85f,.72f,1},2);

@@ -1,6 +1,7 @@
 #include "game/game_app.hpp"
 #include "game/world/storage_loading_gate.hpp"
 #include "game/util/world_math.hpp"
+#include <limits>
 
 namespace game {
 int GameApp::airlock_inside_sign(std::size_t index) const {
@@ -12,7 +13,16 @@ int GameApp::airlock_inside_sign(std::size_t index) const {
     return 1;
 }
 
+bool GameApp::airlock_powered(std::size_t index) const {
+    const auto& lock=placed_habitats_[index];
+    return lock.power_enabled && lock.supply.power_fraction>=.999;
+}
+
 void GameApp::update_pressure_doors(float dt){
+    const auto next_direction=[](const AstronautTestActor& actor){
+        return !astronaut_resting(actor) && actor.destination && actor.route_step<actor.route.size()
+             ? eng::normalize(actor.route[actor.route_step]-actor.position):eng::Vec3{};
+    };
     update_workshop_gates(dt);
     for(auto& state:pressure_doors_) state.seen=false;
     airlock_cycles_.resize(placed_habitats_.size());
@@ -35,6 +45,19 @@ void GameApp::update_pressure_doors(float dt){
                     std::abs(eng::dot(d,side))<geometry::kDoorClearWidth*0.5f+first_person_.body_radius();
             }
         }
+        if(astronaut_test_active()){
+            const eng::Vec3 side{-door.normal.z,0,door.normal.x};
+            for(const auto& actor:test_astronauts_){
+                auto delta=actor.position-door.wall_position;
+                delta.y=0.f;
+                const auto direction=next_direction(actor);
+                requested|=eng::length(delta)<geometry::kDoorTriggerRadius &&
+                           eng::dot(direction,delta)<-.05f;
+                occupied|=!pressure_door::sealed(pressure_doors_[index].open_fraction) &&
+                          std::abs(eng::dot(delta,door.normal))<geometry::kHumanBodyRadius+.10f &&
+                          std::abs(eng::dot(delta,side))<geometry::kDoorClearWidth*.5f;
+            }
+        }
         pressure_door::advance(pressure_doors_[index],dt,requested,occupied);
     };
     for(std::size_t i=0;i<placed_habitats_.size();++i){
@@ -48,9 +71,9 @@ void GameApp::update_pressure_doors(float dt){
         std::vector<airlock::DoorSample> samples;
         for(auto index:indices){auto& state=pressure_doors_[index];samples.push_back({&state,
             world_math::rotate_y(state.door.wall_position-habitat.position,-habitat.rotation_degrees).x,airlock::internal(state.door)});}
-        const auto local=world_math::rotate_y(first_person_.feet_position()-habitat.position,-habitat.rotation_degrees);
+        auto local=world_math::rotate_y(first_person_.feet_position()-habitat.position,-habitat.rotation_degrees);
         const auto& mesh=habitat_models_.mesh(habitat);
-        const bool present=first_person_mode_==FirstPersonMode::Active &&
+        bool present=first_person_mode_==FirstPersonMode::Active &&
             std::abs(local.x)<mesh.footprint_x*0.5f+airlock::kApproach+0.5f &&
             std::abs(local.z)<geometry::kDoorClearWidth*0.5f+first_person_.body_radius()+0.2f &&
             local.y>=mesh.walkable_floor_y-0.2f && local.y<mesh.walkable_floor_y+geometry::kDoorClearHeight;
@@ -60,8 +83,43 @@ void GameApp::update_pressure_doors(float dt){
         if(input_.key_s_down)wish+=forward*-1.f;
         if(input_.key_d_down)wish+=right;
         if(input_.key_a_down)wish+=right*-1.f;
-        const float wish_x=world_math::rotate_y(wish,-habitat.rotation_degrees).x;
-        airlock::advance(cycle,samples,local,wish_x,present,airlock_inside_sign(i),first_person_.body_radius(),dt);
+        float wish_x=world_math::rotate_y(wish,-habitat.rotation_degrees).x;
+        const float radius=first_person_.body_radius();
+        if(!present && astronaut_test_active()){
+            float best=std::numeric_limits<float>::infinity();
+            for(const auto& actor:test_astronauts_){
+                const auto feet=world_math::rotate_y(actor.position-habitat.position,-habitat.rotation_degrees);
+                const auto direction=world_math::rotate_y(next_direction(actor),-habitat.rotation_degrees);
+                if(std::abs(feet.z)>geometry::kDoorClearWidth*.5f+radius+.2f)continue;
+                for(const auto& sample:samples){
+                    const float delta=sample.x-feet.x;
+                    const bool occupying=std::abs(delta)<radius+.12f && !pressure_door::sealed(sample.state->open_fraction);
+                    const bool approaching=std::abs(delta)<airlock::kApproach && delta*direction.x>0.f;
+                    const float score=occupying?-1.f:std::abs(delta)+
+                        (std::abs(feet.x)<mesh.footprint_x*.5f?0.f:2.f);
+                    if((occupying || approaching) && score<best){
+                        best=score;
+                        local=feet;
+                        wish_x=direction.x;
+                        present=true;
+                    }
+                }
+            }
+        }
+        if(airlock_powered(i)){
+            airlock::advance(cycle,samples,local,wish_x,present,airlock_inside_sign(i),radius,dt);
+        }else{
+            cycle.requested=-1;
+            cycle.equalizing=false;
+            cycle.sealing=false;
+            for(const auto& sample:samples){
+                auto& state=*sample.state;
+                const bool straddled=present && std::abs(local.x-sample.x)<radius+.07f;
+                state.hold_seconds=0.f;
+                if(!straddled)pressure_door::advance(state,dt,false,false);
+                cycle.sealing|=!pressure_door::sealed(state.open_fraction);
+            }
+        }
     }
     for(std::size_t i=0;i<placed_resources_.size();++i)
         if(placed_resources_[i].construction.complete()) for(const auto& d:storage_dome_doors(i)) register_door(d);

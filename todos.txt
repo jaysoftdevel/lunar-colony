@@ -212,6 +212,46 @@ add separators and small captions labels (e.g. water/power/hydrogen/living/suppl
 add a storage rate indicator to the status bar showing how much % are used already. If its above 85% show an indicator icon over the storage dome.
 reduce the update of rates in state status panels to 0.5s.
 
+generate astronauts, the shall look like future astronauts and move like humans
+- create preview animation loops of how they would look like and how they move
+- create an animation of how they would move
+	- walking
+	- jumping
+	- running
+	- carrying (e.g. boxes)
+- every astronaut shall have two appearances
+	- space suite wearing (outside)
+	- space suite not wearing (inside)
+- they shall behave like human astronaus, arrage and don't collide
+dont integrate into the game yet, just show me sampled drafts
+
+take the animated astronauts and work them into the game.
+update 3rd stages astronaut scenario and place one astronaut with space suit and one without space suite
+every astronaut shall be selectable shall move to the way point selected by mouse
+
+create these rolse for astronauts (indicate with different coloring of their suites/overalls)
+- engineer
+- biologist
+- medic
+- worker
+add a health bar to the astronauts status panel.
+enable the building feature in the 3rd stage.
+the astronauts may enter indoor structures only via a air-lock.
+the air-lock must be powered in order to function
+only if the indoor area is fully preasurized with breathable air the astronauts can take off their suite
+when astronauts have their space suite on, they shall move 30% slower
+
+astronauts shall auto assign tasks depending of their profession
+they shall automatically move inside when the base is breathable and powered
+setup consumption of food, water and air for each astronaut
+the astronauts suite shall offer a limited amount of air
+add the need of slepp for each astronaut
+astronauts shall prefer to sleep in beds in the crew quarters
+if no bed is available for an astronaut they shall fall asleep where they are (only when they went beyond tiredness -> "knockout")
+astronauts may pass each other inside the base structures and corridors
+
+deselect an astronaut or structure using right click
+
 *** ToDo:
 
 
@@ -239,21 +279,36 @@ Stage 3:
 Keep the option for the definition of further stages!
 
 
+########################################################################
 
-generate astronauts, the shall look like future astronauts and move like humans
-- create a preview picture of how they would look like
-- create an animation of how they would move
-  - walking
-  - jumping
-  - running
-- every astronaut shall have two appearances
-	- space suite wearing (outside)
-	- space suite not wearing (inside)
-dont integrate into the game yet, just show me sampled drafts
+### polishing ###
 
-
+add as a temporary draft (don't include this into the update chain, only provide an experimental update package)
+- add detailed textures
+- add shadows and complex lighting
+- add a moon like surface to the playfield
+- add glow and bloom effects
+- add anti-aliasing
+- add other state of the art rendering mechanisms, the game shall look awesome!
 
 
+generate realistic sounds to all aspects of the game and gameplay.
+Consider these rendering techniques for the engine and rework the game accordingly:
+1. Physically based rendering (PBR)
+2. Deferred and visibility-buffer shading
+3. Virtualized geometry (Nanite-style)
+4. Real-time ray tracing for shadows, reflections, and AO
+5. Software ray tracing (Lumen-style)
+6. ReSTIR and reservoir sampling
+7. Volumetric clouds, fog, and atmosphere
+8. Cascaded shadow maps and virtual shadow maps
+9. Screen-space effects (SSAO, SSR, SSGI, SSSSS)
+10. Temporal anti-aliasing and ML upscaling (DLSS, FSR, XeSS)
+11. GPU-driven rendering and mesh shaders
+12. Hair, cloth, and skin rendering
+13. Decals, virtual texturing, and material layering
+14. Order-independent transparency
+15. Neural radiance caching and ML denoisers
 
 
 

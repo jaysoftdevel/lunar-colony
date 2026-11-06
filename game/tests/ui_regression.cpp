@@ -19,14 +19,15 @@ struct Draw {char type;std::array<float,6> v{};std::string text;eng::Color color
 struct Recorder:eng::Renderer {
     int w=1920,h=1080;float scale=1;bool hud=false;std::vector<Draw> draws;
     std::vector<eng::Vec3> belt_preview_lines;
+    std::size_t mesh_triangles=0;
     bool initialize(void*,std::uintptr_t,int,int)override{return true;}
     void resize(int width,int height)override{w=width;h=height;}
-    void begin_frame(eng::Color)override{draws.clear();belt_preview_lines.clear();hud=false;}void end_frame()override{}
+    void begin_frame(eng::Color)override{draws.clear();belt_preview_lines.clear();mesh_triangles=0;hud=false;}void end_frame()override{}
     void set_3d(const eng::Mat4&)override{hud=false;}void set_2d(float s)override{scale=s;hud=true;}
     void draw_lines_3d(const std::vector<eng::Vec3>& points,eng::Color color,float width)override{
         if(width==1.9f && color.r==.34f && color.g==.82f && color.b==1.0f)belt_preview_lines=points;
     }
-    void draw_triangles_3d(const std::vector<eng::Vec3>&,eng::Color)override{}
+    void draw_triangles_3d(const std::vector<eng::Vec3>& points,eng::Color)override{mesh_triangles+=points.size()/3;}
     void draw_rect(eng::Rect r,eng::Color c)override{if(hud)draws.push_back({'R',{r.x,r.y,r.w,r.h,scale,0},{},c});}
     void draw_line(eng::Vec2 a,eng::Vec2 b,eng::Color c,float width)override{if(hud)draws.push_back({'L',{a.x,a.y,b.x,b.y,scale,width},{},c});}
     void draw_text(eng::Vec2 p,const std::string& text,float s,eng::Color c)override{if(hud){auto e=eng::ui::text_extent(text,s);draws.push_back({'T',{p.x,p.y,e.x,e.y,scale,s},text,c});}}
@@ -1103,19 +1104,120 @@ struct UiRegression {
             require(sandbox.screen_==GameApp::Screen::Playfield && sandbox.astronaut_test_active() &&
                     sandbox.placed_habitats_.empty() && sandbox.placed_resources_.empty() &&
                     sandbox.builder_robots_.empty() && !sandbox.lander_.active(),
-                    "astronaut placeholder did not start on an empty field");
+                    "astronaut test did not start on its own field");
             sandbox.render(stage_ui);
             bool test_title=false,build_menu=false;
             for(const auto& draw:stage_ui.draws)if(draw.type=='T'){
-                test_title|=draw.text=="ASTRONAUT TEST FIELD";
+                test_title|=draw.text=="STAGE 3 - TEST ASTRONAUTS";
                 build_menu|=draw.text=="GAME SPEED";
             }
-            require(test_title && !build_menu,"astronaut placeholder exposed colony controls");
+            require(test_title && build_menu && stage_ui.mesh_triangles>80000,
+                    "astronaut test did not render four meshes and the colony controls");
+            const auto click_astronaut_scene=[&](GameApp& scene,eng::Vec3 p){
+                const auto m=scene.camera_.view_projection((float)stage_ui.w/stage_ui.h).m;
+                const float w=m[3]*p.x+m[7]*p.y+m[11]*p.z+m[15];
+                eng::InputState mouse;
+                mouse.mouse_x=(int)std::lround((.5f+.5f*(m[0]*p.x+m[4]*p.y+m[8]*p.z+m[12])/w)*stage_ui.w);
+                mouse.mouse_y=(int)std::lround((.5f-.5f*(m[1]*p.x+m[5]*p.y+m[9]*p.z+m[13])/w)*stage_ui.h);
+                mouse.left_pressed=true;
+                scene.update(0.f,mouse);
+            };
+            const auto advance_crew=[&](GameApp& scene,int frames){
+                for(int i=0;i<frames;++i){
+                    scene.update(.02f,{});
+                    require(eng::length(scene.test_astronauts_[0].position-scene.test_astronauts_[1].position)
+                            >=kAstronautSeparation-.001f,"astronauts crossed their safety clearance");
+                }
+            };
+            const auto eva_start=sandbox.test_astronauts_[0].position;
+            const auto coverall_start=sandbox.test_astronauts_[1].position;
+            click_astronaut_scene(sandbox,eva_start+eng::Vec3{0,.95f,0});
+            require(sandbox.selected_astronaut_==0,"mouse did not select the EVA astronaut");
+            sandbox.render(stage_ui);
+            const auto shows_text=[&](const char* caption){
+                return std::any_of(stage_ui.draws.begin(),stage_ui.draws.end(),[&](const auto& draw){return draw.text==caption;});
+            };
+            require(shows_text("AMARA OKAFOR") && shows_text("WORKER / EVA SUIT") &&
+                    shows_text("HEALTH 100%") && shows_text("HUNGER 0%    THIRST 0%"),"selected EVA astronaut status was missing");
+            stage_ui.check_bounds("astronaut status");
+
+            // This waypoint is on the other side of the stationary crew member.
+            click_astronaut_scene(sandbox,{4.6f,0,-.55f});
+            require(sandbox.test_astronauts_[0].destination.has_value(),"ground click did not give the EVA astronaut a waypoint");
+            const auto eva_goal=*sandbox.test_astronauts_[0].destination;
+            eng::InputState right_click;
+            right_click.right_pressed=true;
+            sandbox.update(0.f,right_click);
+            require(sandbox.selected_astronaut_==-1 && sandbox.test_astronauts_[0].destination &&
+                    eng::length(*sandbox.test_astronauts_[0].destination-eva_goal)<.001f,
+                    "right click must deselect the astronaut and preserve its waypoint");
+            advance_crew(sandbox,50);
+            const auto eva_saved=sandbox.test_astronauts_[0].position;
+            require(eng::length(eva_saved-eva_start)>.2f && sandbox.test_astronauts_[0].stride_phase>.05f &&
+                    eng::length(sandbox.test_astronauts_[1].position-coverall_start)<.001f,
+                    "walking did not advance the selected mesh animation independently");
             require(sandbox.save_game_to_name("stage3-sandbox-regression",error),"astronaut field save failed: "+error);
             require(loaded.load_game_from_file(save.string(),error) && loaded.astronaut_test_active(),
                     "astronaut test mode did not survive save/load");
+            loaded.screen_=GameApp::Screen::Playfield;
+            loaded.render(stage_ui);
+            require(eng::length(loaded.test_astronauts_[0].position-eva_saved)<.001f &&
+                    loaded.test_astronauts_[0].destination.has_value(),
+                    "save did not restore the astronaut position and pending waypoint");
+            advance_crew(loaded,650);
+            require(!loaded.test_astronauts_[0].destination && eng::length(loaded.test_astronauts_[0].position-eva_goal)<.01f &&
+                    eng::length(loaded.test_astronauts_[1].position-coverall_start)<.001f,
+                    "EVA astronaut did not resume and finish the saved detour");
+
+            click_astronaut_scene(loaded,coverall_start+eng::Vec3{0,.95f,0});
+            require(loaded.selected_astronaut_==1,"mouse did not select the coverall astronaut");
+            loaded.render(stage_ui);
+            require(shows_text("LUCA REYES") && shows_text("ENGINEER / EVA SUIT"),
+                    "selected coverall astronaut status was missing");
+            click_astronaut_scene(loaded,{6.5f,0,-.55f});
+            require(loaded.test_astronauts_[1].destination.has_value(),"ground click did not give the coverall astronaut a waypoint");
+            const auto coverall_goal=*loaded.test_astronauts_[1].destination;
+            click_astronaut_scene(loaded,loaded.test_astronauts_[0].position+eng::Vec3{0,.95f,0});
+            click_astronaut_scene(loaded,{-2.5f,0,-.18f});
+            require(loaded.selected_astronaut_==0 && loaded.test_astronauts_[0].destination,
+                    "another astronaut's pending walk prevented selecting and ordering the EVA astronaut");
+            const auto return_goal=*loaded.test_astronauts_[0].destination;
+            advance_crew(loaded,1150);
+            require(!loaded.test_astronauts_[0].destination && !loaded.test_astronauts_[1].destination &&
+                    eng::length(loaded.test_astronauts_[0].position-return_goal)<.01f &&
+                    eng::length(loaded.test_astronauts_[1].position-coverall_goal)<.01f,
+                    "astronauts did not finish both crossing waypoints");
             std::filesystem::remove(save);
-            std::cout<<"Stage 3 mode selection, instant sandbox placement and save/load passed"
+            sandbox.camera_.restore({105.0f,75.0f,0.0f,{}});
+            select_build("air_lock");
+            click_world(18.f,0.f);
+            require(sandbox.placed_habitats_.size()==1 &&
+                    sandbox.placed_habitats_.front().construction.complete(),
+                    "astronaut test could not place a finished Air Lock with the build tool");
+            click_astronaut_scene(sandbox,sandbox.placed_habitats_.front().position);
+            require(sandbox.selection_kind_==GameApp::SelectionKind::Habitat,"Air Lock click did not select the structure");
+            const auto before_pan=sandbox.camera_.state().target;
+            auto right_press=right_click;
+            right_press.right_down=true;
+            sandbox.update(0.f,right_press);
+            eng::InputState right_drag;
+            right_drag.right_down=true;
+            right_drag.mouse_dx=20;
+            sandbox.update(0.f,right_drag);
+            sandbox.update(0.f,{});
+            require(sandbox.selection_kind_==GameApp::SelectionKind::Habitat &&
+                    eng::length(sandbox.camera_.state().target-before_pan)>.01f,
+                    "right drag must pan with the structure still selected");
+            sandbox.update(0.f,right_press);
+            sandbox.update(0.f,{});
+            require(sandbox.selection_kind_==GameApp::SelectionKind::None && sandbox.selected_habitat_==-1,
+                    "right click did not clear the structure selection");
+            select_build("air_lock");
+            sandbox.update(0.f,right_press);
+            sandbox.update(0.f,{});
+            require(!sandbox.build_catalog_.selected() && sandbox.placed_habitats_.size()==1,
+                    "right click did not cancel structure placement");
+            std::cout<<"Stage 3 mode selection, crew status, instant building, crossing waypoints and save/load passed"
                      <<(template_exists?" with the restored template\n":" without a template file\n");
 
             sandbox.screen_=GameApp::Screen::Stage3Modes;
@@ -1162,6 +1264,23 @@ struct UiRegression {
                        draw.text.find('%')!=std::string::npos)concentration=true;
                 require(concentration,"missing ore survey concentration");
             }
+
+            sandbox.screen_=GameApp::Screen::Stage3Modes;
+            click_menu("SANDBOX MODE");
+            sandbox.camera_.restore({105.0f,75.0f,0.0f,{}});
+            select_build("ore_driller");click_world(-38,0);
+            select_build("storage_dome");click_world(0,0);
+            select_build("landing_pad");click_world(36,0);
+            require(sandbox.placed_resources_.size()==3,"conveyor chain structures could not be placed");
+            select_build("conveyor_belt");click_world(-38,0);click_world(0,0);
+            select_build("conveyor_belt");click_world(4,0);click_world(36,0);
+            const auto& belts=sandbox.utility_network_.connections();
+            require(belts.size()==2 &&
+                    conveyor_route(belts[0].endpoint_a,belts[0].endpoint_b,sandbox.placed_habitats_,sandbox.placed_resources_)==ConveyorRoute::OreStorage &&
+                    conveyor_route(belts[1].endpoint_a,belts[1].endpoint_b,sandbox.placed_habitats_,sandbox.placed_resources_)==ConveyorRoute::Trade,
+                    "conveyor chain placement through the build menu failed");
+            sandbox.render(stage_ui);
+            stage_ui.check_bounds("trade conveyor inspector");
         }
         int site_layout_cases=0;
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:sizes){

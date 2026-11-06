@@ -46,15 +46,6 @@ constexpr StageDefinition kStages[] = {
     {3,"Crew preparation",kStage3,std::size(kStage3)}
 };
 
-int quarters_capacity(HabitatSizeTier size){
-    switch(size){
-        case HabitatSizeTier::Small:return 2;
-        case HabitatSizeTier::Standard:return 4;
-        case HabitatSizeTier::Mid:return 6;
-        case HabitatSizeTier::Big:return 8;
-        default:return 0;
-    }
-}
 }
 
 GameProgressSnapshot GameApp::game_progress_snapshot() const {
@@ -115,7 +106,7 @@ GameProgressSnapshot GameApp::game_progress_snapshot() const {
 
     const auto dorm_capacity=[&](){
         int total=0;
-        for(const auto& h:placed_habitats_)if(h.kind==HabitatKind::CrewQuarters && h.construction.complete())total+=quarters_capacity(h.size);
+        for(const auto& h:placed_habitats_)if(h.kind==HabitatKind::CrewQuarters && h.construction.complete())total+=crew_quarters_bed_count(h.size);
         return total;
     };
     const auto all_interiors_pressurized=[&](){
@@ -176,7 +167,7 @@ GameProgressSnapshot GameApp::game_progress_snapshot() const {
 
 int GameApp::crew_quarters_capacity() const {
     int capacity=0;
-    for(const auto& h:placed_habitats_)if(h.kind==HabitatKind::CrewQuarters && h.construction.complete())capacity+=quarters_capacity(h.size);
+    for(const auto& h:placed_habitats_)if(h.kind==HabitatKind::CrewQuarters && h.construction.complete())capacity+=crew_quarters_bed_count(h.size);
     return capacity;
 }
 

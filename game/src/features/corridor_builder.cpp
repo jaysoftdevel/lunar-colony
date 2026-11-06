@@ -218,7 +218,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     const bool affordable=(can_start_construction(corridor_plan(*preview)) && gate_clear);
     if(!gate_clear){
         corridor_placement_failure_title_="GATE / SERVICE CLEARANCE BLOCKED";
-        corridor_placement_failure_detail_="The connector or its junction area overlaps a structure, gate, walkway, supply channel, or reserved service space.";
+        corridor_placement_failure_detail_="The connector or its junction area overlaps a crew member, structure, route or reserved service space.";
     }else if(!can_start_construction(corridor_plan(*preview))){
         corridor_placement_failure_title_="CORRIDOR CANNOT BE FUNDED";
         corridor_placement_failure_detail_="Required construction resources are not available for this corridor.";

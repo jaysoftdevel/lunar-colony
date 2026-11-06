@@ -75,6 +75,21 @@ struct HabitatEntranceAccess {
     std::vector<eng::Vec3> edges;
 };
 
+inline constexpr int crew_quarters_bed_count(HabitatSizeTier size){
+    switch(size){
+        case HabitatSizeTier::Small:return 2;
+        case HabitatSizeTier::Standard:return 4;
+        case HabitatSizeTier::Mid:return 6;
+        case HabitatSizeTier::Big:return 8;
+        default:return 0;
+    }
+}
+
+struct CrewBunk {
+    eng::Vec3 access;
+    eng::Vec3 feet;
+};
+
 struct HabitatMesh {
     std::vector<eng::Vec3> shell;
     std::vector<eng::Vec3> foundation;
@@ -89,6 +104,7 @@ struct HabitatMesh {
     // Do not infer this from furniture/foundation triangles.
     float walkable_floor_y{0.20f};
     bool crew_accessible{true};
+    std::vector<CrewBunk> crew_bunks{};
     std::vector<HabitatEntrance> entrances{};
     // Optional exterior access geometry indexed like entrances. This is kept
     // separate from the permanent habitat mesh so stairs/ramps can disappear

@@ -3,6 +3,7 @@
 #include "engine/engine.hpp"
 #include "game/features/build_catalog.hpp"
 #include "game/systems/camera_controller.hpp"
+#include "game/systems/astronaut_test.hpp"
 #include "game/systems/first_person_controller.hpp"
 #include "game/systems/colony_status.hpp"
 #include "game/systems/game_progress.hpp"
@@ -118,6 +119,10 @@ private:
     NewGameMode active_game_mode_{NewGameMode::FreePlay};
     Stage3Mode stage3_mode_{Stage3Mode::Sandbox};
     bool astronaut_test_active() const { return active_game_phase_==GamePhase::Debug && stage3_mode_==Stage3Mode::AstronautTest; }
+    std::array<AstronautTestActor,kAstronautRoles.size()> test_astronauts_{};
+    int selected_astronaut_=-1;
+    AstronautCache astronaut_cache_{};
+    float astronaut_schedule_seconds_{};
     PlanningGameState planning_{};
     LunarLanderState lander_{};
     TraderState trader_{};
@@ -221,6 +226,7 @@ private:
     int selected_resource_=-1;
     int selected_ground_resource_=-1;
     std::vector<int> selected_ground_resources_{};
+    bool right_click_pending_{};
     bool selection_marquee_active_{false};
     bool selection_marquee_dragged_{false};
     int selection_marquee_start_x_{0};
@@ -260,7 +266,17 @@ private:
     void render_settings(eng::Renderer& r);
     void render_credits(eng::Renderer& r);
     void render_playfield(eng::Renderer& r);
-    void render_empty_game_phase(eng::Renderer& r);
+    bool handle_astronaut_click(const eng::InputState& input);
+    void reset_astronaut_test();
+    void update_astronaut_test(float dt);
+    void update_astronaut_suits();
+    void assign_astronaut_duties(float dt);
+    AstronautRestPose astronaut_rest_pose(const AstronautTestActor& actor) const;
+    bool consume_colony_stock(MaterialResource material,std::int64_t amount);
+    const SupplyState* astronaut_air_at(eng::Vec3 p,bool& airlock) const;
+    bool astronaut_placement_clear(eng::Vec3 center,float rotation,float width,float depth) const;
+    void render_test_astronauts(eng::Renderer& r) const;
+    void render_astronaut_status(eng::Renderer& r,const eng::Mat4& view_projection) const;
     void render_planning_game(eng::Renderer& r);
     void render_planning_technology_tree(eng::Renderer& r,eng::Rect panel,bool compact);
     void render_status_bar(eng::Renderer& r);
@@ -365,6 +381,7 @@ private:
     std::string landing_message_{};
     void render_lunar_lander(eng::Renderer& r);
     std::size_t trader_pad_index() const;
+    const UtilityConnection* trader_conveyor(std::size_t dome) const;
     bool trader_powered() const;
     bool trade_antenna_enabled() const;
     bool call_trader(std::size_t pad);
@@ -452,7 +469,9 @@ private:
     bool store_first_person_carried_resource();
     void stored_resource_box_pose(const PlacedResource& structure,const ResourceMesh& mesh,std::size_t box_index,eng::Vec3& base,float& half_width,float& height) const;
     bool first_person_spawn_valid(eng::Vec3 p) const;
-    bool first_person_move_allowed(eng::Vec3 from,eng::Vec3 to) const;
+    enum class CrewTraversal { Player, Astronaut, Plan };
+    bool first_person_move_allowed(eng::Vec3 from,eng::Vec3 to,CrewTraversal traversal=CrewTraversal::Player) const;
+    bool airlock_powered(std::size_t index) const;
     float first_person_floor_height(eng::Vec3 p) const;
     float first_person_ceiling_height(eng::Vec3 p) const;
     std::string first_person_environment_label() const;
@@ -479,7 +498,7 @@ private:
     template<class Item>
     void finalize_placement(Item& item){
         item.placement_sequence=next_blueprint_placement_sequence_++;
-        if(active_game_phase_==GamePhase::Debug && stage3_mode_==Stage3Mode::Sandbox){
+        if(active_game_phase_==GamePhase::Debug && stage3_mode_!=Stage3Mode::Template){
             item.construction.finish();
             item.resource_plan.steps={};
         }

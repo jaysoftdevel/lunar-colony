@@ -107,6 +107,12 @@ HabitatMesh scale_xz(const HabitatMesh& source,float scale){
     scale_vertices(out.details);
     scale_vertices(out.glazing);
     scale_vertices(out.edges);
+    for(auto& bunk:out.crew_bunks){
+        bunk.access.x*=scale;
+        bunk.access.z*=scale;
+        bunk.feet.x*=scale;
+        bunk.feet.z*=scale;
+    }
     for(auto& entrance:out.entrances){
         entrance.local_position.x*=scale;
         entrance.local_position.z*=scale;
@@ -155,7 +161,22 @@ HabitatModelLibrary::HabitatModelLibrary(){
             meshes_[i][(std::size_t)HabitatSizeTier::Mid]=standard;
             meshes_[i][(std::size_t)HabitatSizeTier::Big]=standard;
         }
-        for(auto& variant:meshes_[i]) standardize_crew_interfaces(variant,kind==HabitatKind::AirLock);
+        for(std::size_t tier=0;tier<meshes_[i].size();++tier){
+            auto& variant=meshes_[i][tier];
+            if(kind==HabitatKind::CrewQuarters){
+                variant.crew_bunks.resize(crew_quarters_bed_count((HabitatSizeTier)tier));
+                const float scale=variant.footprint_x/standard.footprint_x;
+                habitats::Builder furniture;
+                for(const auto& bed:variant.crew_bunks){
+                    const float x=bed.feet.x+.78f*scale;
+                    const float z=bed.feet.z;
+                    furniture.box(variant.interior,{x,1.28f,z},{1.94f*scale,.44f,.68f*scale},false);
+                    furniture.box(variant.interior,{x,1.52f,z},{1.91f*scale,.12f,.66f*scale},false);
+                    furniture.box(variant.interior,{x+.72f*scale,1.60f,z},{.34f*scale,.07f,.54f*scale},false);
+                }
+            }
+            standardize_crew_interfaces(variant,kind==HabitatKind::AirLock);
+        }
     }
 }
 

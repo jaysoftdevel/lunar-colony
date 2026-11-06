@@ -1626,7 +1626,7 @@ struct NavigationRegression {
         eng::Application engine;int cases=0;
         for(auto size:{HabitatSizeTier::Small,HabitatSizeTier::Standard})for(float rotation:{0.f,37.f,90.f,180.f})for(int inside:{-1,1}){
             GameApp app(engine);app.playfield_.rebuild(128);app.corridor_network_.set_playfield_half_extent(64);
-            PlacedHabitat air;air.kind=HabitatKind::AirLock;air.size=size;air.rotation_degrees=rotation;air.construction.step=kConstructionSteps;air.placement_sequence=1;app.placed_habitats_={air};
+            PlacedHabitat air;air.kind=HabitatKind::AirLock;air.size=size;air.rotation_degrees=rotation;air.construction.step=kConstructionSteps;air.placement_sequence=1;air.supply.power_fraction=1.0;app.placed_habitats_={air};
             const auto& mesh=app.habitat_models_.mesh(air);require(mesh.entrances.empty() && mesh.entrance_access.empty(),"air lock retained authored entrance");const float end=mesh.footprint_x*0.5f;
             const auto world=[&](float x,float z=0.f){return world_math::rotate_y(Vec3{x,mesh.walkable_floor_y,z},rotation);};
             const CorridorBuildAnchor start{CorridorEndpointKind::Habitat,0,world(inside*end)},finish{CorridorEndpointKind::OpenDoor,0,world(inside*(end+14))};
@@ -1694,6 +1694,204 @@ struct NavigationRegression {
             ++cases;
         }
         std::cout<<cases<<" rotated small/standard three-chamber air locks: physical traversal both ways, center retreat, noninstant pressure matching, four-door interlock and bulkhead collision passed\n";
+    }
+
+    static void astronaut_access(){
+        eng::Application engine;
+        GameApp app(engine);
+        app.new_game_phase_selection_=GameApp::GamePhase::Debug;
+        app.start_new_game(GameApp::Stage3Mode::AstronautTest);
+        constexpr float rotation=37.f;
+        const auto world=[&](float x,float z=0.f){return world_math::rotate_y(Vec3{x,0.f,z},rotation);};
+        PlacedHabitat lock;
+        lock.kind=HabitatKind::AirLock;
+        lock.size=HabitatSizeTier::Small;
+        lock.rotation_degrees=rotation;
+        app.finalize_placement(lock);
+        app.placed_habitats_.push_back(lock);
+        PlacedHabitat room=lock;
+        room.kind=HabitatKind::CrewQuarters;
+        room.position=world(22.f);
+        app.finalize_placement(room);
+        app.placed_habitats_.push_back(room);
+        const float end=app.habitat_models_.mesh(lock).footprint_x*.5f;
+        require(app.corridor_network_.build_corridor({CorridorEndpointKind::Habitat,0,world(end)},
+            {CorridorEndpointKind::Habitat,1,world(19.f)},app.placed_habitats_,app.habitat_models_,
+            app.placed_resources_,app.resource_models_),"crew pressure route placement failed");
+        auto& corridor=app.corridor_network_.mutable_connections().front();
+        app.finalize_placement(corridor);
+        const auto& door=corridor.endpoint_b.door;
+        Vec3 goal=door.wall_position-door.normal*1.35f;
+        goal.y=app.first_person_floor_height(goal);
+        auto outside=world(-end-2.f,3.4f);
+        outside.y=app.first_person_floor_height(outside);
+        for(std::size_t i=1;i<app.test_astronauts_.size();++i)
+            app.test_astronauts_[i].position={25.f+(float)i,0.f,25.f};
+        auto& crew=app.test_astronauts_.front();
+        crew.position=outside;
+        crew.activity=AstronautActivity::Manual;
+        crew.destination=goal;
+        app.update_supply_simulation(0.f);
+
+        const auto travel=[&](int frames){
+            for(int i=0;i<frames && crew.destination;++i){
+                app.update_pressure_doors(.05f);
+                app.update_astronaut_test(.05f);
+            }
+        };
+        travel(400);
+        require(!app.airlock_powered(0) && crew.waiting_for_door && crew.suited &&
+                world_math::rotate_y(crew.position,-rotation).x<-end,"crew passed an unpowered air lock");
+
+        PlacedResource battery;
+        battery.kind=ResourceKind::PowerStorage;
+        battery.position=world(-12.f,-16.f);
+        battery.supply.energy_kwh=10.f;
+        app.finalize_placement(battery);
+        app.placed_resources_.push_back(battery);
+        require(app.utility_network_.build_connection(UtilityKind::SupplyChannel,
+            {UtilityEndpointKind::Resource,0,battery.position},{UtilityEndpointKind::Habitat,0,world(0,-1)},
+            app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_),
+            "crew air lock could not be connected to a battery");
+        app.finalize_placement(app.utility_network_.mutable_connections().back());
+        app.update_supply_simulation(0.f);
+        require(app.airlock_powered(0),"connected battery did not power the air lock");
+        travel(1300);
+        require(!crew.destination && distance(crew.position,goal)<.04f && crew.suited,
+                "crew did not walk through the air lock to the unpressurized habitat");
+        auto& supply=app.placed_habitats_[1].supply;
+        supply.oxygen_kg=.999*supply.volume_m3*kOxygenKgPerM3;
+        app.update_astronaut_suits();
+        require(crew.suited,"crew removed the suit before full indicated pressure");
+        supply.oxygen_kg=supply.volume_m3*kOxygenKgPerM3;
+        app.update_astronaut_suits();
+        require(!crew.suited && std::abs(astronaut_walk_speed(true)/astronaut_walk_speed(false)-.70f)<.001f,
+                "full pressure coveralls or EVA speed ratio is incorrect");
+        crew.activity=AstronautActivity::Manual;
+        crew.destination=outside;
+        travel(1400);
+        require(!crew.destination && crew.suited && distance(crew.position,outside)<.04f,
+                "crew did not re-suit and exit through the air lock");
+        std::cout<<"Stage 3 crew waited for a powered air lock, traversed to a habitat, changed suits at full air and exited suited\n";
+    }
+
+    static void astronaut_autonomy(){
+        using eng::Vec3;
+        using world_math::distance_xz;
+        eng::Application platform;
+        GameApp app(platform);
+        app.new_game_phase_selection_=GameApp::GamePhase::Debug;
+        app.start_new_game(GameApp::Stage3Mode::AstronautTest);
+        auto& crew=app.test_astronauts_;
+        const auto tick=[&](int frames){
+            for(int i=0;i<frames;++i){
+                app.update_pressure_doors(.05f);
+                app.update_astronaut_test(.05f);
+            }
+        };
+        const auto before=app.astronaut_cache_;
+        app.update_supply_simulation(24.f);
+        require(app.astronaut_cache_.food_kg<before.food_kg-.339 && app.astronaut_cache_.water_litres<before.water_litres-1.59 &&
+                app.astronaut_cache_.oxygen_kg<before.oxygen_kg-.334,"cache resource draw wrong");
+        require(crew[0].fatigue>.11 && crew[0].hunger==0 && crew[0].thirst==0,"individual needs wrong");
+        auto& a=crew[0];a.position={-15,0,0};a.suit_oxygen_kg=.0001;
+        app.update_supply_simulation(.1f);
+        require(a.suit_oxygen_kg==0 && a.health<1 && a.hunger>0 && a.thirst>0,"finite suit starvation not working");
+        a={};
+        for(std::size_t i=0;i<crew.size();++i)crew[i].position={-7.1f-(float)i*1.3f,0,.1f+(float)i*.12f};
+        PlacedHabitat lock;lock.kind=HabitatKind::AirLock;lock.size=HabitatSizeTier::Small;
+        app.finalize_placement(lock);app.placed_habitats_.push_back(lock);
+        PlacedHabitat quarters=lock;quarters.kind=HabitatKind::CrewQuarters;quarters.position={22,0,0};
+        app.finalize_placement(quarters);app.placed_habitats_.push_back(quarters);
+        require(app.corridor_network_.build_corridor({CorridorEndpointKind::Habitat,0,{3.8f,0,0}},
+                {CorridorEndpointKind::Habitat,1,{19,0,0}},app.placed_habitats_,app.habitat_models_,
+                app.placed_resources_,app.resource_models_),"corridor placement");
+        auto& corridor=app.corridor_network_.mutable_connections()[0];
+        app.finalize_placement(corridor);
+        app.update_supply_simulation(0.f);
+        for(auto& h:app.placed_habitats_)h.supply.oxygen_kg=h.supply.volume_m3*kOxygenKgPerM3;
+        corridor.supply.oxygen_kg=corridor.supply.volume_m3*kOxygenKgPerM3;
+        tick(80);
+        require(!crew[0].destination,"autonomy attempted to enter unpowered base");
+        PlacedResource battery;battery.kind=ResourceKind::PowerStorage;battery.position={-12,0,-16};battery.supply.energy_kwh=10.f;
+        app.finalize_placement(battery);app.placed_resources_.push_back(battery);
+        require(app.utility_network_.build_connection(UtilityKind::SupplyChannel,
+                {UtilityEndpointKind::Resource,0,battery.position},{UtilityEndpointKind::Habitat,0,{0,0,-1}},
+                app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_),"battery utility");
+        app.finalize_placement(app.utility_network_.mutable_connections().back());
+        app.update_supply_simulation(0.f);
+        require(app.airlock_powered(0),"power fixture");
+        for(int i=0;i<64;++i){
+            tick(45);
+            if(std::all_of(crew.begin(),crew.end(),[](const auto& c){return c.position.x>17.9f && !c.destination;}))break;
+        }
+        for(const auto& c:crew)require(c.position.x>17.9f && !c.destination,"crew did not automatically reach the habitat");
+        for(auto& c:crew)c.fatigue=.85f;
+        tick(900);
+        int sleeping=0;
+        for(auto& c:crew)sleeping+=c.activity==AstronautActivity::Sleeping;
+        require(sleeping==2 && crew[0].bed_slot!=crew[1].bed_slot,"two distinct beds not occupied");
+        require(std::none_of(crew.begin(),crew.end(),[](const auto& c){return c.activity==AstronautActivity::Knockout;}),
+                "tired crew knocked out before exhaustion");
+        for(auto& c:crew)if(c.activity!=AstronautActivity::Sleeping)c.fatigue=kCrewExhausted;
+        tick(30);
+        int knocked_out=0;
+        for(auto& c:crew)knocked_out+=c.activity==AstronautActivity::Knockout;
+        require(knocked_out==2,"crew did not knock out with all beds occupied");
+        app.update_supply_simulation(24.f);
+        for(auto& c:crew)require(c.fatigue<(c.activity==AstronautActivity::Knockout?kCrewExhausted:.85f),"sleep did not restore fatigue");
+
+        std::string error;
+        require(app.save_game_to_name("crew-needs-regression",error),"crew needs save failed: "+error);
+        const auto save=std::filesystem::path(app.save_game_directory())/"crew-needs-regression.gmsave";
+        GameApp loaded(platform);
+        const bool restored=loaded.load_game_from_file(save.string(),error);
+        std::filesystem::remove(save);
+        require(restored && loaded.test_astronauts_[0].activity==AstronautActivity::Sleeping &&
+                loaded.test_astronauts_[2].activity==AstronautActivity::Knockout &&
+                std::abs(loaded.test_astronauts_[0].fatigue-crew[0].fatigue)<1e-5f &&
+                std::abs(loaded.astronaut_cache_.oxygen_kg-app.astronaut_cache_.oxygen_kg)<1e-8,
+                "crew sleep and consumables did not survive save/load: "+error);
+
+        for(auto [from,to]:{std::pair{8.f,15.f},std::pair{20.f,24.f}}){
+            for(std::size_t i=0;i<crew.size();++i){
+                crew[i]={};crew[i].position={30.f+(float)i*2.f,0,15.f};
+                crew[i].activity=AstronautActivity::Manual;
+            }
+            crew[0].position={from,app.first_person_floor_height({from,0,0}),0};
+            crew[1].position={to,app.first_person_floor_height({to,0,0}),0};
+            crew[0].destination=crew[1].position+Vec3{.75f,0,0};
+            crew[1].destination=crew[0].position+Vec3{-.75f,0,0};
+            float min_gap=10.f;
+            for(int i=0;i<1000;++i){
+                tick(1);
+                min_gap=std::min(min_gap,distance_xz(crew[0].position,crew[1].position));
+                if(!crew[0].destination&&!crew[1].destination)break;
+            }
+            require(!crew[0].destination && !crew[1].destination &&
+                    min_gap>=kIndoorAstronautSeparation-.001f,"head-on indoor passing failed");
+        }
+
+        app.placed_habitats_.clear();
+        app.corridor_network_.clear();
+        constexpr std::array facilities{HabitatKind::CantineDome,HabitatKind::OxygenGeneratorDome,
+                                        HabitatKind::BioDome,HabitatKind::SickBay};
+        for(std::size_t i=0;i<crew.size();++i){
+            PlacedHabitat workplace;
+            workplace.kind=facilities[i];
+            workplace.position={-30.f+(float)i*20.f,0.f,28.f};
+            app.finalize_placement(workplace);
+            workplace.supply.power_fraction=1.0;
+            workplace.supply.volume_m3=300.0;
+            workplace.supply.oxygen_kg=300.0*kOxygenKgPerM3;
+            app.placed_habitats_.push_back(workplace);
+            crew[i]={};
+            crew[i].position=workplace.position;
+        }
+        app.assign_astronaut_duties(1.f);
+        require(std::all_of(crew.begin(),crew.end(),[](const auto& c){return c.activity==AstronautActivity::Duty;}),
+                "crew did not take their profession-specific assignments");
+        std::cout<<"Autonomous entry, role assignments, finite suit air, sleep, save/load and indoor passing passed\n";
     }
 
     static void airlock_connections(){
@@ -2264,6 +2462,7 @@ struct NavigationRegression {
         // leaves cover the full opening; fully retracted leaves clear it.
         app.placed_resources_.clear();app.pressure_doors_.clear();
         PlacedHabitat air;air.kind=HabitatKind::AirLock;air.construction.step=kConstructionSteps;
+        air.supply.power_fraction=1.0;
         app.placed_habitats_={air};const auto& mesh=app.habitat_models_.mesh(air);require(mesh.entrances.empty(),"air lock retained authored hatch");
         app.corridor_network_.set_playfield_half_extent(64);
         const float air_end=mesh.footprint_x*0.5f;
@@ -2615,7 +2814,11 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="hydrogen-refueling") game::NavigationRegression::hydrogen_refueling();
         else if(argc>1 && std::string(argv[1])=="debug-orders") game::NavigationRegression::debug_orders();
         else if(argc>1 && std::string(argv[1])=="priority") game::NavigationRegression::build_priority();
-        else if(argc>1 && std::string(argv[1])=="airlock-cycle") game::NavigationRegression::airlock_cycle();
+        else if(argc>1 && std::string(argv[1])=="crew-autonomy") game::NavigationRegression::astronaut_autonomy();
+        else if(argc>1 && std::string(argv[1])=="airlock-cycle"){
+            game::NavigationRegression::airlock_cycle();
+            game::NavigationRegression::astronaut_access();
+        }
         else if(argc>1 && std::string(argv[1])=="airlock") game::NavigationRegression::airlock_connections();
         else if(argc>1 && std::string(argv[1])=="hydroponics") game::NavigationRegression::hydroponics();
         else if(argc>1 && std::string(argv[1])=="power-switches") game::NavigationRegression::power_switches();
