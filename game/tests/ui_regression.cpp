@@ -721,6 +721,7 @@ struct UiRegression {
         app.start_new_game(GameApp::Stage3Mode::AstronautTest);
         require(app.astronaut_test_active()==build::debug_features,"incorrect Stage 3 access");
         app.active_game_phase_=GameApp::GamePhase::Debug;
+        app.stage3_mode_=GameApp::Stage3Mode::Sandbox;
         app.debug_frame_enabled_=true;
         PlacedHabitat blueprint;
         app.finalize_placement(blueprint);
@@ -749,6 +750,68 @@ struct UiRegression {
             if(ok) require(loaded.debug_mode_active()==build::debug_features,"save altered build policy");
         }
         std::cout<<(build::debug_features?"Debug":"Release")<<" menus, build actions, and save access passed\n";
+    }
+
+    static void build_order_panel(){
+        eng::Application engine;
+        for(int zoom:{0,4}){
+            GameApp app(engine);
+            setup(app,7,zoom);
+            app.placed_habitats_.clear();
+            app.placed_resources_.clear();
+            app.builder_robots_.clear();
+            for(int i=0;i<12;++i){
+                PlacedResource panel;
+                panel.kind=ResourceKind::SolarPanel;
+                panel.placement_sequence=i+1;
+                panel.instance_serial=i+1;
+                panel.position={float(i-6)*4,0,18};
+                app.placed_resources_.push_back(panel);
+            }
+            const ConstructionTargetRef promoted{ConstructionTargetKind::Resource,1};
+            app.toggle_construction_priority(promoted);
+            Recorder recorder;
+            recorder.resize(1280,720);
+            app.render(recorder);
+            const auto click=[&](float x,float y){
+                eng::InputState input;
+                input.mouse_x=int(std::lround(x*recorder.scale));
+                input.mouse_y=int(std::lround(y*recorder.scale));
+                input.left_pressed=true;
+                app.update_simulation(0.f,input);
+                require(!app.selection_marquee_active_,"queue click reached the world");
+                app.render(recorder);
+            };
+            const auto header=recorder.button("+  BUILD ORDER  [12]");
+            click(header.x+header.w/2,header.y+header.h/2);
+            require(app.build_queue_expanded_,"queue header did not expand");
+            app.input_={};
+            app.render(recorder);
+            recorder.check_bounds("expanded build order");
+            recorder.button("NEXT");
+            const auto expanded=app.build_queue_panel_rect();
+            const float right=expanded.x+expanded.w-8;
+            const float first_row_y=expanded.y+38;
+            click(right-16,first_row_y+17);
+            require(app.construction_queue().front().sequence==1 &&
+                    app.construction_priority_rank(promoted)==kNoRobotIndex,
+                    "down arrow failed to demote the priority row");
+            click(right-48,first_row_y+38+17);
+            require(app.construction_queue().front().sequence==2 &&
+                    app.construction_priority_rank(promoted)==kNoRobotIndex,
+                    "up arrow failed to move a normal row");
+            eng::InputState wheel=app.input_;
+            wheel.left_pressed=false;
+            wheel.wheel=-1;
+            const auto distance=app.camera_.distance();
+            app.update_simulation(0.f,wheel);
+            app.render(recorder);
+            require(app.build_queue_scroll_==1 && app.camera_.distance()==distance,
+                    "scrolling the queue zoomed the playfield or left the rows unchanged");
+            click(header.x+header.w/2,header.y+header.h/2);
+            require(!app.build_queue_expanded_,"queue header did not collapse");
+        }
+        std::cout<<"Build order mouse controls, priority demotion and scroll isolation passed\n";
     }
 
     static void recent_saves(){
@@ -1105,8 +1168,8 @@ struct UiRegression {
                 require(bytes.size()>=lander_trailer,"schema-32 save missing deployment trailer");
                 constexpr std::size_t empty_trade_trailer=1+sizeof(float)+sizeof(std::uint64_t)+3*sizeof(float)+2*kTradeGoodCount*sizeof(std::int64_t)+2*sizeof(std::int64_t)+1+3*sizeof(std::uint32_t);
                 require(bytes.size()>=lander_trailer+empty_trade_trailer+16,"schema-33 fixture missing trade trailer");
-                bytes.resize(bytes.size()-(lander_trailer+empty_trade_trailer+16+10+stages.ground_resource_piles_.size()+stages.planning_.mission_habitats.size()+stages.planning_.mission_structures.size()+7));
-                constexpr std::size_t old_count=12;
+                constexpr std::size_t empty_build_order_trailer=sizeof(std::uint64_t);
+                bytes.resize(bytes.size()-(lander_trailer+empty_trade_trailer+16+10+stages.ground_resource_piles_.size()+stages.planning_.mission_habitats.size()+stages.planning_.mission_structures.size()+7+empty_build_order_trailer));
                 constexpr std::size_t record_bytes=sizeof(std::uint8_t)+sizeof(double)+sizeof(std::uint16_t);
                 constexpr std::size_t trailing=2+kMaterialResourceCount*sizeof(std::int64_t)+1+sizeof(std::int64_t)+3;
                 require(bytes.size()>trailing+kPlanningContractCount*record_bytes+12,
@@ -1484,8 +1547,11 @@ struct UiRegression {
             select_build("air_lock");
             click_world(18.f,0.f);
             require(sandbox.placed_habitats_.size()==1 &&
-                    sandbox.placed_habitats_.front().construction.complete(),
-                    "astronaut test could not place a finished Air Lock with the build tool");
+                    !sandbox.placed_habitats_.front().construction.complete(),
+                    "astronaut test did not queue the placed Air Lock");
+            advance_crew(sandbox,2400);
+            require(sandbox.placed_habitats_.front().construction.complete(),
+                    "astronauts did not finish the queued Air Lock");
             click_astronaut_scene(sandbox,sandbox.placed_habitats_.front().position);
             require(sandbox.selection_kind_==GameApp::SelectionKind::Habitat,"Air Lock click did not select the structure");
             const auto before_pan=sandbox.camera_.state().target;
@@ -1509,7 +1575,7 @@ struct UiRegression {
             sandbox.update(0.f,{});
             require(!sandbox.build_catalog_.selected() && sandbox.placed_habitats_.size()==1,
                     "right click did not cancel structure placement");
-            std::cout<<"Stage 3 mode selection, crew status, instant building, crossing waypoints and save/load passed"
+            std::cout<<"Stage 3 mode selection, crew status, queued building, crossing waypoints and save/load passed"
                      <<(template_exists?" with the restored template\n":" without a template file\n");
 
             sandbox.screen_=GameApp::Screen::Stage3Modes;
@@ -1882,6 +1948,7 @@ int main(int argc,char** argv){
             game::UiRegression::recent_saves();
         }
         else if(out=="graphics-quality") game::UiRegression::graphics_quality();
+        else if(out=="build-order") game::UiRegression::build_order_panel();
         else{
             if(!out.empty()) std::filesystem::create_directories(out);
             game::UiRegression::run(out);

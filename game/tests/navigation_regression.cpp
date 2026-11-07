@@ -1701,25 +1701,28 @@ struct NavigationRegression {
         GameApp app(engine);
         app.new_game_phase_selection_=GameApp::GamePhase::Debug;
         app.start_new_game(GameApp::Stage3Mode::AstronautTest);
+        // These scenarios begin with a built fixture so the assertions isolate
+        // airlock traversal and duties from the construction scheduler.
+        const auto commission=[&](auto& item){app.finalize_placement(item);item.construction.finish();};
         constexpr float rotation=37.f;
         const auto world=[&](float x,float z=0.f){return world_math::rotate_y(Vec3{x,0.f,z},rotation);};
         PlacedHabitat lock;
         lock.kind=HabitatKind::AirLock;
         lock.size=HabitatSizeTier::Small;
         lock.rotation_degrees=rotation;
-        app.finalize_placement(lock);
+        commission(lock);
         app.placed_habitats_.push_back(lock);
         PlacedHabitat room=lock;
         room.kind=HabitatKind::CrewQuarters;
         room.position=world(22.f);
-        app.finalize_placement(room);
+        commission(room);
         app.placed_habitats_.push_back(room);
         const float end=app.habitat_models_.mesh(lock).footprint_x*.5f;
         require(app.corridor_network_.build_corridor({CorridorEndpointKind::Habitat,0,world(end)},
             {CorridorEndpointKind::Habitat,1,world(19.f)},app.placed_habitats_,app.habitat_models_,
             app.placed_resources_,app.resource_models_),"crew pressure route placement failed");
         auto& corridor=app.corridor_network_.mutable_connections().front();
-        app.finalize_placement(corridor);
+        commission(corridor);
         const auto& door=corridor.endpoint_b.door;
         Vec3 goal=door.wall_position-door.normal*1.35f;
         goal.y=app.first_person_floor_height(goal);
@@ -1747,13 +1750,13 @@ struct NavigationRegression {
         battery.kind=ResourceKind::PowerStorage;
         battery.position=world(-12.f,-16.f);
         battery.supply.energy_kwh=10.f;
-        app.finalize_placement(battery);
+        commission(battery);
         app.placed_resources_.push_back(battery);
         require(app.utility_network_.build_connection(UtilityKind::SupplyChannel,
             {UtilityEndpointKind::Resource,0,battery.position},{UtilityEndpointKind::Habitat,0,world(0,-1)},
             app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_),
             "crew air lock could not be connected to a battery");
-        app.finalize_placement(app.utility_network_.mutable_connections().back());
+        commission(app.utility_network_.mutable_connections().back());
         app.update_supply_simulation(0.f);
         require(app.airlock_powered(0),"connected battery did not power the air lock");
         travel(1300);
@@ -1782,6 +1785,9 @@ struct NavigationRegression {
         GameApp app(platform);
         app.new_game_phase_selection_=GameApp::GamePhase::Debug;
         app.start_new_game(GameApp::Stage3Mode::AstronautTest);
+        // These scenarios begin with a built fixture so the assertions isolate
+        // airlock traversal and duties from the construction scheduler.
+        const auto commission=[&](auto& item){app.finalize_placement(item);item.construction.finish();};
         auto& crew=app.test_astronauts_;
         const auto tick=[&](int frames){
             for(int i=0;i<frames;++i){
@@ -1800,25 +1806,25 @@ struct NavigationRegression {
         a={};
         for(std::size_t i=0;i<crew.size();++i)crew[i].position={-7.1f-(float)i*1.3f,0,.1f+(float)i*.12f};
         PlacedHabitat lock;lock.kind=HabitatKind::AirLock;lock.size=HabitatSizeTier::Small;
-        app.finalize_placement(lock);app.placed_habitats_.push_back(lock);
+        commission(lock);app.placed_habitats_.push_back(lock);
         PlacedHabitat quarters=lock;quarters.kind=HabitatKind::CrewQuarters;quarters.position={22,0,0};
-        app.finalize_placement(quarters);app.placed_habitats_.push_back(quarters);
+        commission(quarters);app.placed_habitats_.push_back(quarters);
         require(app.corridor_network_.build_corridor({CorridorEndpointKind::Habitat,0,{3.8f,0,0}},
                 {CorridorEndpointKind::Habitat,1,{19,0,0}},app.placed_habitats_,app.habitat_models_,
                 app.placed_resources_,app.resource_models_),"corridor placement");
         auto& corridor=app.corridor_network_.mutable_connections()[0];
-        app.finalize_placement(corridor);
+        commission(corridor);
         app.update_supply_simulation(0.f);
         for(auto& h:app.placed_habitats_)h.supply.oxygen_kg=h.supply.volume_m3*kOxygenKgPerM3;
         corridor.supply.oxygen_kg=corridor.supply.volume_m3*kOxygenKgPerM3;
         tick(80);
         require(!crew[0].destination,"autonomy attempted to enter unpowered base");
         PlacedResource battery;battery.kind=ResourceKind::PowerStorage;battery.position={-12,0,-16};battery.supply.energy_kwh=10.f;
-        app.finalize_placement(battery);app.placed_resources_.push_back(battery);
+        commission(battery);app.placed_resources_.push_back(battery);
         require(app.utility_network_.build_connection(UtilityKind::SupplyChannel,
                 {UtilityEndpointKind::Resource,0,battery.position},{UtilityEndpointKind::Habitat,0,{0,0,-1}},
                 app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_),"battery utility");
-        app.finalize_placement(app.utility_network_.mutable_connections().back());
+        commission(app.utility_network_.mutable_connections().back());
         app.update_supply_simulation(0.f);
         require(app.airlock_powered(0),"power fixture");
         for(int i=0;i<64;++i){
@@ -1880,7 +1886,7 @@ struct NavigationRegression {
             PlacedHabitat workplace;
             workplace.kind=facilities[i];
             workplace.position={-30.f+(float)i*20.f,0.f,28.f};
-            app.finalize_placement(workplace);
+            commission(workplace);
             workplace.supply.power_fraction=1.0;
             workplace.supply.volume_m3=300.0;
             workplace.supply.oxygen_kg=300.0*kOxygenKgPerM3;
@@ -2024,6 +2030,76 @@ struct NavigationRegression {
         require(hydroponics_bay_count(HabitatSizeTier::Small)==2 && hydroponics_bay_count(HabitatSizeTier::Standard)==4 && hydroponics_bay_count(HabitatSizeTier::Mid)==6 && hydroponics_bay_count(HabitatSizeTier::Big)==8,"Bio Dome bay count does not scale with dome size");
         require(hydroponics_lights_on(6.0f) && hydroponics_lights_on(21.99f) && !hydroponics_lights_on(22.0f) && !hydroponics_lights_on(5.99f),"Bio Dome 16/8 photoperiod boundaries are wrong");
         std::cout<<"Bio Dome empty defaults, 16/8 light cycle, air/power/water dependency, harvest and schema-23 persistence passed\n";
+    }
+
+    static void reordered_builds(){
+        eng::Application engine;
+        GameApp app(engine);
+        app.playfield_.rebuild(128);
+        app.starting_robot_count_=1;
+        app.starting_carrier_count_=1;
+        app.reset_builder_robot_and_starter_stash();
+        app.ground_resource_piles_={{MaterialResource::Iron,1000,{-30,0,30},0.4f,1}};
+        for(int i=0;i<3;++i){
+            PlacedResource job;
+            job.kind=ResourceKind::SolarPanel;
+            job.position={float(i-1)*20,0,-20};
+            job.resource_plan.total_steps=kConstructionSteps;
+            for(auto& cost:job.resource_plan.steps) cost.iron=10;
+            job.site_buffer.iron=10;
+            app.finalize_placement(job);
+            app.placed_resources_.push_back(job);
+        }
+        const ConstructionTargetRef first{ConstructionTargetKind::Resource,0};
+        const ConstructionTargetRef last{ConstructionTargetKind::Resource,2};
+        app.builder_robots_[0].position={-22,0,23};
+        app.builder_robots_[1].position={-22,0,30};
+        require(app.move_construction_order(3,-1) && app.move_construction_order(3,-1),
+                "normal job could not move to the front");
+        app.update_construction(1.f/90.f);
+        require(app.builder_robots_[0].target.same_as(last),"builder ignored the reordered queue");
+        require(app.builder_robots_[1].target.same_as(last),"carrier ignored the reordered queue");
+        app.toggle_construction_priority(last);
+        require(app.move_construction_order(3,1) && app.construction_priority_rank(last)==kNoRobotIndex,
+                "priority survived a move below a normal row");
+        app.update_construction(1.f/90.f);
+        require(app.builder_robots_[1].target.same_as(first),"empty carrier did not switch to the new queue head");
+
+        std::string error;
+        require(app.save_game_to_name("build-order-regression",error),error);
+        const auto path=std::filesystem::path(app.save_game_directory())/"build-order-regression.gmsave";
+        GameApp restored(engine);
+        const bool loaded=restored.load_game_from_file(path.string(),error);
+        std::filesystem::remove(path);
+        require(loaded,error);
+        require(restored.construction_order_==app.construction_order_ &&
+                restored.construction_queue().front().sequence==1,"edited queue was lost when loading");
+        restored.placed_resources_.erase(restored.placed_resources_.begin());
+        require(restored.construction_queue().front().sequence==3,"queue followed object indices after deletion");
+
+        if constexpr(build::debug_features){
+            GameApp crew(engine);
+            crew.new_game_phase_selection_=GameApp::GamePhase::Debug;
+            crew.start_new_game(GameApp::Stage3Mode::AstronautTest);
+            for(float x:{-13.f,13.f}){
+                PlacedResource job;
+                job.kind=ResourceKind::SolarPanel;
+                job.size=ResourceSizeTier::Small;
+                job.position={x,0,8};
+                crew.finalize_placement(job);
+                crew.placed_resources_.push_back(job);
+            }
+            require(crew.move_construction_order(2,-1),"crew queue did not move");
+            for(int i=0;i<960 && !crew.placed_resources_[1].construction.complete();++i){
+                crew.update_astronaut_test(.05f);
+                require(crew.placed_resources_[0].construction.step==0,"crew built a later item out of order");
+            }
+            require(crew.placed_resources_[1].construction.complete(),"crew did not assemble the new queue head");
+            for(int i=0;i<960 && !crew.placed_resources_[0].construction.complete();++i)
+                crew.update_astronaut_test(.05f);
+            require(crew.placed_resources_[0].construction.complete(),"crew did not take the next job");
+        }
+        std::cout<<"Shared rover and astronaut dispatch, priority demotion and save/load passed\n";
     }
 
     static void queue_and_flow(){
@@ -2864,6 +2940,7 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="airlock") game::NavigationRegression::airlock_connections();
         else if(argc>1 && std::string(argv[1])=="hydroponics") game::NavigationRegression::hydroponics();
         else if(argc>1 && std::string(argv[1])=="power-switches") game::NavigationRegression::power_switches();
+        else if(argc>1 && std::string(argv[1])=="build-order") game::NavigationRegression::reordered_builds();
         else if(argc>1 && std::string(argv[1])=="queue-flow") game::NavigationRegression::queue_and_flow();
         else if(argc>1 && std::string(argv[1])=="network") game::NavigationRegression::supply_network();
         else if(argc>1 && std::string(argv[1])=="supply") game::NavigationRegression::supply();

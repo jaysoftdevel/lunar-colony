@@ -14,6 +14,7 @@
 #include <limits>
 #include <system_error>
 #include <unordered_map>
+#include <unordered_set>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -26,7 +27,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=45;
+constexpr std::uint32_t kSaveSchema=46;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -767,26 +768,34 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     // Schema 44 records individual needs, sleeping assignments and emergency supplies.
     if(astronaut_test_active()){
         for(const auto& actor:test_astronauts_){
+            // Crew construction is scheduled again from the restored queue.
+            const bool building=actor.activity==AstronautActivity::Construction;
             write_vec3(w,actor.position);
             w.pod(actor.heading_degrees);
             w.pod(actor.health);
-            w.boolean(actor.destination.has_value());
-            if(actor.destination)write_vec3(w,*actor.destination);
+            w.boolean(!building && actor.destination.has_value());
+            if(!building && actor.destination)write_vec3(w,*actor.destination);
             w.pod(actor.suit_oxygen_kg);
             w.pod(actor.food_pack_kg);
             w.pod(actor.hunger);
             w.pod(actor.thirst);
             w.pod(actor.fatigue);
-            w.pod((std::uint8_t)actor.activity);
+            w.pod((std::uint8_t)(building?AstronautActivity::Idle:actor.activity));
             w.pod(actor.bed_owner);
             w.pod(actor.bed_slot);
             w.boolean(actor.suited);
-            w.pod(actor.entry_step);
-            if(actor.entry_step<2)for(const auto& p:actor.entry_waypoints)write_vec3(w,p);
+            w.pod(building?std::uint8_t{2}:actor.entry_step);
+            if(!building && actor.entry_step<2)for(const auto& p:actor.entry_waypoints)write_vec3(w,p);
         }
         w.pod(astronaut_cache_.oxygen_kg);
         w.pod(astronaut_cache_.food_kg);
         w.pod(astronaut_cache_.water_litres);
+    }
+    // Schema 46 retains the player's row order and automatic-priority overrides.
+    w.pod(static_cast<std::uint64_t>(construction_order_.size()));
+    for(const auto& item:construction_order_){
+        w.pod(item.sequence);
+        w.boolean(item.automatic_priority);
     }
 
     w.out.close();
@@ -984,7 +993,10 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     walkway_network_.restore_connections(std::move(walkways));
 
     next_blueprint_placement_sequence_=1;
-    construction_priority_.clear();debug_move_pick_robot_=-1;
+    construction_priority_.clear();
+    construction_order_.clear();
+    build_queue_expanded_=false;build_queue_scroll_=0;
+    debug_move_pick_robot_=-1;
     auto advance_sequence=[&](std::uint64_t sequence){
         next_blueprint_placement_sequence_=std::max(next_blueprint_placement_sequence_,sequence+1);
     };
@@ -1545,6 +1557,21 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         if(!r.valid){error="Savegame astronaut state is damaged.";return false;}
     }
 
+    std::vector<BuildOrderSlot> saved_order;
+    if(source_schema>=46){
+        const auto count=r.pod<std::uint64_t>();
+        if(count>5*kMaxObjects){error="Savegame build order is damaged.";return false;}
+        saved_order.reserve(static_cast<std::size_t>(count));
+        std::unordered_set<std::uint64_t> seen;
+        for(std::uint64_t i=0;i<count && r.valid;++i){
+            const auto sequence=r.pod<std::uint64_t>();
+            const auto automatic=r.pod<std::uint8_t>();
+            if(!sequence || automatic>1 || !seen.insert(sequence).second){r.valid=false;break;}
+            saved_order.push_back({sequence,automatic!=0});
+        }
+        if(!r.valid){error="Savegame build order is damaged.";return false;}
+    }
+
     // v0.40.11 and older stored delivered construction material on the BR-02
     // coordinator. Move that authoritative buffer onto the blueprint itself so
     // carriers can continue supplying an unstaffed blueprint and constructors
@@ -1629,7 +1656,11 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     walkway_network_.restore_connections(std::move(walkways));
 
     next_blueprint_placement_sequence_=1;
-    construction_priority_=std::move(saved_priority);debug_move_pick_robot_=-1;
+    construction_priority_=std::move(saved_priority);
+    construction_order_=std::move(saved_order);
+    prune_construction_priorities();
+    build_queue_expanded_=false;build_queue_scroll_=0;
+    debug_move_pick_robot_=-1;
     auto advance_sequence=[&](std::uint64_t sequence){
         next_blueprint_placement_sequence_=std::max(next_blueprint_placement_sequence_,sequence+1);
     };

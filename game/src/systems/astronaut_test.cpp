@@ -163,6 +163,7 @@ bool GameApp::handle_astronaut_click(const InputState& input){
     auto& actor=test_astronauts_[selected_astronaut_];
     if(astronaut_resting(actor))return true;
     actor.activity=AstronautActivity::Manual;
+    actor.construction_job=0;
     actor.bed_owner=0;
     actor.entry_step=2;
     actor.destination=hit;
@@ -280,6 +281,7 @@ void GameApp::update_astronaut_test(float dt){
         }
         time-=step;
     }
+    advance_astronaut_construction(std::clamp(dt,0.f,.24f));
     update_astronaut_suits();
 }
 

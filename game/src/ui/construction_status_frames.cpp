@@ -145,6 +145,7 @@ void GameApp::render_astronaut_status(Renderer& r,const Mat4& view_projection) c
         case AstronautActivity::Sleeping:activity="SLEEPING IN QUARTERS";break;
         case AstronautActivity::Knockout:activity="KNOCKOUT / EXHAUSTED";break;
         case AstronautActivity::Resupply:activity="RETURNING FOR SUIT AIR";break;
+        case AstronautActivity::Construction:activity=actor.destination?"HEADING TO BUILD SITE":"ASSEMBLING BLUEPRINT";break;
         default:break;
     }
     if(actor.health<=0.f)activity="DECEASED";
@@ -274,11 +275,12 @@ void GameApp::render_construction_status_frames(Renderer& r){
     if(first_person_mode_!=FirstPersonMode::Active){
         if(selection_kind_!=SelectionKind::None)occupied.push_back(selection_kind_==SelectionKind::GroundResource && selected_ground_resources_.size()<=1?ground_resource_panel_rect():selection_panel_rect());
         else occupied.push_back({PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,560,130});
-        if(debug_mode_active())occupied.push_back({logical_w-360-PLAYFIELD_MARGIN,logical_h-BUILD_BAR_H-198-PLAYFIELD_MARGIN,360,198});
+        if(debug_mode_active() && !build_queue_expanded_)occupied.push_back({logical_w-360-PLAYFIELD_MARGIN,logical_h-BUILD_BAR_H-198-PLAYFIELD_MARGIN,360,198});
     }
     // Normal gameplay reserves the right-edge progression checklist so floating
     // construction frames never cover objectives or the crew-readiness milestone.
-    if(!debug_mode_active())occupied.push_back(progress_tree_panel_rect());
+    if(!debug_mode_active() && (!build_queue_expanded_ || first_person_mode_!=FirstPersonMode::Off))occupied.push_back(progress_tree_panel_rect());
+    if(first_person_mode_==FirstPersonMode::Off) occupied.push_back(build_queue_panel_rect());
     for(auto& frame:visible){
         const auto needed_lines=frame.selected?resource_lines("NEEDED",frame.needed,"NONE"):std::vector<std::string>{};
         const auto shipped_lines=frame.selected?resource_lines("SHIPPED",frame.shipped,"NONE"):std::vector<std::string>{};
@@ -330,7 +332,7 @@ void GameApp::render_construction_status_frames(Renderer& r){
              <<"   "<<(int)std::lround(frame.progress*100.0f)<<"%";
         const auto rank=construction_priority_rank(frame.target);
         if(rank!=kNoRobotIndex)title<<"   PRIO "<<rank+1;
-        else if(construction_ready_connection(frame.target))title<<"   AUTO LINK";
+        else if(construction_automatic_priority(frame.target))title<<"   AUTO LINK";
         game_label_fitted(r,{candidate.x+8.0f,candidate.y+6.0f,candidate.w-16.0f,13.0f},title.str(),0.43f,theme_);
 
         const Rect progress_track{candidate.x+8.0f,candidate.y+23.0f,candidate.w-16.0f,7.0f};
@@ -391,7 +393,7 @@ void GameApp::render_supply_indicators(Renderer& r){
     };
     const auto priority=[&](ConstructionTargetRef target,Vec3 position,float height){
         if(target.same_as(selected_construction_target()))return; // selected frame already labels its priority
-        const auto rank=construction_priority_rank(target);const bool automatic=construction_ready_connection(target);
+        const auto rank=construction_priority_rank(target);const bool automatic=construction_automatic_priority(target);
         if((rank==kNoRobotIndex && !automatic) || construction_target_complete(target))return;
         float x=0,y=0;if(!project_world_to_logical(vp,position+Vec3{0,height+2.0f,0},r.width(),r.height(),ui_scale_,x,y))return;
         const Color c{0.28f,0.88f,1.0f,1};

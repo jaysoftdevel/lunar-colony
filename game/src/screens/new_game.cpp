@@ -212,7 +212,7 @@ void GameApp::render_stage3_modes(Renderer& r){
         start_new_game(Stage3Mode::Sandbox);
         return;
     }
-    if(option(2,"TEST ASTRONAUTS","FOUR CREW ROLES / INSTANT BUILD / POWERED AIR LOCKS",debug_frame_enabled_)){
+    if(option(2,"TEST ASTRONAUTS","FOUR CREW ROLES / QUEUED CONSTRUCTION / POWERED AIR LOCKS",debug_frame_enabled_)){
         start_new_game(Stage3Mode::AstronautTest);
         return;
     }
@@ -267,7 +267,10 @@ void GameApp::start_new_game(Stage3Mode stage3_mode){
         camera_.restore({134.0f,47.0f,38.0f,{0.0f,0.0f,4.0f}});
     }
     starter_stash_center_={};
-    construction_priority_.clear();debug_move_pick_robot_=-1;
+    construction_priority_.clear();
+    construction_order_.clear();
+    build_queue_expanded_=false;build_queue_scroll_=0;
+    debug_move_pick_robot_=-1;
     first_person_carried_resource_.reset();
     first_person_hover_ground_resource_=-1;
     first_person_hover_storage_resource_=-1;

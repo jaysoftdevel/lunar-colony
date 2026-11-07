@@ -27,6 +27,7 @@ bool role_facility(std::size_t role,HabitatKind kind){
 
 void order(AstronautTestActor& actor,AstronautActivity activity,std::optional<Vec3> destination={}){
     actor.activity=activity;
+    actor.construction_job=0;
     actor.destination=destination;
     actor.entry_step=2;
     actor.route.clear();
@@ -64,6 +65,21 @@ void GameApp::assign_astronaut_duties(float dt){
     }
     if(astronaut_schedule_seconds_>0.f)return;
     astronaut_schedule_seconds_=.65f;
+
+    const auto next_job=next_astronaut_construction();
+    const auto build_id=next_job.sequence;
+    const auto worksite=build_id?construction_drop_position(next_job.target):Vec3{};
+    bool crew_build_claimed=false;
+    for(auto& actor:test_astronauts_){
+        if(actor.activity!=AstronautActivity::Construction) continue;
+        if(actor.construction_job==build_id && actor.order_timeout<16.f && actor.fatigue<kCrewTired){
+            crew_build_claimed=true;
+        }else{
+            const bool timed_out=actor.order_timeout>=16.f;
+            order(actor,AstronautActivity::Idle);
+            if(timed_out) actor.decision_delay=2.f;
+        }
+    }
 
     // Join the passenger corridors only. Supply pipes do not grant access.
     const auto& corridors=corridor_network_.connections();
@@ -195,6 +211,7 @@ void GameApp::assign_astronaut_duties(float dt){
         if(actor.destination && actor.activity==AstronautActivity::Manual && actor.fatigue<kCrewExhausted)continue;
         if(actor.destination && actor.activity==AstronautActivity::Resupply &&
            actor.suit_oxygen_kg<.22 && astronaut_cache_.oxygen_kg>0)continue;
+        if(actor.activity==AstronautActivity::Construction)continue;
         if(actor.destination && actor.order_timeout<16.f){
             bool target_lock=false;
             if(ready(astronaut_air_at(*actor.destination,target_lock)) &&
@@ -249,6 +266,46 @@ void GameApp::assign_astronaut_duties(float dt){
         const bool at_duty=ready(air) && here<count &&
             (here<habitat_count?role_facility(i,placed_habitats_[here].kind):
              i==0 && here<corridor_start && placed_resources_[here-habitat_count].kind==ResourceKind::StorageDome);
+        // Worker and engineer take construction first. A biologist or medic
+        // can cover the job when available away from their assigned facility.
+        if(build_id && !crew_build_claimed && actor.fatigue<kCrewTired && (i<2 || !at_duty)){
+            Vec3 site=worksite;
+            site.y=first_person_floor_height(site);
+            const float field_limit=playfield_.size()*.5f-kAstronautFieldMargin;
+            const float air_needed=distance_xz(actor.position,site)+
+                std::max(0.f,std::hypot(site.x,site.z)-kCrewCacheRadius)+8.f;
+            bool station_lock=false;
+            if(std::abs(site.x)<=field_limit && std::abs(site.z)<=field_limit && suit_range>=air_needed &&
+               !astronaut_air_at(site,station_lock) && spot_free(site)){
+                std::optional<std::array<Vec3,2>> exit_waypoints;
+                if(air && here<count){
+                    float best=std::numeric_limits<float>::infinity();
+                    for(std::size_t h=0;h<habitat_count;++h){
+                        if(placed_habitats_[h].kind!=HabitatKind::AirLock || group(h)!=group(here) ||
+                           !placed_habitats_[h].construction.complete() || !airlock_powered(h))continue;
+                        for(const auto& door:habitat_doors(h)){
+                            if(door.entrance_index!=-4)continue;
+                            auto outside=door.wall_position+door.normal*1.75f;
+                            auto inside=door.wall_position-door.normal*.65f;
+                            outside.y=first_person_floor_height(outside);
+                            inside.y=first_person_floor_height(inside);
+                            const float cost=distance_xz(actor.position,inside)+distance_xz(outside,site);
+                            if(cost>=best || !first_person_move_allowed(inside,inside,CrewTraversal::Plan) ||
+                               !first_person_move_allowed(outside,outside,CrewTraversal::Plan))continue;
+                            exit_waypoints=std::array<Vec3,2>{inside,outside};
+                            best=cost;
+                        }
+                    }
+                }
+                if(!air || exit_waypoints){
+                    order(actor,AstronautActivity::Construction,site);
+                    actor.construction_job=build_id;
+                    if(exit_waypoints){actor.entry_waypoints=*exit_waypoints;actor.entry_step=0;}
+                    crew_build_claimed=true;
+                    continue;
+                }
+            }
+        }
         if(at_duty){
             actor.activity=AstronautActivity::Duty;
             continue;
@@ -295,6 +352,69 @@ void GameApp::assign_astronaut_duties(float dt){
             enter_via_airlock(target_node);
             entry_in_progress|=!air;
         }else actor.activity=ready(air)?AstronautActivity::Shelter:AstronautActivity::Idle;
+    }
+}
+
+GameApp::BuildQueueItem GameApp::next_astronaut_construction() const {
+    for(const auto& job:construction_queue()){
+        const auto* plan=construction_target_plan(job.target);
+        if(job.sequence && construction_queue_allows(job) && construction_target_dependencies_ready(job.target) &&
+           plan && plan->remaining(construction_target_step(job.target)).empty()) return job;
+    }
+    return {};
+}
+
+void GameApp::advance_astronaut_construction(float dt){
+    if(dt<=0.f) return;
+    const auto worker=std::find_if(test_astronauts_.begin(),test_astronauts_.end(),[](const auto& actor){
+        return actor.activity==AstronautActivity::Construction && actor.construction_job &&
+               !actor.destination && actor.speed<.05f && actor.health>0.f && actor.suited &&
+               actor.suit_oxygen_kg>0.0 && actor.fatigue<kCrewTired;
+    });
+    if(worker==test_astronauts_.end()) return;
+
+    const auto job=next_astronaut_construction();
+    if(job.sequence!=worker->construction_job) return;
+    const auto& target=job.target;
+    const auto occupied=[&](const auto& inside){
+        return std::any_of(test_astronauts_.begin(),test_astronauts_.end(),[&](const auto& actor){
+                   return inside(astronaut_rest_pose(actor).feet);
+               }) || (first_person_mode_==FirstPersonMode::Active && inside(first_person_.feet_position()));
+    };
+    const auto structure_clear=[&](const auto& structure,const auto& mesh){
+        const auto box=footprint(structure.position,structure.rotation_degrees,mesh.footprint_x,mesh.footprint_z);
+        return !occupied([&](Vec3 p){return overlaps(box,footprint(p,0.f,.90f,.90f),0.f);});
+    };
+    const auto segment_occupied=[&](Vec3 a,Vec3 b,float width){
+        return occupied([&](Vec3 p){return point_segment_distance_xz(p,a,b)<width+.45f;});
+    };
+    switch(target.kind){
+        case ConstructionTargetKind::Habitat:{
+            const auto& structure=placed_habitats_[target.index];
+            if(!structure_clear(structure,habitat_models_.mesh(structure))) return;
+            break;
+        }
+        case ConstructionTargetKind::Resource:{
+            const auto& structure=placed_resources_[target.index];
+            if(!structure_clear(structure,resource_models_.mesh(structure))) return;
+            break;
+        }
+        case ConstructionTargetKind::Corridor:{
+            const auto& corridor=corridor_network_.connections()[target.index];
+            for(std::size_t i=1;i<corridor.path.size();++i)
+                if(segment_occupied(corridor.path[i-1],corridor.path[i],geometry::kCorridorHalfWidth)) return;
+            for(const auto* endpoint:{&corridor.endpoint_a,&corridor.endpoint_b}){
+                if((endpoint->kind==CorridorEndpointKind::Habitat || endpoint->kind==CorridorEndpointKind::Resource) &&
+                   segment_occupied(endpoint->position,endpoint->door.wall_position,geometry::kDockSleeveHalfWidth)) return;
+            }
+            break;
+        }
+        default:break; // Walkways and supply channels remain surface-crossable.
+    }
+    advance_construction_target(target,dt);
+    if(construction_target_complete(target)){
+        order(*worker,AstronautActivity::Idle);
+        astronaut_schedule_seconds_=0.f;
     }
 }
 

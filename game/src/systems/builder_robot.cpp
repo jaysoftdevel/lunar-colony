@@ -1437,6 +1437,7 @@ void GameApp::update_builder_robot(float dt){
     bool has_workshop=false;
     for(std::size_t i=0;i<placed_resources_.size();++i) if(workshop_operational(i)){has_workshop=true;break;}
     if(dt<=0.0f || builder_robots_.empty()) return;
+    const auto build_queue=construction_queue();
 
     // Battery use is accounted from authoritative before/after poses, not from
     // requested routes, so waiting/rejected safety proposals never consume fake
@@ -4784,55 +4785,24 @@ void GameApp::update_builder_robot(float dt){
             robot.mode=BuilderRobotMode::Idle;
         }
 
-        auto choose_target=[&](){
-            ConstructionTargetRef best{};
-            float best_score=std::numeric_limits<float>::max();
-            std::size_t best_priority=kNoRobotIndex;
-            auto consider=[&](ConstructionTargetKind kind,std::size_t index){
-                ConstructionTargetRef candidate{kind,index};
-                if(construction_target_complete(candidate) || !construction_target_dependencies_ready(candidate)) return;
-                if(!construction_stage_supplied(candidate) || !construction_site_logistics_clear(candidate)) return;
-                // Untouched blueprints remain traversable. BR-02 may claim a
-                // supplied target while another rover is crossing it; the
-                // pre-build gate clears the footprint only when work is actually
-                // about to begin.
-                const std::size_t workers=constructor_team_count(candidate);
-                const std::size_t capacity=constructor_team_capacity(candidate);
-                if(workers>=capacity) return;
-                const float distance=dist_xz(robot.position,construction_target_position(candidate));
-                // Prefer joining a nearby active build crew before opening a new
-                // site, but distribute excess BR-02s once a sensible crew size
-                // has been reached. This gives visible cooperative construction
-                // without sending the entire fleet to one tiny walkway segment.
-                const float cooperation_bonus=workers>0?2.4f:0.0f;
-                const float load_penalty=(float)workers*1.15f;
-                // Always seed an untouched construction site before adding a
-                // second helper to an already staffed site. This guarantees that
-                // simultaneous blueprints actually progress in parallel instead
-                // of the fleet dog-piling the nearest structure first.
-                const float staffed_site_penalty=workers>0?10000.0f:0.0f;
-                // Once endpoint structures are complete, finish their network
-                // connection before sending BR-02 to unrelated later structures.
-                // This makes placed corridors an actual construction commitment
-                // rather than an indefinitely deferred low-priority blueprint.
-                float network_priority=0.0f;
-                if(kind==ConstructionTargetKind::Corridor) network_priority=-600.0f;
-                else if(kind==ConstructionTargetKind::Utility || kind==ConstructionTargetKind::Walkway) network_priority=-350.0f;
-                const float score=distance+load_penalty-cooperation_bonus+staffed_site_penalty+network_priority;
-                const auto priority=construction_dispatch_rank(candidate);
-                if(priority==3)return;
-                if(priority<best_priority || (priority==best_priority && score<best_score)){ best_priority=priority;best_score=score;best=candidate; }
-            };
-            for(std::size_t i=0;i<placed_habitats_.size();++i) consider(ConstructionTargetKind::Habitat,i);
-            for(std::size_t i=0;i<placed_resources_.size();++i) consider(ConstructionTargetKind::Resource,i);
-            for(std::size_t i=0;i<corridor_network_.connections().size();++i) consider(ConstructionTargetKind::Corridor,i);
-            for(std::size_t i=0;i<utility_network_.connections().size();++i) consider(ConstructionTargetKind::Utility,i);
-            for(std::size_t i=0;i<walkway_network_.connections().size();++i) consider(ConstructionTargetKind::Walkway,i);
-            return best;
+        auto choose_target=[&](bool only_earlier){
+            for(const auto& job:build_queue){
+                const auto& target=job.target;
+                if(only_earlier && target.same_as(robot.target)) break;
+                if(!construction_queue_allows(job) || !construction_target_dependencies_ready(target)) continue;
+                if(construction_stage_supplied(target) && construction_site_logistics_clear(target) &&
+                   constructor_team_count(target)<constructor_team_capacity(target)) return target;
+            }
+            return ConstructionTargetRef{};
         };
 
-        if(!robot.target.valid() || construction_target_complete(robot.target)){
-            robot.target=choose_target();
+        const bool needs_assignment=!robot.target.valid() || construction_target_complete(robot.target);
+        const bool can_switch=!construction_order_.empty() && robot.mode==BuilderRobotMode::AwaitingMaterials &&
+            robot.action==BuilderRobotAction::None && robot.cargo.empty() && robot.logistics_reservation.empty() &&
+            !robot.stage_materials_picked && !robot.stage_commit_pending;
+        const auto next=needs_assignment?choose_target(false):can_switch?choose_target(true):ConstructionTargetRef{};
+        if(needs_assignment || next.valid()){
+            robot.target=next;
             robot.service_slot_offset=0;
             if(robot.target.valid()){
                 const std::size_t coordinator=site_owner_index(robot.target);
@@ -4869,7 +4839,7 @@ void GameApp::update_builder_robot(float dt){
             // missing resources. Return it to its own parking bay beside the
             // starter stash. The same home behavior applies when the entire
             // construction queue is complete. As soon as a supplied build task
-            // becomes available on a later tick, choose_target() preempts this
+            // becomes available on a later tick, dispatch preempts this
             // cosmetic return trip immediately.
             if(has_workshop || robot.debug_move_active) continue;
             const Vec3 home=constructor_parking_position(robot_index);
@@ -5411,48 +5381,17 @@ void GameApp::update_builder_robot(float dt){
             return false;
         };
 
-        // Within equal player priority CR-01 logistics is FIFO by placement order. The
-        // fleet fully stages the complete remaining bill of materials for the
-        // oldest blueprint before any carrier is allowed to advance to a newer
-        // one. Construction dependencies do not alter this logistics order.
-        auto placement_sequence=[&](const ConstructionTargetRef& target){ return construction_target_sequence(target); };
-
+        // Physically stage the whole remaining bill before advancing to the
+        // next item. A connection moved ahead of its prerequisites leaves
+        // those jobs available for delivery first.
         auto fifo_front_target=[&](){
-            ConstructionTargetRef best{};
-            std::size_t best_priority=kNoRobotIndex;
-            std::uint64_t best_sequence=std::numeric_limits<std::uint64_t>::max();
-            std::uint64_t fallback_order=0;
-            std::uint64_t best_fallback=std::numeric_limits<std::uint64_t>::max();
-
-            auto consider=[&](const ConstructionTargetRef& target){
-                if(!target.valid() || construction_target_complete(target)) return;
-                // Advance the queue only after the complete REMAINING plan is
-                // physically staged at this blueprint. Fleet reservations do
-                // not count as supplied until the pallet actually arrives.
-                if(logistics_remaining(target,true,false,kNoRobotIndex).empty()) return;
-                const std::uint64_t sequence=placement_sequence(target);
-                const std::uint64_t fallback=++fallback_order;
-                const auto priority=construction_dispatch_rank(target);
-                if(priority==3)return;
-                if(priority>best_priority)return;
-                if(priority<best_priority){best_priority=priority;best_sequence=std::numeric_limits<std::uint64_t>::max();best_fallback=std::numeric_limits<std::uint64_t>::max();}
-
-                if(sequence>0){
-                    if(sequence<best_sequence){ best_sequence=sequence; best_fallback=fallback; best=target; }
-                }else if(best_sequence==std::numeric_limits<std::uint64_t>::max() && fallback<best_fallback){
-                    // Defensive support for a transient/legacy object without a
-                    // sequence. Save migration normally guarantees non-zero IDs.
-                    best_fallback=fallback;
-                    best=target;
-                }
-            };
-
-            for(std::size_t i=0;i<placed_habitats_.size();++i) consider({ConstructionTargetKind::Habitat,i});
-            for(std::size_t i=0;i<placed_resources_.size();++i) consider({ConstructionTargetKind::Resource,i});
-            for(std::size_t i=0;i<corridor_network_.connections().size();++i) consider({ConstructionTargetKind::Corridor,i});
-            for(std::size_t i=0;i<utility_network_.connections().size();++i) consider({ConstructionTargetKind::Utility,i});
-            for(std::size_t i=0;i<walkway_network_.connections().size();++i) consider({ConstructionTargetKind::Walkway,i});
-            return best;
+            for(const auto& job:build_queue){
+                if(!construction_queue_allows(job)) continue;
+                if((!construction_order_.empty() || job.manual_priority) &&
+                   !construction_target_dependencies_ready(job.target)) continue;
+                if(!logistics_remaining(job.target,true,false,kNoRobotIndex).empty()) return job.target;
+            }
+            return ConstructionTargetRef{};
         };
 
         auto choose_support=[&](bool loaded_only){

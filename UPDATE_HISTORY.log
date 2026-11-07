@@ -813,3 +813,8 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Allocate screen buffers for enabled effects and skip the OpenGL resolve pass when it has no work.
 - Add a new main menu and Continue action, order saves by recency, and preserve distinct save names.
 - Publish save updates through a single replacement and apply display changes through explicit controls.
+
+0.52.8 - Editable build order
+- Show a collapsible Build Order panel in the colony HUD with priority badges and row controls.
+- Share the queue between construction rovers, material carriers, and the Stage 3 astronaut test crew.
+- Drop priority when a row moves below a normal job. Persist edited order by blueprint ID.

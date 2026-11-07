@@ -60,6 +60,7 @@ add_library(game_cluster_ui OBJECT
     src/ui/status_bar.cpp
     "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/src/ui/debug_frame.cpp>"
     src/ui/build_bar.cpp
+    src/ui/build_queue.cpp
     src/ui/view_selector.cpp
     src/ui/build_icons.cpp
     src/ui/selection_panel.cpp

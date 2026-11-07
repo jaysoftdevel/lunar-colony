@@ -213,6 +213,21 @@ private:
     // Monotonic placement order shared by structures and network blueprints.
     std::uint64_t next_blueprint_placement_sequence_{1};
     std::vector<std::uint64_t> construction_priority_{}; // FIFO priorities, stable placement IDs
+    struct BuildOrderSlot {
+        std::uint64_t sequence{};
+        bool automatic_priority{};
+        bool operator==(const BuildOrderSlot&) const = default;
+    };
+    struct BuildQueueItem {
+        ConstructionTargetRef target{};
+        std::uint64_t sequence{};
+        bool automatic_priority{};
+        bool manual_priority{};
+        bool prioritized() const { return automatic_priority || manual_priority; }
+    };
+    std::vector<BuildOrderSlot> construction_order_{};
+    bool build_queue_expanded_{};
+    int build_queue_scroll_{};
     eng::Rect construction_priority_button_rect_{};
     ConstructionTargetRef construction_priority_button_target_{};
     int debug_move_pick_robot_{-1};
@@ -295,11 +310,16 @@ private:
     bool render_benchmark_scene(eng::Renderer& r);
     void render_credits(eng::Renderer& r);
     void render_playfield(eng::Renderer& r);
+    eng::Rect build_queue_panel_rect() const;
+    bool mouse_over_build_queue(const eng::InputState& input) const;
+    void render_build_queue(eng::Renderer& r);
     bool handle_astronaut_click(const eng::InputState& input);
     void reset_astronaut_test();
     void update_astronaut_test(float dt);
     void update_astronaut_suits();
     void assign_astronaut_duties(float dt);
+    void advance_astronaut_construction(float dt);
+    BuildQueueItem next_astronaut_construction() const;
     AstronautRestPose astronaut_rest_pose(const AstronautTestActor& actor) const;
     bool consume_colony_stock(MaterialResource material,std::int64_t amount);
     const SupplyState* astronaut_air_at(eng::Vec3 p,bool& airlock) const;
@@ -380,8 +400,13 @@ private:
     ConstructionTargetRef selected_construction_target() const;
     std::uint64_t construction_target_sequence(const ConstructionTargetRef& target) const;
     std::size_t construction_priority_rank(const ConstructionTargetRef& target) const;
+    std::vector<BuildQueueItem> construction_queue() const;
+    void set_construction_order(const std::vector<BuildQueueItem>& queue);
+    bool move_construction_order(std::uint64_t sequence,int direction);
+    bool construction_queue_allows(const BuildQueueItem& item) const;
     void toggle_construction_priority(const ConstructionTargetRef& target);
     bool construction_ready_connection(const ConstructionTargetRef& target) const;
+    bool construction_automatic_priority(const ConstructionTargetRef& target) const;
     std::size_t construction_dispatch_rank(const ConstructionTargetRef& target) const;
     void prune_construction_priorities();
     bool debug_robot_move_available(std::size_t index) const;
@@ -528,8 +553,8 @@ private:
     void finalize_placement(Item& item){
         item.placement_sequence=next_blueprint_placement_sequence_++;
         if(build::debug_features && active_game_phase_==GamePhase::Debug && stage3_mode_!=Stage3Mode::Template){
-            item.construction.finish();
             item.resource_plan.steps={};
+            if(stage3_mode_==Stage3Mode::Sandbox) item.construction.finish();
         }
     }
     bool can_start_construction(const ConstructionResourcePlan& plan) const;

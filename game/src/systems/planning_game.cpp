@@ -977,6 +977,8 @@ void GameApp::deploy_lunar_base_from_mission(){
     builder_robots_.clear();
     next_blueprint_placement_sequence_=1;
     construction_priority_.clear();
+    construction_order_.clear();
+    build_queue_expanded_=false;build_queue_scroll_=0;
     debug_move_pick_robot_=-1;
     first_person_carried_resource_.reset();
     first_person_hover_ground_resource_=-1;

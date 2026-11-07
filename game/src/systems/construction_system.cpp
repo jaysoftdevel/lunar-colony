@@ -2,6 +2,9 @@
 #include "game/robots/path_planner.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace game {
@@ -52,13 +55,105 @@ std::size_t GameApp::construction_priority_rank(const ConstructionTargetRef& t) 
     const auto it=std::find(construction_priority_.begin(),construction_priority_.end(),seq);
     return seq && it!=construction_priority_.end()?(std::size_t)(it-construction_priority_.begin()):kNoRobotIndex;
 }
+
+std::vector<GameApp::BuildQueueItem> GameApp::construction_queue() const {
+    std::unordered_map<std::uint64_t,std::size_t> explicit_rank,manual_rank;
+    for(std::size_t i=0;i<construction_order_.size();++i) explicit_rank.emplace(construction_order_[i].sequence,i);
+    for(std::size_t i=0;i<construction_priority_.size();++i) manual_rank.emplace(construction_priority_[i],i);
+
+    struct RankedItem {
+        BuildQueueItem item;
+        std::tuple<int,std::size_t,std::uint64_t> key;
+    };
+    std::vector<RankedItem> pending;
+    const auto collect=[&](const auto& items,ConstructionTargetKind kind){
+        for(std::size_t i=0;i<items.size();++i){
+            const auto& placed=items[i];
+            if(placed.construction.complete()) continue;
+            BuildQueueItem item{{kind,i},placed.placement_sequence};
+            const auto ordered=explicit_rank.find(item.sequence);
+            const auto manual=manual_rank.find(item.sequence);
+            item.automatic_priority=construction_ready_connection(item.target);
+            item.manual_priority=manual!=manual_rank.end();
+            const auto sequence=item.sequence?item.sequence:std::numeric_limits<std::uint64_t>::max();
+            if(ordered!=explicit_rank.end()){
+                item.automatic_priority&=construction_order_[ordered->second].automatic_priority;
+                pending.push_back({item,{1,ordered->second,sequence}});
+            }else if(item.automatic_priority){
+                pending.push_back({item,{0,0,sequence}});
+            }else if(item.manual_priority){
+                pending.push_back({item,{2,manual->second,sequence}});
+            }else{
+                pending.push_back({item,{3,0,sequence}});
+            }
+        }
+    };
+    collect(placed_habitats_,ConstructionTargetKind::Habitat);
+    collect(placed_resources_,ConstructionTargetKind::Resource);
+    collect(corridor_network_.connections(),ConstructionTargetKind::Corridor);
+    collect(utility_network_.connections(),ConstructionTargetKind::Utility);
+    collect(walkway_network_.connections(),ConstructionTargetKind::Walkway);
+    std::stable_sort(pending.begin(),pending.end(),[](const auto& a,const auto& b){return a.key<b.key;});
+
+    std::vector<BuildQueueItem> queue;
+    queue.reserve(pending.size());
+    for(const auto& job:pending) queue.push_back(job.item);
+    return queue;
+}
+
+void GameApp::set_construction_order(const std::vector<BuildQueueItem>& queue){
+    construction_order_.clear();
+    construction_order_.reserve(queue.size());
+    construction_priority_.clear();
+    for(const auto& item:queue){
+        if(!item.sequence) continue;
+        construction_order_.push_back({item.sequence,item.automatic_priority});
+        if(item.manual_priority) construction_priority_.push_back(item.sequence);
+    }
+    astronaut_schedule_seconds_=0.f;
+}
+
+bool GameApp::move_construction_order(std::uint64_t sequence,int direction){
+    if(!sequence || (direction!=-1 && direction!=1)) return false;
+    auto queue=construction_queue();
+    const auto item=std::find_if(queue.begin(),queue.end(),[&](const auto& job){return job.sequence==sequence;});
+    if(item==queue.end()) return false;
+    const auto row=item-queue.begin();
+    const auto neighbor=row+direction;
+    if(neighbor<0 || neighbor>=static_cast<std::ptrdiff_t>(queue.size()) || !queue[neighbor].sequence) return false;
+
+    std::swap(queue[row],queue[neighbor]);
+    const auto upper=std::min(row,neighbor),lower=std::max(row,neighbor);
+    if(!queue[upper].prioritized()){
+        queue[lower].manual_priority=false;
+        queue[lower].automatic_priority=false;
+    }
+    set_construction_order(queue);
+    return true;
+}
+
 void GameApp::toggle_construction_priority(const ConstructionTargetRef& t){
     if(!t.valid() || construction_target_complete(t))return;
     prune_construction_priorities();
     auto seq=construction_target_sequence(t);if(!seq)return;
+    if(!construction_order_.empty()){
+        auto queue=construction_queue();
+        const auto row=std::find_if(queue.begin(),queue.end(),[&](const auto& item){return item.sequence==seq;});
+        if(row==queue.end()) return;
+        auto item=*row;
+        item.manual_priority=!item.manual_priority;
+        if(!item.automatic_priority){
+            queue.erase(row);
+            const auto ordinary=std::find_if(queue.begin(),queue.end(),[](const auto& job){return !job.prioritized();});
+            queue.insert(ordinary,item);
+        }else *row=item;
+        set_construction_order(queue);
+        return;
+    }
     const auto it=std::find(construction_priority_.begin(),construction_priority_.end(),seq);
     if(it==construction_priority_.end())construction_priority_.push_back(seq);
     else construction_priority_.erase(it);
+    astronaut_schedule_seconds_=0.f;
 }
 bool GameApp::construction_ready_connection(const ConstructionTargetRef& t) const {
     if(construction_target_complete(t) || !construction_target_dependencies_ready(t))return false;
@@ -71,15 +166,31 @@ bool GameApp::construction_ready_connection(const ConstructionTargetRef& t) cons
     }
     return false;
 }
+
+bool GameApp::construction_queue_allows(const BuildQueueItem& item) const {
+    return !construction_target_complete(item.target) &&
+           (!item.manual_priority || item.automatic_priority || construction_dispatch_rank(item.target)!=3);
+}
+
+bool GameApp::construction_automatic_priority(const ConstructionTargetRef& target) const {
+    if(!construction_ready_connection(target)) return false;
+    const auto sequence=construction_target_sequence(target);
+    const auto slot=std::find_if(construction_order_.begin(),construction_order_.end(),[&](const auto& item){
+        return item.sequence==sequence;
+    });
+    return slot==construction_order_.end() || slot->automatic_priority;
+}
+
 void GameApp::prune_construction_priorities(){
-    if(construction_priority_.empty())return;
+    if(construction_priority_.empty() && construction_order_.empty())return;
     std::unordered_set<std::uint64_t> pending;
     const auto collect=[&](const auto& items){for(const auto& item:items)if(!item.construction.complete())pending.insert(item.placement_sequence);};
     collect(placed_habitats_);collect(placed_resources_);collect(corridor_network_.connections());collect(utility_network_.connections());collect(walkway_network_.connections());
     std::erase_if(construction_priority_,[&](auto seq){return !pending.count(seq);});
+    std::erase_if(construction_order_,[&](const auto& slot){return !pending.count(slot.sequence);});
 }
 std::size_t GameApp::construction_dispatch_rank(const ConstructionTargetRef& candidate) const {
-    if(construction_ready_connection(candidate))return 0;
+    if(construction_automatic_priority(candidate))return 0;
     if(construction_priority_.empty())return 2;
     const auto manual=construction_priority_rank(candidate);
     if(manual==0)return 1;
@@ -106,6 +217,13 @@ std::size_t GameApp::construction_dispatch_rank(const ConstructionTargetRef& can
                 if(e->kind==UtilityEndpointKind::Habitat)stack.push_back({ConstructionTargetKind::Habitat,e->index});
                 if(e->kind==UtilityEndpointKind::Resource)stack.push_back({ConstructionTargetKind::Resource,e->index});
                 if(e->kind==UtilityEndpointKind::Corridor)stack.push_back({ConstructionTargetKind::Corridor,e->index});
+            }
+        }else if(t.kind==ConstructionTargetKind::Walkway && t.index<walkway_network_.connections().size()){
+            const auto& c=walkway_network_.connections()[t.index];for(const auto* e:{&c.endpoint_a,&c.endpoint_b}){
+                if(e->kind==WalkwayEndpointKind::Habitat)stack.push_back({ConstructionTargetKind::Habitat,e->index});
+                if(e->kind==WalkwayEndpointKind::Resource)stack.push_back({ConstructionTargetKind::Resource,e->index});
+                if(e->kind==WalkwayEndpointKind::Corridor)stack.push_back({ConstructionTargetKind::Corridor,e->index});
+                if(e->kind==WalkwayEndpointKind::Walkway)stack.push_back({ConstructionTargetKind::Walkway,e->index});
             }
         }
     }
@@ -179,9 +297,8 @@ void GameApp::update_construction(float dt){
     prune_construction_priorities();
     assign_storage_loading_faces();
     synchronize_storage_gates();
-    // v0.31: construction never advances by timer alone. The autonomous
-    // builder robot is the sole stage gate: fetch -> transport -> deliver ->
-    // build. Resource facilities run in parallel and replenish physical stock.
+    // Rovers use the physical material ledger. In the astronaut test, crew
+    // assemble pre-stocked blueprints through their own movement update.
     update_resource_economy(dt);
 
     // Robot navigation/operations use bounded simulation substeps. QUICK/FAST

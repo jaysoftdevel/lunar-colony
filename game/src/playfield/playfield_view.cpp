@@ -100,24 +100,30 @@ void GameApp::render_playfield(Renderer& r){
 
     corridor_placement_failure_title_.clear();
     corridor_placement_failure_detail_.clear();
-    render_corridor_link_preview(r);
-    render_corridor_placement(r);
-    render_habitat_placement(r);
-    render_resource_placement(r);
-    render_utility_placement(r);
-    render_walkway_placement(r);
+    const bool over_queue=mouse_over_build_queue(input_);
+    if(!over_queue){
+        render_corridor_link_preview(r);
+        render_corridor_placement(r);
+        render_habitat_placement(r);
+        render_resource_placement(r);
+        render_utility_placement(r);
+        render_walkway_placement(r);
+    }
     render_playfield_crosshair(r);
 
+    const InputState hud_input=ui_input_;
+    if(over_queue){ui_input_.left_pressed=false;ui_input_.wheel=0.f;}
     r.set_2d(ui_scale_);
     render_construction_status_frames(r);
     render_supply_indicators(r);
     render_status_bar(r);
-    render_progress_tree(r);
+    const bool queue_open=build_queue_expanded_ && first_person_mode_==FirstPersonMode::Off;
+    if(!queue_open) render_progress_tree(r);
     render_build_bar(r);
     render_ore_survey(r);
     render_selection_marquee(r);
     if constexpr(build::debug_features){
-        if(debug_mode_active() && !astronaut_test_active()) render_debug_frame(r);
+        if(debug_mode_active() && !astronaut_test_active() && !queue_open) render_debug_frame(r);
     }
     if(selection_kind_!=SelectionKind::None) render_selection_panel(r);
     render_corridor_placement_tooltip(r);
@@ -180,6 +186,8 @@ void GameApp::render_playfield(Renderer& r){
     game_label_fitted(r,{robot_info.x+12,robot_info.y+11,robot_info.w-24,16},robot_line.str(),0.47f,theme_);
     }
     }
+    ui_input_=hud_input;
+    if(first_person_mode_==FirstPersonMode::Off) render_build_queue(r);
 }
 
 void GameApp::render_selection_marquee(Renderer& r){
@@ -286,7 +294,8 @@ void GameApp::render_first_person_hud(Renderer& r){
 void GameApp::render_playfield_crosshair(Renderer& r){
     const float top_px=STATUS_BAR_H*ui_scale_;
     const float bottom_px=(ui_height(r)-BUILD_BAR_H)*ui_scale_;
-    if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px || mouse_over_selection_panel(input_)){
+    if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px ||
+       mouse_over_selection_panel(input_) || mouse_over_build_queue(input_)){
         app_.set_cursor_visible(true);
         return;
     }

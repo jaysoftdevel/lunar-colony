@@ -20,7 +20,7 @@ inline constexpr float kCrewTired=.80f;
 inline constexpr float kCrewExhausted=1.20f;
 inline constexpr float kCrewCacheRadius=5.0f;
 
-enum class AstronautActivity : std::uint8_t { Idle, Manual, Shelter, Duty, ToBed, Sleeping, Knockout, Resupply };
+enum class AstronautActivity : std::uint8_t { Idle, Manual, Shelter, Duty, ToBed, Sleeping, Knockout, Resupply, Construction };
 
 struct AstronautCache {
     double oxygen_kg{42.0};
@@ -57,6 +57,7 @@ struct AstronautTestActor {
     double food_pack_kg{};
     float hunger{},thirst{},fatigue{};
     AstronautActivity activity{AstronautActivity::Idle};
+    std::uint64_t construction_job{}; // Transient assignment to a blueprint's placement ID.
     std::uint64_t bed_owner{};
     std::uint8_t bed_slot{};
     bool suited{true};

@@ -56,7 +56,8 @@ void GameApp::update_simulation(float dt,const InputState& in){
 
     // Keep the press pending until release. A right-button drag belongs to
     // the camera, and an active placement tool owns its cancellation click.
-    const bool selection_click=(in.right_pressed || right_click_pending_) &&
+    const bool over_build_queue=mouse_over_build_queue(in);
+    const bool selection_click=(in.right_pressed || right_click_pending_) && !over_build_queue &&
         screen_==Screen::Playfield && active_game_phase_!=GamePhase::Planning &&
         first_person_mode_==FirstPersonMode::Off && !in.key_v_pressed && !in.escape_pressed &&
         !storage_gate_placement_active_ && !build_catalog_.selected() && corridor_link_source_<0 &&
@@ -94,7 +95,8 @@ void GameApp::update_simulation(float dt,const InputState& in){
             if(in.right_pressed&&lander_.awaiting_stash&&lander_.phase==LanderPhase::Approach&&lander_.elapsed==0){lander_.awaiting_site=true;lander_.awaiting_stash=false;return;}
             if(in.escape_pressed){screen_=Screen::MainMenu;return;}
             camera_.update(in,playfield_.size(),viewport_height_,dt);
-            if(in.left_pressed&&!mouse_over_selection_panel(in)&&(float)in.mouse_y/ui_scale_>=STATUS_BAR_H&&(float)in.mouse_y/ui_scale_<(float)viewport_height_/ui_scale_-BUILD_BAR_H){
+            if(in.left_pressed && !over_build_queue && !mouse_over_selection_panel(in) &&
+               (float)in.mouse_y/ui_scale_>=STATUS_BAR_H && (float)in.mouse_y/ui_scale_<(float)viewport_height_/ui_scale_-BUILD_BAR_H){
                 Vec3 hit{};if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
                     if(lander_.awaiting_site)confirm_lander_site(hit);else confirm_stash_site(hit);
                 }
@@ -121,18 +123,19 @@ void GameApp::update_simulation(float dt,const InputState& in){
                 view.target=view.target-origin;
                 camera_.restore(view);
                 auto camera_input=in;
-                if(mouse_over_selection_panel(in)) camera_input.wheel=0;
+                if(over_build_queue || mouse_over_selection_panel(in)) camera_input.wheel=0;
                 camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
                 view=camera_.state();
                 view.target+=origin;
                 camera_.restore(view);
             }else{
                 auto camera_input=in;
-                if(mouse_over_selection_panel(in))camera_input.wheel=0;
+                if(over_build_queue || mouse_over_selection_panel(in))camera_input.wheel=0;
                 camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
-                update_selection_panel_scroll(in);
+                if(!over_build_queue) update_selection_panel_scroll(in);
                 const float y=(float)in.mouse_y/ui_scale_;
-                if(in.left_pressed && y>=STATUS_BAR_H && y<(float)viewport_height_/ui_scale_-BUILD_BAR_H && !mouse_over_selection_panel(in))
+                if(in.left_pressed && !over_build_queue && y>=STATUS_BAR_H &&
+                   y<(float)viewport_height_/ui_scale_-BUILD_BAR_H && !mouse_over_selection_panel(in))
                     select_world_at(in.mouse_x,in.mouse_y);
             }
             return;
@@ -242,10 +245,10 @@ void GameApp::update_simulation(float dt,const InputState& in){
             return;
         }
 
-        const bool over_selection_panel=mouse_over_selection_panel(in);
-        update_selection_panel_scroll(in);
+        const bool over_panel=over_build_queue || mouse_over_selection_panel(in);
+        if(!over_build_queue) update_selection_panel_scroll(in);
         InputState camera_input=in;
-        if(const BuildObjectDefinition* selected=build_catalog_.selected(); !over_selection_panel && selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
+        if(const BuildObjectDefinition* selected=build_catalog_.selected(); !over_panel && selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
             constexpr float step=15.0f;
             if(selected->kind==BuildObjectKind::Habitat){
                 auto cycle_habitat=[&](int delta){
@@ -287,7 +290,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
             if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
         }
         const float pointer_y=(float)in.mouse_y/ui_scale_;
-        if(pointer_y<STATUS_BAR_H || pointer_y>=(float)viewport_height_/ui_scale_-BUILD_BAR_H || over_selection_panel)camera_input.wheel=0;
+        if(pointer_y<STATUS_BAR_H || pointer_y>=(float)viewport_height_/ui_scale_-BUILD_BAR_H || over_panel)camera_input.wheel=0;
         camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
         advance_colony();
 
@@ -301,18 +304,18 @@ void GameApp::update_simulation(float dt,const InputState& in){
                                   !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_;
         if(astronaut_test_active()){
             if(!paused) update_astronaut_test(sim_dt);
-            if(selection_idle && over_world && !over_selection_panel && handle_astronaut_click(in)){
+            if(selection_idle && over_world && !over_panel && handle_astronaut_click(in)){
                 selection_marquee_active_=false;
                 return;
             }
         }
-        if(debug_move_pick_robot_>=0 && in.left_pressed && over_world && !mouse_over_selection_panel(in)){
+        if(debug_move_pick_robot_>=0 && in.left_pressed && over_world && !over_panel){
             Vec3 hit{};
             if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit) &&
                issue_debug_robot_move((std::size_t)debug_move_pick_robot_,hit))debug_move_pick_robot_=-1;
             selection_marquee_active_=false;return;
         }
-        if(debug_move_pick_robot_<0 && selection_idle && in.left_pressed && over_world && !mouse_over_selection_panel(in)){
+        if(debug_move_pick_robot_<0 && selection_idle && in.left_pressed && over_world && !over_panel){
             Vec3 hit{};
             if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
                 selection_marquee_active_=true;

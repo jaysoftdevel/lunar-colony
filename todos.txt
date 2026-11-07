@@ -252,7 +252,14 @@ astronauts may pass each other inside the base structures and corridors
 
 deselect an astronaut or structure using right click
 
+A question: if I pass a screenrecording of how astronauts and robots shall move and how gameplay is set up, can you apply this info to the current game?
+https://youtu.be/F8YQllAu8Es
+get inspired by UI, movement and graphics theme
+
 *** ToDo:
+
+rework all structures and its furnitures
+- all astronauts (and POV character) may pass between all furniture and machines as like in a real base
 
 
 
