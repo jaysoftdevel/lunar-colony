@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
-#include <numeric>
 
 namespace game {
 namespace {
@@ -60,8 +59,11 @@ double hydroponics_water_litres_per_day(const PlacedHabitat& h,bool light_phase)
 }
 }
 
-UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
-    auto services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
+const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
+    const auto& topology=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
+    auto& services=live_supply_services_;
+    services=topology;
+    const auto sun=status_.sun_pose();
     const bool hydroponics_light_phase=hydroponics_lights_on(status_.hour());
     struct Component {std::vector<std::size_t> tanks,batteries,solars,drillers,hydrogen_generators,hydrogen_tanks,oxygen_tanks,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;};
     std::map<std::size_t,Component> groups;
@@ -86,6 +88,11 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     std::vector<SupplyState*> nodes;
     std::vector<eng::Vec3> positions;
     std::vector<double> runs,initial_oxygen;
+    const auto node_count=topology.node_components.size();
+    nodes.reserve(node_count);
+    positions.reserve(node_count);
+    runs.reserve(node_count);
+    initial_oxygen.reserve(node_count);
     const auto add_node=[&](SupplyState& s,eng::Vec3 p,double volume,double run){
         s.volume_m3=volume;s.warnings=0;s.power_fraction=0;
         s.oxygen_kg=std::clamp(s.oxygen_kg,0.0,volume*kOxygenKgPerM3);
@@ -97,11 +104,16 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         nodes.push_back(&s);positions.push_back(p);runs.push_back(run);initial_oxygen.push_back(s.oxygen_kg);
     };
     for(std::size_t i=0;i<placed_habitats_.size();++i){
-        auto& h=placed_habitats_[i];const auto& m=habitat_models_.mesh(h);
-        // Interior cubic envelope, reduced for pressure shell, equipment and curved roof.
-        const double volume=h.construction.complete()?m.footprint_x*m.footprint_z*std::max(0.0f,m.height-m.walkable_floor_y)*0.65:0;
+        auto& h=placed_habitats_[i];
+        const bool complete=h.construction.complete();
+        double volume=0.0;
+        if(complete){
+            const auto& m=habitat_models_.mesh(h);
+            // Interior envelope reduced for the shell, equipment and curved roof.
+            volume=m.footprint_x*m.footprint_z*std::max(0.0f,m.height-m.walkable_floor_y)*0.65;
+        }
         add_node(h.supply,h.position,volume,0);
-        if(h.construction.complete()){
+        if(complete){
             if(h.kind==HabitatKind::OxygenGeneratorDome)
                 h.supply.hydrogen_kg=std::clamp(h.supply.hydrogen_kg,0.0,hydrogen_buffer_capacity(h));
             if(h.power_enabled){
@@ -112,9 +124,8 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         }
     }
     for(std::size_t i=0;i<placed_resources_.size();++i){
-        auto& r=placed_resources_[i];const auto& m=resource_models_.mesh(r);
+        auto& r=placed_resources_[i];
         if(r.kind==ResourceKind::SolarPanel){
-            const auto sun=status_.sun_pose();
             const eng::Vec3 fixed=solar_tracking::fixed_panel_normal(r.rotation_degrees);
             const eng::Vec3 target=(r.solar_tracking_enabled && sun.above_horizon)?sun.direction:fixed;
             if(!r.solar_visual_initialized || eng::length(r.solar_visual_normal)<0.5f){
@@ -130,8 +141,14 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         }
         // External equipment has a small sealed service manifold: its ports
         // relay air between pipes without treating the exterior as a cabin.
-        add_node(r.supply,r.position,r.kind==ResourceKind::StorageDome && r.construction.complete()?m.footprint_x*m.footprint_z*std::max(0.0f,m.height-m.walkable_floor_y)*0.65:(r.construction.complete()?0.02:0),0);
-        if(!r.construction.complete())continue;
+        const bool complete=r.construction.complete();
+        double volume=complete?0.02:0.0;
+        if(complete && r.kind==ResourceKind::StorageDome){
+            const auto& m=resource_models_.mesh(r);
+            volume=m.footprint_x*m.footprint_z*std::max(0.0f,m.height-m.walkable_floor_y)*0.65;
+        }
+        add_node(r.supply,r.position,volume,0);
+        if(!complete)continue;
         // A standalone battery/tank/solar plant is its own component, never a global pool.
         const auto key=services.resources[i].connected?services.resources[i].component:nodes.size()+1000000;
         auto& g=groups[key];
@@ -161,16 +178,19 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
             r.lander_fuel_kg=std::clamp(r.lander_fuel_kg,0.0,landing_pad_lander_fuel_capacity_kg());
         }
         if(r.kind==ResourceKind::SolarPanel){
-            const auto sun=status_.sun_pose();
             const double incidence=r.solar_tracking_enabled?1.0:solar_tracking::fixed_panel_incidence_fraction(sun.direction,r.rotation_degrees);
             g.solar_kw+=kSolarPeakKw*scale(r)*sun.irradiance_fraction*incidence;
         }
     }
     for(auto& u:utility_network_.mutable_connections()){
-        const double len=path_length(u.path);add_node(u.supply,u.path.empty()?eng::Vec3{}:u.path[u.path.size()/2],u.kind==UtilityKind::SupplyChannel && u.construction.complete()?std::max(0.02,len*0.005):0,len);
+        const bool active=u.kind==UtilityKind::SupplyChannel && u.construction.complete();
+        const double len=active?path_length(u.path):0.0;
+        add_node(u.supply,u.path.empty()?eng::Vec3{}:u.path[u.path.size()/2],active?std::max(0.02,len*0.005):0.0,len);
     }
     for(auto& c:corridor_network_.mutable_connections()){
-        const double len=path_length(c.path);add_node(c.supply,c.path.empty()?eng::Vec3{}:c.path[c.path.size()/2],c.construction.complete()?std::max(0.1,len*4.0):0,len);
+        const bool complete=c.construction.complete();
+        const double len=complete?path_length(c.path):0.0;
+        add_node(c.supply,c.path.empty()?eng::Vec3{}:c.path[c.path.size()/2],complete?std::max(0.1,len*4.0):0.0,len);
     }
     double initial_energy=0,initial_water=0,consumed_water=0,demanded_energy=0,supplied_energy=0;
     for(const auto& r:placed_resources_)if(r.construction.complete()){
@@ -239,9 +259,7 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     // The loss is proportional to the oxygen actually present, so an empty
     // structure does not consume a full-pressure leak budget while filling.
     for(auto* s:nodes)if(s->volume_m3>0.05 && s->breathability()>=99.0)s->oxygen_demand_kg_per_day+=s->oxygen_kg*kPressurizedOxygenLeakFractionPerDay;
-    std::vector<std::size_t> parent(nodes.size());std::iota(parent.begin(),parent.end(),0);
-    const auto root=[&](std::size_t i){while(parent[i]!=i)i=parent[i];return i;};
-    for(const auto& link:services.links)if(link.first<nodes.size() && link.second<nodes.size())parent[root(link.first)]=root(link.second);
+    const auto root=[&](std::size_t i){return topology.node_components[i];};
     struct CrewIntake {SupplyState* air{};Component* service{};bool at_cache{};};
     std::array<CrewIntake,kAstronautRoles.size()> intake{};
     if(astronaut_test_active()){
@@ -273,7 +291,16 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
     };
     // Substeps use actual game time and simultaneous, donor/receiver-limited air flux.
     // No frame-rate-dependent overdraw or same-tick propagation through an entire chain.
+    struct Flux {std::size_t a,b;double mass;};
+    std::vector<Flux> fluxes;
+    std::vector<double> out,in,delta;
     double remaining=std::max(0.0f,dt);
+    if(remaining>0.0){
+        fluxes.reserve(topology.links.size());
+        out.reserve(node_count);
+        in.reserve(node_count);
+        delta.reserve(node_count);
+    }
     while(remaining>1e-8){
         const double step=std::min(remaining,0.1);remaining-=step;const double hours=step/10.0,days=step/240.0;
         for(auto& [key,g]:groups){
@@ -514,9 +541,10 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
             const double leaked=s->oxygen_kg*kPressurizedOxygenLeakFractionPerDay*days;
             s->oxygen_kg=std::max(0.0,s->oxygen_kg-leaked);
         }
-        struct Flux {std::size_t a,b;double mass;};std::vector<Flux> fluxes;
-        std::vector<double> out(nodes.size(),0),in(nodes.size(),0);
-        for(const auto& [a,b]:services.links){
+        fluxes.clear();
+        out.assign(node_count,0.0);
+        in.assign(node_count,0.0);
+        for(const auto& [a,b]:topology.links){
             if(a>=nodes.size() || b>=nodes.size() || nodes[a]->volume_m3<=0 || nodes[b]->volume_m3<=0)continue;
             const double difference=nodes[a]->breathability()/100.0-nodes[b]->breathability()/100.0;
             const std::size_t from=difference>=0?a:b,to=difference>=0?b:a;
@@ -524,7 +552,7 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
             const double mass=std::abs(difference)*12.0*hours/(1.0+route/10.0);
             fluxes.push_back({from,to,mass});out[from]+=mass;in[to]+=mass;
         }
-        std::vector<double> delta(nodes.size(),0);
+        delta.assign(node_count,0.0);
         for(const auto& f:fluxes){
             const double space=nodes[f.b]->volume_m3*kOxygenKgPerM3-nodes[f.b]->oxygen_kg;
             const double factor=std::min({1.0,out[f.a]>0?nodes[f.a]->oxygen_kg/out[f.a]:1.0,in[f.b]>0?space/in[f.b]:1.0});
@@ -593,7 +621,6 @@ UtilityServiceSnapshot GameApp::update_supply_simulation(float dt){
         [](const auto& actor){return actor.health>0.f;});
     state.crew_capacity=std::max(state.crew_current,crew_quarters_capacity());
     status_.restore(state);
-    last_supply_services_=services;
     return services;
 }
 // Transfer hydrogen from a completed, connected storage tank to a vehicle
@@ -602,7 +629,7 @@ double GameApp::refuel_landing_pad(std::size_t pad_index,bool rocket){
     if(pad_index>=placed_resources_.size())return 0.0;
     auto& pad=placed_resources_[pad_index];
     if(pad.kind!=ResourceKind::LandingPad || !pad.construction.complete() || !pad.power_enabled)return 0.0;
-    const auto services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
+    const auto& services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
     if(pad_index>=services.resources.size() || !services.resources[pad_index].connected)return 0.0;
     // The fueling pump requires power as well as the H2 manifold.
     if(pad.supply.power_fraction<0.5)return 0.0;

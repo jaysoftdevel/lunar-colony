@@ -40,6 +40,7 @@ void GameApp::on_start(){
     graphics_=preferences.graphics;
     world_layout_mode_=preferences.mesh_layout?WorldLayoutMode::Mesh:WorldLayoutMode::FullGraphics;
     soundscape_.set_music_enabled(preferences.music_enabled);
+    refresh_save_games();
 }
 
 void GameApp::persist_preferences(){

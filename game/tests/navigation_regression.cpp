@@ -2157,6 +2157,45 @@ struct NavigationRegression {
         std::cout<<"Brownout telemetry, load shedding, passive network links, and power state save/load passed\n";
     }
     static void supply_network(){
+        {
+            UtilityNetwork network;
+            CorridorNetwork corridors;
+            std::vector<PlacedResource> resources(2);
+            resources[0].kind=ResourceKind::SolarPanel;
+            resources[1].kind=ResourceKind::WaterDriller;
+            for(auto& resource:resources) resource.construction.finish();
+
+            auto& links=network.mutable_connections();
+            links.resize(2);
+            for(std::size_t i=0;i<links.size();++i){
+                links[i].endpoint_a.kind=UtilityEndpointKind::Resource;
+                links[i].endpoint_a.index=i;
+                links[i].endpoint_b.kind=UtilityEndpointKind::Open;
+                links[i].construction.finish();
+            }
+            links[0].path={{-5,0,0},{5,0,0}};
+            links[1].path={{0,0,-4},{0,0,4}};
+            const auto supplied=[&]{return network.evaluate_services(corridors,{},resources).resources[1].water;};
+            require(supplied(),"crossing pipes did not share power and water");
+            require(supplied(),"unchanged utility graph lost service");
+
+            for(auto& point:links[1].path) point.x=8;
+            require(!supplied(),"same-size route edit left a stale pipe intersection");
+            for(auto& point:links[1].path) point.x=0;
+            require(supplied(),"restored route did not reconnect the pipe intersection");
+            links[1].construction.step=0;
+            require(!supplied(),"blueprint pipe retained a live utility connection");
+            links[1].construction.finish();
+            require(supplied(),"finished pipe failed to rejoin the network");
+            resources[0].power_enabled=false;
+            require(!supplied(),"power switch left stale service flags");
+            resources[0].power_enabled=true;
+            links[1].endpoint_a.index=0;
+            require(!supplied(),"same-size endpoint change retained an old attachment");
+            links[1].endpoint_a.index=1;
+            require(supplied(),"restored endpoint failed to rejoin the network");
+        }
+
         // Pass uploads must retain draw order, style and nonoverlapping ranges.
         eng::GeometryStream stream;float a[]{1,2,3,4,5,6},b[]{7,8,9,10,11,12};
         stream.append(a,6,1,{1,0,0,1},2);stream.append(b,6,1,{1,0,0,1},2);
@@ -2578,6 +2617,9 @@ struct NavigationRegression {
         for(int kind=1;kind<(int)HabitatKind::Count;++kind) for(int tier=0;tier<(int)HabitatSizeTier::Count;++tier) for(float rotation:{180.0f,135.0f,90.0f}){
             app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
             PlacedHabitat a;a.kind=HabitatKind::AirLock;a.position={-22,0,0};a.construction.step=kConstructionSteps;
+            // This fixture exercises hatch clearance rather than utility
+            // commissioning. The air lock needs power before its leaves move.
+            a.supply.power_fraction=1.0;
             PlacedHabitat b;b.kind=(HabitatKind)kind;b.size=(HabitatSizeTier)tier;b.position={22,0,0};b.rotation_degrees=rotation;b.construction.step=kConstructionSteps;
             app.placed_habitats_={a,b};
             const auto& mesh=app.habitat_models_.mesh(b);

@@ -178,11 +178,13 @@ std::vector<Vec3> tracked_solar_vertices(const std::vector<Vec3>& src,Vec3 posit
 
 void draw_tracked_solar(Renderer& r,const ResourceMesh& mesh,const PlacedResource& instance,Vec3 tracker_normal,bool selected,Color accent){
     const float boost=selected?1.45f:1.0f;
+    const bool lunar=r.lunar_scene_active();
     const auto foundation=transformed_vertices(mesh.foundation,instance.position,instance.rotation_degrees);
     const auto body=tracked_solar_vertices(mesh.body,instance.position,instance.rotation_degrees,tracker_normal);
     const auto details=tracked_solar_vertices(mesh.details,instance.position,instance.rotation_degrees,tracker_normal);
-    const auto edges=tracked_solar_vertices(mesh.edges,instance.position,instance.rotation_degrees,tracker_normal);
-    if(r.lunar_scene_active()){
+    const auto edges=selected || !lunar?
+        tracked_solar_vertices(mesh.edges,instance.position,instance.rotation_degrees,tracker_normal):std::vector<Vec3>{};
+    if(lunar){
         std::vector<Vec3> panel,mast;
         for(std::size_t i=0;i+2<body.size();i+=3){
             auto& layer=mesh.body[i].y>3.12f && mesh.body[i+1].y>3.12f && mesh.body[i+2].y>3.12f?panel:mast;
@@ -407,13 +409,15 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
         return;
     }
 
+    const bool lunar=r.lunar_scene_active();
     auto shell=transformed_vertices(portal_layer(mesh.shell,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
     const auto interior=transformed_vertices(portal_layer(mesh.interior,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     auto glazing=transformed_vertices(portal_layer(mesh.glazing,position,rotation_degrees,fpv_doors),position,rotation_degrees);
-    const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
-    if(r.lunar_scene_active()){
+    const auto edges=selected || !lunar?
+        transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees):std::vector<Vec3>{};
+    if(lunar){
         const bool cutaway=habitat_view_mode_==HabitatViewMode::Full && first_person_mode_!=FirstPersonMode::Active;
         Color cladding{0.84f,0.83f,0.78f,cutaway?0.18f:1.0f};
         Color fittings{0.64f,0.52f,0.32f,1};
@@ -501,11 +505,13 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
         return;
     }
 
+    const bool lunar=r.lunar_scene_active();
     auto body=transformed_vertices(portal_layer(mesh.body,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
     auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
-    const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
-    if(r.lunar_scene_active()){
+    const auto edges=selected || !lunar?
+        transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees):std::vector<Vec3>{};
+    if(lunar){
         const bool pad=kind==ResourceKind::LandingPad;
         const bool cutaway=kind==ResourceKind::StorageDome && habitat_view_mode_==HabitatViewMode::Full &&
                            first_person_mode_!=FirstPersonMode::Active;

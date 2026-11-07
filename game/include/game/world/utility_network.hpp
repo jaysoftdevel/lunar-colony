@@ -7,6 +7,7 @@
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <limits>
 #include <vector>
@@ -75,6 +76,7 @@ struct UtilityServiceSnapshot {
     std::vector<UtilityServiceState> resources{};
     // Live graph in habitat/resource/channel/corridor order, including junctions.
     std::vector<std::pair<std::size_t,std::size_t>> links{};
+    std::vector<std::size_t> node_components{};
 };
 
 struct UtilityConnection {
@@ -140,10 +142,9 @@ public:
     void remove_resource(std::size_t resource_index);
     void remove_corridor(std::size_t corridor_index);
 
-    // Build the live water/power topology from completed supply channels and
-    // completed corridors. No extra save data is needed: service availability
-    // is derived from the physical network every time topology changes.
-    UtilityServiceSnapshot evaluate_services(
+    // Reuse the completed service graph until its inputs change. The returned
+    // snapshot belongs to this network and is replaced when the graph changes.
+    const UtilityServiceSnapshot& evaluate_services(
         const CorridorNetwork& corridors,
         const std::vector<PlacedHabitat>& habitats,
         const std::vector<PlacedResource>& resources) const;
@@ -151,9 +152,34 @@ public:
     void update_construction(float dt,ResourceManagement& resources,bool allow_negative);
 
 private:
+    struct ServiceStructureInput {
+        bool complete{},powered{};
+        ResourceKind kind{};
+        bool operator==(const ServiceStructureInput&) const = default;
+    };
+    struct ServiceLinkInput {
+        bool active{};
+        int a_kind{},b_kind{};
+        std::size_t a_index{},b_index{},points{};
+        bool operator==(const ServiceLinkInput&) const = default;
+    };
+    struct ServiceInputs {
+        std::size_t habitat_count{},utility_count{};
+        std::vector<ServiceStructureInput> structures;
+        std::vector<ServiceLinkInput> links;
+        std::vector<std::array<float,2>> centerlines;
+        bool operator==(const ServiceInputs&) const = default;
+    };
+
+    UtilityServiceSnapshot build_service_snapshot(
+        const CorridorNetwork& corridors,
+        const std::vector<PlacedHabitat>& habitats,
+        const std::vector<PlacedResource>& resources) const;
     bool conveyor_source_used(std::size_t resource_index) const;
     void rebuild_supply_junctions();
     std::vector<UtilityConnection> connections_{};
+    mutable ServiceInputs service_inputs_,next_service_inputs_;
+    mutable UtilityServiceSnapshot service_snapshot_;
     float playfield_half_extent_{32.0f};
 };
 

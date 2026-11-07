@@ -810,7 +810,7 @@ void GameApp::render_selection_panel(Renderer& r){
         }
         if(item.kind==ResourceKind::LandingPad){
             const auto index=(std::size_t)selected_resource_;
-            auto service=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
+            const auto& service=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
             double ready_hydrogen=0.0;
             if(index<service.resources.size() && service.resources[index].connected){
                 for(std::size_t j=0;j<placed_resources_.size() && j<service.resources.size();++j){

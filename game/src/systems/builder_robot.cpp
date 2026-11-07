@@ -5945,12 +5945,23 @@ void GameApp::update_builder_robot(float dt){
 
     // Stable home assignments survive task dispatch; returning is optional
     // traffic and is replaced immediately when job routines submit real work.
-    std::vector<std::array<bool,workshop::kBays>> occupied(placed_resources_.size());
+    struct WorkshopBays {
+        bool operational{};
+        std::array<bool,workshop::kBays> occupied{};
+    };
+    std::vector<WorkshopBays> bays(placed_resources_.size());
+    std::vector<std::size_t> open_workshops;
+    for(std::size_t home=0;home<placed_resources_.size();++home){
+        if(workshop_operational(home)){
+            bays[home].operational=true;
+            open_workshops.push_back(home);
+        }
+    }
     for(auto& robot:builder_robots_){
         const auto home=robot.workshop_index;
-        const bool valid=workshop_operational(home) && robot.workshop_bay>=0 && robot.workshop_bay<workshop::kBays &&
-            !occupied[home][robot.workshop_bay];
-        if(valid) occupied[home][robot.workshop_bay]=true;
+        const bool valid=home<bays.size() && bays[home].operational &&
+            robot.workshop_bay>=0 && robot.workshop_bay<workshop::kBays && !bays[home].occupied[robot.workshop_bay];
+        if(valid) bays[home].occupied[robot.workshop_bay]=true;
         else {robot.workshop_index=kNoRobotIndex;robot.workshop_bay=-1;robot.workshop_entry_started=false;}
         robot.workshop_returning=false;
         if(!valid || robot.mode!=BuilderRobotMode::Idle || robot.target.valid() || !robot.cargo.empty()) robot.workshop_parked=false;
@@ -5959,23 +5970,21 @@ void GameApp::update_builder_robot(float dt){
         auto& robot=builder_robots_[i];
         if(robot.workshop_index==kNoRobotIndex){
             float best=std::numeric_limits<float>::max();
-            for(std::size_t home=0;home<placed_resources_.size();++home){
+            for(const auto home:open_workshops){
                 const auto& item=placed_resources_[home];
-                if(!workshop_operational(home)) continue;
                 for(int slot=0;slot<workshop::kBays;++slot){
-                    if(occupied[home][slot]) continue;
+                    if(bays[home].occupied[slot]) continue;
                     const float distance=dist_xz(robot.position,workshop::bay(item,slot));
                     if(distance<best){best=distance;robot.workshop_index=home;robot.workshop_bay=slot;}
                 }
             }
-            if(robot.workshop_index!=kNoRobotIndex) occupied[robot.workshop_index][robot.workshop_bay]=true;
+            if(robot.workshop_index!=kNoRobotIndex) bays[robot.workshop_index].occupied[robot.workshop_bay]=true;
         }
     }
     // One inbound rover owns the ramp until it is fully docked. Real work
     // leaving the building has priority over every cosmetic return trip.
-    for(std::size_t home=0;home<placed_resources_.size();++home){
+    for(const auto home:open_workshops){
         auto& item=placed_resources_[home];
-        if(!workshop_operational(home)) continue;
         auto incoming=[&](std::size_t i){
             if(i>=builder_robots_.size()) return false;
             const auto& r=builder_robots_[i];
@@ -6687,7 +6696,7 @@ void GameApp::update_resource_economy(float dt){
         std::array<bool,kMaterialResourceCount> has_output{};
     };
 
-    const auto services=update_supply_simulation(dt);
+    const auto& services=update_supply_simulation(dt);
     update_ore_logistics(dt);
     std::map<std::size_t,NetworkEconomy> networks;
     auto network_for=[&](const UtilityServiceState& service)->NetworkEconomy*{

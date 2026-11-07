@@ -68,7 +68,9 @@ void GameApp::render_settings(Renderer& r){
 
     ui::label(r,{left_x,inner_y},"DISPLAY",1.18f,theme_);
     ui::label(r,{left_x,inner_y+39},"FULLSCREEN",0.92f,theme_);
-    ui::label(r,{left_x+column_w-26,inner_y+39},"ON",0.92f,theme_);
+    const bool fullscreen=app_.fullscreen();
+    if(ui::button(r,ui_input_,{left_x+column_w-82,inner_y+27,82,34},fullscreen?"ON":"OFF",theme_))
+        app_.set_fullscreen(!fullscreen);
 
     ui::label(r,{left_x,inner_y+78},"UI SCALE",0.92f,theme_);
     const float small_button=38.0f;
@@ -86,21 +88,18 @@ void GameApp::render_settings(Renderer& r){
     }
 
     ui::label(r,{left_x,inner_y+119},"RESOLUTION",0.92f,theme_);
-    bool resolution_changed=false;
-    if(ui::button(r,ui_input_,{control_right-190,inner_y+107,small_button,34},"<",theme_) && display_mode_index_>0){
+    if(ui::button(r,ui_input_,{control_right-190,inner_y+107,small_button,34},"<",theme_,display_mode_index_>0)){
         --display_mode_index_;
-        resolution_changed=true;
     }
-    if(ui::button(r,ui_input_,{control_right-small_button,inner_y+107,small_button,34},">",theme_) && display_mode_index_<(int)display_modes_.size()-1){
+    if(ui::button(r,ui_input_,{control_right-small_button,inner_y+107,small_button,34},">",theme_,
+                  display_mode_index_<static_cast<int>(display_modes_.size())-1)){
         ++display_mode_index_;
-        resolution_changed=true;
     }
     const auto& mode=display_modes_[(size_t)std::max(0,display_mode_index_)];
     std::ostringstream resolution;
     resolution<<mode.width<<" X "<<mode.height;
     ui::label(r,{control_right-140,inner_y+119},resolution.str(),0.86f,theme_);
 
-    if(resolution_changed) app_.set_display_mode(mode.width,mode.height);
     if(ui::button(r,ui_input_,{control_right-112,inner_y+151,112,34},"APPLY",theme_)){
         app_.set_display_mode(mode.width,mode.height);
     }

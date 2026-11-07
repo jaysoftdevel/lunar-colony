@@ -806,3 +806,10 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Scale the Direct3D 12 lunar render targets while drawing the HUD at display resolution.
 - Measure fixed rendering scenes on the active adapter and recommend a profile for the selected frame-rate target.
 - Show benchmark results before applying any graphics changes.
+
+0.52.7 - Colony performance, rendering and session flow
+- Reuse the utility graph until its routes, construction state or power settings change.
+- Reuse network membership for pressure calculations and progression, and check workshop availability once per docking pass.
+- Allocate screen buffers for enabled effects and skip the OpenGL resolve pass when it has no work.
+- Add a new main menu and Continue action, order saves by recency, and preserve distinct save names.
+- Publish save updates through a single replacement and apply display changes through explicit controls.

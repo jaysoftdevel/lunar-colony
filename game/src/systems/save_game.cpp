@@ -5,6 +5,7 @@
 #include "game/world/geometry_standards.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <cmath>
@@ -17,6 +18,8 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace game {
@@ -93,6 +96,35 @@ struct Reader {
     }
     bool ok() const { return valid && in.good(); }
 };
+
+struct SavedSessionOptions {
+    int playfield{},display_width{},display_height{},ui_scale{};
+    bool fullscreen{};
+    std::uint8_t view{},category{};
+    float rotation{};
+    std::uint8_t habitat_size{},storage_size{};
+    ResourceSizeTier resource_size{ResourceSizeTier::Standard};
+    std::uint8_t speed{},phase{2};
+};
+
+SavedSessionOptions read_session_options(Reader& r,std::uint32_t schema){
+    SavedSessionOptions options;
+    options.playfield=r.pod<std::int32_t>();
+    options.display_width=r.pod<std::int32_t>();
+    options.display_height=r.pod<std::int32_t>();
+    options.fullscreen=r.boolean();
+    options.ui_scale=r.pod<std::int32_t>();
+    (void)r.boolean(); // Legacy debug-frame field.
+    options.view=r.pod<std::uint8_t>();
+    options.category=r.pod<std::uint8_t>();
+    options.rotation=r.pod<float>();
+    options.habitat_size=r.pod<std::uint8_t>();
+    options.storage_size=r.pod<std::uint8_t>();
+    if(schema>=7) options.resource_size=static_cast<ResourceSizeTier>(r.pod<std::uint8_t>());
+    if(schema>=4) options.speed=r.pod<std::uint8_t>();
+    if(schema>=24) options.phase=r.pod<std::uint8_t>();
+    return options;
+}
 
 bool read_power_enabled(Reader& in){
     const auto enabled=in.pod<std::uint8_t>();
@@ -378,14 +410,15 @@ std::string filename_for_name(const std::string& name){
     return stem+".gmsave";
 }
 
-bool read_metadata(const fs::path& path,std::string& name,std::string& version){
+bool read_metadata(const fs::path& path,std::string& name,std::string& version,std::uint8_t& phase){
     Reader r(path);
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic) return false;
     const auto schema=r.pod<std::uint32_t>();
     if(schema<kMinSaveSchema || schema>kSaveSchema) return false;
     version=r.string(64); name=r.string(128);
-    return r.valid && !name.empty();
+    phase=read_session_options(r,schema).phase;
+    return r.ok() && !name.empty();
 }
 
 template<class T,class ReadFn>
@@ -490,16 +523,24 @@ void GameApp::refresh_save_games(){
     save_games_.clear();
     std::error_code ec;
     const fs::path dir(save_game_directory());
-    fs::create_directories(dir,ec);
-    if(ec) return;
-    for(const auto& entry:fs::directory_iterator(dir,ec)){
-        if(ec) break;
-        if(!entry.is_regular_file() || entry.path().extension()!=".gmsave") continue;
+    for(fs::directory_iterator it(dir,ec),end;!ec && it!=end;it.increment(ec)){
+        const auto& entry=*it;
+        std::error_code entry_error;
+        if(entry.path().extension()!=".gmsave" || !entry.is_regular_file(entry_error)) continue;
         std::string name,version;
-        if(!read_metadata(entry.path(),name,version)) continue;
-        save_games_.push_back({name,entry.path().string(),version});
+        std::uint8_t phase{};
+        if(!read_metadata(entry.path(),name,version,phase) || phase<static_cast<std::uint8_t>(GamePhase::Planning) ||
+           phase>static_cast<std::uint8_t>(GamePhase::Debug)) continue;
+        const auto modified=entry.last_write_time(entry_error);
+        save_games_.push_back({std::move(name),entry.path().string(),std::move(version),
+                               entry_error?fs::file_time_type::min():modified,
+                               phase==static_cast<std::uint8_t>(GamePhase::Debug)});
     }
-    std::sort(save_games_.begin(),save_games_.end(),[](const SaveGameEntry& a,const SaveGameEntry& b){ return a.name<b.name; });
+    std::sort(save_games_.begin(),save_games_.end(),[](const SaveGameEntry& a,const SaveGameEntry& b){
+        if(a.modified!=b.modified) return a.modified>b.modified;
+        if(a.name!=b.name) return a.name<b.name;
+        return a.path<b.path;
+    });
     load_save_scroll_=std::clamp(load_save_scroll_,0,std::max(0,(int)save_games_.size()-1));
 }
 
@@ -512,8 +553,26 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     const fs::path dir(save_game_directory());
     fs::create_directories(dir,ec);
     if(ec){ error="Unable to create the savegame directory."; return false; }
-    const fs::path final_path=dir/filename_for_name(name);
-    const fs::path temp_path=final_path.string()+".tmp";
+    // Existing saves keep their path. Names that sanitize to the same filename
+    // receive a separate slot, including case collisions on Windows.
+    refresh_save_games();
+    const auto existing=std::find_if(save_games_.begin(),save_games_.end(),
+        [&](const SaveGameEntry& entry){return entry.name==name;});
+    const fs::path preferred=dir/filename_for_name(name);
+    fs::path final_path=existing!=save_games_.end()?fs::path(existing->path):preferred;
+    if(existing==save_games_.end()){
+        for(unsigned suffix=2;fs::exists(final_path,ec) && !ec;++suffix)
+            final_path=dir/(preferred.stem().string()+"-"+std::to_string(suffix)+".gmsave");
+        if(ec){ error="Unable to choose a savegame filename."; return false; }
+    }
+    static std::atomic<std::uint64_t> sequence{0};
+#ifdef _WIN32
+    const auto process_id=GetCurrentProcessId();
+#else
+    const auto process_id=getpid();
+#endif
+    auto temp_path=final_path;
+    temp_path+="."+std::to_string(process_id)+"."+std::to_string(sequence.fetch_add(1,std::memory_order_relaxed))+".tmp";
     Writer w(temp_path);
     if(!w.ok()){ error="Unable to open the savegame file for writing."; return false; }
 
@@ -730,10 +789,10 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         w.pod(astronaut_cache_.water_litres);
     }
 
-    w.out.flush();
-    if(!w.ok()){ w.out.close(); fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
     w.out.close();
-    fs::remove(final_path,ec); ec.clear();
+    if(!w.ok()){ fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
+    // The closed temporary file and its destination share a directory, so
+    // replacing the destination is one rename, even when overwriting a save.
     fs::rename(temp_path,final_path,ec);
     if(ec){ fs::remove(temp_path,ec); error="Unable to finalize the savegame file."; return false; }
     refresh_save_games();
@@ -943,7 +1002,6 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
 }
 
 bool GameApp::load_game_from_file(const std::string& path,std::string& error){
-    robot_enclosure_legacy_scan_pending_=true;
     Reader r{fs::path(path)};
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Invalid savegame file."; return false; }
@@ -955,27 +1013,13 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     (void)source_version;
     if(!r.valid || save_name.empty()){ error="Savegame header is damaged."; return false; }
 
-    const int saved_playfield=(int)r.pod<std::int32_t>();
-    const int saved_display_width=(int)r.pod<std::int32_t>();
-    const int saved_display_height=(int)r.pod<std::int32_t>();
-    const bool saved_fullscreen=r.boolean();
-    const int saved_ui_scale=(int)r.pod<std::int32_t>();
-    (void)r.boolean(); // Legacy debug-frame field. Visibility is local to the running build.
-    const auto saved_view=(HabitatViewMode)r.pod<std::uint8_t>();
-    const auto saved_category=(BuildCategory)r.pod<std::uint8_t>();
-    const float saved_rotation=r.pod<float>();
-    const auto saved_habitat_size=(HabitatSizeTier)r.pod<std::uint8_t>();
-    const auto saved_storage_size=(StorageDomeSize)r.pod<std::uint8_t>();
-    const auto saved_resource_size=source_schema>=7?(ResourceSizeTier)r.pod<std::uint8_t>():ResourceSizeTier::Standard;
-    const auto saved_game_speed=source_schema>=4?(GameSpeed)r.pod<std::uint8_t>():GameSpeed::Normal;
-    GamePhase saved_game_phase=GamePhase::RobotPreparation;
-    if(source_schema>=24){
-        const auto raw_phase=r.pod<std::uint8_t>();
-        if(raw_phase<(std::uint8_t)GamePhase::Planning || raw_phase>(std::uint8_t)GamePhase::Debug){
-            error="Savegame game-stage value is invalid."; return false;
-        }
-        saved_game_phase=(GamePhase)raw_phase;
+    const auto options=read_session_options(r,source_schema);
+    if(!r.ok()){ error="Savegame session settings are damaged."; return false; }
+    const int saved_playfield=options.playfield;
+    if(options.phase<static_cast<std::uint8_t>(GamePhase::Planning) || options.phase>static_cast<std::uint8_t>(GamePhase::Debug)){
+        error="Savegame game-stage value is invalid."; return false;
     }
+    const auto saved_game_phase=static_cast<GamePhase>(options.phase);
     if(!build::debug_features && saved_game_phase==GamePhase::Debug){
         error="Stage 3 test saves require the Debug build.";
         return false;
@@ -1563,6 +1607,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         finish_pending(walkways,ConstructionTargetKind::Walkway);
     }
 
+    robot_enclosure_legacy_scan_pending_=true;
     playfield_size_=saved_playfield;
     playfield_.rebuild(saved_playfield);
     camera_.restore(camera_state);
@@ -1853,14 +1898,14 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         if(!valid_owner) robot.support_robot_index=i;
     }
 
-    if(saved_display_width>0 && saved_display_height>0) app_.set_display_mode(saved_display_width,saved_display_height);
-    app_.set_fullscreen(saved_fullscreen);
+    if(options.display_width>0 && options.display_height>0) app_.set_display_mode(options.display_width,options.display_height);
+    app_.set_fullscreen(options.fullscreen);
     display_modes_.clear();
     display_mode_index_=-1;
-    ui_scale_index_=std::clamp(saved_ui_scale,0,layout::UI_SCALE_COUNT-1);
+    ui_scale_index_=std::clamp(options.ui_scale,0,layout::UI_SCALE_COUNT-1);
     on_resize(viewport_width_,viewport_height_);
-    habitat_view_mode_=saved_view;
-    game_speed_=saved_game_speed;
+    habitat_view_mode_=static_cast<HabitatViewMode>(options.view);
+    game_speed_=static_cast<GameSpeed>(options.speed);
     last_running_speed_=1;
     active_game_phase_=saved_game_phase;
     stage3_mode_=stage3_mode;
@@ -1899,12 +1944,12 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     if(lander_.active()){starting_robot_count_=lander_.builders;starting_carrier_count_=lander_.carriers;robot_enclosure_legacy_scan_pending_=false;}
     planning_structure_page_=-1;
     planning_status_message_.clear();
-    build_catalog_.set_category(saved_category);
+    build_catalog_.set_category(static_cast<BuildCategory>(options.category));
     build_catalog_.clear_selection();
-    placement_rotation_degrees_=saved_rotation;
-    placement_habitat_size_=saved_habitat_size;
-    placement_storage_size_=saved_storage_size;
-    placement_resource_size_=saved_resource_size;
+    placement_rotation_degrees_=options.rotation;
+    placement_habitat_size_=static_cast<HabitatSizeTier>(options.habitat_size);
+    placement_storage_size_=static_cast<StorageDomeSize>(options.storage_size);
+    placement_resource_size_=options.resource_size;
     storage_gate_placement_active_=false;
     storage_gate_placement_owner_=kNoRobotIndex;
 

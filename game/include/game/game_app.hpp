@@ -27,6 +27,7 @@
 #include <optional>
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <vector>
 #include <string>
@@ -92,6 +93,8 @@ private:
         std::string name{};
         std::string path{};
         std::string version{};
+        std::filesystem::file_time_type modified{};
+        bool debug_only{};
     };
     void update_simulation(float dt,const eng::InputState& input);
     void update_soundscape(float dt,const eng::InputState& input);
@@ -222,7 +225,7 @@ private:
     std::vector<airlock::Cycle> airlock_cycles_{}; // transient, seals reset safely on load
     std::vector<float> storage_gate_open_{};
     UtilityNetwork utility_network_{};
-    UtilityServiceSnapshot last_supply_services_{}; // derived live topology for progression/UI
+    UtilityServiceSnapshot live_supply_services_{};
     WalkwayNetwork walkway_network_{};
     float placement_rotation_degrees_=0.0f;
     HabitatSizeTier placement_habitat_size_{HabitatSizeTier::Small};
@@ -462,7 +465,7 @@ private:
     GameProgressSnapshot game_progress_snapshot() const;
     int crew_quarters_capacity() const;
     eng::Rect progress_tree_panel_rect() const;
-    UtilityServiceSnapshot update_supply_simulation(float dt);
+    const UtilityServiceSnapshot& update_supply_simulation(float dt);
     double refuel_landing_pad(std::size_t pad_index,bool rocket);
     void render_supply_indicators(eng::Renderer& r);
     void render_gate_areas(eng::Renderer& r) const;
@@ -539,6 +542,7 @@ private:
     void ensure_display_modes();
     std::string save_game_directory() const;
     void refresh_save_games();
+    bool resume_save(const SaveGameEntry& entry);
     bool save_game_to_name(const std::string& name,std::string& error);
     bool load_game_from_file(const std::string& path,std::string& error);
     bool load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool completed=false);

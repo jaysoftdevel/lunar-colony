@@ -1,8 +1,6 @@
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
-#include "game/version.hpp"
 #include <algorithm>
-#include <sstream>
 
 namespace game {
 using namespace eng;
@@ -39,10 +37,12 @@ void GameApp::render_save_game(Renderer& r){
     r.draw_line({field.x+field.w,field.y},{field.x+field.w,field.y+field.h},theme_.border,1.0f);
     r.draw_line({field.x+field.w,field.y+field.h},{field.x,field.y+field.h},theme_.border,1.0f);
     r.draw_line({field.x,field.y+field.h},{field.x,field.y},theme_.border,1.0f);
-    ui::label(r,{field.x+12.0f,field.y+15.0f},display_name_field(save_game_name_),0.93f,theme_,save_game_name_.empty());
+    ui::label_fitted(r,{field.x+12.0f,field.y+15.0f,field.w-24.0f,18.0f},
+                     display_name_field(save_game_name_),0.93f,theme_,save_game_name_.empty());
 
-    ui::label(r,{left,p.y+120},"Typing replaces no files except a save with the same name.",0.72f,theme_,true);
-    if(!save_status_message_.empty()) ui::label(r,{left,p.y+146},save_status_message_,0.78f,theme_);
+    ui::label_fitted(r,{left,p.y+120,right-left,18},"USING THE SAME NAME UPDATES THAT SAVE.",0.72f,theme_,true);
+    if(!save_status_message_.empty())
+        ui::label_fitted(r,{left,p.y+146,right-left,18},save_status_message_,0.78f,theme_);
 
     constexpr float bw=150.0f,bh=40.0f;
     if(ui::button(r,ui_input_,{left,p.y+p.h-PANEL_PADDING-bh,bw,bh},"BACK",theme_)){
@@ -62,6 +62,17 @@ void GameApp::render_save_game(Renderer& r){
     }
 }
 
+bool GameApp::resume_save(const SaveGameEntry& entry){
+    std::string error;
+    if(!load_game_from_file(entry.path,error)){
+        save_status_message_=std::move(error);
+        return false;
+    }
+    save_status_message_.clear();
+    screen_=Screen::Playfield;
+    return true;
+}
+
 void GameApp::render_load_game(Renderer& r){
     ui::title(r,{32,26},"LOAD GAME",theme_);
     const float logical_w=ui_width(r);
@@ -74,7 +85,8 @@ void GameApp::render_load_game(Renderer& r){
     const float left=p.x+PANEL_PADDING;
     const float right=p.x+p.w-PANEL_PADDING;
     ui::label(r,{left,p.y+18},"SAVED COLONIES",1.05f,theme_);
-    if(!save_status_message_.empty()) ui::label(r,{left,p.y+45},save_status_message_,0.70f,theme_,true);
+    ui::label_fitted(r,{left,p.y+45,right-left,18},
+        save_status_message_.empty()?"MOST RECENT FIRST":save_status_message_,0.70f,theme_,true);
 
     constexpr float row_h=44.0f;
     constexpr float row_gap=7.0f;
@@ -89,7 +101,7 @@ void GameApp::render_load_game(Renderer& r){
 
     if(save_games_.empty()){
         ui::label(r,{left,list_top+18.0f},"NO SAVE GAMES FOUND",0.92f,theme_,true);
-        ui::label(r,{left,list_top+48.0f},save_game_directory(),0.60f,theme_,true);
+        ui::label_fitted(r,{left,list_top+48.0f,right-left,18},save_game_directory(),0.60f,theme_,true);
     }else{
         for(int row=0;row<visible;++row){
             const int index=load_save_scroll_+row;
@@ -98,15 +110,9 @@ void GameApp::render_load_game(Renderer& r){
             Rect button{left,list_top+(row_h+row_gap)*row,right-left,row_h};
             std::string label=entry.name;
             if(!entry.version.empty()) label+="  ["+entry.version+"]";
-            if(ui::button(r,ui_input_,button,label,theme_)){
-                std::string error;
-                if(load_game_from_file(entry.path,error)){
-                    save_status_message_.clear();
-                    screen_=Screen::Playfield;
-                    return;
-                }
-                save_status_message_=error;
-            }
+            if(entry.debug_only) label+="  [DEBUG]";
+            if(ui::button(r,ui_input_,button,label,theme_,build::debug_features || !entry.debug_only) &&
+               resume_save(entry)) return;
         }
     }
 
@@ -117,6 +123,10 @@ void GameApp::render_load_game(Renderer& r){
         return;
     }
     if(!save_games_.empty()){
+        const int end=std::min(static_cast<int>(save_games_.size()),load_save_scroll_+visible);
+        ui::label_fitted(r,{left+bw+14.0f,action_y+13.0f,right-left-3.0f*bw-34.0f,16.0f},
+            std::to_string(load_save_scroll_+1)+"-"+std::to_string(end)+" / "+std::to_string(save_games_.size()),
+            0.68f,theme_,true);
         if(ui::button(r,ui_input_,{right-2.0f*bw-10.0f,action_y,bw,action_h},"PREV",theme_,load_save_scroll_>0))
             load_save_scroll_=std::max(0,load_save_scroll_-visible);
         if(ui::button(r,ui_input_,{right-bw,action_y,bw,action_h},"NEXT",theme_,load_save_scroll_<max_scroll))

@@ -751,6 +751,59 @@ struct UiRegression {
         std::cout<<(build::debug_features?"Debug":"Release")<<" menus, build actions, and save access passed\n";
     }
 
+    static void recent_saves(){
+        namespace fs=std::filesystem;
+        eng::Application engine;
+        GameApp original(engine);
+        original.builder_robots_.resize(1);
+        const std::string prefix="resume-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const std::string first=prefix+" A",second=prefix+"_A",debug=prefix+" Debug";
+        std::vector<fs::path> paths;
+        std::string error;
+        const auto save=[&](const std::string& name,int size){
+            original.playfield_.rebuild(size);
+            require(original.save_game_to_name(name,error),error);
+            const auto entry=std::find_if(original.save_games_.begin(),original.save_games_.end(),
+                [&](const auto& candidate){return candidate.name==name;});
+            require(entry!=original.save_games_.end(),"new save was omitted from the list");
+            return fs::path(entry->path);
+        };
+        try{
+            paths.push_back(save(first,64));
+            paths.push_back(save(second,128));
+            require(paths[0]!=paths[1],"distinct save names overwrote the same file");
+            require(save(second,192)==paths[1],"same-name replacement created a duplicate save");
+
+            original.active_game_phase_=GameApp::GamePhase::Debug;
+            paths.push_back(save(debug,256));
+            const auto now=fs::file_time_type::clock::now();
+            fs::last_write_time(paths[0],now-std::chrono::hours(1));
+            fs::last_write_time(paths[1],now);
+            fs::last_write_time(paths[2],now+std::chrono::hours(1));
+
+            GameApp restarted(engine);
+            restarted.on_start();
+            require(!restarted.save_games_.empty() && restarted.save_games_.front().name==debug,"save list is out of date order");
+            Recorder recorder;
+            restarted.render(recorder);
+            const auto button=recorder.button("CONTINUE");
+            restarted.input_.mouse_x=static_cast<int>((button.x+button.w/2)*recorder.scale);
+            restarted.input_.mouse_y=static_cast<int>((button.y+button.h/2)*recorder.scale);
+            restarted.input_.left_pressed=true;
+            restarted.render(recorder);
+            require(restarted.screen_==GameApp::Screen::Playfield &&
+                    restarted.save_game_name_==(build::debug_features?debug:second) &&
+                    restarted.playfield_.size()==(build::debug_features?256:192),
+                    "Continue did not load the newest compatible save");
+            require(restarted.load_game_from_file(paths[0].string(),error) && restarted.playfield_.size()==64,
+                    "saving a colliding name changed the earlier colony");
+        }catch(...){
+            for(const auto& path:paths) fs::remove(path);
+            throw;
+        }
+        for(const auto& path:paths) fs::remove(path);
+    }
+
     static void run(const std::string& output){
         order_controls();
         presentation_controls();
@@ -800,7 +853,7 @@ struct UiRegression {
         }
         for(const auto size:sizes){
             GameApp app(engine);setup(app,0,2);Recorder r;r.resize((int)size.x,(int)size.y);app.render(r);
-            const auto start=r.button("NEW GAME  /  CAMPAIGN OR FREE PLAY");app.input_.mouse_x=(int)std::lround((start.x+start.w*0.5f)*r.scale);app.input_.mouse_y=(int)std::lround((start.y+start.h*0.5f)*r.scale);app.input_.left_pressed=true;app.render(r);
+            const auto start=r.button("NEW GAME");app.input_.mouse_x=(int)std::lround((start.x+start.w*0.5f)*r.scale);app.input_.mouse_y=(int)std::lround((start.y+start.h*0.5f)*r.scale);app.input_.left_pressed=true;app.render(r);
             require(app.screen_==GameApp::Screen::NewGame,"menu hitbox missed after resolution scaling");
             app.input_={};app.selection_kind_=GameApp::SelectionKind::Robot;app.on_resize(r.w,r.h);const auto pane=app.selection_panel_rect();eng::InputState pointer;
             pointer.mouse_x=(int)std::lround((pane.x+pane.w/2)*app.ui_scale_);pointer.mouse_y=(int)std::lround((pane.y+pane.h/2)*app.ui_scale_);
@@ -1824,7 +1877,10 @@ int main(int argc,char** argv){
     int result=0;
     try{
         const std::string out=argc>1?argv[1]:"";
-        if(out=="build-mode") game::UiRegression::build_mode();
+        if(out=="build-mode"){
+            game::UiRegression::build_mode();
+            game::UiRegression::recent_saves();
+        }
         else if(out=="graphics-quality") game::UiRegression::graphics_quality();
         else{
             if(!out.empty()) std::filesystem::create_directories(out);

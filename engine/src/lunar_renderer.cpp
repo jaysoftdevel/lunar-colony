@@ -501,6 +501,11 @@ Vec3 forward(const Mat4& projection){
 } // namespace
 
 struct LunarRenderer::Impl {
+    struct ScreenFeatures {
+        bool reflections{},bloom{},volumes{},visibility{},rays{},ray_filter{},reservoirs{};
+        bool operator==(const ScreenFeatures&) const = default;
+    };
+
     Api gl;
     ComputeApi compute;
     bool visibility_path{},visibility_targets{},cluster_path{};
@@ -531,7 +536,7 @@ struct LunarRenderer::Impl {
     lunar::PageCoord ground_origin{},shadow_origin{};
     Vec3 page_sun{},page_x{},page_y{};
     bool page_support{},shadow_pages_active{};
-    bool loaded{},ready{},in_scene{},targets_ready{},history_valid{},earth_sky_failed{};
+    bool loaded{},ready{},in_scene{},targets_ready{},history_valid{},earth_sky_failed{},skin_in_scene{};
     Int width{},height{},output_width{},output_height{},history_width{},history_height{},terrain_vertices{},stone_start{};
     GraphicsSettings graphics=graphics_settings_from_environment();
     std::uint32_t frame_features{all_graphics_features};
@@ -697,11 +702,28 @@ struct LunarRenderer::Impl {
             destroy(*target);
     }
 
-    void resize_rays(){
+    static bool trace_enabled(const GraphicsSettings& settings){
+        constexpr auto effects=graphics_bit(Feature::RayShadows)|graphics_bit(Feature::RayReflections)|
+            graphics_bit(Feature::RayOcclusion)|graphics_bit(Feature::RayIndirect);
+        return settings.enabled(Feature::RayTracing) && (settings.features&effects)!=0;
+    }
+
+    ScreenFeatures screen_features(const GraphicsSettings& settings) const {
+        const bool compute_available=settings.path==GraphicsPath::Auto && advanced;
+        const bool reservoirs_needed=compute_available && settings.enabled(Feature::LocalLights) &&
+            settings.enabled(Feature::ReservoirLights);
+        const bool rays_needed=compute_available && (trace_enabled(settings) || reservoirs_needed);
+        return {settings.enabled(Feature::ScreenReflections),settings.bloom>0,
+                settings.enabled(Feature::VolumetricDust) || settings.enabled(Feature::VolumetricPlumes),
+                settings.path==GraphicsPath::Auto && visibility_path && settings.enabled(Feature::VisibilityBuffer),
+                rays_needed,rays_needed && settings.enabled(Feature::RayDenoise),reservoirs_needed};
+    }
+
+    void resize_rays(const ScreenFeatures& features){
         ray_targets=false;
         ray_history=reservoir_history=false;
         ray_index=reservoir_index=0;
-        if(!auto_path() || !advanced) return;
+        if(!features.rays) return;
         const float scale=graphics.ray_scale*0.01f;
         const float ratio=std::min(scale,1300.0f*scale/width);
         ray_width=std::max(1,Int(width*ratio));
@@ -709,11 +731,15 @@ struct LunarRenderer::Impl {
         const auto triple=[&](Target& target){
             return make_target(target,ray_width,ray_height,{{rgba16f,true},{rgba16f,true},{rgba16f,true}});
         };
-        ray_targets=make_target(reservoirs[0],ray_width,ray_height,{{rgba32f}})
-            && make_target(reservoirs[1],ray_width,ray_height,{{rgba32f}})
-            && triple(ray_raw) && triple(ray_filtered[0]) && triple(ray_filtered[1]);
-        if(!ray_targets)
+        ray_targets=triple(ray_raw)
+            && (!features.ray_filter || (triple(ray_filtered[0]) && triple(ray_filtered[1])))
+            && (!features.reservoirs || (make_target(reservoirs[0],ray_width,ray_height,{{rgba32f}})
+                && make_target(reservoirs[1],ray_width,ray_height,{{rgba32f}})));
+        if(!ray_targets){
+            for(Target* target:{&ray_raw,&ray_filtered[0],&ray_filtered[1],&reservoirs[0],&reservoirs[1]})
+                destroy(*target);
             std::cerr<<"Lunar compute targets unavailable; using the raster lighting path.\n";
+        }
     }
 
     void resize(Int w,Int h){
@@ -731,15 +757,19 @@ struct LunarRenderer::Impl {
         history_height=std::max(1,Int(h*history_scale));
         history_valid=false;
         history_index=jitter=0;
+        const auto features=screen_features(graphics);
+        const bool history_needed=temporal_aa() || features.ray_filter || features.reservoirs;
+        const bool resolve_ready=history_needed?
+            make_target(history[0],history_width,history_height,{{rgba16f,true},{r32f}}) &&
+            make_target(history[1],history_width,history_height,{{rgba16f,true},{r32f}}):
+            make_target(history[0],history_width,history_height,{{rgba16f,true}});
         const Int bw=std::max(1,width/bloom_divisor()),bh=std::max(1,height/bloom_divisor());
-        targets_ready=make_target(gbuffer,width,height,{{rgba8},{rgba16f},{rgba8}},true)
+        targets_ready=resolve_ready && make_target(gbuffer,width,height,{{rgba8},{rgba16f},{rgba8}},true)
             && make_target(hdr,width,height,{{rgba16f,true}})
-            && make_target(reflections,std::max(1,width/2),std::max(1,height/2),{{rgba16f,true}})
+            && (!features.reflections || make_target(reflections,std::max(1,width/2),std::max(1,height/2),{{rgba16f,true}}))
             && make_target(oit,width,height,{{rgba16f},{r16f}})
-            && make_target(history[0],history_width,history_height,{{rgba16f,true},{r32f}})
-            && make_target(history[1],history_width,history_height,{{rgba16f,true},{r32f}})
-            && make_target(bloom_a,bw,bh,{{rgba16f,true}}) && make_target(bloom_b,bw,bh,{{rgba16f,true}})
-            && make_target(volume_target,std::max(1,width/2),std::max(1,height/2),{{rgba16f,true}})
+            && (!features.bloom || (make_target(bloom_a,bw,bh,{{rgba16f,true}}) && make_target(bloom_b,bw,bh,{{rgba16f,true}})))
+            && (!features.volumes || make_target(volume_target,std::max(1,width/2),std::max(1,height/2),{{rgba16f,true}}))
             && make_target(overlay,width,height,{{rgba8,true}})
             && make_target(ldr,history_width,history_height,{{rgba8,true}});
         if(targets_ready){
@@ -748,14 +778,14 @@ struct LunarRenderer::Impl {
             targets_ready=gl.CheckFramebufferStatus(framebuffer)==complete;
         }
         visibility_targets=false;
-        if(targets_ready && auto_path() && visibility_path){
+        if(targets_ready && features.visibility){
             visibility_targets=make_target(visibility,width,height,{{r32ui}});
             if(visibility_targets){
                 attach_depth(gbuffer.depth);
                 visibility_targets=gl.CheckFramebufferStatus(framebuffer)==complete;
             }
         }
-        if(targets_ready) resize_rays();
+        if(targets_ready) resize_rays(features);
         gl.BindFramebuffer(framebuffer,0);
         bind_texture(0,0);
         if(!targets_ready){
@@ -932,7 +962,8 @@ struct LunarRenderer::Impl {
         const bool resolution_changed=(next.aa==GraphicsAA::Temporal)!=temporal_aa() ||
             next.render_scale!=graphics.render_scale || next.ray_scale!=graphics.ray_scale ||
             next.bloom_quality!=graphics.bloom_quality;
-        if(next.path!=graphics.path || resolution_changed) output_width=0;
+        if(next.path!=graphics.path || resolution_changed || screen_features(next)!=screen_features(graphics))
+            output_width=0;
         if(loaded && next.path==GraphicsPath::Classic && graphics.path!=GraphicsPath::Classic){
             destroy_screen_targets();
             targets_ready=false;
@@ -1007,6 +1038,7 @@ struct LunarRenderer::Impl {
         const Int first=static_cast<Int>(vertices.size());
         for(std::size_t i=0;i<count;++i) vertices.push_back({points[i],tint,float(material)});
         const bool transparent=tint.a<0.999f;
+        if(!is_line && !transparent && material==static_cast<Int>(LunarMaterial::Skin)) skin_in_scene=true;
         const bool casts=!is_line && !transparent && material!=static_cast<Int>(LunarMaterial::Emissive) &&
             material!=static_cast<Int>(LunarMaterial::Marking);
         auto& draws=is_line?lines:transparent?translucent:opaque;
@@ -1464,9 +1496,7 @@ struct LunarRenderer::Impl {
 
     bool render_rays(){
         if(!auto_path() || !ray_targets) return false;
-        constexpr auto effects=graphics_bit(Feature::RayShadows)|graphics_bit(Feature::RayReflections)|
-            graphics_bit(Feature::RayOcclusion)|graphics_bit(Feature::RayIndirect);
-        const bool trace_requested=graphics.enabled(Feature::RayTracing) && (graphics.features&effects)!=0;
+        const bool trace_requested=trace_enabled(graphics);
         if(trace_requested) update_ray_tree();
         const bool tracing=trace_requested && ray_tree_ready;
         const bool local_lights=graphics.enabled(Feature::LocalLights);
@@ -1638,8 +1668,12 @@ struct LunarRenderer::Impl {
     }
 
     UInt resolve_world(UInt reflection_texture){
+        if(!temporal_aa() && !ray_history && !reservoir_history && !reflection_texture &&
+           translucent.empty() && !volume_count && !(skin_in_scene && graphics.enabled(Feature::Skin)))
+            return hdr.color;
+
         const Target& previous=history[history_index];
-        history_index^=1;
+        if(history[1].fbo) history_index^=1;
         const Target& current=history[history_index];
         gl.BindFramebuffer(framebuffer,current.fbo);
         gl.Viewport(0,0,history_width,history_height);
@@ -1652,8 +1686,9 @@ struct LunarRenderer::Impl {
         sample(temporal,ReflectedMap,2,reflection_texture);
         sample(temporal,AccumulatedMap,3,oit.color);
         sample(temporal,DensityMap,4,oit.aux[0]);
-        sample(temporal,HistoryMap,5,previous.color);
-        sample(temporal,HistoryDepth,6,previous.aux[0]);
+        const bool use_history=temporal_aa() && history_valid;
+        sample(temporal,HistoryMap,5,use_history?previous.color:0);
+        sample(temporal,HistoryDepth,6,use_history?previous.aux[0]:0);
         sample(temporal,MaterialMap,7,gbuffer.aux[1]);
         sample(temporal,NormalMap,8,gbuffer.aux[0]);
         sample(temporal,VolumeMap,9,volume_count?volume_target.color:0);
@@ -1663,7 +1698,7 @@ struct LunarRenderer::Impl {
         matrix(temporal,PreviousInverseViewProjection,previous_inverse);
         vector(temporal,Eye,scene.eye);
         screen_size(temporal);
-        gl.Uniform1i(temporal[UseHistory],temporal_aa() && history_valid);
+        gl.Uniform1i(temporal[UseHistory],use_history);
         gl.Uniform1i(temporal[UseTransparency],!translucent.empty());
         gl.DrawArrays(triangles_mode,0,3);
         previous_projection=view_projection;
@@ -1794,6 +1829,7 @@ struct LunarRenderer::Impl {
         translucent.clear();
         lines.clear();
         volume_count=0;
+        skin_in_scene=false;
         in_scene=false;
     }
 };

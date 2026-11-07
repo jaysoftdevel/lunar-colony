@@ -61,48 +61,28 @@ GameProgressSnapshot GameApp::game_progress_snapshot() const {
         });
     };
 
-    const UtilityServiceSnapshot* services=&last_supply_services_;
-    UtilityServiceSnapshot refreshed;
-    if(services->resources.size()!=placed_resources_.size() || services->habitats.size()!=placed_habitats_.size()){
-        refreshed=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
-        services=&refreshed;
+    const auto& services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
+    struct Component {bool resource{},solar{},battery{},driller{},tank{};};
+    std::vector<Component> components(services.node_components.size());
+    for(std::size_t i=0;i<placed_resources_.size();++i){
+        const auto& resource=placed_resources_[i];
+        const auto& service=services.resources[i];
+        if(!resource.construction.complete() || !service.connected) continue;
+        auto& component=components[service.component];
+        component.resource=true;
+        switch(resource.kind){
+            case ResourceKind::SolarPanel:component.solar=true;break;
+            case ResourceKind::PowerStorage:component.battery=true;break;
+            case ResourceKind::WaterDriller:component.driller=true;break;
+            case ResourceKind::WaterStorage:component.tank=true;break;
+            default:break;
+        }
     }
-
-    const auto component_with_resources=[&](){
-        struct Flags {bool solar=false,battery=false,driller=false,tank=false;};
-        std::vector<std::pair<std::size_t,Flags>> components;
-        for(std::size_t i=0;i<placed_resources_.size() && i<services->resources.size();++i){
-            const auto& r=placed_resources_[i];
-            const auto& s=services->resources[i];
-            if(!r.construction.complete() || !s.connected || s.component==kNoUtilityComponent)continue;
-            auto it=std::find_if(components.begin(),components.end(),[&](const auto& v){return v.first==s.component;});
-            if(it==components.end()){components.push_back({s.component,{}});it=std::prev(components.end());}
-            switch(r.kind){
-                case ResourceKind::SolarPanel:it->second.solar=true;break;
-                case ResourceKind::PowerStorage:it->second.battery=true;break;
-                case ResourceKind::WaterDriller:it->second.driller=true;break;
-                case ResourceKind::WaterStorage:it->second.tank=true;break;
-                default:break;
-            }
-        }
-        for(const auto& [component,f]:components)if(f.solar&&f.battery&&f.driller&&f.tank)return component;
-        return kNoUtilityComponent;
-    };
-    const std::size_t core_component=component_with_resources();
-
-    const auto resource_to_habitat_connected=[&](){
-        for(std::size_t hi=0;hi<placed_habitats_.size() && hi<services->habitats.size();++hi){
-            if(!placed_habitats_[hi].construction.complete())continue;
-            const auto& hs=services->habitats[hi];
-            if(!hs.connected || hs.component==kNoUtilityComponent)continue;
-            for(std::size_t ri=0;ri<placed_resources_.size() && ri<services->resources.size();++ri){
-                if(!placed_resources_[ri].construction.complete())continue;
-                const auto& rs=services->resources[ri];
-                if(rs.connected && rs.component==hs.component)return true;
-            }
-        }
-        return false;
-    };
+    const bool core_network=std::any_of(components.begin(),components.end(),[](const Component& c){
+        return c.solar && c.battery && c.driller && c.tank;
+    });
+    const bool resource_to_habitat_connected=std::any_of(services.habitats.begin(),services.habitats.end(),
+        [&](const UtilityServiceState& service){return service.connected && components[service.component].resource;});
 
     const auto dorm_capacity=[&](){
         int total=0;
@@ -130,10 +110,10 @@ GameProgressSnapshot GameApp::game_progress_snapshot() const {
             case ProgressRequirementKind::BatteryBuilt:return complete_resource(ResourceKind::PowerStorage);
             case ProgressRequirementKind::WaterDrillerBuilt:return complete_resource(ResourceKind::WaterDriller);
             case ProgressRequirementKind::WaterStorageBuilt:return complete_resource(ResourceKind::WaterStorage);
-            case ProgressRequirementKind::CoreResourceNetworkConnected:return core_component!=kNoUtilityComponent;
+            case ProgressRequirementKind::CoreResourceNetworkConnected:return core_network;
             case ProgressRequirementKind::AirLockBuilt:return complete_habitat(HabitatKind::AirLock);
             case ProgressRequirementKind::OxygenGeneratorBuilt:return complete_habitat(HabitatKind::OxygenGeneratorDome);
-            case ProgressRequirementKind::ResourceToHabitatConnected:return resource_to_habitat_connected();
+            case ProgressRequirementKind::ResourceToHabitatConnected:return resource_to_habitat_connected;
             case ProgressRequirementKind::CanteenBuilt:return complete_habitat(HabitatKind::CantineDome);
             case ProgressRequirementKind::DormCapacitySix:return dorm_capacity()>=6;
             case ProgressRequirementKind::LandingPadBuilt:return complete_resource(ResourceKind::LandingPad);

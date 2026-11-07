@@ -351,11 +351,12 @@ float cross2(Vec3 a,Vec3 b,Vec3 c){
     return (b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x);
 }
 
+constexpr float intersection_epsilon=1.0e-4f;
+
 bool on_segment_xz(Vec3 a,Vec3 b,Vec3 p){
-    constexpr float EPS=1.0e-4f;
-    return std::abs(cross2(a,b,p))<EPS &&
-           p.x>=std::min(a.x,b.x)-EPS && p.x<=std::max(a.x,b.x)+EPS &&
-           p.z>=std::min(a.z,b.z)-EPS && p.z<=std::max(a.z,b.z)+EPS;
+    return std::abs(cross2(a,b,p))<intersection_epsilon &&
+           p.x>=std::min(a.x,b.x)-intersection_epsilon && p.x<=std::max(a.x,b.x)+intersection_epsilon &&
+           p.z>=std::min(a.z,b.z)-intersection_epsilon && p.z<=std::max(a.z,b.z)+intersection_epsilon;
 }
 
 bool segments_intersect_xz(Vec3 a,Vec3 b,Vec3 c,Vec3 d){
@@ -364,6 +365,45 @@ bool segments_intersect_xz(Vec3 a,Vec3 b,Vec3 c,Vec3 d){
     if(((ab_c>0.0f && ab_d<0.0f)||(ab_c<0.0f && ab_d>0.0f)) &&
        ((cd_a>0.0f && cd_b<0.0f)||(cd_a<0.0f && cd_b>0.0f))) return true;
     return on_segment_xz(a,b,c)||on_segment_xz(a,b,d)||on_segment_xz(c,d,a)||on_segment_xz(c,d,b);
+}
+
+bool paths_intersect_xz(const std::vector<Vec3>& a,const std::vector<Vec3>& b){
+    for(std::size_t i=1;i<a.size();++i)
+        for(std::size_t j=1;j<b.size();++j)
+            if(segments_intersect_xz(a[i-1],a[i],b[j-1],b[j])) return true;
+    return false;
+}
+
+template<class Connection,class Active,class Join>
+void join_crossing_paths(const std::vector<Connection>& connections,Active active,Join join){
+    struct RouteBounds {
+        std::size_t index;
+        float min_x,max_x,min_z,max_z;
+    };
+    std::vector<RouteBounds> bounds;
+    for(std::size_t i=0;i<connections.size();++i){
+        const auto& connection=connections[i];
+        if(!active(connection) || connection.path.size()<2) continue;
+        const auto start=connection.path.front();
+        RouteBounds route{i,start.x,start.x,start.z,start.z};
+        for(const auto& point:connection.path){
+            route.min_x=std::min(route.min_x,point.x);
+            route.max_x=std::max(route.max_x,point.x);
+            route.min_z=std::min(route.min_z,point.z);
+            route.max_z=std::max(route.max_z,point.z);
+        }
+        bounds.push_back(route);
+    }
+    for(std::size_t i=0;i<bounds.size();++i){
+        const auto& a=bounds[i];
+        for(std::size_t j=i+1;j<bounds.size();++j){
+            const auto& b=bounds[j];
+            constexpr float margin=2.0f*intersection_epsilon;
+            if(a.max_x+margin<b.min_x || b.max_x+margin<a.min_x ||
+               a.max_z+margin<b.min_z || b.max_z+margin<a.min_z) continue;
+            if(paths_intersect_xz(connections[a.index].path,connections[b.index].path)) join(a.index,b.index);
+        }
+    }
 }
 
 float segment_distance_xz(Vec3 a,Vec3 b,Vec3 c,Vec3 d){
@@ -1126,7 +1166,48 @@ void UtilityNetwork::remove_corridor(std::size_t corridor_index){
     rebuild_supply_junctions();
 }
 
-UtilityServiceSnapshot UtilityNetwork::evaluate_services(
+const UtilityServiceSnapshot& UtilityNetwork::evaluate_services(
+    const CorridorNetwork& corridors,
+    const std::vector<PlacedHabitat>& habitats,
+    const std::vector<PlacedResource>& resources) const {
+    // Check the inputs directly because construction, save migration and route
+    // editing can update the same connection in place. Exclude per-tick state
+    // such as stored oxygen and ore cargo from the graph identity.
+    auto& inputs=next_service_inputs_;
+    inputs.habitat_count=habitats.size();
+    inputs.utility_count=connections_.size();
+    inputs.structures.clear();
+    inputs.structures.reserve(habitats.size()+resources.size());
+    for(const auto& habitat:habitats)
+        inputs.structures.push_back({habitat.construction.complete(),habitat.power_enabled});
+    for(const auto& resource:resources)
+        inputs.structures.push_back({resource.construction.complete(),resource.power_enabled,resource.kind});
+
+    inputs.links.clear();
+    inputs.links.reserve(connections_.size()+corridors.connections().size());
+    inputs.centerlines.clear();
+    const auto capture_link=[&](const auto& link,bool active){
+        if(!active){
+            inputs.links.emplace_back();
+            return;
+        }
+        inputs.links.push_back({true,static_cast<int>(link.endpoint_a.kind),static_cast<int>(link.endpoint_b.kind),
+                                link.endpoint_a.index,link.endpoint_b.index,link.path.size()});
+        for(const auto& p:link.path) inputs.centerlines.push_back({p.x,p.z});
+    };
+    for(const auto& link:connections_)
+        capture_link(link,link.kind==UtilityKind::SupplyChannel && link.construction.complete());
+    for(const auto& link:corridors.connections())
+        capture_link(link,link.construction.complete());
+
+    if(inputs!=service_inputs_){
+        service_snapshot_=build_service_snapshot(corridors,habitats,resources);
+        std::swap(service_inputs_,next_service_inputs_);
+    }
+    return service_snapshot_;
+}
+
+UtilityServiceSnapshot UtilityNetwork::build_service_snapshot(
     const CorridorNetwork& corridors,
     const std::vector<PlacedHabitat>& habitats,
     const std::vector<PlacedResource>& resources) const {
@@ -1180,19 +1261,9 @@ UtilityServiceSnapshot UtilityNetwork::evaluate_services(
         attach_utility_endpoint(i,link.endpoint_b);
     }
     // Supply-channel centerline crossings are real shared manifolds.
-    for(std::size_t i=0;i<u_count;++i){
-        if(connections_[i].kind!=UtilityKind::SupplyChannel || !connections_[i].construction.complete()) continue;
-        for(std::size_t j=i+1;j<u_count;++j){
-            if(connections_[j].kind!=UtilityKind::SupplyChannel || !connections_[j].construction.complete()) continue;
-            bool joined=false;
-            for(std::size_t a=0;a+1<connections_[i].path.size() && !joined;++a)
-                for(std::size_t b=0;b+1<connections_[j].path.size();++b)
-                    if(segments_intersect_xz(connections_[i].path[a],connections_[i].path[a+1],connections_[j].path[b],connections_[j].path[b+1])){
-                        joined=true; break;
-                    }
-            if(joined) join(u_node(i),u_node(j));
-        }
-    }
+    join_crossing_paths(connections_,
+        [](const UtilityConnection& c){return c.kind==UtilityKind::SupplyChannel && c.construction.complete();},
+        [&](std::size_t i,std::size_t j){join(u_node(i),u_node(j));});
 
     const auto attach_corridor_endpoint=[&](std::size_t ci,const CorridorEndpoint& endpoint){
         switch(endpoint.kind){
@@ -1218,19 +1289,9 @@ UtilityServiceSnapshot UtilityNetwork::evaluate_services(
     }
     // Automatic corridor crossings are pressure manifolds, therefore their
     // embedded service pipes share the same component as well.
-    for(std::size_t i=0;i<c_count;++i){
-        if(!corridor_complete(i)) continue;
-        for(std::size_t j=i+1;j<c_count;++j){
-            if(!corridor_complete(j)) continue;
-            bool joined=false;
-            const auto& a=corridors.connections()[i].path;
-            const auto& b=corridors.connections()[j].path;
-            for(std::size_t ai=0;ai+1<a.size() && !joined;++ai)
-                for(std::size_t bi=0;bi+1<b.size();++bi)
-                    if(segments_intersect_xz(a[ai],a[ai+1],b[bi],b[bi+1])){ joined=true; break; }
-            if(joined) join(c_node(i),c_node(j));
-        }
-    }
+    join_crossing_paths(corridors.connections(),
+        [](const CorridorConnection& c){return c.construction.complete();},
+        [&](std::size_t i,std::size_t j){join(c_node(i),c_node(j));});
 
     struct Component {
         bool network{false};
@@ -1269,6 +1330,8 @@ UtilityServiceSnapshot UtilityNetwork::evaluate_services(
     };
     for(std::size_t i=0;i<h_count;++i) snapshot.habitats[i]=state_for(h_node(i),habitats[i].power_enabled);
     for(std::size_t i=0;i<r_count;++i) snapshot.resources[i]=state_for(r_node(i),resources[i].power_enabled);
+    snapshot.node_components.resize(total);
+    for(std::size_t i=0;i<total;++i) snapshot.node_components[i]=sets.find(i);
     return snapshot;
 }
 

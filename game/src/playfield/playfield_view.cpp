@@ -30,25 +30,27 @@ void GameApp::render_playfield(Renderer& r){
         focus.y=0;
         LunarScene scene{view,eye,focus,sun.direction,sun.irradiance_fraction,playfield_.size()*0.5f};
         scene.seconds=static_cast<float>(ui_time_seconds_);
-        std::vector<LunarLight> lights;
-        for(const auto& habitat:placed_habitats_){
-            if(habitat.construction.complete() && lunar_look::powered(habitat.supply,habitat.power_enabled))
-                lights.push_back(lunar_look::habitat_fixture(habitat,habitat_models_.mesh(habitat)).light());
+        if(graphics_.enabled(GraphicsFeature::LocalLights)){
+            std::vector<LunarLight> lights;
+            for(const auto& habitat:placed_habitats_){
+                if(habitat.construction.complete() && lunar_look::powered(habitat.supply,habitat.power_enabled))
+                    lights.push_back(lunar_look::habitat_fixture(habitat,habitat_models_.mesh(habitat)).light());
+            }
+            for(const auto& pad:placed_resources_){
+                if(pad.kind!=ResourceKind::LandingPad || !pad.construction.complete() ||
+                   !lunar_look::powered(pad.supply,pad.power_enabled)) continue;
+                for(const auto& fixture:lunar_look::pad_fixtures(pad,resource_models_.mesh(pad)))
+                    lights.push_back(fixture.light());
+            }
+            scene.light_count=std::min(lights.size(),scene.lights.size());
+            const auto distance_to_focus=[&](const LunarLight& light){
+                const Vec3 offset=light.position-focus;
+                return dot(offset,offset);
+            };
+            std::partial_sort(lights.begin(),lights.begin()+scene.light_count,lights.end(),
+                [&](const LunarLight& a,const LunarLight& b){ return distance_to_focus(a)<distance_to_focus(b); });
+            std::copy_n(lights.begin(),scene.light_count,scene.lights.begin());
         }
-        for(const auto& pad:placed_resources_){
-            if(pad.kind!=ResourceKind::LandingPad || !pad.construction.complete() ||
-               !lunar_look::powered(pad.supply,pad.power_enabled)) continue;
-            for(const auto& fixture:lunar_look::pad_fixtures(pad,resource_models_.mesh(pad)))
-                lights.push_back(fixture.light());
-        }
-        scene.light_count=std::min(lights.size(),scene.lights.size());
-        const auto distance_to_focus=[&](const LunarLight& light){
-            const Vec3 offset=light.position-focus;
-            return dot(offset,offset);
-        };
-        std::partial_sort(lights.begin(),lights.begin()+scene.light_count,lights.end(),
-            [&](const LunarLight& a,const LunarLight& b){ return distance_to_focus(a)<distance_to_focus(b); });
-        std::copy_n(lights.begin(),scene.light_count,scene.lights.begin());
         lunar=r.begin_lunar_scene(scene);
     }
     const bool show_build_guides=!lunar || build_catalog_.selected() || storage_gate_placement_active_;
@@ -89,7 +91,7 @@ void GameApp::render_playfield(Renderer& r){
     if(first_person_mode_==FirstPersonMode::Active){
         r.set_2d(ui_scale_);
         render_construction_status_frames(r);
-    render_supply_indicators(r);
+        render_supply_indicators(r);
         render_status_bar(r);
         render_progress_tree(r);
         render_first_person_hud(r);

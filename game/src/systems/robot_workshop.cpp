@@ -18,7 +18,7 @@ bool GameApp::workshop_supplied(std::size_t resource_index) const {
 bool GameApp::workshop_operational(std::size_t resource_index) const {
     if(resource_index>=placed_resources_.size() || placed_resources_[resource_index].kind!=ResourceKind::RobotWorkshop ||
        !placed_resources_[resource_index].construction.complete() || !workshop_supplied(resource_index)) return false;
-    const auto services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
+    const auto& services=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
     return resource_index<services.resources.size() && services.resources[resource_index].power;
 }
 

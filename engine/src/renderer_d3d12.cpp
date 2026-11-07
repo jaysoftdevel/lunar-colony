@@ -357,6 +357,7 @@ class D3D12Renderer final : public Renderer {
     float terrain_half_{};
     int terrain_relief_{};
     int lunar_width_{},lunar_height_{},target_scale_{},target_bloom_quality_{};
+    bool target_bloom_enabled_{};
     bool benchmarking_{};
     double benchmark_ms_{};
     std::chrono::steady_clock::time_point benchmark_begin_{};
@@ -553,6 +554,7 @@ class D3D12Renderer final : public Renderer {
         lunar_depth_.Reset();
         target_scale_=graphics_.render_scale;
         target_bloom_quality_=graphics_.bloom_quality;
+        target_bloom_enabled_=graphics_.bloom>0;
         lunar_width_=std::max(1,width_*target_scale_/100);
         lunar_height_=std::max(1,height_*target_scale_/100);
         if((lunar_width_!=width_ || lunar_height_!=height_) &&
@@ -569,13 +571,13 @@ class D3D12Renderer final : public Renderer {
         };
         ComPtr<ID3D12Resource> scene,bloom;
         HRESULT hr=make_target(lunar_width_,lunar_height_,&clear,scene);
-        if(SUCCEEDED(hr)) hr=make_target(bloom_width(),bloom_height(),nullptr,bloom);
+        if(SUCCEEDED(hr) && target_bloom_enabled_) hr=make_target(bloom_width(),bloom_height(),nullptr,bloom);
         if(FAILED(hr)){
             log_hresult("Create lunar render targets",hr);
             return false;
         }
         device_->CreateRenderTargetView(scene.Get(),nullptr,rtv_handle(kSceneRtv));
-        device_->CreateRenderTargetView(bloom.Get(),nullptr,rtv_handle(kBloomRtv));
+        if(bloom) device_->CreateRenderTargetView(bloom.Get(),nullptr,rtv_handle(kBloomRtv));
 
         D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
         srv.Format=kLunarFormat;
@@ -584,8 +586,10 @@ class D3D12Renderer final : public Renderer {
         srv.Texture2D.MipLevels=1;
         auto cpu=lunar_srv_heap_->GetCPUDescriptorHandleForHeapStart();
         device_->CreateShaderResourceView(scene.Get(),&srv,cpu);
-        cpu.ptr+=srv_increment_;
-        device_->CreateShaderResourceView(bloom.Get(),&srv,cpu);
+        if(bloom){
+            cpu.ptr+=srv_increment_;
+            device_->CreateShaderResourceView(bloom.Get(),&srv,cpu);
+        }
         lunar_target_=std::move(scene);
         bloom_target_=std::move(bloom);
         return true;
@@ -973,7 +977,8 @@ public:
         benchmark_ms_=0.0;
         if(frame_open_ || !swap_chain_ || !depth_buffer_) return;
         if(lunar_srv_heap_ && graphics_.path!=GraphicsPath::Classic &&
-           (target_scale_!=graphics_.render_scale || target_bloom_quality_!=graphics_.bloom_quality)){
+           (target_scale_!=graphics_.render_scale || target_bloom_enabled_!=(graphics_.bloom>0) ||
+            (target_bloom_enabled_ && target_bloom_quality_!=graphics_.bloom_quality))){
             wait_for_gpu();
             create_lunar_targets();
         }
@@ -1066,7 +1071,7 @@ public:
     double benchmark_frame_ms() const override { return benchmark_ms_; }
 
     bool begin_lunar_scene(const LunarScene& scene) override {
-        if(!frame_open_ || lunar_active_ || !lunar_target_ || !bloom_target_ ||
+        if(!frame_open_ || lunar_active_ || !lunar_target_ || (graphics_.bloom>0 && !bloom_target_) ||
            graphics_.path==GraphicsPath::Classic) return false;
 
         SceneConstants constants{};
