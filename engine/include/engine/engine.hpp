@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/math.hpp"
+#include "engine/graphics_settings.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -14,6 +15,38 @@
 
 namespace eng {
 struct Color { float r{},g{},b{},a{1.0f}; };
+enum class LunarMaterial { Paint, Alloy, Regolith, Solar, Glass, Fabric, Pad, Emissive, Skin, Marking, Hair };
+
+struct LunarLight {
+    Vec3 position{};
+    Color color{};
+    float radius{};
+    float power{};
+};
+
+struct LunarVolume {
+    Vec3 origin{};
+    Vec3 axis{0,1,0};
+    float length{};
+    float radius{};
+    Color tint{};
+    float density{};
+    float emission{};
+    bool cone{};
+};
+
+struct LunarScene {
+    Mat4 view_projection{};
+    Vec3 eye{};
+    Vec3 focus{};
+    Vec3 sun_direction{};
+    float daylight{};
+    float half_extent{};
+    std::array<LunarLight,64> lights{};
+    std::size_t light_count{};
+    float seconds{};
+};
+
 struct Rect { float x{},y{},w{},h{}; bool contains(float px,float py) const { return px>=x&&px<=x+w&&py>=y&&py<=y+h; } };
 struct DisplayMode {
     int width{};
@@ -36,6 +69,8 @@ struct InputState {
     bool key_w_down{}, key_a_down{}, key_s_down{}, key_d_down{};
     bool key_shift_down{};
     bool key_space_pressed{}, key_space_down{};
+    bool key_j_pressed{}, key_j_down{};
+    std::uint8_t key_number_pressed{};
     bool delete_pressed{};
     bool backspace_pressed{}, enter_pressed{};
     std::string text_input{};
@@ -61,6 +96,16 @@ public:
     // 0 grass, 1 sand, 2 tarmac, 3 concrete, 4 water, 5 industrial roof.
     virtual void draw_material_triangles_3d(const std::vector<Vec3>& vertices, int material, Color tint){
         (void)material;
+        draw_triangles_3d(vertices,tint);
+    }
+    virtual void set_graphics_settings(const GraphicsSettings&) {}
+    virtual GraphicsCapabilities graphics_capabilities() { return {}; }
+    // Optional lunar scene pass. Other backends retain the standard mesh view.
+    virtual bool begin_lunar_scene(const LunarScene&) { return false; }
+    virtual bool lunar_scene_active() const { return false; }
+    virtual bool draw_lunar_volume(const LunarVolume&) { return false; }
+    virtual bool draw_campus_atmosphere(const Mat4&,Vec3,float){ return false; }
+    virtual void draw_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial,Color tint){
         draw_triangles_3d(vertices,tint);
     }
     virtual void draw_rect(Rect r, Color color)=0;

@@ -53,7 +53,7 @@ void GameApp::render_settings(Renderer& r){
     const float logical_w=ui_width(r);
     const float logical_h=ui_height(r);
     const float w=std::min(820.0f,logical_w-2.0f*SCREEN_MARGIN);
-    const float h=std::min(300.0f,std::max(286.0f,logical_h-92.0f));
+    const float h=std::min(368.0f,logical_h-92.0f);
     Rect p={(logical_w-w)*0.5f,70,w,h};
     ui::panel(r,p,theme_);
 
@@ -105,17 +105,47 @@ void GameApp::render_settings(Renderer& r){
         app_.set_display_mode(mode.width,mode.height);
     }
     ui::label(r,{left_x,inner_y+158},"COMMON SUPPORTED MODES",0.72f,theme_,true);
+    if(ui::button(r,ui_input_,{left_x,inner_y+202,column_w,34},"GRAPHICS",theme_)){
+        screen_=Screen::GraphicsSettings;
+        graphics_tab_=graphics_page_=0;
+    }
 
     r.draw_line({separator_x,p.y+16},{separator_x,p.y+p.h-58},theme_.border,1.0f);
 
-    ui::label(r,{right_x,inner_y},"GAMEPLAY",1.18f,theme_);
-    ui::label(r,{right_x,inner_y+39},"DEBUG FRAME",0.92f,theme_);
-    const std::string debug_label=debug_frame_enabled_?"ON":"OFF";
-    if(ui::button(r,ui_input_,{right_x+column_w-82,inner_y+27,82,34},debug_label,theme_)){
-        debug_frame_enabled_=!debug_frame_enabled_;
+    const float right_edge=right_x+column_w;
+    if constexpr(build::debug_features){
+        ui::label(r,{right_x,inner_y},"GAMEPLAY",1.18f,theme_);
+        ui::label(r,{right_x,inner_y+39},"DEBUG FRAME",0.92f,theme_);
+        const std::string debug_label=debug_frame_enabled_?"ON":"OFF";
+        if(ui::button(r,ui_input_,{right_x+column_w-82,inner_y+27,82,34},debug_label,theme_)){
+            debug_frame_enabled_=!debug_frame_enabled_;
+        }
+        ui::label(r,{right_x,inner_y+80},"DEBUG LAYOUT",0.92f,theme_);
+        if(ui::button(r,ui_input_,{right_edge-148,inner_y+68,148,34},
+                      mesh_layout_active()?"MESHED":"FULL GRAPHICS",theme_))
+            toggle_world_layout();
     }
-    ui::label(r,{right_x,inner_y+82},"SAME UI PROPORTIONS AT HD AND 4K",0.76f,theme_,true);
-    ui::label(r,{right_x,inner_y+109},"CROSSHAIR ONLY OVER PLAYFIELD",0.76f,theme_,true);
+
+    const float audio_y=inner_y+(build::debug_features?120.0f:0.0f);
+    ui::label(r,{right_x,audio_y},"AUDIO",1.18f,theme_);
+    ui::label(r,{right_x,audio_y+38},"MUSIC",0.92f,theme_);
+    if(ui::button(r,ui_input_,{right_edge-82,audio_y+26,82,34},soundscape_.music_enabled()?"ON":"OFF",theme_)){
+        soundscape_.set_music_enabled(!soundscape_.music_enabled());
+        persist_preferences();
+    }
+
+    const float volume=soundscape_.volume();
+    ui::label(r,{right_x,audio_y+80},"SOUND VOLUME",0.92f,theme_);
+    if(ui::button(r,ui_input_,{right_edge-150,audio_y+68,small_button,34},"-",theme_))
+        soundscape_.set_volume(volume-.10f);
+    ui::label(r,{right_edge-99,audio_y+80},std::to_string((int)std::lround(volume*100.0f))+"%",0.91f,theme_);
+    if(ui::button(r,ui_input_,{right_edge-small_button,audio_y+68,small_button,34},"+",theme_))
+        soundscape_.set_volume(volume+.10f);
+    if(ui::button(r,ui_input_,{right_edge-112,audio_y+108,112,34},volume>0.0f?"MUTE":"UNMUTE",theme_))
+        soundscape_.set_volume(volume>0.0f?0.0f:.72f);
+
+    if(preferences_save_failed_)
+        ui::label_fitted(r,{right_x,inner_y+279,column_w,24},"PREFERENCES COULD NOT BE SAVED",0.78f,theme_);
 
     constexpr float back_w=130.0f;
     constexpr float back_h=38.0f;

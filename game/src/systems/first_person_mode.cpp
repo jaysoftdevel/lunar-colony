@@ -1282,8 +1282,8 @@ void GameApp::update_first_person(float dt,const InputState& input){
         }
     }
     first_person_.set_feet_position(current);
-    const float ceiling=input.key_space_pressed || !first_person_.grounded()?first_person_ceiling_height(current):std::numeric_limits<float>::max();
-    first_person_.advance_vertical(input.key_space_pressed,dt,first_person_floor_height(current),ceiling);
+    const float ceiling=input.key_j_pressed || !first_person_.grounded()?first_person_ceiling_height(current):std::numeric_limits<float>::max();
+    first_person_.advance_vertical(input.key_j_pressed,dt,first_person_floor_height(current),ceiling);
     update_first_person_resource_hover();
     if(input.left_pressed) first_person_grab_or_drop_resource();
 }

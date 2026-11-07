@@ -8,7 +8,8 @@ if /I not "%CONFIG%"=="Debug" if /I not "%CONFIG%"=="Release" if /I not "%CONFIG
     echo Usage: configure.bat [Debug^|Release^|RelWithDebInfo^|MinSizeRel] [--tests]
     exit /b 2
 )
-set "TESTS=OFF"
+set "TESTS=%GAME_BUILD_TESTS%"
+if "%TESTS%"=="" set "TESTS=OFF"
 if /I "%~1"=="--tests" set "TESTS=ON"
 if /I "%~2"=="--tests" set "TESTS=ON"
 where cmake >nul 2>nul
@@ -18,5 +19,5 @@ if errorlevel 1 (
 )
 cmake -S . -B build\windows -G "Visual Studio 17 2022" -A x64 -DGAME_BUILD_NAVIGATION_TESTS=%TESTS%
 if errorlevel 1 exit /b 1
-echo Configured Windows/Win32/Direct3D 12: build\windows ^(%CONFIG%, tests=%TESTS%^)
+echo Configured Windows/Win32/Direct3D 12: build\windows ^(Release and Debug, tests=%TESTS%^)
 exit /b 0

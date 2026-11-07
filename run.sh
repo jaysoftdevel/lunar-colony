@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
-if [[ ! -x "$GAME_BIN" ]]; then
-    echo "No Linux executable found. Building Release first..."
-    "$GAME_ROOT/build.sh" Release
+bin="$GAME_BIN"
+case "${1:-}" in
+    Debug|debug|--debug) bin="$GAME_DEBUG_BIN"; shift ;;
+    Release|release) shift ;;
+esac
+if [[ ! -x "$GAME_BIN" || ! -x "$GAME_DEBUG_BIN" ]]; then
+    "$GAME_ROOT/build.sh"
 fi
-exec "$GAME_BIN" "$@"
+exec "$bin" "$@"

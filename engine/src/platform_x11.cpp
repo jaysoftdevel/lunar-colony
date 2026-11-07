@@ -6,6 +6,7 @@
 #include <X11/XKBlib.h>
 #include <X11/keysym.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -123,6 +124,7 @@ struct Application::Impl {
     bool quit=false;
     bool fullscreen=false;
     InputState input{};
+    std::array<unsigned int,3> speed_key_codes{};
     std::unique_ptr<Renderer> renderer;
     mutable RandRApi randr{};
 
@@ -206,6 +208,9 @@ struct Application::Impl {
         input.key_w_down=input.key_a_down=input.key_s_down=input.key_d_down=false;
         input.key_shift_down=false;
         input.key_space_down=false;input.key_space_pressed=false;
+        input.key_j_down=false;input.key_j_pressed=false;
+        input.key_number_pressed=0;
+        speed_key_codes.fill(0);
         input.mouse_dx=input.mouse_dy=0;
     }
 
@@ -467,7 +472,8 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
         p.input.left_pressed=p.input.middle_pressed=p.input.right_pressed=false;
         p.input.escape_pressed=p.input.key_n_pressed=p.input.key_m_pressed=p.input.key_v_pressed=p.input.delete_pressed=false;
         p.input.backspace_pressed=p.input.enter_pressed=false;
-        p.input.key_space_pressed=false;
+        p.input.key_space_pressed=p.input.key_j_pressed=false;
+        p.input.key_number_pressed=0;
         p.input.text_input.clear();
         p.input.wheel=0; p.input.mouse_dx=0; p.input.mouse_dy=0;
         while(XPending(p.display)){
@@ -517,6 +523,14 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
                 else if(k==XK_n || k==XK_N) p.input.key_n_pressed=true;
                 else if(k==XK_m || k==XK_M) p.input.key_m_pressed=true;
                 else if(k==XK_space){if(!p.input.key_space_down)p.input.key_space_pressed=true;p.input.key_space_down=true;}
+                else if(k==XK_j || k==XK_J){if(!p.input.key_j_down)p.input.key_j_pressed=true;p.input.key_j_down=true;}
+                else if((k>=XK_1 && k<=XK_3) || (k>=XK_KP_1 && k<=XK_KP_3)){
+                    const auto index=static_cast<std::size_t>(k-(k>=XK_KP_1?XK_KP_1:XK_1));
+                    if(!p.speed_key_codes[index] && !(e.xkey.state&(ControlMask|Mod1Mask))){
+                        p.speed_key_codes[index]=e.xkey.keycode;
+                        p.input.key_number_pressed=static_cast<std::uint8_t>(index+1);
+                    }
+                }
                 else if(k==XK_v || k==XK_V){ if(!p.input.key_v_down) p.input.key_v_pressed=true; p.input.key_v_down=true; }
                 else if(k==XK_w || k==XK_W) p.input.key_w_down=true;
                 else if(k==XK_a || k==XK_A) p.input.key_a_down=true;
@@ -532,8 +546,18 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
                     }
                 }
             } else if(e.type==KeyRelease){
+                // Non-detectable autorepeat sends a release/press pair with
+                // the same timestamp. Keep edge-triggered shortcuts held.
+                if(!detectable && XEventsQueued(p.display,QueuedAfterReading)>0){
+                    XEvent next{};
+                    XPeekEvent(p.display,&next);
+                    if(next.type==KeyPress && next.xkey.time==e.xkey.time && next.xkey.keycode==e.xkey.keycode)
+                        continue;
+                }
+                for(auto& code:p.speed_key_codes) if(code==e.xkey.keycode) code=0;
                 KeySym k=XLookupKeysym(&e.xkey,0);
                 if(k==XK_space) p.input.key_space_down=false;
+                else if(k==XK_j || k==XK_J) p.input.key_j_down=false;
                 else if(k==XK_v || k==XK_V) p.input.key_v_down=false;
                 else if(k==XK_w || k==XK_W) p.input.key_w_down=false;
                 else if(k==XK_a || k==XK_A) p.input.key_a_down=false;

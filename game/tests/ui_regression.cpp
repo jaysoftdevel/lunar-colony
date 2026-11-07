@@ -1,9 +1,12 @@
 #include "game/game_app.hpp"
+#include "game/config/preferences.hpp"
 #include "game/ui/layout.hpp"
 #include "engine/ui_metrics.hpp"
 #include "engine/ui_font.hpp"
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <filesystem>
@@ -18,6 +21,8 @@ void require(bool pass,const std::string& message){if(!pass)throw std::runtime_e
 struct Draw {char type;std::array<float,6> v{};std::string text;eng::Color color;};
 struct Recorder:eng::Renderer {
     int w=1920,h=1080;float scale=1;bool hud=false;std::vector<Draw> draws;
+    eng::GraphicsSettings graphics;
+    void set_graphics_settings(const eng::GraphicsSettings& settings) override { graphics=settings; }
     std::vector<eng::Vec3> belt_preview_lines;
     std::size_t mesh_triangles=0;
     bool initialize(void*,std::uintptr_t,int,int)override{return true;}
@@ -122,12 +127,14 @@ struct UiRegression {
         {
             GameApp debug(engine);setup(debug,7,2);debug.debug_frame_enabled_=true;debug.selection_kind_=GameApp::SelectionKind::None;
             Recorder debug_r;debug_r.resize(1920,1080);debug.render(debug_r);debug_r.check_bounds("debug layout switch");
-            const auto layout_button=debug_r.button("MESH");
+            require(debug_r.graphics.path==eng::GraphicsPath::Auto,"enhanced graphics are not the default");
+            const auto layout_button=debug_r.button("FULL GRAPHICS");
             debug.input_.mouse_x=(int)((layout_button.x+layout_button.w/2)*debug_r.scale);
             debug.input_.mouse_y=(int)((layout_button.y+layout_button.h/2)*debug_r.scale);
             debug.input_.left_pressed=true;debug.render(debug_r);
-            require(debug.world_layout_mode_==GameApp::WorldLayoutMode::Textured,"debug layout switch did not select textured mode");
-            debug.input_.left_pressed=false;debug.render(debug_r);debug_r.button("TEXTURED");
+            require(debug.world_layout_mode_==GameApp::WorldLayoutMode::Mesh,"debug layout switch did not select mesh mode");
+            debug.input_.left_pressed=false;debug.render(debug_r);debug_r.button("MESHED");
+            require(debug_r.graphics.path==eng::GraphicsPath::Classic,"debug layout did not select the mesh renderer");
         }
         GameApp app(engine);setup(app,7,2);app.debug_frame_enabled_=true;app.selection_kind_=GameApp::SelectionKind::Robot;app.selected_robot_=0;
         Recorder r;app.render(r);r.check_bounds("debug robot inspector");const auto button=r.button("DEBUG MOVE / PICK DESTINATION");
@@ -516,8 +523,149 @@ struct UiRegression {
         std::cout<<"Power switches, offline world icon and independent solar/driller rows passed\n";
     }
 
+    static void presentation_controls(){
+        using namespace eng;
+        Application engine;
+        GameApp app(engine);
+        setup(app,3,layout::UI_SCALE_COUNT-1);
+        Recorder r;
+        r.resize(1280,720);
+        app.render(r);
+        const auto click=[&](Rect button){
+            app.input_.mouse_x=int(std::lround((button.x+button.w*.5f)*r.scale));
+            app.input_.mouse_y=int(std::lround((button.y+button.h*.5f)*r.scale));
+            app.input_.left_pressed=true;
+            app.render(r);
+            app.input_={};
+            app.render(r);
+            r.check_bounds("presentation settings");
+        };
+        app.graphics_.path=GraphicsPath::Deferred;
+        click(r.button("FULL GRAPHICS"));
+        require(r.graphics.path==GraphicsPath::Classic && app.graphics_.path==GraphicsPath::Deferred,
+                "mesh override replaced the user's graphics path");
+        click(r.button("MESHED"));
+        require(r.graphics.path==GraphicsPath::Deferred,"full graphics did not restore the saved path");
+
+        // The right column has two ON buttons. Use the one aligned with Music.
+        const auto music=std::find_if(r.draws.begin(),r.draws.end(),[](const Draw& d){return d.type=='T' && d.text=="MUSIC";});
+        require(music!=r.draws.end(),"Music row missing");
+        const auto music_button=std::find_if(r.draws.begin(),r.draws.end(),[&](const Draw& d){
+            return d.type=='R' && d.v[0]>music->v[0] && std::abs(d.v[1]+12-music->v[1])<.1f;
+        });
+        require(music_button!=r.draws.end(),"Music button missing");
+        click({music_button->v[0],music_button->v[1],music_button->v[2],music_button->v[3]});
+        require(!app.soundscape_.music_enabled() && !load_preferences().music_enabled,"Music Off did not persist");
+        GameApp restarted(engine);
+        restarted.on_start();
+        require(!restarted.soundscape_.music_enabled(),"Music Off was lost on restart");
+
+        setup(app,7,0);
+        InputState key;
+        for(std::uint8_t digit=1;digit<=3;++digit){
+            key.key_number_pressed=digit;
+            app.update_simulation(0,key);
+            require(static_cast<int>(app.game_speed_)==digit-1,"number key selected the wrong lunar speed");
+        }
+        key={};
+        key.key_space_pressed=true;
+        const auto hour=app.status_.hour();
+        app.update_simulation(.05f,key);
+        require(app.simulation_paused() && app.status_.hour()==hour,"Space did not freeze lunar time");
+        app.render(r);
+        const auto border=r.draws.back();
+        require(border.type=='R' && border.v[2]==3.5f && border.v[1]==3.5f,"pause border missing");
+        app.update_simulation(.5f,{});
+        app.render(r);
+        require(r.draws.back().color.a!=border.color.a && app.status_.hour()==hour,
+                "pause frame did not pulse while simulation time was frozen");
+        app.update_simulation(0,key);
+        require(app.game_speed_==GameApp::GameSpeed::Fast,"Space did not restore the prior speed");
+        app.render(r);
+        require(r.draws.back().color.a!=border.color.a || r.draws.back().v[2]!=border.v[2],
+                "pause border remained visible after resuming");
+
+        app.active_game_phase_=GameApp::GamePhase::Planning;
+        const double day=app.planning_.elapsed_days;
+        app.update_simulation(.05f,key);
+        require(app.planning_.time_speed==0 && app.planning_.elapsed_days==day,
+                "Space did not pause the planning clock");
+        key={};
+        key.key_number_pressed=2;
+        app.update_simulation(.05f,key);
+        require(app.planning_.time_speed==2 && std::abs(app.planning_.elapsed_days-day-.25)<.0001,
+                "number key did not resume the planning clock at the selected speed");
+        std::cout<<"Mesh override, Music persistence, stage speed shortcuts and pause frame passed\n";
+    }
+
+    static void build_mode(){
+        using namespace eng;
+        Application engine;
+        GameApp app(engine);
+        require(app.debug_mode_active()==build::debug_features,"wrong default debug policy");
+        auto preferences=load_preferences();
+        preferences.mesh_layout=true;
+        preferences.graphics.path=GraphicsPath::Deferred;
+        require(save_preferences(preferences),"could not write isolated test preferences");
+        app.on_start();
+        Recorder r;
+        app.screen_=GameApp::Screen::Settings;
+        app.render(r);
+        const auto has=[&](std::string_view text){
+            return std::any_of(r.draws.begin(),r.draws.end(),[&](const Draw& d){
+                return d.type=='T' && d.text.find(text)!=std::string::npos;
+            });
+        };
+        require(has("GRAPHICS") && has("MUSIC") && has("SOUND VOLUME"),"player settings missing");
+        require(has("DEBUG FRAME")==build::debug_features && has("DEBUG LAYOUT")==build::debug_features,
+                "settings ignored the build policy");
+        require(r.graphics.path==(build::debug_features?GraphicsPath::Classic:GraphicsPath::Deferred),
+                "debug layout preference affected the wrong build");
+
+        app.screen_=GameApp::Screen::NewGame;
+        app.new_game_mode_selection_=GameApp::NewGameMode::FreePlay;
+        app.render(r);
+        require(has("1  PLANNING") && has("2  ROBOT PREPARATION"),"playable stages missing");
+        require(has("3  DEBUG MODES")==build::debug_features && has("DEBUG START TEMPLATE")==build::debug_features,
+                "new-game wizard ignored the build policy");
+
+        app.new_game_phase_selection_=GameApp::GamePhase::Debug;
+        app.start_new_game(GameApp::Stage3Mode::AstronautTest);
+        require(app.astronaut_test_active()==build::debug_features,"incorrect Stage 3 access");
+        app.active_game_phase_=GameApp::GamePhase::Debug;
+        app.debug_frame_enabled_=true;
+        PlacedHabitat blueprint;
+        app.finalize_placement(blueprint);
+        require(blueprint.construction.complete()==build::debug_features,"instant construction escaped Debug");
+
+        app.active_game_phase_=GameApp::GamePhase::RobotPreparation;
+        app.stage3_mode_=GameApp::Stage3Mode::Sandbox;
+        app.playfield_.rebuild(128);
+        app.builder_robots_.resize(1);
+        require(app.debug_robot_move_available(0)==build::debug_features,"robot command escaped Debug");
+
+        const auto suffix=std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        std::string error;
+        for(const auto phase:{GameApp::GamePhase::RobotPreparation,GameApp::GamePhase::Debug}){
+            app.active_game_phase_=phase;
+            const std::string name="build-mode-"+suffix+"-"+std::to_string(static_cast<int>(phase));
+            require(app.save_game_to_name(name,error),error);
+            app.refresh_save_games();
+            const auto item=std::find_if(app.save_games_.begin(),app.save_games_.end(),[&](const auto& save){return save.name==name;});
+            require(item!=app.save_games_.end(),"could not find build-policy save");
+            GameApp loaded(engine);
+            const bool ok=loaded.load_game_from_file(item->path,error);
+            std::filesystem::remove(item->path);
+            require(ok==(phase!=GameApp::GamePhase::Debug || build::debug_features),"wrong save access for build mode");
+            require(ok || error.find("Debug build")!=std::string::npos,"missing diagnostic for a Stage 3 save");
+            if(ok) require(loaded.debug_mode_active()==build::debug_features,"save altered build policy");
+        }
+        std::cout<<(build::debug_features?"Debug":"Release")<<" menus, build actions, and save access passed\n";
+    }
+
     static void run(const std::string& output){
         order_controls();
+        presentation_controls();
         airlock_status();
         status_bars(output);
         storage_and_rate_display();
@@ -542,7 +690,7 @@ struct UiRegression {
                 if(scene==19)require(has_text("HYDROPONICS") && has_text("PHOTOPERIOD"),"Bio Dome details omit hydroponics/photoperiod status");
                 if(scene==9)require(has_text("WARNING:") && has_text("AIR BELOW 95%"),"storage warning icon reason missing");
                 if(scene==16 || scene==17)require(has_text("WARNING:") && has_text("INSUFFICIENT POWER"),"storage/workshop early return hides warning reasons");
-                if(scene==12)require(has_text("SPACE JUMP"),"POV help omits Space jump");
+                if(scene==12)require(has_text("J JUMP") && has_text("SPACE PAUSE"),"POV help omits the jump or pause shortcut");
                 if(scene==14)require(has_text("-0.125"),"depleting interior details hide negative air change");
                 if(n==0)reference=r;else compare(reference,r,label);
                 if(!output.empty() && ((zoom==2 && (n==0 || n==4)) || (zoom==4 && n==0)))r.write(std::filesystem::path(output)/("ui-"+std::to_string(scene)+"-"+std::to_string(r.w)+"-zoom"+std::to_string(zoom)+".json"));
@@ -1574,4 +1722,27 @@ struct UiRegression {
     }
 };
 }
-int main(int argc,char** argv){try{const std::string out=argc>1?argv[1]:"";if(!out.empty())std::filesystem::create_directories(out);game::UiRegression::run(out);}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<"\n";return 1;}}
+int main(int argc,char** argv){
+    const auto preferences=std::filesystem::temp_directory_path()/
+        ("lunar-ui-regression-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".cfg");
+#ifdef _WIN32
+    if(_putenv_s("GAME_GRAPHICS_CONFIG",preferences.string().c_str())!=0) return 1;
+#else
+    if(setenv("GAME_GRAPHICS_CONFIG",preferences.c_str(),1)!=0) return 1;
+#endif
+    int result=0;
+    try{
+        const std::string out=argc>1?argv[1]:"";
+        if(out=="build-mode") game::UiRegression::build_mode();
+        else{
+            if(!out.empty()) std::filesystem::create_directories(out);
+            game::UiRegression::run(out);
+        }
+    }catch(const std::exception& e){
+        std::cerr<<"FAIL: "<<e.what()<<"\n";
+        result=1;
+    }
+    std::error_code error;
+    std::filesystem::remove(preferences,error);
+    return result;
+}

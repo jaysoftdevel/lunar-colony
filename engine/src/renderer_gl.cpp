@@ -2,6 +2,7 @@
 #include "engine/ui_metrics.hpp"
 #include "engine/ui_font.hpp"
 #include "engine/geometry_stream.hpp"
+#include "lunar_renderer.hpp"
 #include <algorithm>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -148,6 +149,13 @@ class GLRenderer final: public Renderer {
     GLApi gl_; Display* d_{}; Window w_{}; GLXContext ctx_{}; int width_{},height_{}; GLuint prog_{},material_prog_{},vbo_{}; GLint u_mvp_{},u_color_{},material_mvp_{},material_color_{},material_kind_{},material_tex_{},material_tiling_{}; std::array<GLuint,kCampusTexCount> campus_textures_{}; Mat4 mvp_=Mat4::identity();
     GLsizeiptr vbo_capacity_bytes_{0};
     GeometryStream stream_;
+    GraphicsSettings graphics_=graphics_settings_from_environment();
+    std::unique_ptr<LunarRenderer> lunar_;
+    bool lunar_attempted_{false};
+    bool lunar_frame_{false};
+    bool campus_atmosphere_{false};
+    Vec3 campus_eye_{};
+    GLint campus_haze_{},campus_eye_uniform_{};
     struct MaterialCommand {GLint first{},count{};int kind{};Color tint{};};
     std::vector<float> material_vertices_; // interleaved position + flat face normal
     std::vector<MaterialCommand> material_commands_;
@@ -186,11 +194,29 @@ class GLRenderer final: public Renderer {
         return false;
     }
     GLuint shader(GLenum type,const char* src){ GLuint s=gl_.glCreateShader(type); gl_.glShaderSource(s,1,&src,nullptr); gl_.glCompileShader(s); GLint ok=0; gl_.glGetShaderiv(s,GL_COMPILE_STATUS,&ok); if(!ok){ char log[2048]{}; GLsizei n=0; gl_.glGetShaderInfoLog(s,2047,&n,log); std::cerr<<"Shader error: "<<log<<"\n"; } return s; }
+    bool ensure_lunar(){
+        if(lunar_attempted_) return lunar_!=nullptr;
+        lunar_attempted_=true;
+        auto candidate=std::make_unique<LunarRenderer>();
+        if(!candidate->initialize([this](const char* name){
+            void* address=nullptr;
+            gl_.load(address,name);
+            return address;
+        })){
+            std::cerr<<"Enhanced graphics require OpenGL 3.3 with framebuffer support; using the standard view.\n";
+            return false;
+        }
+        candidate->set_graphics_settings(graphics_);
+        lunar_=std::move(candidate);
+        return true;
+    }
     void flush_materials(){
         if(material_commands_.empty())return;
         gl_.glUseProgram(material_prog_);
         gl_.glUniformMatrix4fv(material_mvp_,1,GL_FALSE,mvp_.m.data());
         gl_.glUniform1i(material_tex_,0);
+        gl_.glUniform1i(campus_haze_,campus_atmosphere_?1:0);
+        gl_.glUniform4f(campus_eye_uniform_,campus_eye_.x,campus_eye_.y,campus_eye_.z,0);
         gl_.glActiveTexture(GL_TEXTURE0);
         gl_.glBindBuffer(GL_ARRAY_BUFFER,vbo_);
         const auto bytes=(GLsizeiptr)(material_vertices_.size()*sizeof(float));
@@ -300,7 +326,7 @@ void main(){vWorld=aPos;vNormal=aNormal;gl_Position=uMVP*vec4(aPos,1.0);}
 )GLSL";
         const char* mfs=R"GLSL(#version 120
 uniform vec4 uColor;uniform float uMaterial;uniform float uTiling;
-uniform sampler2D uTexture;
+uniform sampler2D uTexture;uniform int uHaze;uniform vec4 uEye;
 varying vec3 vWorld;varying vec3 vNormal;
 void main(){
     vec3 n=normalize(vNormal);
@@ -316,7 +342,13 @@ void main(){
         light+=pow(max(dot(n,normalize(vec3(0.45,0.18,0.88))),0.0),14.0)*0.13;
     }
     if(uMaterial>3.5&&uMaterial<4.5)light=0.87;
-    gl_FragColor=vec4(clamp(base*light,0.0,1.0),uColor.a);
+    vec3 lit=clamp(base*light,0.0,1.0);
+    if(uHaze!=0){
+        float d=max(0.0,length(vWorld-uEye.xyz)-80.0);
+        float haze=1.0-exp(-d*0.0013);
+        lit=mix(lit,vec3(0.65,0.76,0.82),haze*0.79);
+    }
+    gl_FragColor=vec4(lit,uColor.a);
 }
 )GLSL";
         GLuint mv=shader(GL_VERTEX_SHADER,mvs),mf=shader(GL_FRAGMENT_SHADER,mfs);
@@ -331,6 +363,8 @@ void main(){
         material_kind_=gl_.glGetUniformLocation(material_prog_,"uMaterial");
         material_tex_=gl_.glGetUniformLocation(material_prog_,"uTexture");
         material_tiling_=gl_.glGetUniformLocation(material_prog_,"uTiling");
+        campus_haze_=gl_.glGetUniformLocation(material_prog_,"uHaze");
+        campus_eye_uniform_=gl_.glGetUniformLocation(material_prog_,"uEye");
         gl_.glPixelStorei(GL_UNPACK_ALIGNMENT,1);
         gl_.glActiveTexture(GL_TEXTURE0);
         gl_.glGenTextures(kCampusTexCount,campus_textures_.data());
@@ -349,19 +383,68 @@ void main(){
                  <<(gl_.glGenerateMipmap?" (mipmapped)":" (bilinear fallback)")<<"\n";
         u_mvp_=gl_.glGetUniformLocation(prog_,"uMVP"); u_color_=gl_.glGetUniformLocation(prog_,"uColor"); gl_.glGenBuffers(1,&vbo_); resize(width,height); return true;
     }
-    void resize(int w,int h) override { flush_geometry();flush_materials(); width_=w;height_=h; if(h<1)h=1; gl_.glViewport(0,0,w,h); }
-    void begin_frame(Color c) override { stream_.clear();material_vertices_.clear();material_commands_.clear(); gl_.glClearColor(c.r,c.g,c.b,c.a); gl_.glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); gl_.glEnable(GL_DEPTH_TEST); gl_.glEnable(GL_BLEND); gl_.glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA); }
-    void end_frame() override { flush_geometry();flush_materials(); gl_.glXSwapBuffers(d_,w_); }
-    void set_3d(const Mat4& vp) override { flush_geometry();flush_materials(); mvp_=vp; gl_.glEnable(GL_DEPTH_TEST); }
+    void resize(int w,int h) override { if(lunar_) lunar_->finish(); flush_geometry();flush_materials(); width_=w;height_=h; if(h<1)h=1; gl_.glViewport(0,0,w,h); }
+    void begin_frame(Color c) override {
+        if(lunar_ && !lunar_frame_) lunar_->invalidate_history();
+        lunar_frame_=false;
+        campus_atmosphere_=false;
+        stream_.clear();material_vertices_.clear();material_commands_.clear(); gl_.glClearColor(c.r,c.g,c.b,c.a); gl_.glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); gl_.glEnable(GL_DEPTH_TEST); gl_.glEnable(GL_BLEND); gl_.glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA); }
+    void end_frame() override { if(lunar_) lunar_->finish(); flush_geometry();flush_materials(); gl_.glXSwapBuffers(d_,w_); }
+    void set_3d(const Mat4& vp) override { if(lunar_) lunar_->finish(); flush_geometry();flush_materials(); mvp_=vp; gl_.glEnable(GL_DEPTH_TEST); }
     void set_2d(float scale=1.0f) override {
+        if(lunar_) lunar_->finish();
         flush_geometry();flush_materials();
         scale=std::max(0.01f,scale);
         mvp_=ortho(0,(float)width_/scale,(float)height_/scale,0,-1,1);
         gl_.glDisable(GL_DEPTH_TEST);
     }
-    void draw_lines_3d(const std::vector<Vec3>& v,Color c,float width) override { if(v.empty())return; upload_and_draw((const float*)v.data(),v.size()*3,GL_LINES,c,width); }
-    void draw_triangles_3d(const std::vector<Vec3>& v,Color c) override { if(v.empty())return; upload_and_draw((const float*)v.data(),v.size()*3,GL_TRIANGLES,c,1); }
+    void set_graphics_settings(const GraphicsSettings& settings) override {
+        if(settings==graphics_) return;
+        graphics_=settings;
+        graphics_.normalize();
+        if(lunar_) lunar_->set_graphics_settings(graphics_);
+    }
+    GraphicsCapabilities graphics_capabilities() override {
+        return ensure_lunar()?lunar_->graphics_capabilities():GraphicsCapabilities{};
+    }
+    bool draw_campus_atmosphere(const Mat4& projection,Vec3 eye,float seconds) override {
+        if(graphics_.path==GraphicsPath::Classic || !ensure_lunar()) return false;
+        flush_geometry();
+        flush_materials();
+        campus_eye_=eye;
+        campus_atmosphere_=graphics_.enabled(GraphicsFeature::Haze);
+        return lunar_->campus_atmosphere(projection,eye,seconds,width_,height_);
+    }
+    bool begin_lunar_scene(const LunarScene& scene) override {
+        if(graphics_.path==GraphicsPath::Classic || !ensure_lunar()) return false;
+        flush_geometry();
+        flush_materials();
+        lunar_frame_=lunar_->begin(scene,width_,height_);
+        return lunar_frame_;
+    }
+    bool lunar_scene_active() const override { return lunar_ && lunar_->active(); }
+    bool draw_lunar_volume(const LunarVolume& volume) override {
+        return lunar_ && lunar_->volume(volume);
+    }
+    void draw_lunar_surface(const std::vector<Vec3>& v,LunarMaterial material,Color c) override {
+        if(lunar_scene_active()) lunar_->triangles(v,material,c);
+        else draw_triangles_3d(v,c);
+    }
+    void draw_lines_3d(const std::vector<Vec3>& v,Color c,float width) override {
+        if(v.empty()) return;
+        if(lunar_scene_active()) lunar_->lines(v,c,width);
+        else upload_and_draw((const float*)v.data(),v.size()*3,GL_LINES,c,width);
+    }
+    void draw_triangles_3d(const std::vector<Vec3>& v,Color c) override {
+        if(v.empty()) return;
+        if(lunar_scene_active()) lunar_->triangles(v,LunarMaterial::Paint,c);
+        else upload_and_draw((const float*)v.data(),v.size()*3,GL_TRIANGLES,c,1);
+    }
     void draw_material_triangles_3d(const std::vector<Vec3>& v,int kind,Color c) override {
+        if(graphics_.path==GraphicsPath::Classic){
+            draw_triangles_3d(v,c);
+            return;
+        }
         if(v.empty())return;
         flush_geometry();
         const int material=std::clamp(kind,0,kCampusTexCount-1);

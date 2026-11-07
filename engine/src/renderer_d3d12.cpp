@@ -1,6 +1,7 @@
 #include "engine/engine.hpp"
 #include "engine/ui_metrics.hpp"
 #include "engine/ui_font.hpp"
+#include "renderer_d3d12_shaders.hpp"
 
 #ifndef _WIN32
 #error renderer_d3d12.cpp is Windows-only
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -36,6 +38,12 @@ constexpr UINT kFrameCount=3;
 constexpr std::size_t kUploadBytesPerFrame=64u*1024u*1024u;
 constexpr DXGI_FORMAT kBackBufferFormat=DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr DXGI_FORMAT kDepthFormat=DXGI_FORMAT_D32_FLOAT;
+constexpr DXGI_FORMAT kLunarFormat=DXGI_FORMAT_R16G16B16A16_FLOAT;
+constexpr std::array kLunarClear{0.002f,0.003f,0.005f,1.0f};
+constexpr UINT kSceneRtv=kFrameCount;
+constexpr UINT kBloomRtv=kFrameCount+1;
+constexpr int kBloomScale=4;
+static_assert(sizeof(Vec3)==3*sizeof(float));
 
 std::string wide_to_utf8(const wchar_t* text){
     if(!text || !*text) return {};
@@ -78,9 +86,41 @@ struct DrawConstants {
     float color[4]{};
     float viewport[2]{};
     float line_width{1.0f};
-    float padding{0.0f};
+    float material{};
 };
 static_assert(sizeof(DrawConstants)==24*sizeof(float));
+
+struct SceneConstants {
+    struct Fixture {
+        float position_radius[4]{};
+        float color_power[4]{};
+    };
+    float sun_daylight[4]{};
+    float eye[4]{};
+    UINT light_count{};
+    UINT pbr{};
+    UINT material_detail{};
+    UINT terrain_relief{};
+    std::array<Fixture,64> lights{};
+};
+static_assert(offsetof(SceneConstants,lights)==48 && sizeof(SceneConstants::Fixture)==32);
+static_assert(static_cast<int>(LunarMaterial::Paint)==0 && static_cast<int>(LunarMaterial::Alloy)==1 &&
+              static_cast<int>(LunarMaterial::Regolith)==2 && static_cast<int>(LunarMaterial::Solar)==3 &&
+              static_cast<int>(LunarMaterial::Glass)==4 && static_cast<int>(LunarMaterial::Fabric)==5 &&
+              static_cast<int>(LunarMaterial::Pad)==6 && static_cast<int>(LunarMaterial::Emissive)==7 &&
+              static_cast<int>(LunarMaterial::Skin)==8 && static_cast<int>(LunarMaterial::Marking)==9 &&
+              static_cast<int>(LunarMaterial::Hair)==10);
+
+struct PostConstants {
+    float pixel_size[2]{};
+    float exposure{};
+    float bloom{};
+    UINT fxaa{};
+    UINT filmic{};
+    UINT vignette{};
+    UINT padding{};
+};
+static_assert(sizeof(PostConstants)==8*sizeof(UINT));
 
 struct FrameResources {
     ComPtr<ID3D12CommandAllocator> allocator{};
@@ -109,25 +149,13 @@ ComPtr<ID3DBlob> compile_shader(const char* source,const char* entry,const char*
     return shader;
 }
 
-constexpr const char* kShaderSource=R"HLSL(
-cbuffer DrawConstants : register(b0)
-{
-    column_major float4x4 gMVP;
-    float4 gColor;
-    float2 gViewport;
-    float gLineWidth;
-    float gPadding;
-};
-
+constexpr const char* kBasicShader=R"HLSL(
 struct VSOut { float4 position : SV_POSITION; };
 
 VSOut VSMain(float3 position : POSITION)
 {
     VSOut o;
-    o.position = mul(gMVP, float4(position, 1.0));
-    // The original game matrices use OpenGL's -1..+1 NDC Z range. Convert it
-    // here to Direct3D's 0..+1 range without changing any gameplay/camera math.
-    o.position.z = o.position.z * 0.5 + o.position.w * 0.5;
+    o.position = clip_position(position);
     return o;
 }
 
@@ -155,7 +183,16 @@ float4 PSMain(VSOut input) : SV_TARGET
 {
     return gColor;
 }
+
+float4 PSLinear(VSOut input) : SV_TARGET
+{
+    return float4(linear_color(gColor.rgb), gColor.a);
+}
 )HLSL";
+
+constexpr D3D12_INPUT_ELEMENT_DESC kPositionInput{
+    "POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0
+};
 
 D3D12_BLEND_DESC blend_desc(){
     D3D12_BLEND_DESC d{};
@@ -228,12 +265,62 @@ D3D12_RESOURCE_DESC buffer_desc(UINT64 bytes){
     return d;
 }
 
+D3D12_RESOURCE_DESC target_desc(int width,int height,DXGI_FORMAT format,D3D12_RESOURCE_FLAGS flags){
+    D3D12_RESOURCE_DESC d{};
+    d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width=static_cast<UINT64>(width);
+    d.Height=static_cast<UINT>(height);
+    d.DepthOrArraySize=1;
+    d.MipLevels=1;
+    d.Format=format;
+    d.SampleDesc.Count=1;
+    d.Layout=D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    d.Flags=flags;
+    return d;
+}
+
+// The first ring joins the flat build plane. Relief grows only outside it.
+std::vector<Vec3> lunar_horizon(float half,bool relief){
+    constexpr std::array offsets{0.0f,32.0f,72.0f,128.0f,210.0f,340.0f,540.0f,810.0f,1150.0f,1700.0f};
+    constexpr int segments=32;
+    using Ring=std::array<Vec3,4*segments>;
+    Ring previous{},current{};
+    std::vector<Vec3> terrain;
+    terrain.reserve((offsets.size()-1)*current.size()*6);
+    for(float offset:offsets){
+        const float radius=half+offset;
+        const float relief_scale=relief?std::clamp(offset/280.0f,0.0f,1.0f):0.0f;
+        for(int step=0;step<segments;++step){
+            const float edge=radius*(2.0f*step/segments-1.0f);
+            current[step]={edge,0,-radius};
+            current[step+segments]={radius,0,edge};
+            current[step+2*segments]={-edge,0,radius};
+            current[step+3*segments]={-radius,0,-edge};
+        }
+        for(auto& p:current){
+            const float hills=std::sin(p.x*0.008f)*std::cos(p.z*0.008f);
+            const float ridges=std::sin(p.x*0.020f+p.z*0.012f)*std::cos(p.z*0.017f);
+            p.y=relief_scale*(22.0f*hills+5.0f*ridges+10.0f);
+        }
+        if(offset>0.0f){
+            for(std::size_t i=0;i<current.size();++i){
+                const std::size_t j=(i+1)%current.size();
+                terrain.insert(terrain.end(),{previous[i],current[j],current[i],previous[i],previous[j],current[j]});
+            }
+        }
+        previous=current;
+    }
+    return terrain;
+}
+
 } // namespace
 
 class D3D12Renderer final : public Renderer {
     HWND hwnd_{};
     int width_{};
     int height_{};
+    int pending_width_{};
+    int pending_height_{};
     bool depth_enabled_{true};
     Mat4 mvp_{Mat4::identity()};
 
@@ -260,11 +347,36 @@ class D3D12Renderer final : public Renderer {
     bool vsync_{false};
     bool upload_overflow_reported_{false};
 
+    GraphicsSettings graphics_{};
+    bool enhanced_barriers_{};
+    bool variable_rate_shading_{};
+    bool coarse_shading_{};
+    bool lunar_active_{};
+    float terrain_half_{};
+    bool terrain_relief_{};
+    std::vector<Vec3> horizon_{};
+    D3D12_GPU_VIRTUAL_ADDRESS scene_constants_{};
+#ifdef __ID3D12GraphicsCommandList7_INTERFACE_DEFINED__
+    ComPtr<ID3D12GraphicsCommandList7> barrier_list_{};
+#endif
+#ifdef __ID3D12GraphicsCommandList5_INTERFACE_DEFINED__
+    ComPtr<ID3D12GraphicsCommandList5> shading_rate_list_{};
+#endif
+
     ComPtr<ID3D12RootSignature> root_signature_{};
     ComPtr<ID3D12PipelineState> triangles_depth_{};
     ComPtr<ID3D12PipelineState> triangles_no_depth_{};
     ComPtr<ID3D12PipelineState> lines_depth_{};
     ComPtr<ID3D12PipelineState> lines_no_depth_{};
+    ComPtr<ID3D12PipelineState> lunar_triangles_{};
+    ComPtr<ID3D12PipelineState> lunar_lines_{};
+    ComPtr<ID3D12RootSignature> post_signature_{};
+    ComPtr<ID3D12PipelineState> bloom_pso_{};
+    ComPtr<ID3D12PipelineState> composite_pso_{};
+    ComPtr<ID3D12DescriptorHeap> lunar_srv_heap_{};
+    UINT srv_increment_{};
+    ComPtr<ID3D12Resource> lunar_target_{};
+    ComPtr<ID3D12Resource> bloom_target_{};
 
     bool create_factory_and_device(){
         UINT flags=0;
@@ -277,6 +389,7 @@ class D3D12Renderer final : public Renderer {
 #endif
         ComPtr<IDXGIFactory4> factory4;
         HRESULT hr=CreateDXGIFactory2(flags,IID_PPV_ARGS(&factory4));
+        if(FAILED(hr) && flags) hr=CreateDXGIFactory2(0,IID_PPV_ARGS(&factory4));
         if(FAILED(hr)){ log_hresult("CreateDXGIFactory2",hr); return false; }
         factory4.As(&factory_);
 
@@ -377,7 +490,7 @@ class D3D12Renderer final : public Renderer {
     bool create_descriptor_heaps(){
         D3D12_DESCRIPTOR_HEAP_DESC rtv{};
         rtv.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-        rtv.NumDescriptors=kFrameCount;
+        rtv.NumDescriptors=kFrameCount+2;
         if(FAILED(device_->CreateDescriptorHeap(&rtv,IID_PPV_ARGS(&rtv_heap_)))) return false;
         rtv_increment_=device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
@@ -401,16 +514,7 @@ class D3D12Renderer final : public Renderer {
 
     bool create_depth_buffer(){
         depth_buffer_.Reset();
-        D3D12_RESOURCE_DESC d{};
-        d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        d.Width=(UINT64)std::max(1,width_);
-        d.Height=(UINT)std::max(1,height_);
-        d.DepthOrArraySize=1;
-        d.MipLevels=1;
-        d.Format=kDepthFormat;
-        d.SampleDesc.Count=1;
-        d.Layout=D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        d.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        const auto d=target_desc(width_,height_,kDepthFormat,D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
         D3D12_CLEAR_VALUE clear{};
         clear.Format=kDepthFormat;
         clear.DepthStencil.Depth=1.0f;
@@ -423,6 +527,46 @@ class D3D12Renderer final : public Renderer {
         view.Format=kDepthFormat;
         view.ViewDimension=D3D12_DSV_DIMENSION_TEXTURE2D;
         device_->CreateDepthStencilView(depth_buffer_.Get(),&view,dsv_heap_->GetCPUDescriptorHandleForHeapStart());
+        return true;
+    }
+
+    int bloom_width() const { return (width_+kBloomScale-1)/kBloomScale; }
+    int bloom_height() const { return (height_+kBloomScale-1)/kBloomScale; }
+
+    bool create_lunar_targets(){
+        lunar_target_.Reset();
+        bloom_target_.Reset();
+        D3D12_CLEAR_VALUE clear{};
+        clear.Format=kLunarFormat;
+        std::copy(kLunarClear.begin(),kLunarClear.end(),clear.Color);
+        const auto heap=heap_props(D3D12_HEAP_TYPE_DEFAULT);
+        auto make_target=[&](int width,int height,const D3D12_CLEAR_VALUE* optimized_clear,
+                             ComPtr<ID3D12Resource>& out){
+            const auto desc=target_desc(width,height,kLunarFormat,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+            return device_->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,optimized_clear,IID_PPV_ARGS(&out));
+        };
+        ComPtr<ID3D12Resource> scene,bloom;
+        HRESULT hr=make_target(width_,height_,&clear,scene);
+        if(SUCCEEDED(hr)) hr=make_target(bloom_width(),bloom_height(),nullptr,bloom);
+        if(FAILED(hr)){
+            log_hresult("Create lunar render targets",hr);
+            return false;
+        }
+        device_->CreateRenderTargetView(scene.Get(),nullptr,rtv_handle(kSceneRtv));
+        device_->CreateRenderTargetView(bloom.Get(),nullptr,rtv_handle(kBloomRtv));
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Format=kLunarFormat;
+        srv.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
+        srv.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv.Texture2D.MipLevels=1;
+        auto cpu=lunar_srv_heap_->GetCPUDescriptorHandleForHeapStart();
+        device_->CreateShaderResourceView(scene.Get(),&srv,cpu);
+        cpu.ptr+=srv_increment_;
+        device_->CreateShaderResourceView(bloom.Get(),&srv,cpu);
+        lunar_target_=std::move(scene);
+        bloom_target_=std::move(bloom);
         return true;
     }
 
@@ -444,7 +588,19 @@ class D3D12Renderer final : public Renderer {
         HRESULT hr=device_->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,frames_[0].allocator.Get(),nullptr,
                                               IID_PPV_ARGS(&command_list_));
         if(FAILED(hr)) return false;
-        command_list_->Close();
+        if(FAILED(command_list_->Close())) return false;
+
+#ifdef __ID3D12GraphicsCommandList7_INTERFACE_DEFINED__
+        D3D12_FEATURE_DATA_D3D12_OPTIONS12 barriers{};
+        enhanced_barriers_=SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS12,&barriers,sizeof(barriers))) &&
+                           barriers.EnhancedBarriersSupported && SUCCEEDED(command_list_.As(&barrier_list_));
+#endif
+#ifdef __ID3D12GraphicsCommandList5_INTERFACE_DEFINED__
+        D3D12_FEATURE_DATA_D3D12_OPTIONS6 rates{};
+        variable_rate_shading_=SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6,&rates,sizeof(rates))) &&
+                               rates.VariableShadingRateTier>=D3D12_VARIABLE_SHADING_RATE_TIER_1 &&
+                               SUCCEEDED(command_list_.As(&shading_rate_list_));
+#endif
 
         hr=device_->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence_));
         if(FAILED(hr)) return false;
@@ -452,64 +608,131 @@ class D3D12Renderer final : public Renderer {
         return fence_event_!=nullptr;
     }
 
-    bool create_root_signature_and_psos(){
-        D3D12_ROOT_PARAMETER root{};
-        root.ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        root.Constants.ShaderRegister=0;
-        root.Constants.RegisterSpace=0;
-        root.Constants.Num32BitValues=24;
-        root.ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
-        D3D12_ROOT_SIGNATURE_DESC rs{};
-        rs.NumParameters=1;
-        rs.pParameters=&root;
-        rs.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    bool create_signature(const D3D12_ROOT_SIGNATURE_DESC& desc,ComPtr<ID3D12RootSignature>& out){
         ComPtr<ID3DBlob> signature,error;
-        HRESULT hr=D3D12SerializeRootSignature(&rs,D3D_ROOT_SIGNATURE_VERSION_1,&signature,&error);
+        const HRESULT hr=D3D12SerializeRootSignature(&desc,D3D_ROOT_SIGNATURE_VERSION_1,&signature,&error);
         if(FAILED(hr)){
             if(error) std::cerr<<static_cast<const char*>(error->GetBufferPointer())<<"\n";
+            else log_hresult("D3D12SerializeRootSignature",hr);
             return false;
         }
-        hr=device_->CreateRootSignature(0,signature->GetBufferPointer(),signature->GetBufferSize(),IID_PPV_ARGS(&root_signature_));
-        if(FAILED(hr)) return false;
+        const HRESULT result=device_->CreateRootSignature(0,signature->GetBufferPointer(),signature->GetBufferSize(),
+                                                         IID_PPV_ARGS(&out));
+        if(FAILED(result)) log_hresult("CreateRootSignature",result);
+        return SUCCEEDED(result);
+    }
 
-        auto vs=compile_shader(kShaderSource,"VSMain","vs_5_1");
-        auto gs=compile_shader(kShaderSource,"GSLine","gs_5_1");
-        auto ps=compile_shader(kShaderSource,"PSMain","ps_5_1");
+    bool create_pipeline(ID3D12RootSignature* signature,ID3DBlob* vs,ID3DBlob* ps,ID3DBlob* gs,
+                         DXGI_FORMAT format,bool depth,bool mesh,ComPtr<ID3D12PipelineState>& out){
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC p{};
+        p.pRootSignature=signature;
+        p.VS={vs->GetBufferPointer(),vs->GetBufferSize()};
+        p.PS={ps->GetBufferPointer(),ps->GetBufferSize()};
+        if(gs) p.GS={gs->GetBufferPointer(),gs->GetBufferSize()};
+        p.BlendState=blend_desc();
+        p.BlendState.RenderTarget[0].BlendEnable=mesh?TRUE:FALSE;
+        p.SampleMask=UINT_MAX;
+        p.RasterizerState=raster_desc();
+        p.DepthStencilState=depth_desc(depth);
+        if(mesh) p.InputLayout={&kPositionInput,1};
+        p.PrimitiveTopologyType=gs?D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE:D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        p.NumRenderTargets=1;
+        p.RTVFormats[0]=format;
+        p.DSVFormat=mesh?kDepthFormat:DXGI_FORMAT_UNKNOWN;
+        p.SampleDesc.Count=1;
+        const HRESULT hr=device_->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&out));
+        if(FAILED(hr)) log_hresult("CreateGraphicsPipelineState",hr);
+        return SUCCEEDED(hr);
+    }
+
+    bool create_root_signature_and_psos(){
+        D3D12_ROOT_PARAMETER roots[2]{};
+        roots[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        roots[0].Constants.Num32BitValues=sizeof(DrawConstants)/sizeof(UINT);
+        roots[0].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+        roots[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;
+        roots[1].Descriptor.ShaderRegister=1;
+        roots[1].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_ROOT_SIGNATURE_DESC rs{};
+        rs.NumParameters=2;
+        rs.pParameters=roots;
+        rs.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+        if(!create_signature(rs,root_signature_)) return false;
+
+        const std::string basic=std::string(d3d12_shaders::draw_constants)+kBasicShader;
+        auto vs=compile_shader(basic.c_str(),"VSMain","vs_5_1");
+        auto gs=compile_shader(basic.c_str(),"GSLine","gs_5_1");
+        auto ps=compile_shader(basic.c_str(),"PSMain","ps_5_1");
         if(!vs||!gs||!ps) return false;
 
-        D3D12_INPUT_ELEMENT_DESC input{};
-        input.SemanticName="POSITION";
-        input.SemanticIndex=0;
-        input.Format=DXGI_FORMAT_R32G32B32_FLOAT;
-        input.InputSlot=0;
-        input.AlignedByteOffset=0;
-        input.InputSlotClass=D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-        input.InstanceDataStepRate=0;
-
-        auto create_pso=[&](bool lines,bool depth,ComPtr<ID3D12PipelineState>& out)->bool{
-            D3D12_GRAPHICS_PIPELINE_STATE_DESC p{};
-            p.pRootSignature=root_signature_.Get();
-            p.VS={vs->GetBufferPointer(),vs->GetBufferSize()};
-            p.PS={ps->GetBufferPointer(),ps->GetBufferSize()};
-            if(lines) p.GS={gs->GetBufferPointer(),gs->GetBufferSize()};
-            p.BlendState=blend_desc();
-            p.SampleMask=UINT_MAX;
-            p.RasterizerState=raster_desc();
-            p.DepthStencilState=depth_desc(depth);
-            p.InputLayout={&input,1};
-            p.PrimitiveTopologyType=lines?D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE:D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-            p.NumRenderTargets=1;
-            p.RTVFormats[0]=kBackBufferFormat;
-            p.DSVFormat=kDepthFormat;
-            p.SampleDesc.Count=1;
-            const HRESULT result=device_->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&out));
-            if(FAILED(result)) log_hresult("CreateGraphicsPipelineState",result);
-            return SUCCEEDED(result);
+        const auto classic=[&](bool lines,bool depth,ComPtr<ID3D12PipelineState>& pso){
+            return create_pipeline(root_signature_.Get(),vs.Get(),ps.Get(),lines?gs.Get():nullptr,
+                                   kBackBufferFormat,depth,true,pso);
         };
-        return create_pso(false,true,triangles_depth_) &&
-               create_pso(false,false,triangles_no_depth_) &&
-               create_pso(true,true,lines_depth_) &&
-               create_pso(true,false,lines_no_depth_);
+        if(!classic(false,true,triangles_depth_) || !classic(false,false,triangles_no_depth_) ||
+           !classic(true,true,lines_depth_) || !classic(true,false,lines_no_depth_)) return false;
+
+        const bool lunar=create_lunar_pipeline(basic,vs.Get(),gs.Get()) && create_lunar_targets();
+        std::cout<<"D3D12 lunar rendering: "<<(lunar?"FP16 lighting and post-processing":"classic meshes")
+                 <<" | barriers: "<<(enhanced_barriers_?"enhanced":"legacy")
+                 <<" | terrain VRS: "<<(variable_rate_shading_?"available":"unavailable")<<"\n";
+        return true;
+    }
+
+    bool create_lunar_pipeline(const std::string& basic,ID3DBlob* vs,ID3DBlob* gs){
+        constexpr UINT needed=static_cast<UINT>(D3D12_FORMAT_SUPPORT1_RENDER_TARGET) |
+                              static_cast<UINT>(D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE) |
+                              static_cast<UINT>(D3D12_FORMAT_SUPPORT1_BLENDABLE);
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT format{};
+        format.Format=kLunarFormat;
+        if(FAILED(device_->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT,&format,sizeof(format))) ||
+           (static_cast<UINT>(format.Support1)&needed)!=needed) return false;
+
+        const std::string lunar=std::string(d3d12_shaders::draw_constants)+d3d12_shaders::lunar;
+        auto lunar_vs=compile_shader(lunar.c_str(),"VSLunar","vs_5_1");
+        auto lunar_ps=compile_shader(lunar.c_str(),"PSLunar","ps_5_1");
+        auto linear_ps=compile_shader(basic.c_str(),"PSLinear","ps_5_1");
+        if(!lunar_vs || !lunar_ps || !linear_ps) return false;
+        if(!create_pipeline(root_signature_.Get(),lunar_vs.Get(),lunar_ps.Get(),nullptr,kLunarFormat,true,true,lunar_triangles_) ||
+           !create_pipeline(root_signature_.Get(),vs,linear_ps.Get(),gs,kLunarFormat,true,true,lunar_lines_)) return false;
+
+        D3D12_DESCRIPTOR_RANGE ranges[2]{};
+        D3D12_ROOT_PARAMETER roots[3]{};
+        roots[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        roots[0].Constants.Num32BitValues=sizeof(PostConstants)/sizeof(UINT);
+        roots[0].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+        for(UINT i=0;i<2;++i){
+            ranges[i].RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            ranges[i].NumDescriptors=1;
+            ranges[i].BaseShaderRegister=i;
+            roots[i+1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            roots[i+1].DescriptorTable={1,&ranges[i]};
+            roots[i+1].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+        }
+        D3D12_STATIC_SAMPLER_DESC sampler{};
+        sampler.Filter=D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+        sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.MaxAnisotropy=1;
+        sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_NEVER;
+        sampler.MaxLOD=D3D12_FLOAT32_MAX;
+        sampler.ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_ROOT_SIGNATURE_DESC post{3,roots,1,&sampler,D3D12_ROOT_SIGNATURE_FLAG_NONE};
+        if(!create_signature(post,post_signature_)) return false;
+
+        auto post_vs=compile_shader(d3d12_shaders::post,"VSFullscreen","vs_5_1");
+        auto bloom_ps=compile_shader(d3d12_shaders::post,"PSBloom","ps_5_1");
+        auto composite_ps=compile_shader(d3d12_shaders::post,"PSComposite","ps_5_1");
+        if(!post_vs || !bloom_ps || !composite_ps) return false;
+        if(!create_pipeline(post_signature_.Get(),post_vs.Get(),bloom_ps.Get(),nullptr,kLunarFormat,false,false,bloom_pso_) ||
+           !create_pipeline(post_signature_.Get(),post_vs.Get(),composite_ps.Get(),nullptr,kBackBufferFormat,false,false,composite_pso_))
+            return false;
+
+        D3D12_DESCRIPTOR_HEAP_DESC heap{};
+        heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        heap.NumDescriptors=2;
+        heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        srv_increment_=device_->GetDescriptorHandleIncrementSize(heap.Type);
+        return SUCCEEDED(device_->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&lunar_srv_heap_)));
     }
 
     void wait_for_fence(UINT64 value){
@@ -523,42 +746,107 @@ class D3D12Renderer final : public Renderer {
         if(SUCCEEDED(queue_->Signal(fence_.Get(),value))) wait_for_fence(value);
     }
 
-    D3D12_CPU_DESCRIPTOR_HANDLE current_rtv() const {
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv_handle(UINT index) const {
         auto h=rtv_heap_->GetCPUDescriptorHandleForHeapStart();
-        h.ptr += (SIZE_T)frame_index_*rtv_increment_;
+        h.ptr+=static_cast<SIZE_T>(index)*rtv_increment_;
         return h;
     }
 
-    bool upload_vertices(const float* data,std::size_t floats,D3D12_VERTEX_BUFFER_VIEW& vb){
-        if(!frame_open_ || !data || floats==0) return false;
+    enum class TextureUse { Present, RenderTarget, PixelRead };
+
+    void transition(ID3D12Resource* texture,TextureUse from,TextureUse to){
+#ifdef __ID3D12GraphicsCommandList7_INTERFACE_DEFINED__
+        if(enhanced_barriers_){
+            struct Usage {
+                D3D12_BARRIER_SYNC sync;
+                D3D12_BARRIER_ACCESS access;
+                D3D12_BARRIER_LAYOUT layout;
+            };
+            constexpr std::array<Usage,3> usage{{
+                {D3D12_BARRIER_SYNC_NONE,D3D12_BARRIER_ACCESS_NO_ACCESS,D3D12_BARRIER_LAYOUT_PRESENT},
+                {D3D12_BARRIER_SYNC_RENDER_TARGET,D3D12_BARRIER_ACCESS_RENDER_TARGET,D3D12_BARRIER_LAYOUT_RENDER_TARGET},
+                {D3D12_BARRIER_SYNC_PIXEL_SHADING,D3D12_BARRIER_ACCESS_SHADER_RESOURCE,D3D12_BARRIER_LAYOUT_SHADER_RESOURCE}
+            }};
+            const auto before=usage[static_cast<unsigned>(from)];
+            const auto after=usage[static_cast<unsigned>(to)];
+            D3D12_TEXTURE_BARRIER barrier{};
+            barrier.SyncBefore=before.sync;
+            barrier.SyncAfter=after.sync;
+            barrier.AccessBefore=before.access;
+            barrier.AccessAfter=after.access;
+            barrier.LayoutBefore=before.layout;
+            barrier.LayoutAfter=after.layout;
+            barrier.pResource=texture;
+            // These targets have one mip, one array slice, and one plane.
+            D3D12_BARRIER_GROUP group{};
+            group.Type=D3D12_BARRIER_TYPE_TEXTURE;
+            group.NumBarriers=1;
+            group.pTextureBarriers=&barrier;
+            barrier_list_->Barrier(1,&group);
+            return;
+        }
+#endif
+        constexpr std::array states{
+            D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+        };
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource=texture;
+        barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore=states[static_cast<unsigned>(from)];
+        barrier.Transition.StateAfter=states[static_cast<unsigned>(to)];
+        command_list_->ResourceBarrier(1,&barrier);
+    }
+
+    void set_coarse_shading(bool coarse){
+#ifdef __ID3D12GraphicsCommandList5_INTERFACE_DEFINED__
+        if(!variable_rate_shading_ || coarse==coarse_shading_) return;
+        shading_rate_list_->RSSetShadingRate(coarse?D3D12_SHADING_RATE_2X2:D3D12_SHADING_RATE_1X1,nullptr);
+        coarse_shading_=coarse;
+#else
+        (void)coarse;
+#endif
+    }
+
+    void set_viewport(int width,int height){
+        D3D12_VIEWPORT viewport{0.0f,0.0f,static_cast<float>(width),static_cast<float>(height),0.0f,1.0f};
+        D3D12_RECT scissor{0,0,width,height};
+        command_list_->RSSetViewports(1,&viewport);
+        command_list_->RSSetScissorRects(1,&scissor);
+    }
+
+    D3D12_GPU_VIRTUAL_ADDRESS upload(const void* data,std::size_t bytes,std::size_t alignment){
         auto& frame=frames_[frame_index_];
-        const std::size_t bytes=floats*sizeof(float);
-        const std::size_t aligned=(frame.upload_offset+15u)&~std::size_t(15u);
-        if(aligned+bytes>kUploadBytesPerFrame){
+        const std::size_t aligned=(frame.upload_offset+alignment-1)&~(alignment-1);
+        if(aligned>kUploadBytesPerFrame || bytes>kUploadBytesPerFrame-aligned){
             if(!upload_overflow_reported_){
                 upload_overflow_reported_=true;
                 std::cerr<<"D3D12 per-frame upload budget exceeded (64 MiB). Further draws in this frame are skipped.\n";
             }
-            return false;
+            return 0;
         }
         std::memcpy(frame.mapped+aligned,data,bytes);
-        vb.BufferLocation=frame.upload->GetGPUVirtualAddress()+aligned;
-        vb.SizeInBytes=(UINT)bytes;
-        vb.StrideInBytes=3u*sizeof(float);
         frame.upload_offset=aligned+bytes;
-        return true;
+        return frame.upload->GetGPUVirtualAddress()+aligned;
     }
 
-    void draw(const float* data,std::size_t floats,bool lines,Color c,float width){
-        if(!frame_open_ || !data || floats==0) return;
-        D3D12_VERTEX_BUFFER_VIEW vb{};
-        if(!upload_vertices(data,floats,vb)) return;
+    void draw(const void* data,std::size_t vertices,bool lines,Color c,float width,
+              LunarMaterial material=LunarMaterial::Paint,bool coarse=false){
+        if(!frame_open_ || vertices==0) return;
+        constexpr UINT stride=3u*sizeof(float);
+        const auto bytes=vertices*stride;
+        const auto address=upload(data,bytes,16u);
+        if(!address) return;
+        const D3D12_VERTEX_BUFFER_VIEW vb{address,static_cast<UINT>(bytes),stride};
 
         ID3D12PipelineState* pso=nullptr;
-        if(lines) pso=depth_enabled_?lines_depth_.Get():lines_no_depth_.Get();
+        if(lunar_active_) pso=lines?lunar_lines_.Get():lunar_triangles_.Get();
+        else if(lines) pso=depth_enabled_?lines_depth_.Get():lines_no_depth_.Get();
         else pso=depth_enabled_?triangles_depth_.Get():triangles_no_depth_.Get();
+        set_coarse_shading(coarse);
         command_list_->SetPipelineState(pso);
         command_list_->SetGraphicsRootSignature(root_signature_.Get());
+        if(lunar_active_ && !lines) command_list_->SetGraphicsRootConstantBufferView(1,scene_constants_);
 
         DrawConstants constants{};
         std::memcpy(constants.mvp,mvp_.m.data(),sizeof(constants.mvp));
@@ -566,10 +854,58 @@ class D3D12Renderer final : public Renderer {
         constants.viewport[0]=(float)std::max(1,width_);
         constants.viewport[1]=(float)std::max(1,height_);
         constants.line_width=std::max(1.0f,width);
-        command_list_->SetGraphicsRoot32BitConstants(0,24,&constants,0);
+        constants.material=static_cast<float>(material);
+        command_list_->SetGraphicsRoot32BitConstants(0,sizeof(constants)/sizeof(UINT),&constants,0);
         command_list_->IASetVertexBuffers(0,1,&vb);
         command_list_->IASetPrimitiveTopology(lines?D3D_PRIMITIVE_TOPOLOGY_LINELIST:D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        command_list_->DrawInstanced((UINT)(floats/3u),1,0,0);
+        command_list_->DrawInstanced(static_cast<UINT>(vertices),1,0,0);
+    }
+
+    void finish_lunar_scene(){
+        if(!lunar_active_) return;
+        lunar_active_=false;
+        set_coarse_shading(false);
+        transition(lunar_target_.Get(),TextureUse::RenderTarget,TextureUse::PixelRead);
+
+        const PostConstants constants{
+            {1.0f/width_,1.0f/height_},std::exp2(graphics_.exposure_tenths*0.1f),graphics_.bloom*0.006f,
+            graphics_.aa!=GraphicsAA::Off,graphics_.enabled(GraphicsFeature::Filmic),
+            graphics_.enabled(GraphicsFeature::Vignette)
+        };
+        ID3D12DescriptorHeap* heaps[]{lunar_srv_heap_.Get()};
+        command_list_->SetDescriptorHeaps(1,heaps);
+        command_list_->SetGraphicsRootSignature(post_signature_.Get());
+        command_list_->SetGraphicsRoot32BitConstants(0,sizeof(constants)/sizeof(UINT),&constants,0);
+        const auto scene_srv=lunar_srv_heap_->GetGPUDescriptorHandleForHeapStart();
+        command_list_->SetGraphicsRootDescriptorTable(1,scene_srv);
+        command_list_->SetGraphicsRootDescriptorTable(2,scene_srv);
+        command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+        auto bloom_srv=scene_srv;
+        if(constants.bloom>0.0f){
+            const auto bloom_rtv=rtv_handle(kBloomRtv);
+            command_list_->OMSetRenderTargets(1,&bloom_rtv,FALSE,nullptr);
+            set_viewport(bloom_width(),bloom_height());
+            command_list_->SetPipelineState(bloom_pso_.Get());
+            command_list_->DrawInstanced(3,1,0,0);
+            transition(bloom_target_.Get(),TextureUse::RenderTarget,TextureUse::PixelRead);
+            bloom_srv.ptr+=srv_increment_;
+            command_list_->SetGraphicsRootDescriptorTable(2,bloom_srv);
+        }
+
+        const auto back=rtv_handle(frame_index_);
+        command_list_->OMSetRenderTargets(1,&back,FALSE,nullptr);
+        set_viewport(width_,height_);
+        command_list_->SetPipelineState(composite_pso_.Get());
+        command_list_->DrawInstanced(3,1,0,0);
+
+        // Both textures begin and end in RT layout. One set of targets can
+        // serve all swap-chain frames on the same direct queue.
+        transition(lunar_target_.Get(),TextureUse::PixelRead,TextureUse::RenderTarget);
+        if(constants.bloom>0.0f)
+            transition(bloom_target_.Get(),TextureUse::PixelRead,TextureUse::RenderTarget);
+        const auto dsv=dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        command_list_->OMSetRenderTargets(1,&back,FALSE,&dsv);
     }
 
 public:
@@ -594,61 +930,53 @@ public:
 
     void resize(int width,int height) override {
         if(width<=0 || height<=0 || !swap_chain_) return;
-        if(width==width_ && height==height_) return;
+        if(frame_open_){
+            pending_width_=width;
+            pending_height_=height;
+            return;
+        }
+        if(width==width_ && height==height_ && depth_buffer_) return;
         wait_for_gpu();
         for(auto& target:render_targets_) target.Reset();
         depth_buffer_.Reset();
-        width_=width; height_=height;
-        DXGI_SWAP_CHAIN_DESC desc{};
-        swap_chain_->GetDesc(&desc);
-        const HRESULT hr=swap_chain_->ResizeBuffers(kFrameCount,(UINT)width_,(UINT)height_,kBackBufferFormat,desc.Flags);
-        if(FAILED(hr)){ log_hresult("ResizeBuffers",hr); return; }
+        const UINT flags=tearing_supported_?DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING:0;
+        const HRESULT hr=swap_chain_->ResizeBuffers(kFrameCount,(UINT)width,(UINT)height,kBackBufferFormat,flags);
+        if(SUCCEEDED(hr)){ width_=width; height_=height; }
+        else log_hresult("ResizeBuffers",hr);
         frame_index_=swap_chain_->GetCurrentBackBufferIndex();
-        create_back_buffers();
+        if(create_back_buffers() && SUCCEEDED(hr) && lunar_srv_heap_) create_lunar_targets();
     }
 
     void begin_frame(Color clear) override {
-        if(frame_open_ || !swap_chain_) return;
+        if(frame_open_ || !swap_chain_ || !depth_buffer_) return;
         frame_index_=swap_chain_->GetCurrentBackBufferIndex();
+        if(!render_targets_[frame_index_]) return;
         auto& frame=frames_[frame_index_];
         wait_for_fence(frame.fence_value);
         frame.upload_offset=0;
         upload_overflow_reported_=false;
-        frame.allocator->Reset();
-        command_list_->Reset(frame.allocator.Get(),nullptr);
+        HRESULT hr=frame.allocator->Reset();
+        if(SUCCEEDED(hr)) hr=command_list_->Reset(frame.allocator.Get(),nullptr);
+        if(FAILED(hr)){ log_hresult("Reset D3D12 frame",hr); return; }
+        coarse_shading_=false;
+        transition(render_targets_[frame_index_].Get(),TextureUse::Present,TextureUse::RenderTarget);
 
-        D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.pResource=render_targets_[frame_index_].Get();
-        barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_PRESENT;
-        barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_RENDER_TARGET;
-        command_list_->ResourceBarrier(1,&barrier);
-
-        const auto rtv=current_rtv();
+        const auto rtv=rtv_handle(frame_index_);
         const auto dsv=dsv_heap_->GetCPUDescriptorHandleForHeapStart();
         const float clear_color[4]{clear.r,clear.g,clear.b,clear.a};
         command_list_->OMSetRenderTargets(1,&rtv,FALSE,&dsv);
         command_list_->ClearRenderTargetView(rtv,clear_color,0,nullptr);
         command_list_->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
 
-        D3D12_VIEWPORT viewport{0.0f,0.0f,(float)width_,(float)height_,0.0f,1.0f};
-        D3D12_RECT scissor{0,0,width_,height_};
-        command_list_->RSSetViewports(1,&viewport);
-        command_list_->RSSetScissorRects(1,&scissor);
+        set_viewport(width_,height_);
         depth_enabled_=true;
         frame_open_=true;
     }
 
     void end_frame() override {
         if(!frame_open_) return;
-        D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.pResource=render_targets_[frame_index_].Get();
-        barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_RENDER_TARGET;
-        barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_PRESENT;
-        command_list_->ResourceBarrier(1,&barrier);
+        finish_lunar_scene();
+        transition(render_targets_[frame_index_].Get(),TextureUse::RenderTarget,TextureUse::Present);
         if(FAILED(command_list_->Close())){ frame_open_=false; return; }
         ID3D12CommandList* lists[]{command_list_.Get()};
         queue_->ExecuteCommandLists(1,lists);
@@ -665,31 +993,108 @@ public:
             if(FAILED(removed)) log_hresult("D3D12 device removed",removed);
         }
         frame_open_=false;
+        if(pending_width_){
+            const int width=std::exchange(pending_width_,0);
+            resize(width,pending_height_);
+        }
     }
 
-    void set_3d(const Mat4& view_proj) override { mvp_=view_proj; depth_enabled_=true; }
+    void set_3d(const Mat4& view_proj) override {
+        finish_lunar_scene();
+        mvp_=view_proj;
+        depth_enabled_=true;
+    }
     void set_2d(float scale=1.0f) override {
+        finish_lunar_scene();
         scale=std::max(0.01f,scale);
         mvp_=ortho(0,(float)width_/scale,(float)height_/scale,0,-1,1);
         depth_enabled_=false;
     }
 
+    void set_graphics_settings(const GraphicsSettings& settings) override {
+        graphics_=settings;
+        graphics_.normalize();
+    }
+    GraphicsCapabilities graphics_capabilities() override {
+        GraphicsCapabilities caps{};
+        caps.enhanced=lunar_target_ && bloom_target_;
+        caps.enhanced_barriers=enhanced_barriers_;
+        caps.variable_rate_shading=variable_rate_shading_;
+        return caps;
+    }
+
+    bool begin_lunar_scene(const LunarScene& scene) override {
+        if(!frame_open_ || lunar_active_ || !lunar_target_ || !bloom_target_ ||
+           graphics_.path==GraphicsPath::Classic) return false;
+
+        SceneConstants constants{};
+        const Vec3 sun=normalize(scene.sun_direction);
+        constants.sun_daylight[0]=sun.x;
+        constants.sun_daylight[1]=sun.y;
+        constants.sun_daylight[2]=sun.z;
+        constants.sun_daylight[3]=std::clamp(scene.daylight,0.0f,1.0f);
+        constants.eye[0]=scene.eye.x;
+        constants.eye[1]=scene.eye.y;
+        constants.eye[2]=scene.eye.z;
+        constants.pbr=graphics_.enabled(GraphicsFeature::Pbr);
+        constants.material_detail=graphics_.enabled(GraphicsFeature::MaterialDetail);
+        constants.terrain_relief=graphics_.enabled(GraphicsFeature::TerrainRelief);
+        if(graphics_.enabled(GraphicsFeature::LocalLights)){
+            const auto count=std::min(scene.light_count,scene.lights.size());
+            for(std::size_t i=0;i<count;++i){
+                const auto& light=scene.lights[i];
+                if(light.radius<=0.0f || light.power<=0.0f) continue;
+                constants.lights[constants.light_count++]={
+                    {light.position.x,light.position.y,light.position.z,light.radius},
+                    {light.color.r,light.color.g,light.color.b,light.power}
+                };
+            }
+        }
+        scene_constants_=upload(&constants,sizeof(constants),D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+        if(!scene_constants_) return false;
+
+        const auto rtv=rtv_handle(kSceneRtv);
+        const auto dsv=dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        command_list_->OMSetRenderTargets(1,&rtv,FALSE,&dsv);
+        command_list_->ClearRenderTargetView(rtv,kLunarClear.data(),0,nullptr);
+        mvp_=scene.view_projection;
+        depth_enabled_=true;
+        lunar_active_=true;
+
+        const float half=std::max(1.0f,scene.half_extent);
+        const bool relief=constants.terrain_relief!=0;
+        if(terrain_half_!=half || terrain_relief_!=relief){
+            horizon_=lunar_horizon(half,relief);
+            terrain_half_=half;
+            terrain_relief_=relief;
+        }
+        constexpr Color regolith{0.53f,0.51f,0.49f,1.0f};
+        const std::array<Vec3,6> floor{{{-half,0,-half},{half,0,-half},{half,0,half},
+                                      {-half,0,-half},{half,0,half},{-half,0,half}}};
+        draw(horizon_.data(),horizon_.size(),false,regolith,1.0f,LunarMaterial::Regolith,graphics_.terrain_vrs);
+        draw(floor.data(),floor.size(),false,regolith,1.0f,LunarMaterial::Regolith);
+        return true;
+    }
+
+    bool lunar_scene_active() const override { return lunar_active_; }
+    void draw_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint) override {
+        draw(vertices.data(),vertices.size(),false,tint,1.0f,material);
+    }
+
     void draw_lines_3d(const std::vector<Vec3>& vertices,Color color,float width=1.0f) override {
-        if(vertices.empty()) return;
-        draw(reinterpret_cast<const float*>(vertices.data()),vertices.size()*3u,true,color,width);
+        draw(vertices.data(),vertices.size(),true,color,width);
     }
     void draw_triangles_3d(const std::vector<Vec3>& vertices,Color color) override {
-        if(vertices.empty()) return;
-        draw(reinterpret_cast<const float*>(vertices.data()),vertices.size()*3u,false,color,1.0f);
+        draw(vertices.data(),vertices.size(),false,color,1.0f);
     }
     void draw_rect(Rect r,Color c) override {
         const float v[]={r.x,r.y,0,r.x+r.w,r.y,0,r.x+r.w,r.y+r.h,0,
                          r.x,r.y,0,r.x+r.w,r.y+r.h,0,r.x,r.y+r.h,0};
-        draw(v,18,false,c,1.0f);
+        draw(v,6,false,c,1.0f);
     }
     void draw_line(Vec2 a,Vec2 b,Color c,float width=1.0f) override {
         const auto v=ui::line_quad(a,b,width);
-        draw(v.data(),v.size(),false,c,1.0f);
+        draw(v.data(),v.size()/3u,false,c,1.0f);
     }
     void draw_text(Vec2 p,const std::string& text,float scale,Color c) override;
 
@@ -722,7 +1127,7 @@ void D3D12Renderer::draw_text(Vec2 p,const std::string& text,float scale,Color c
             if(rows[y]&(1<<(4-x))) quad(p.x+x*scale,p.y+y*scale);
         p.x+=6*scale;
     }
-    if(!vertices.empty()) draw(vertices.data(),vertices.size(),false,c,1.0f);
+    draw(vertices.data(),vertices.size()/3u,false,c,1.0f);
 }
 
 std::unique_ptr<Renderer> create_d3d12_renderer(){ return std::make_unique<D3D12Renderer>(); }

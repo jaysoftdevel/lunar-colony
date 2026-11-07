@@ -368,7 +368,7 @@ void GameApp::render_builder_robot(Renderer& r){
         const auto& chassis=carrier?carrier_body:body;
         const auto& sensor_mesh=carrier?carrier_sensors:sensors;
         r.draw_triangles_3d(transform(chassis.tris,pos,heading,pitch),carrier?Color{0.34f,0.48f,0.56f,1.0f}:Color{0.58f,0.61f,0.60f,1.0f});
-        r.draw_triangles_3d(transform(wheels.tris,pos,heading,pitch),{0.08f,0.10f,0.11f,1.0f});
+        r.draw_lunar_surface(transform(wheels.tris,pos,heading,pitch),eng::LunarMaterial::Fabric,{0.08f,0.10f,0.11f,1.0f});
         r.draw_triangles_3d(transform(suspension.tris,pos,heading,pitch),{0.35f,0.37f,0.36f,1.0f});
         r.draw_triangles_3d(transform(arm.tris,pos,arm_heading,pitch),carrier?Color{0.28f,0.56f,0.68f,1.0f}:Color{0.72f,0.46f,0.14f,1.0f});
         r.draw_triangles_3d(transform(gripper.tris,pos,arm_heading,pitch),{0.23f,0.25f,0.24f,1.0f});

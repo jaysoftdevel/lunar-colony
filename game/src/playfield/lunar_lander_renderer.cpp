@@ -6,16 +6,18 @@
 
 namespace game {
 namespace {
-using eng::Vec3;using eng::Color;
+using eng::Vec3;using eng::Color;using eng::LunarMaterial;
 constexpr float pi=3.14159265359f;
-struct Part {Color color;std::vector<Vec3> edges;};
+struct Part {Color color;std::vector<Vec3> vertices;};
 struct Mesh {
+    explicit Mesh(bool solid):solid(solid){}
+    bool solid;
     std::vector<Part> parts;
-    // Only topology is submitted: no filled faces, materials or textures.
     void quad(Color c,Vec3 a,Vec3 b,Vec3 d,Vec3 e){
         auto it=std::find_if(parts.begin(),parts.end(),[&](const Part& p){return p.color.r==c.r&&p.color.g==c.g&&p.color.b==c.b&&p.color.a==c.a;});
         if(it==parts.end()){parts.push_back({c,{}});it=parts.end()-1;}
-        it->edges.insert(it->edges.end(),{a,b,b,d,d,e,e,a});
+        if(solid) it->vertices.insert(it->vertices.end(),{a,b,d,a,d,e});
+        else it->vertices.insert(it->vertices.end(),{a,b,b,d,d,e,e,a});
     }
     void box(Vec3 p,Vec3 size,Color c){
         Vec3 h=size*0.5f;
@@ -39,9 +41,16 @@ struct Mesh {
             quad(shade,v0,v1,v2,v3);
         }
     }
-    void draw(eng::Renderer& r,Vec3 offset,float roll=0,float opacity=1)const{
+    void draw(eng::Renderer& r,Vec3 offset,float roll=0,float opacity=1,LunarMaterial material=LunarMaterial::Paint)const{
         const float a=roll*pi/180,c=std::cos(a),s=std::sin(a);
-        for(const auto& part:parts){auto points=part.edges;for(auto& v:points){v={v.x*c-v.y*s,v.x*s+v.y*c,v.z};v+=offset;}r.draw_lines_3d(points,{std::max(.35f,part.color.r),std::max(.45f,part.color.g),std::max(.5f,part.color.b),part.color.a*opacity},1);}
+        for(const auto& part:parts){
+            auto points=part.vertices;
+            for(auto& v:points) v=Vec3{v.x*c-v.y*s,v.x*s+v.y*c,v.z}+offset;
+            Color color=part.color;
+            color.a*=opacity;
+            if(solid) r.draw_lunar_surface(points,material,color);
+            else r.draw_lines_3d(points,{std::max(.35f,color.r),std::max(.45f,color.g),std::max(.5f,color.b),color.a},1);
+        }
     }
 };
 constexpr Color white{0.76f,0.79f,0.78f,1},gold{0.60f,0.39f,0.14f,1},dark{0.075f,0.095f,0.12f,1},metal{0.35f,0.40f,0.44f,1},blue{0.10f,0.26f,0.42f,1};
@@ -60,7 +69,8 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
     Vec3 origin=lander_.site+flight.offset;
     const float settle=lander_.phase==LanderPhase::Settling?std::exp(-lander_.elapsed*2.5f)*std::sin(lander_.elapsed*8)*.055f:0;
     origin.y+=settle;
-    Mesh frame,top,tanks,gear;
+    const bool solid=r.lunar_scene_active();
+    Mesh frame(solid),top(solid),tanks(solid),gear(solid),lights(solid);
     // A low, wide octagonal chassis with an open, beveled portal at the nose.
     // The ramp hinge stays aligned with the rover's deck and deployment path.
     const std::array<Vec3,8> chassis{{
@@ -95,7 +105,11 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
             frame.beam({x*4.92f,2.33f,z},{x*2.55f,4.63f,z*.88f},.13f,metal);
         }
         frame.box({x*2.77f,4.45f,3.13f},{.52f,.34f,.37f},dark);
-        for(float offset:{-.14f,.14f}) frame.box({x*2.77f+offset,4.46f,3.34f},{.19f,.18f,.055f},white);
+        for(float offset:{-.14f,.14f}){
+            const Vec3 lamp{x*2.77f+offset,4.46f,3.34f};
+            frame.box(lamp,{.19f,.18f,.055f},white);
+            if(solid) lights.box(lamp+Vec3{0,0,.032f},{.15f,.12f,.015f},{.58f,.83f,1,1});
+        }
         for(int i=0;i<3;++i){
             const float z=-2.15f+(float)i*1.73f;
             const Vec3 base{x*3.85f,2.52f,z};
@@ -192,20 +206,30 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
     draw_module(top,4.5f);
     draw_module(tanks,9.0f);
     draw_module(frame,13.5f);
+    if(solid && work<12.1f) lights.draw(r,origin,flight.roll_degrees,1,LunarMaterial::Emissive);
     // Keep the last recovery frame visible while waiting for a place for its parts.
     const float last_cut=smooth((work-16.0f)/2.0f);
     gear.draw(r,origin-Vec3{0,.24f*last_cut,0},flight.roll_degrees,1-.72f*last_cut);
     if(lander_.in_flight()){
         // Vacuum exhaust has no smoke column. Dust follows low lunar-gravity
         // ballistic arcs only when the plume reaches the regolith.
-        Mesh exhaust;
+        Mesh exhaust(solid);
         const float pulse=.92f+.08f*std::sin(lander_.elapsed*31);
         const float plume=std::min(origin.y+.55f,2.5f+1.8f*flight.thrust_acceleration)*pulse;
-        exhaust.cylinder({0,.55f-plume,-.6f},1.5f*plume/5.0f,plume,{.18f,.44f,.75f,.27f},.55f);
-        exhaust.cylinder({0,.55f-plume*.6f,-.6f},.45f,plume*.6f,{.55f,.80f,1,.60f},.36f);
-        exhaust.draw(r,origin,flight.roll_degrees);
+        const bool volumetric=solid && r.draw_lunar_volume({origin+Vec3{0,.55f,-.60f},{0,-1,0},plume,
+            std::max(0.18f,plume*0.31f),{0.20f,0.54f,0.98f,1},0.89f,4.1f,true});
+        if(!volumetric){
+            exhaust.cylinder({0,.55f-plume,-.6f},1.5f*plume/5.0f,plume,{.18f,.44f,.75f,.27f},.55f);
+            exhaust.cylinder({0,.55f-plume*.6f,-.6f},.45f,plume*.6f,{.55f,.80f,1,.60f},.36f);
+            exhaust.draw(r,origin,flight.roll_degrees,1,LunarMaterial::Emissive);
+        }
+        if(solid && origin.y<8.0f){
+            const float dust=1.0f-std::clamp(origin.y/8.0f,0.0f,1.0f);
+            r.draw_lunar_volume({origin-Vec3{0,origin.y-0.06f,0},{0,1,0},
+                0.75f+1.2f*dust,2.2f+5.6f*dust,{0.46f,0.43f,0.38f,1},0.66f*dust,0.0f,false});
+        }
         if(origin.y<16){
-            Mesh dust;
+            Mesh dust(solid);
             for(int i=0;i<42;++i){
                 const float angle=(float)i*2.399963f,age=std::fmod(lander_.elapsed*.85f+(float)i*.071f,1.1f);
                 const float speed=3.0f+((float)(i%5))*.6f;

@@ -85,18 +85,23 @@ void GameApp::render_new_game(Renderer& r){
     mode_button(NewGameMode::FreePlay,left+mode_w+gap,"FREE PLAY");
     const bool career=new_game_mode_selection_==NewGameMode::Career;
     if(career) new_game_phase_selection_=GamePhase::Planning;
+    else if(!build::debug_features && new_game_phase_selection_==GamePhase::Debug)
+        new_game_phase_selection_=GamePhase::RobotPreparation;
     const float expl_y=mode_y+mode_h+(very_compact?4.0f:11.0f);
     ui::label_fitted(r,{left,expl_y,content_w,14.0f},
         career?"BEGIN IN STAGE 1. FUND, RESEARCH, PREPARE AND LAUNCH YOUR LUNAR PROGRAM.":
-               "PLAY A STAGE INDEPENDENTLY. STAGE 3 REQUIRES THE DEBUG FRAME SETTING.",
+               build::debug_features?"PLAY A STAGE INDEPENDENTLY. STAGE 3 REQUIRES THE DEBUG FRAME SETTING.":
+                                     "PLAY THE PLANNING OR ROBOT PREPARATION STAGE INDEPENDENTLY.",
         very_compact?0.34f:0.49f,theme_,true);
     const float stage_label_y=expl_y+(very_compact?15.0f:25.0f);
     ui::label(r,{left,stage_label_y},career?"CAMPAIGN START":"SELECT FREE-PLAY STAGE",very_compact?0.43f:0.63f,theme_);
     const float stage_y=stage_label_y+(very_compact?14.0f:23.0f);
-    const float stage_w=(content_w-2*gap)/3.0f;
+    constexpr int stage_count=build::debug_features?3:2;
+    const float stage_w=(content_w-(stage_count-1)*gap)/stage_count;
     const float stage_h=very_compact?27.0f:compact?35.0f:45.0f;
-    const std::array<const char*,3> stage_names{{"1  PLANNING","2  ROBOT PREPARATION","3  DEBUG MODES"}};
-    for(int index=0;index<3;++index){
+    const std::array<const char*,3> stage_names{{"1  PLANNING","2  ROBOT PREPARATION",
+                                                 build::debug_features?"3  DEBUG MODES":""}};
+    for(int index=0;index<stage_count;++index){
         const auto phase=(GamePhase)(index+1);
         const bool selected=new_game_phase_selection_==phase;
         const std::string label=(selected?"> ":"")+std::string(stage_names[(std::size_t)index])+(selected?" <":"");
@@ -109,6 +114,7 @@ void GameApp::render_new_game(Renderer& r){
         }
     }
     const bool robot_stage=new_game_phase_selection_==GamePhase::RobotPreparation;
+    const bool debug_stage=build::debug_features && new_game_phase_selection_==GamePhase::Debug;
     const bool planning_stage=new_game_phase_selection_==GamePhase::Planning;
     const float details_y=stage_y+stage_h+(very_compact?9.0f:compact?17.0f:27.0f);
     const float actions_h=very_compact?28.0f:compact?34.0f:43.0f;
@@ -119,20 +125,21 @@ void GameApp::render_new_game(Renderer& r){
     const float detail_w=content_w-2*(very_compact?9.0f:17.0f);
     const float info_scale=very_compact?0.41f:compact?0.53f:0.70f;
     ui::label_fitted(r,{detail_left,details_y+8,detail_w,20},
-        planning_stage?"STAGE 1  /  SPACE COMPANY LAUNCH CENTER":robot_stage?"STAGE 2  /  ROBOTIC LUNAR DEPLOYMENT":"STAGE 3  /  DEBUG MODES",info_scale,theme_);
+        planning_stage?"STAGE 1  /  SPACE COMPANY LAUNCH CENTER":robot_stage?"STAGE 2  /  ROBOTIC LUNAR DEPLOYMENT":
+        build::debug_features?"STAGE 3  /  DEBUG MODES":"",info_scale,theme_);
     const float sub_y=details_y+(very_compact?27.0f:39.0f);
     if(planning_stage){
         ui::label_fitted(r,{detail_left,sub_y,detail_w,16},"FIXED COASTAL CAMPUS  /  RESEARCH  /  CONTRACTS  /  LAUNCH MISSIONS",very_compact?0.31f:0.48f,theme_,true);
         if(!very_compact && available_h>100)ui::label_fitted(r,{detail_left,sub_y+30,detail_w,16},"3D SITE CAMERA: MOUSE WHEEL ZOOM  |  MIDDLE MOUSE ORBIT  |  RIGHT MOUSE PAN",0.44f,theme_,true);
         if(!compact && available_h>140)ui::label_fitted(r,{detail_left,sub_y+72,detail_w,16},"PROGRESS THROUGH MISSION FACILITIES, TECH RESEARCH, CONTRACT FUNDING AND VEHICLE ASSEMBLY",0.43f,theme_,true);
-    }else if(!robot_stage){
+    }else if(debug_stage){
         ui::label_fitted(r,{detail_left,sub_y,detail_w,16},"CHOOSE TEMPLATE MODE, SANDBOX MODE OR TEST ASTRONAUTS",very_compact?0.32f:0.52f,theme_,true);
         if(!very_compact && available_h>100)ui::label_fitted(r,{detail_left,sub_y+30,detail_w,16},"CONTINUE TO THE STAGE 3 MODE SELECTOR",0.45f,theme_,true);
     }else{
         // Stage 2 is the only phase with a configurable playfield size.
         const float robot_line=very_compact?23.0f:compact?29.0f:40.0f;
         const float row_y=sub_y;
-        const bool fixed_size=debug_start_template_enabled_;
+        const bool fixed_size=build::debug_features && debug_start_template_enabled_;
         ui::label_fitted(r,{detail_left,row_y,detail_w*0.30f,16},"PLAYFIELD",very_compact?0.32f:0.48f,theme_);
         const float size_x=detail_left+detail_w*0.32f;
         if(ui::button(r,ui_input_,{size_x,row_y-3,28,robot_line},"<",theme_,!fixed_size)) playfield_size_=std::max(kNewGamePlayfieldMin,playfield_size_-kNewGamePlayfieldStep);
@@ -151,7 +158,7 @@ void GameApp::render_new_game(Renderer& r){
             count(detail_left,starting_robot_count_,"BUILDER BOTS");
             count(detail_left+col_w+10,starting_carrier_count_,"CARRIER BOTS");
         }
-        if(available_h>150){
+        if(build::debug_features && available_h>150){
             const float debug_y=details_y+available_h-45.0f;
             ui::label_fitted(r,{detail_left,debug_y,detail_w-95,16},"DEBUG START TEMPLATE",0.49f,theme_);
             if(ui::button(r,ui_input_,{detail_left+detail_w-74,debug_y-6,70,29},debug_start_template_enabled_?"ON":"OFF",theme_)){
@@ -166,7 +173,6 @@ void GameApp::render_new_game(Renderer& r){
         screen_=Screen::MainMenu;
         new_game_status_message_.clear();
     }
-    const bool debug_stage=new_game_phase_selection_==GamePhase::Debug;
     const char* action=career?"START CAREER":debug_stage?"CONTINUE":"CREATE";
     if(ui::button(r,ui_input_,{right-action_w,actions_y,action_w,actions_h},action,theme_,
         !debug_stage || debug_frame_enabled_)){
@@ -178,6 +184,10 @@ void GameApp::render_new_game(Renderer& r){
 }
 
 void GameApp::render_stage3_modes(Renderer& r){
+    if constexpr(!build::debug_features){
+        screen_=Screen::NewGame;
+        return;
+    }
     const float w=ui_width(r),h=ui_height(r);
     draw_new_game_backdrop(r,w,h);
     const float panel_w=std::min(660.0f,w-24.0f);
@@ -214,14 +224,16 @@ void GameApp::render_stage3_modes(Renderer& r){
 }
 
 void GameApp::start_new_game(Stage3Mode stage3_mode){
+    if(!build::debug_features && new_game_phase_selection_==GamePhase::Debug) return;
     const bool robot_stage=new_game_phase_selection_==GamePhase::RobotPreparation;
-    const bool debug_stage=new_game_phase_selection_==GamePhase::Debug;
-    if(robot_stage&&!debug_start_template_enabled_&&playfield_size_<64){
+    const bool debug_stage=build::debug_features && new_game_phase_selection_==GamePhase::Debug;
+    const bool start_template=build::debug_features && robot_stage && debug_start_template_enabled_;
+    if(robot_stage && !start_template && playfield_size_<64){
         new_game_status_message_="CHOOSE AT LEAST 64 X 64 FOR THE LANDER AND CARGO STACKS";
         return;
     }
     const bool completed_template=debug_stage && stage3_mode==Stage3Mode::Template;
-    const bool use_template=completed_template || (robot_stage && debug_start_template_enabled_);
+    const bool use_template=completed_template || start_template;
     if(use_template){
         std::string error;
         if(!load_debug_blueprint_template_from_file(debug_blueprint_template_path(),error,completed_template)){
@@ -289,7 +301,8 @@ void GameApp::start_new_game(Stage3Mode stage3_mode){
     storage_gate_placement_active_=false;
     storage_gate_placement_owner_=kNoRobotIndex;
     habitat_view_mode_=HabitatViewMode::Default;
-    game_speed_=(robot_stage && debug_start_template_enabled_)?GameSpeed::Pause:GameSpeed::Normal;
+    game_speed_=start_template?GameSpeed::Pause:GameSpeed::Normal;
+    last_running_speed_=1;
     clear_world_selection();
     if(lander_.active())selection_kind_=SelectionKind::Lander;
     selection_marquee_active_=false;

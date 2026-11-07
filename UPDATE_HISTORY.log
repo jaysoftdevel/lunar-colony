@@ -755,3 +755,42 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Send raw ore boxes from Ore Drillers into Storage Domes.
 - Load reserved packaged goods and raw ore from Storage Domes onto the trader through a connected Landing Pad.
 - Resume belt shipments from save and hand reserved parcels to rovers when their belt is removed.
+
+0.51.20 - Spatial audio
+- Bring the OpenAL sound engine and synthesized sound effects into the mainline.
+- Add campus, suit, cabin and machinery ambience and sounds for crew, cargo and gameplay events.
+- Add master sound volume and mute controls in Settings.
+
+0.52.0 - Full project rendering edition
+- Add visibility-buffer material resolve and GPU-driven terrain cluster draws.
+- Stream terrain detail, regolith textures and near-sun shadow pages.
+- Trace nearby scene geometry on the GPU for off-screen reflections, shadows, ambient occlusion and indirect lighting.
+- Resample fixture lights across pixels and frames and filter the ray results with an online radiance model and learned temporal confidence.
+- Add depth-clipped exhaust and dust volumes, screen-space skin diffusion, anisotropic hair, and native temporal upscaling.
+- Include the OpenAL audio draft and the OpenGL 3.3 raster fallback.
+- Validate legacy lander migration with files produced by the original schema-33 and schema-35 game builds.
+
+0.52.1 - Graphics settings
+- Add six Graphics tabs to the title and pause menu settings.
+- Apply renderer, quality and effect changes when drawing resumes and save them as user preferences.
+- Let players tune individual ray and screen-space effects, tone mapping, transparency and atmosphere.
+- Show which controls need the enhanced renderer, compute support or another active option.
+
+0.52.2 - Mesh view, ambient music, and pause controls
+- Add a persistent Debug Layout switch to Settings and connect the debug frame to the same renderer choice.
+- Play a continuous stereo pad theme in menus and gameplay. Music Off stops it immediately and leaves effects enabled.
+- Bind 1 through 3 to each stage’s speed levels and Space to pause and resume. Move first-person jump to J.
+- Draw a slowly pulsing screen frame while the simulation is paused.
+
+0.52.3 - Shared Windows and Linux build variants
+- Build distinct Release and Debug executables through the paired platform scripts.
+- Enable developer controls and Stage 3 test scenarios in Debug. Keep normal campaign saves compatible across both builds.
+- Enable Windows audio through the shared OpenAL mixer and app-local runtime.
+- Add a native Windows update launcher for the same mainline patch.
+
+0.52.4 - Windows Direct3D 12 rendering
+- Add FP16 lunar scene lighting, procedural terrain and materials, powered fixture lights, and bloom.
+- Tone-map the scene to SDR and apply FXAA before drawing the interface.
+- Use enhanced barriers on supported runtimes and offer optional variable-rate shading for outer terrain.
+- Add Windows graphics controls for the new renderer and its effects.
+- Support an optional app-local Agility SDK 1.620.1 runtime for both Windows executables.

@@ -11,23 +11,23 @@ Gameplay, simulation, construction, navigation/RVO2, save/load, UI logic and tes
 
 ## Mirrored commands
 
-The shell and batch interfaces intentionally use the same verbs and configuration names.
+The shell and batch commands build the two variants from the same sources. Release includes the campaign and playable stages. Debug also enables the developer frame, layout switch, robot orders, template starts, and Stage 3 scenarios. Both executables share their platform's `bin/savegames` folder. Stage 3 test saves open in Debug.
 
 | Action | Linux | Windows |
 |---|---|---|
 | Install/check dependencies | `./dev.sh deps` | `dev.bat deps` |
-| Incremental Release build | `./dev.sh build Release` | `dev.bat build Release` |
-| Incremental Debug build | `./dev.sh build Debug` | `dev.bat build Debug` |
-| Clean rebuild | `./dev.sh rebuild Release` | `dev.bat rebuild Release` |
-| Run | `./dev.sh run` | `dev.bat run` |
-| Build + regressions | `./dev.sh test Release` | `dev.bat test Release` |
-| Remove platform build tree | `./dev.sh clean` | `dev.bat clean` |
+| Build both variants | `./dev.sh build` | `dev.bat build` |
+| Clean rebuild of both variants | `./dev.sh rebuild` | `dev.bat rebuild` |
+| Run Release | `./dev.sh run` | `dev.bat run` |
+| Run Debug | `./dev.sh run Debug` | `dev.bat run Debug` |
+| Build and run regressions | `./dev.sh test` | `dev.bat test` |
+| Clean generated build outputs | `./dev.sh clean` | `dev.bat clean` |
 
 The direct paired scripts (`build.*`, `run.*`, `test.*`, `clean.*`, `configure.*`) can be used instead of `dev.*`.
 
 ## Parallel development model
 
-The two platforms use different build directories. A checkout can therefore be shared or synchronized between Linux and Windows without conflicting CMake caches. Do not commit `build/`.
+Linux builds in `build/linux/Release` and `build/linux/Debug`. Windows uses the corresponding configurations in `build/windows`. Each platform writes `game` and `game-debug` into its `bin` directory, with an `.exe` extension on Windows.
 
 Shared code belongs in `game/`, `engine/src/ui.cpp`, `engine/src/task_pool.cpp`, and common engine headers. Platform-specific behavior should remain in:
 
@@ -40,7 +40,7 @@ When changing shared gameplay behavior, run `test.sh`/`test.bat` on both hosts b
 
 ## Build options
 
-`GAME_BUILD_TESTS=ON ./build.sh Release` can enable Linux tests through the environment. `--tests` works on both direct build scripts. `GAME_BUILD_JOBS=N` caps Linux compile parallelism; Windows delegates parallelism to CMake/MSBuild.
+`GAME_BUILD_TESTS=ON` or `--tests` enables tests on either platform. The developer regression suite runs in Debug and the build policy is tested in both configurations. `GAME_BUILD_JOBS=N` caps compile parallelism.
 
 ## Save compatibility
 

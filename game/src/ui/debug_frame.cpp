@@ -55,14 +55,9 @@ void GameApp::render_debug_frame(Renderer& r){
     game_label(r,{frame.x+12,frame.y+163},"GPU HW " + gpu,0.54f,theme_);
 
     game_label(r,{frame.x+12,frame.y+188},"WORLD LAYOUT",0.56f,theme_,true);
-    const bool textured=world_layout_mode_==WorldLayoutMode::Textured;
-    const std::string layout_label=textured?"TEXTURED":"MESH";
-    if(ui::button(r,ui_input_,{frame.x+222,frame.y+181,126,32},layout_label,theme_)){
-        world_layout_mode_=textured?WorldLayoutMode::Mesh:WorldLayoutMode::Textured;
-    }
-    // The current project has no texture asset/material pipeline yet. The mode
-    // is nevertheless carried by GameApp and exposed here so a future textured
-    // renderer can dispatch on it without changing gameplay/UI contracts.
+    const char* layout_label=mesh_layout_active()?"MESHED":"FULL GRAPHICS";
+    if(ui::button(r,ui_input_,{frame.x+222,frame.y+181,126,32},layout_label,theme_))
+        toggle_world_layout();
 }
 
 } // namespace game

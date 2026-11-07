@@ -15,23 +15,23 @@ echo Usage: dev.bat {configure^|build^|rebuild^|run^|test^|clean^|deps} [argumen
 exit /b 2
 
 :do_configure
-call configure.bat %*
+call configure.bat %1 %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 :do_build
-call build.bat %*
+call build.bat %1 %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 :do_rebuild
-call build.bat %* --clean
+call build.bat %1 %2 %3 %4 %5 %6 %7 %8 %9 --clean
 exit /b %ERRORLEVEL%
 :do_run
-call run.bat %*
+call run.bat %1 %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 :do_test
-call test.bat %*
+call test.bat %1 %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 :do_clean
 call clean.bat
 exit /b %ERRORLEVEL%
 :do_deps
-call install-deps.bat %*
+call install-deps.bat %1 %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%

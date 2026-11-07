@@ -1,6 +1,6 @@
 # Windows 11 / Direct3D 12 build
 
-This repository contains the shared Linux + Windows source for game **0.42.0**. The gameplay implementation is common; only the operating-system and renderer backends are selected per platform.
+This workspace contains the shared Linux and Windows sources for JSD Lunar Base. The Windows build uses Win32 and Direct3D 12 with the shared simulation, save format, UI, and audio mixer.
 
 ## What the Windows build uses
 
@@ -38,18 +38,20 @@ No third-party package manager is required. RVO2 is already included under `thir
 The primary Windows development interface mirrors the Linux shell scripts:
 
 ```bat
-build.bat Release
+build.bat
 run.bat
-test.bat Release
+run.bat Debug
+test.bat
 ```
 
-The Release executable is created as:
+Each build writes both executables to `build/windows/bin`.
 
-```text
-build/windows/bin/game.exe
-```
+| Variant | Executable |
+|---|---|
+| Release | `game.exe` |
+| Debug | `game-debug.exe` |
 
-Debug-template starts read the optional save from the source tree or the executable's `debug/` directory at runtime. Building the executable does not require that save.
+The Debug executable can read the optional construction template from the source tree or its `debug/` directory.
 
 `dev.bat` provides the common command wrapper (`build`, `rebuild`, `run`, `test`, `clean`, `deps`). `build-windows.bat` and `build-windows.ps1` remain compatibility wrappers for the earlier Windows-only workflow.
 
@@ -58,7 +60,9 @@ Debug-template starts read the optional save from the source tree or the executa
 ```powershell
 cmake -S . -B build/windows -G "Visual Studio 17 2022" -A x64 -DGAME_BUILD_NAVIGATION_TESTS=ON
 cmake --build build/windows --config Release --parallel
+cmake --build build/windows --config Debug --parallel
 ctest --test-dir build/windows -C Release --output-on-failure
+ctest --test-dir build/windows -C Debug --output-on-failure
 ```
 
 If you use a newer Visual Studio generator, replace the generator name accordingly.
@@ -78,7 +82,7 @@ When VSync is off and the driver/display supports DXGI tearing, the Direct3D bac
 
 ## Save-game compatibility
 
-The Windows build uses the same binary `.gmsave` serializer/schema as the Linux game. Saves are placed in `savegames/` beside `game.exe`, matching the existing installed-game-relative behavior. Existing compatible 0.41.x saves can therefore be copied directly between the Linux and Windows builds.
+The Windows build uses the same binary `.gmsave` serializer/schema as the Linux game. Saves are placed in `savegames/` beside `game.exe`, matching the existing installed-game-relative behavior. Compatible saves can be copied between Linux and Windows. The Release executable opens campaign and normal colony saves. Stage 3 test saves require Debug.
 
 ## Platform differences / items that are not literally portable
 
@@ -91,8 +95,16 @@ The complete gameplay feature set is retained, but these Linux implementation de
 - **Linux `sched_getaffinity` CPU visibility** is replaced by Windows processor-group enumeration plus the C++ worker pool.
 - **GLX swap-interval extensions** are replaced by DXGI Present/VSync/tearing control.
 
-There is currently no Linux-specific subsystem such as ALSA, PulseAudio, evdev, Wayland, POSIX networking, shell scripting, or process control in the game that needs a functional replacement. The existing game contains no audio subsystem, so there is no audio API to port.
+Windows loads the same sound mixer through the Win64 OpenAL Soft runtime. `install-deps.bat` installs that runtime beside both executables.
 
-## DirectX version clarification
+## Direct3D 12 graphics
 
-Direct3D **12** is the current Direct3D API generation used by this build. Hardware capabilities are described separately as feature levels. At startup the renderer asks the selected adapter for the highest supported feature level and can report up to **12_2**, the DirectX 12 Ultimate-class feature level. The game does not require ray tracing, mesh shaders, variable-rate shading, or other Ultimate-only features, so it will also run on Direct3D 12 hardware exposing lower supported feature levels.
+The lunar stages use an FP16 scene buffer for material lighting and emissive fixtures. The game applies bloom, exposure, tone mapping to SDR, and optional FXAA before drawing the interface.
+
+**Settings → Graphics** provides the Enhanced and Classic views, material and terrain detail, lighting, and image controls. Terrain VRS is an optional performance setting for compatible GPUs. Enhanced barriers are selected automatically when the runtime and driver support them. Older adapters use legacy barriers and can fall back to the Classic view if the FP16 pipeline is unavailable.
+
+Both build variants default to the Direct3D 12 runtime supplied by Windows.
+To use [DirectX 12 Agility SDK 1.620.1](https://www.nuget.org/packages/Microsoft.Direct3D.D3D12/1.620.1),
+set `GAME_D3D12_AGILITY_DIR` to its extracted `build/native/bin/x64` directory
+before running `build.bat`. Both executables then use SDK version 620, with
+the runtime copied to the `D3D12` directory beside them.

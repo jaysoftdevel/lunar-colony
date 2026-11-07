@@ -4,16 +4,23 @@ if(WIN32)
         src/renderer_d3d12.cpp
         src/ui.cpp
         src/task_pool.cpp
+        src/audio_openal.cpp
     )
 else()
     find_package(X11 REQUIRED)
     add_library(game_engine STATIC
         src/platform_x11.cpp
         src/renderer_gl.cpp
+        src/lunar_renderer.cpp
+        src/lunar_bvh.cpp
+        src/lunar_geometry.cpp
+        src/lunar_pages.cpp
         src/ui.cpp
         src/task_pool.cpp
+        src/audio_openal.cpp
     )
 endif()
+target_sources(game_engine PRIVATE src/graphics_settings.cpp)
 target_include_directories(game_engine PUBLIC include)
 target_compile_definitions(game_engine PUBLIC
     GAME_PLATFORM_NAME="${GAME_PLATFORM_NAME}"

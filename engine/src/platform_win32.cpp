@@ -173,6 +173,10 @@ struct Application::Impl {
                 else if(k=='N' && first) input.key_n_pressed=true;
                 else if(k=='M' && first) input.key_m_pressed=true;
                 else if(k==VK_SPACE){if(first) input.key_space_pressed=true;input.key_space_down=true;}
+                else if(k=='J'){if(first) input.key_j_pressed=true;input.key_j_down=true;}
+                else if(first && ((k>='1' && k<='3') || (k>=VK_NUMPAD1 && k<=VK_NUMPAD3)) &&
+                        !(GetKeyState(VK_CONTROL)&0x8000) && !(GetKeyState(VK_MENU)&0x8000))
+                    input.key_number_pressed=static_cast<std::uint8_t>(k-(k>=VK_NUMPAD1?VK_NUMPAD1:'1')+1);
                 else if(k=='V'){ if(first) input.key_v_pressed=true; input.key_v_down=true; }
                 else if(k=='W') input.key_w_down=true;
                 else if(k=='A') input.key_a_down=true;
@@ -186,6 +190,7 @@ struct Application::Impl {
             case WM_SYSKEYUP: {
                 const UINT k=(UINT)wp;
                 if(k==VK_SPACE) input.key_space_down=false;
+                else if(k=='J') input.key_j_down=false;
                 else if(k=='V') input.key_v_down=false;
                 else if(k=='W') input.key_w_down=false;
                 else if(k=='A') input.key_a_down=false;
@@ -252,6 +257,8 @@ struct Application::Impl {
         input.key_w_down=input.key_a_down=input.key_s_down=input.key_d_down=false;
         input.key_shift_down=false;
         input.key_space_down=false;input.key_space_pressed=false;
+        input.key_j_down=false;input.key_j_pressed=false;
+        input.key_number_pressed=0;
         input.mouse_dx=input.mouse_dy=0;
     }
 
@@ -453,7 +460,8 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
         p.input.left_pressed=p.input.middle_pressed=p.input.right_pressed=false;
         p.input.escape_pressed=p.input.key_n_pressed=p.input.key_m_pressed=p.input.key_v_pressed=p.input.delete_pressed=false;
         p.input.backspace_pressed=p.input.enter_pressed=false;
-        p.input.key_space_pressed=false;
+        p.input.key_space_pressed=p.input.key_j_pressed=false;
+        p.input.key_number_pressed=0;
         p.input.text_input.clear();
         p.input.wheel=0; p.input.mouse_dx=0; p.input.mouse_dy=0;
 

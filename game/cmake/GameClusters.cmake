@@ -21,6 +21,8 @@ add_library(game_cluster_app OBJECT
     src/screens/new_game.cpp
     src/screens/save_load.cpp
     src/screens/settings.cpp
+    src/screens/graphics_settings.cpp
+    src/config/preferences.cpp
     src/screens/credits.cpp
 )
 configure_game_cluster(game_cluster_app)
@@ -28,6 +30,8 @@ configure_game_cluster(game_cluster_app)
 add_library(game_cluster_interaction OBJECT
     src/playfield/playfield_view.cpp
     src/systems/gameplay_controller.cpp
+    src/systems/soundscape.cpp
+    src/systems/sound_assets.cpp
     src/systems/astronaut_test.cpp
     src/systems/astronaut_duties.cpp
     src/systems/world_selection.cpp
@@ -44,7 +48,7 @@ configure_game_cluster(game_cluster_interaction)
 add_library(game_cluster_rendering OBJECT
     src/playfield/world_renderer.cpp
     src/playfield/builder_robot_renderer.cpp
-    src/playfield/astronaut_renderer.cpp
+    "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/src/playfield/astronaut_renderer.cpp>"
     src/playfield/lunar_lander_renderer.cpp
     src/playfield/trader_renderer.cpp
 )
@@ -52,7 +56,7 @@ configure_game_cluster(game_cluster_rendering)
 
 add_library(game_cluster_ui OBJECT
     src/ui/status_bar.cpp
-    src/ui/debug_frame.cpp
+    "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/src/ui/debug_frame.cpp>"
     src/ui/build_bar.cpp
     src/ui/view_selector.cpp
     src/ui/build_icons.cpp

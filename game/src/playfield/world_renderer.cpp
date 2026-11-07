@@ -1,5 +1,6 @@
 #include "game/game_app.hpp"
 #include "game/world/mesh_portals.hpp"
+#include "game/world/lunar_look.hpp"
 #include "game/world/storage_loading_gate.hpp"
 #include "game/world/resource_builder.hpp"
 #include "game/world/robot_workshop.hpp"
@@ -31,6 +32,24 @@ void draw_structure_ground_reservation(Renderer& r,float physical_x,float physic
                              {hx,0.025f,hz},{-hx,0.025f,hz},
                              {-hx,0.025f,hz},{-hx,0.025f,-hz}};
     r.draw_lines_3d(transformed_vertices(marker,position,rotation_degrees),color,width);
+}
+
+void draw_pad_markings(Renderer& r,const ResourceMesh& mesh,Vec3 position,float rotation){
+    const float scale=mesh.footprint_x/20.0f;
+    const auto quad=[&](std::vector<Vec3>& out,float x,float z,float width,float depth,float y,float angle){
+        const Vec3 center=rotate_y(Vec3{x*scale,y,z*scale},angle);
+        const Vec3 x_axis=rotate_y(Vec3{width*scale*0.5f,0,0},angle);
+        const Vec3 z_axis=rotate_y(Vec3{0,0,depth*scale*0.5f},angle);
+        const Vec3 a=center-x_axis-z_axis,b=center+x_axis-z_axis,c=center+x_axis+z_axis,d=center-x_axis+z_axis;
+        out.insert(out.end(),{a,b,c,a,c,d});
+    };
+    std::vector<Vec3> white,amber;
+    for(float side:{-1.0f,1.0f}) quad(white,side*0.70f,0,0.29f,2.2f,0.761f,0);
+    quad(white,0,0,1.40f,0.29f,0.761f,0);
+    for(float angle:{0.0f,90.0f,180.0f,270.0f})
+        for(float x:{-1.04f,-0.52f,0.0f,0.52f,1.04f}) quad(amber,x,-7.18f,0.23f,0.47f,0.653f,angle);
+    r.draw_lunar_surface(transformed_vertices(white,position,rotation),LunarMaterial::Marking,{0.86f,0.83f,0.74f,1});
+    r.draw_lunar_surface(transformed_vertices(amber,position,rotation),LunarMaterial::Marking,{0.83f,0.59f,0.22f,1});
 }
 
 std::vector<Vec3> construction_path_lines(const std::vector<Vec3>& path){
@@ -93,7 +112,10 @@ struct ResourceBoxBatch {
         // Inventory packages never intersect. Keep face order and consolidate
         // their common outline after the depth-tested faces, instead of two
         // GPU submissions for every individual 10 kg package.
-        for(const auto& batch:faces){const auto c=resource_box_color(batch.material);r.draw_triangles_3d(batch.vertices,{c.r,c.g,c.b,0.90f});}
+        for(const auto& batch:faces){
+            const auto c=resource_box_color(batch.material);
+            r.draw_triangles_3d(batch.vertices,{c.r,c.g,c.b,r.lunar_scene_active()?1.0f:0.90f});
+        }
         if(!edges.empty())r.draw_lines_3d(edges,{0.10f,0.12f,0.13f,1},1.25f);
     }
 };
@@ -160,6 +182,19 @@ void draw_tracked_solar(Renderer& r,const ResourceMesh& mesh,const PlacedResourc
     const auto body=tracked_solar_vertices(mesh.body,instance.position,instance.rotation_degrees,tracker_normal);
     const auto details=tracked_solar_vertices(mesh.details,instance.position,instance.rotation_degrees,tracker_normal);
     const auto edges=tracked_solar_vertices(mesh.edges,instance.position,instance.rotation_degrees,tracker_normal);
+    if(r.lunar_scene_active()){
+        std::vector<Vec3> panel,mast;
+        for(std::size_t i=0;i+2<body.size();i+=3){
+            auto& layer=mesh.body[i].y>3.12f && mesh.body[i+1].y>3.12f && mesh.body[i+2].y>3.12f?panel:mast;
+            layer.insert(layer.end(),{body[i],body[i+1],body[i+2]});
+        }
+        r.draw_lunar_surface(foundation,LunarMaterial::Pad,{0.43f,0.44f,0.46f,1});
+        r.draw_lunar_surface(mast,LunarMaterial::Paint,{0.80f,0.81f,0.78f,1});
+        r.draw_lunar_surface(panel,LunarMaterial::Solar,{0.17f,0.30f,0.51f,1});
+        r.draw_lunar_surface(details,LunarMaterial::Alloy,{0.69f,0.63f,0.49f,1});
+        if(selected) r.draw_lines_3d(edges,accent,2.0f);
+        return;
+    }
     mesh_wireframe::draw_layer(r,foundation,{0.20f,0.84f,0.36f,1.0f},2.40f*boost);
     mesh_wireframe::draw_layer(r,body,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
     mesh_wireframe::draw_layer(r,details,{0.22f,0.92f,0.40f,0.99f},2.35f*boost);
@@ -201,6 +236,12 @@ const std::vector<Vec3>& portal_layer(const std::vector<Vec3>& triangles,Vec3 po
 }
 
 void draw_extension_mesh(Renderer& r,const ResourceMesh& mesh,float progress,bool preview=false){
+    if(r.lunar_scene_active() && !preview && progress>=0.9999f){
+        r.draw_lunar_surface(mesh.foundation,LunarMaterial::Pad,{0.47f,0.50f,0.53f,1});
+        r.draw_lunar_surface(mesh.body,LunarMaterial::Paint,{0.69f,0.73f,0.74f,1});
+        r.draw_lunar_surface(mesh.details,LunarMaterial::Alloy,{0.52f,0.55f,0.57f,1});
+        return;
+    }
     const Color blueprint{0.10f,0.42f,0.96f,0.52f},installed{1,0.68f,0.12f,0.99f},complete{0.24f,0.96f,0.42f,1};
     for(const auto* layer:{&mesh.foundation,&mesh.body,&mesh.details}){
         if(preview || progress<0.9999f) mesh_wireframe::draw_layer(r,*layer,blueprint,1.50f);
@@ -210,8 +251,11 @@ void draw_extension_mesh(Renderer& r,const ResourceMesh& mesh,float progress,boo
 }
 void draw_pressure_box(Renderer& r,Vec3 center,Vec3 side,Vec3 normal,Vec3 size,Color color){
     resources::Builder b;b.oriented_box(b.mesh.body,center,side,{0,1,0},normal,size);
-    mesh_wireframe::draw_layer(r,b.mesh.body,color,2.35f);
-    r.draw_lines_3d(b.mesh.edges,color,2.1f);
+    if(r.lunar_scene_active()) r.draw_lunar_surface(b.mesh.body,LunarMaterial::Pad,{0.59f,0.62f,0.63f,1});
+    else{
+        mesh_wireframe::draw_layer(r,b.mesh.body,color,2.35f);
+        r.draw_lines_3d(b.mesh.edges,color,2.1f);
+    }
 }
 void draw_generated_airlock_access(Renderer& r,const CorridorDoor& door,float deck_y,Color color){
     if(door.entrance_index!=-4) return;
@@ -299,7 +343,7 @@ void draw_loading_gate(Renderer& r,const PlacedResource& item,float opening,bool
 
 }
 
-void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors,bool greenhouse_dark) const {
+void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors,bool greenhouse_dark,HabitatKind kind) const {
     if(preview){
         const auto shell=transformed_vertices(portal_layer(mesh.shell,position,rotation_degrees,fpv_doors),position,rotation_degrees);
         const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
@@ -369,6 +413,27 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
     auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     auto glazing=transformed_vertices(portal_layer(mesh.glazing,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
+    if(r.lunar_scene_active()){
+        const bool cutaway=habitat_view_mode_==HabitatViewMode::Full && first_person_mode_!=FirstPersonMode::Active;
+        Color cladding{0.84f,0.83f,0.78f,cutaway?0.18f:1.0f};
+        Color fittings{0.64f,0.52f,0.32f,1};
+        switch(kind){
+            case HabitatKind::AirLock: cladding.r=0.79f;cladding.g=0.84f;cladding.b=0.87f;break;
+            case HabitatKind::BioDome: fittings={0.45f,0.59f,0.46f,1};break;
+            case HabitatKind::CrewQuarters: fittings={0.43f,0.60f,0.66f,1};break;
+            case HabitatKind::SickBay: fittings={0.75f,0.37f,0.37f,1};break;
+            default: break;
+        }
+        const Color glass=greenhouse_dark?Color{0.14f,0.25f,0.27f,cutaway?0.20f:0.68f}:
+            Color{0.27f,0.51f,0.63f,cutaway?0.22f:0.58f};
+        r.draw_lunar_surface(foundation,LunarMaterial::Pad,{0.48f,0.49f,0.50f,1});
+        r.draw_lunar_surface(interior,LunarMaterial::Paint,{0.58f,0.66f,0.67f,1});
+        r.draw_lunar_surface(details,LunarMaterial::Alloy,fittings);
+        r.draw_lunar_surface(shell,LunarMaterial::Paint,cladding);
+        r.draw_lunar_surface(glazing,LunarMaterial::Glass,glass);
+        if(selected) r.draw_lines_3d(edges,{0.98f,0.85f,0.46f,0.88f},2.0f);
+        return;
+    }
     const Color shell_color=greenhouse_dark?Color{0.15f,0.46f,0.24f,1.0f}:Color{0.24f,0.96f,0.42f,1.0f};
     const Color foundation_color=greenhouse_dark?Color{0.13f,0.38f,0.20f,1.0f}:Color{0.20f,0.84f,0.36f,1.0f};
     const Color interior_color=greenhouse_dark?Color{0.10f,0.27f,0.16f,0.78f}:Color{0.34f,1.00f,0.50f,0.98f};
@@ -392,7 +457,7 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
     r.draw_lines_3d(edges,edge_color,selected?3.65f:2.90f);
 }
 
-void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors) const {
+void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors,ResourceKind kind) const {
     if(preview){
         const auto body=transformed_vertices(portal_layer(mesh.body,position,rotation_degrees,fpv_doors),position,rotation_degrees);
         const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
@@ -440,6 +505,22 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
     const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
     auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
+    if(r.lunar_scene_active()){
+        const bool pad=kind==ResourceKind::LandingPad;
+        const bool cutaway=kind==ResourceKind::StorageDome && habitat_view_mode_==HabitatViewMode::Full &&
+                           first_person_mode_!=FirstPersonMode::Active;
+        Color paint=pad?Color{0.37f,0.40f,0.44f,1}:Color{0.80f,0.82f,0.78f,cutaway?0.22f:1.0f};
+        Color trim{0.66f,0.51f,0.28f,1};
+        if(kind==ResourceKind::WaterStorage || kind==ResourceKind::WaterDriller) trim={0.35f,0.58f,0.71f,1};
+        if(kind==ResourceKind::HydrogenTank || kind==ResourceKind::OxygenTank) trim={0.51f,0.65f,0.61f,1};
+        if(pad) trim={0.80f,0.74f,0.57f,1};
+        r.draw_lunar_surface(foundation,LunarMaterial::Pad,{0.46f,0.47f,0.49f,1});
+        r.draw_lunar_surface(body,pad?LunarMaterial::Pad:LunarMaterial::Paint,paint);
+        r.draw_lunar_surface(details,pad?LunarMaterial::Paint:LunarMaterial::Alloy,trim);
+        if(pad) draw_pad_markings(r,mesh,position,rotation_degrees);
+        if(selected) r.draw_lines_3d(edges,{0.98f,0.85f,0.46f,0.88f},2.0f);
+        return;
+    }
     const float boost=selected?1.45f:1.0f;
     mesh_wireframe::draw_layer(r,foundation,{0.20f,0.84f,0.36f,1.0f},2.40f*boost);
     mesh_wireframe::draw_layer(r,body,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
@@ -569,7 +650,12 @@ void GameApp::render_resources(Renderer& r){
             draw_tracked_solar(r,mesh,instance,visual_normal,selected,Color{1.0f,0.94f,0.55f,1.0f});
         }
         else
-            render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr);
+            render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr,instance.kind);
+        if(r.lunar_scene_active() && instance.kind==ResourceKind::LandingPad && instance.construction.complete() &&
+           lunar_look::powered(instance.supply,instance.power_enabled)){
+            for(const auto& fixture:lunar_look::pad_fixtures(instance,mesh))
+                lunar_look::draw_fixture(r,fixture,instance.rotation_degrees);
+        }
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
         if(instance.kind==ResourceKind::RobotWorkshop) render_workshop_gate(r,instance,!instance.construction.complete());
         if(instance.kind==ResourceKind::StorageGate && instance.storage_parent_index<placed_resources_.size()){
@@ -647,11 +733,17 @@ void GameApp::render_utilities(Renderer& r){
         }
 
         const bool conveyor=link.kind==UtilityKind::ConveyorBelt;
-        const Color shell=conveyor?Color{.82f,.64f,.33f,1}:Color{0.24f,0.96f,0.42f,1};
-        const Color details=conveyor?shell:Color{0.22f,0.92f,0.40f,0.99f};
-        mesh_wireframe::draw_layer(r,link.mesh.shell,shell,2.60f*boost);
-        mesh_wireframe::draw_layer(r,link.mesh.details,details,2.35f*boost);
-        r.draw_lines_3d(link.mesh.edges,selected?theme_.accent:shell,selected?3.60f:2.85f);
+        if(r.lunar_scene_active()){
+            r.draw_lunar_surface(link.mesh.shell,LunarMaterial::Paint,conveyor?Color{0.44f,0.47f,0.50f,1}:Color{0.63f,0.67f,0.67f,1});
+            r.draw_lunar_surface(link.mesh.details,LunarMaterial::Alloy,{0.70f,0.55f,0.30f,1});
+            if(selected) r.draw_lines_3d(link.mesh.edges,theme_.accent,2.1f);
+        }else{
+            const Color shell=conveyor?Color{.82f,.64f,.33f,1}:Color{0.24f,0.96f,0.42f,1};
+            const Color details=conveyor?shell:Color{0.22f,0.92f,0.40f,0.99f};
+            mesh_wireframe::draw_layer(r,link.mesh.shell,shell,2.60f*boost);
+            mesh_wireframe::draw_layer(r,link.mesh.details,details,2.35f*boost);
+            r.draw_lines_3d(link.mesh.edges,selected?theme_.accent:shell,selected?3.60f:2.85f);
+        }
         if(conveyor && link.ore_cargo<ore::no_cargo)
             draw_resource_box(r,link.ore_box_position(),.23f,.34f,ore::materials[link.ore_cargo]);
     }
@@ -682,6 +774,12 @@ void GameApp::render_walkways(Renderer& r){
                 mesh_wireframe::draw_layer(r,details,build_detail,1.80f*boost);
                 if(!edges.empty()) r.draw_lines_3d(edges,build_main,selected?3.35f:2.30f);
             }
+            continue;
+        }
+        if(r.lunar_scene_active()){
+            r.draw_lunar_surface(w.mesh.deck,LunarMaterial::Pad,{0.46f,0.49f,0.51f,1});
+            r.draw_lunar_surface(w.mesh.details,LunarMaterial::Paint,{0.71f,0.66f,0.53f,1});
+            if(selected) r.draw_lines_3d(w.mesh.edges,theme_.accent,2.1f);
             continue;
         }
         mesh_wireframe::draw_layer(r,w.mesh.deck,{0.24f,0.96f,0.42f,1.0f},2.60f*boost);
@@ -723,6 +821,13 @@ void GameApp::render_corridors(Renderer& r){
             continue;
         }
 
+        if(r.lunar_scene_active()){
+            const bool cutaway=habitat_view_mode_==HabitatViewMode::Full && first_person_mode_!=FirstPersonMode::Active;
+            r.draw_lunar_surface(connection.mesh.details,LunarMaterial::Alloy,{0.60f,0.63f,0.64f,1});
+            r.draw_lunar_surface(connection.mesh.shell,LunarMaterial::Paint,{0.76f,0.78f,0.73f,cutaway?0.20f:1.0f});
+            if(selected || link_source) r.draw_lines_3d(connection.mesh.edges,edge_color,2.2f);
+            continue;
+        }
         const Color shell_color{0.24f,0.96f,0.42f,1.0f};
         const Color detail_color{0.22f,0.92f,0.40f,0.99f};
         // Open corridor endpoints are permanent sealed pressure bulkheads.
@@ -751,7 +856,9 @@ void GameApp::render_habitats(Renderer& r){
             fpv_ptr=&fpv_doors;
         }
         const bool greenhouse_dark=instance.kind==HabitatKind::BioDome && instance.construction.complete() && !hydroponics_lights_on(status_.hour());
-        render_habitat_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr,greenhouse_dark);
+        render_habitat_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr,greenhouse_dark,instance.kind);
+        if(r.lunar_scene_active() && instance.construction.complete() && lunar_look::powered(instance.supply,instance.power_enabled))
+            lunar_look::draw_fixture(r,lunar_look::habitat_fixture(instance,mesh),instance.rotation_degrees);
         if(fpv_ptr) for(const auto& door:fpv_doors){
             draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position));
             if(instance.kind==HabitatKind::AirLock && door.entrance_index==-4)

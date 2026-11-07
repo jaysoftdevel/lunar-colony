@@ -1,6 +1,7 @@
 #include <chrono>
 #pragma once
 #include "engine/engine.hpp"
+#include "game/build_mode.hpp"
 #include "game/features/build_catalog.hpp"
 #include "game/systems/camera_controller.hpp"
 #include "game/systems/astronaut_test.hpp"
@@ -10,6 +11,7 @@
 #include "game/systems/planning_game.hpp"
 #include "game/systems/lunar_lander.hpp"
 #include "game/systems/trader.hpp"
+#include "game/systems/soundscape.hpp"
 #include "game/systems/resource_management.hpp"
 #include "game/systems/builder_robot.hpp"
 #include "game/world/playfield.hpp"
@@ -59,6 +61,7 @@ struct GroundResourcePile {
 class GameApp final : public eng::GameDelegate {
 public:
     explicit GameApp(eng::Application& app):app_(app){}
+    void on_start() override;
     void on_resize(int width,int height) override;
     void update(float dt,const eng::InputState& input) override;
     void render(eng::Renderer& r) override;
@@ -68,7 +71,7 @@ private:
     friend struct LanderRegression;
     friend struct TraderRegression;
     friend struct ShipLayoutRegression;
-    enum class Screen { MainMenu, NewGame, Stage3Modes, SaveGame, LoadGame, Settings, Credits, Playfield };
+    enum class Screen { MainMenu, NewGame, Stage3Modes, SaveGame, LoadGame, Settings, GraphicsSettings, Credits, Playfield };
     // Top-level game content. This is intentionally separate from the colony
     // progression stages used inside RobotPreparation. Each phase owns a
     // distinct gameplay surface so future Planning and sandbox mechanics
@@ -79,7 +82,7 @@ private:
     enum class NewGameMode : std::uint8_t { Career = 0, FreePlay = 1 };
     enum class Stage3Mode : std::uint8_t { Sandbox, Template, AstronautTest };
     enum class HabitatViewMode { Default, Full };
-    enum class WorldLayoutMode { Mesh, Textured };
+    enum class WorldLayoutMode { FullGraphics, Mesh };
     enum class GameSpeed { Normal = 0, Quick, Fast, Pause };
     enum class FirstPersonMode { Off, DropPending, Active };
     enum class SelectionKind { None, Habitat, Corridor, Resource, GroundResource, Utility, Walkway, Robot, Lander, Stash };
@@ -89,11 +92,17 @@ private:
         std::string path{};
         std::string version{};
     };
+    void update_simulation(float dt,const eng::InputState& input);
+    void update_soundscape(float dt,const eng::InputState& input);
     eng::Application& app_;
+    sound::Soundscape soundscape_;
     Screen screen_=Screen::MainMenu;
     eng::InputState input_{};
     eng::InputState ui_input_{};
     eng::ui::Theme theme_{};
+    eng::GraphicsSettings graphics_;
+    int graphics_tab_{},graphics_page_{};
+    bool preferences_save_failed_{};
     static constexpr int kNewGamePlayfieldMin=32;
     static constexpr int kNewGamePlayfieldMax=1024;
     static constexpr int kNewGamePlayfieldStep=32;
@@ -109,16 +118,20 @@ private:
     double ui_time_seconds_=0.0;
     static constexpr double kStatusRateRefreshSeconds=0.5;
     float ui_scale_=1.0f;
-    bool debug_frame_enabled_=true;
-    WorldLayoutMode world_layout_mode_{WorldLayoutMode::Mesh};
+    bool debug_frame_enabled_=build::debug_features;
+    WorldLayoutMode world_layout_mode_{WorldLayoutMode::FullGraphics};
     bool game_session_active_=false;
     GamePhase active_game_phase_{GamePhase::RobotPreparation};
-    bool debug_mode_active() const { return debug_frame_enabled_ || active_game_phase_==GamePhase::Debug; }
+    bool debug_mode_active() const {
+        return build::debug_features && (debug_frame_enabled_ || active_game_phase_==GamePhase::Debug);
+    }
     GamePhase new_game_phase_selection_{GamePhase::RobotPreparation};
     NewGameMode new_game_mode_selection_{NewGameMode::Career};
     NewGameMode active_game_mode_{NewGameMode::FreePlay};
     Stage3Mode stage3_mode_{Stage3Mode::Sandbox};
-    bool astronaut_test_active() const { return active_game_phase_==GamePhase::Debug && stage3_mode_==Stage3Mode::AstronautTest; }
+    bool astronaut_test_active() const {
+        return build::debug_features && active_game_phase_==GamePhase::Debug && stage3_mode_==Stage3Mode::AstronautTest;
+    }
     std::array<AstronautTestActor,kAstronautRoles.size()> test_astronauts_{};
     int selected_astronaut_=-1;
     AstronautCache astronaut_cache_{};
@@ -220,6 +233,7 @@ private:
     std::size_t storage_gate_placement_owner_{std::numeric_limits<std::size_t>::max()};
     HabitatViewMode habitat_view_mode_=HabitatViewMode::Default;
     GameSpeed game_speed_=GameSpeed::Normal;
+    std::uint8_t last_running_speed_{1};
     SelectionKind selection_kind_=SelectionKind::None;
     int selected_habitat_=-1;
     int selected_corridor_=-1;
@@ -264,6 +278,13 @@ private:
     void render_save_game(eng::Renderer& r);
     void render_load_game(eng::Renderer& r);
     void render_settings(eng::Renderer& r);
+    void persist_preferences();
+    bool mesh_layout_active() const { return build::debug_features && world_layout_mode_==WorldLayoutMode::Mesh; }
+    void toggle_world_layout();
+    void update_speed_shortcuts(const eng::InputState& input);
+    bool simulation_paused() const;
+    void render_pause_frame(eng::Renderer& r) const;
+    void render_graphics_settings(eng::Renderer& r);
     void render_credits(eng::Renderer& r);
     void render_playfield(eng::Renderer& r);
     bool handle_astronaut_click(const eng::InputState& input);
@@ -305,8 +326,8 @@ private:
     void render_walkway_placement(eng::Renderer& r);
     void render_corridor_placement(eng::Renderer& r);
     void render_corridor_placement_tooltip(eng::Renderer& r);
-    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false) const;
-    void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr) const;
+    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false,HabitatKind kind=HabitatKind::AirLock) const;
+    void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,ResourceKind kind=ResourceKind::Count) const;
     struct StructureAttachment {
         eng::Vec3 position;
         std::optional<CorridorConnection> corridor;
@@ -498,7 +519,7 @@ private:
     template<class Item>
     void finalize_placement(Item& item){
         item.placement_sequence=next_blueprint_placement_sequence_++;
-        if(active_game_phase_==GamePhase::Debug && stage3_mode_!=Stage3Mode::Template){
+        if(build::debug_features && active_game_phase_==GamePhase::Debug && stage3_mode_!=Stage3Mode::Template){
             item.construction.finish();
             item.resource_plan.steps={};
         }

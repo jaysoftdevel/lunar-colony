@@ -526,7 +526,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     w.pod((std::int32_t)display_mode.height);
     w.boolean(app_.fullscreen());
     w.pod((std::int32_t)ui_scale_index_);
-    w.boolean(debug_frame_enabled_);
+    w.boolean(build::debug_features && debug_frame_enabled_);
     w.pod((std::uint8_t)habitat_view_mode_);
     w.pod((std::uint8_t)build_catalog_.category());
     w.pod(placement_rotation_degrees_);
@@ -758,6 +758,10 @@ std::string GameApp::debug_blueprint_template_path() const {
 }
 
 bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool completed){
+    if constexpr(!build::debug_features){
+        error="Blueprint templates require the Debug build.";
+        return false;
+    }
     Reader r{fs::path(path)};
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Template file is missing or invalid."; return false; }
@@ -967,7 +971,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     const int saved_display_height=(int)r.pod<std::int32_t>();
     const bool saved_fullscreen=r.boolean();
     const int saved_ui_scale=(int)r.pod<std::int32_t>();
-    const bool saved_debug=r.boolean();
+    (void)r.boolean(); // Legacy debug-frame field. Visibility is local to the running build.
     const auto saved_view=(HabitatViewMode)r.pod<std::uint8_t>();
     const auto saved_category=(BuildCategory)r.pod<std::uint8_t>();
     const float saved_rotation=r.pod<float>();
@@ -982,6 +986,10 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
             error="Savegame game-stage value is invalid."; return false;
         }
         saved_game_phase=(GamePhase)raw_phase;
+    }
+    if(!build::debug_features && saved_game_phase==GamePhase::Debug){
+        error="Stage 3 test saves require the Debug build.";
+        return false;
     }
     if(saved_playfield<16 || saved_playfield>kNewGamePlayfieldMax){ error="Savegame playfield size is invalid."; return false; }
 
@@ -1862,9 +1870,9 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     display_mode_index_=-1;
     ui_scale_index_=std::clamp(saved_ui_scale,0,layout::UI_SCALE_COUNT-1);
     on_resize(viewport_width_,viewport_height_);
-    debug_frame_enabled_=saved_debug;
     habitat_view_mode_=saved_view;
     game_speed_=saved_game_speed;
+    last_running_speed_=1;
     active_game_phase_=saved_game_phase;
     stage3_mode_=stage3_mode;
     selected_astronaut_=-1;

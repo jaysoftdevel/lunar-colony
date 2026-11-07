@@ -5,7 +5,6 @@
 #include "engine/ui_metrics.hpp"
 #include <cmath>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -42,6 +41,10 @@ struct Capture:eng::Renderer {
     }
 };
 }
+#ifndef GAME_LEGACY_LANDER_FIXTURES
+#define GAME_LEGACY_LANDER_FIXTURES "game/tests/fixtures"
+#endif
+
 namespace game {
 struct LanderRegression {
     static ResourceBundle cargo(){ResourceBundle b;b.iron=1000;b.food=600;b.water=700;b.silicon=333;return b;}
@@ -115,21 +118,14 @@ struct LanderRegression {
         for(int i=0;i<12;++i)
             require(eng::length(resumed.builder_robots_[(std::size_t)i].position-lunar_lander_robot_bay(resumed.lander_,i))<.001f,
                     "rover did not reach its assigned bay");
-        app.lander_.legacy_parking=true;
-        app.builder_robots_.push_back(app.lander_robot(0));
-        app.lander_.elapsed=7;
-        require(app.save_game_to_name("rover-queue-mid-ramp",error),error);
-        {
-            std::fstream file(path,std::ios::binary|std::ios::in|std::ios::out);
-            const std::uint32_t old_schema=35;
-            file.seekp(8);
-            file.write(reinterpret_cast<const char*>(&old_schema),sizeof(old_schema));
-            require(bool(file),"write legacy unload fixture");
-        }
+        // This file was produced by the schema-35 game while its second
+        // rover was on the ramp. The parked prefix must survive migration.
+        const auto old_path=std::filesystem::path(GAME_LEGACY_LANDER_FIXTURES)/"schema35-mid-ramp.gmsave";
         GameApp legacy(engine);
-        require(legacy.load_game_from_file(path.string(),error),error);
+        require(legacy.load_game_from_file(old_path.string(),error),error);
+        const eng::Vec3 parked{11.6f,0.0f,-6.4f};
         require(legacy.builder_robots_.size()==1&&legacy.lander_.legacy_parking&&legacy.lander_.elapsed==0&&
-                eng::length(legacy.builder_robots_[0].position-app.builder_robots_[0].position)<.001f,
+                eng::length(legacy.builder_robots_[0].position-parked)<.001f,
                 "legacy unload did not preserve its parked rover");
         legacy.update_lunar_lander(100);
         require(legacy.builder_robots_.size()==12,"legacy unload lost or duplicated a rover");
@@ -177,13 +173,22 @@ struct LanderRegression {
             std::filesystem::create_directories(output);Capture c;
             a.camera_.restore({25,25,29,{0,2,0}});c.set_3d(a.camera_.view_projection(1600.f/900));a.render_lunar_lander(c);c.write(std::filesystem::path(output)/"lander.json");
         }
-        // A schema-33 colony retains exact inventory while its old aggregate depot is repacked.
-        {GameApp old(engine);setup(old);require(old.prepare_default_landing(),"legacy fixture placement");old.update_lunar_lander(200);old.unload_lunar_lander();old.update_lunar_lander(400);
-            old.ground_resource_piles_.clear();old.lander_.boxed=false;
-            for(std::size_t i=0;i<kMaterialResourceCount;++i){auto m=(MaterialResource)i;auto n=cargo().amount(m);if(n)old.ground_resource_piles_.push_back({m,n,lunar_lander_stash_position(old.lander_,m),resource_package_half_width(m,n),1});}
-            std::string error;require(old.save_game_to_name("legacy-layout",error),error);const auto path=std::filesystem::path(old.save_game_directory())/"legacy-layout.gmsave";
-            std::ifstream input(path,std::ios::binary);std::vector<char> bytes((std::istreambuf_iterator<char>(input)),{});input.close();bytes.resize(bytes.size()-16-10-old.ground_resource_piles_.size()-old.planning_.mission_habitats.size()-old.planning_.mission_structures.size()-7);std::uint32_t schema=33;std::memcpy(bytes.data()+8,&schema,4);std::ofstream file(path,std::ios::binary);file.write(bytes.data(),bytes.size());file.close();
-            GameApp resumed(engine);require(resumed.load_game_from_file(path.string(),error),error);require(resumed.lander_.awaiting_stash&&!resumed.lander_.boxed,"legacy depot not awaiting mouse area");require(resumed.prepare_default_landing(),"legacy depot repacking failed");std::int64_t amount=0;for(const auto& b:resumed.ground_resource_piles_){amount+=b.amount;require(b.kind==GroundPileKind::Stash&&b.amount<=kGroundStackLayers*resource_package_capacity_kg(b.resource),"legacy aggregate remains");}require(amount==cargo().total_amount()&&resumed.resources_.amounts().total_amount()==amount,"legacy repack changed inventory");std::filesystem::remove(path);
+        // The schema-33 game wrote one aggregate pile per material.
+        {
+            const auto old_path=std::filesystem::path(GAME_LEGACY_LANDER_FIXTURES)/"schema33-aggregate-depot.gmsave";
+            GameApp resumed(engine);
+            std::string error;
+            require(resumed.load_game_from_file(old_path.string(),error),error);
+            require(resumed.lander_.awaiting_stash&&!resumed.lander_.boxed,"legacy depot not awaiting mouse area");
+            require(resumed.prepare_default_landing(),"legacy depot repacking failed");
+            std::int64_t amount=0;
+            for(const auto& pile:resumed.ground_resource_piles_){
+                amount+=pile.amount;
+                require(pile.kind==GroundPileKind::Stash&&pile.amount<=kGroundStackLayers*resource_package_capacity_kg(pile.resource),
+                        "legacy aggregate remains");
+            }
+            require(amount==cargo().total_amount()&&resumed.resources_.amounts().total_amount()==amount,
+                    "legacy repack changed inventory");
         }
         roundtrip(a,"stacked-depot");
         const auto before=a.resources_.amounts().total_amount();

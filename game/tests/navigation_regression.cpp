@@ -1235,9 +1235,9 @@ struct NavigationRegression {
             if(size==0 && angle>50)require(!route.add_storage_gate_at(0,100.0f),"overlapping cargo approaches were accepted");
         }
         app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({-20,0,-20});
-        eng::InputState jump;jump.key_space_pressed=true;jump.key_space_down=true;app.update_first_person(1.0f/120,jump);
+        eng::InputState jump;jump.key_j_pressed=true;jump.key_j_down=true;app.update_first_person(1.0f/120,jump);
         require(app.first_person_.feet_position().y>0 && !app.first_person_.grounded(),"Space did not launch POV jump");
-        jump.key_space_pressed=false;float peak=0;
+        jump.key_j_pressed=false;float peak=0;
         for(int i=0;i<360;++i){app.update_first_person(1.0f/120,jump);peak=std::max(peak,app.first_person_.feet_position().y);}
         require(peak>0.97f && peak<1.02f && app.first_person_.grounded() && std::abs(app.first_person_.feet_position().y)<1e-5,"lunar jump arc/landing or held-key behavior is wrong");
         // A second press in mid-air cannot launch another jump.
@@ -1253,13 +1253,13 @@ struct NavigationRegression {
         auto links=app.corridor_network_.connections();links[0].construction.step=links[0].construction.total_steps;app.corridor_network_.restore_connections(links);
         app.first_person_.spawn({0,app.first_person_floor_height({0,0,0}),0});const float ceiling=app.first_person_ceiling_height(app.first_person_.feet_position());
         require(ceiling<3.0f && ceiling>2.0f,"rendered corridor roof not found");
-        jump.key_space_pressed=true;app.update_first_person(1.0f/120,jump);jump.key_space_pressed=false;
+        jump.key_j_pressed=true;app.update_first_person(1.0f/120,jump);jump.key_j_pressed=false;
         for(int i=0;i<360;++i){app.update_first_person(1.0f/120,jump);require(app.first_person_.eye_position().y<ceiling && app.first_person_.feet_position().y+app.first_person_.body_height()+0.019f<=ceiling,"POV head crossed corridor roof");}
         require(app.first_person_.grounded(),"POV did not land on corridor deck");
         app.corridor_network_.clear();PlacedResource solid;solid.kind=ResourceKind::WaterStorage;solid.construction.step=kConstructionSteps;app.placed_resources_={solid};
         const float edge=app.resource_models_.mesh(solid).footprint_z*0.5f;
-        app.first_person_.spawn({0,0,edge+1.0f});jump.key_w_down=true;jump.key_space_pressed=true;
-        app.update_first_person(1.0f/120,jump);jump.key_space_pressed=false;
+        app.first_person_.spawn({0,0,edge+1.0f});jump.key_w_down=true;jump.key_j_pressed=true;
+        app.update_first_person(1.0f/120,jump);jump.key_j_pressed=false;
         for(int i=0;i<360;++i){app.update_first_person(1.0f/120,jump);require(app.first_person_.feet_position().z>=edge+app.first_person_.body_radius()-0.03f,"jump bypassed a solid structure wall");}
         std::cout<<"480 rigid gate angles/tiers, 8 autonomous gate arrivals, compact pickup/shutter clearance, lunar jump/landing, no airborne re-jump and ceiling collision passed\n";
     }

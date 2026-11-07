@@ -9,6 +9,12 @@ namespace {
 using eng::Vec3;using eng::Color;using resources::Builder;
 std::vector<Vec3> pose(const std::vector<Vec3>& src,Vec3 position,float rotation,float scale=1){std::vector<Vec3> out;out.reserve(src.size());for(auto p:src)out.push_back(world_math::rotate_y(p*scale,rotation)+position);return out;}
 void draw(eng::Renderer& r,const Builder& b,Vec3 p,float yaw=0,float s=1,Color color={.42f,.58f,.65f,1},bool wire=false){
+    if(r.lunar_scene_active()){
+        r.draw_lunar_surface(pose(b.mesh.foundation,p,yaw,s),eng::LunarMaterial::Alloy,{.44f,.49f,.52f,1});
+        r.draw_lunar_surface(pose(b.mesh.body,p,yaw,s),eng::LunarMaterial::Paint,color);
+        r.draw_lunar_surface(pose(b.mesh.details,p,yaw,s),eng::LunarMaterial::Alloy,{.79f,.58f,.27f,1});
+        return;
+    }
     if(wire){r.draw_lines_3d(pose(b.mesh.edges,p,yaw,s),color,1);return;}
     r.draw_triangles_3d(pose(b.mesh.foundation,p,yaw,s),{.16f,.20f,.23f,1});
     r.draw_triangles_3d(pose(b.mesh.body,p,yaw,s),color);
@@ -97,8 +103,12 @@ void GameApp::render_trader(eng::Renderer& r){
         const auto q=trader_.dock;const float half=1.2f;
         r.draw_lines_3d({{q.x-half,.035f,q.z-half},{q.x+half,.035f,q.z-half},{q.x+half,.035f,q.z-half},{q.x+half,.035f,q.z+half},{q.x+half,.035f,q.z+half},{q.x-half,.035f,q.z+half},{q.x-half,.035f,q.z+half},{q.x-half,.035f,q.z-half}},{.25f,.85f,.72f,1},2);
     }else{
+        if(r.draw_lunar_volume({origin+Vec3{0,-0.1f,0},{0,-1,0},3.9f*size,1.22f*size,
+            {0.25f,0.52f,0.96f,1},0.76f,3.3f,true})) return;
         Builder plume;plume.cylinder_y(plume.mesh.body,{0,-1.6f,0},4.0f,.6f,16,true);
-        r.draw_lines_3d(pose(plume.mesh.edges,origin,pad.rotation_degrees,size),{.35f,.65f,.95f,.55f},1);
+        if(r.lunar_scene_active())
+            r.draw_lunar_surface(pose(plume.mesh.body,origin,pad.rotation_degrees,size),eng::LunarMaterial::Emissive,{.32f,.67f,1.0f,.48f});
+        else r.draw_lines_3d(pose(plume.mesh.edges,origin,pad.rotation_degrees,size),{.35f,.65f,.95f,.55f},1);
     }
 }
 } // namespace game

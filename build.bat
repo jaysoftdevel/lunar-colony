@@ -2,58 +2,55 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 set "CONFIG=Release"
-set "TESTS=OFF"
-set "CLEAN=0"
+set "TESTS=%GAME_BUILD_TESTS%"
+set "CLEAN_ARG="
 
 :parse
 if "%~1"=="" goto parsed
-if /I "%~1"=="Debug" goto cfg_debug
-if /I "%~1"=="Release" goto cfg_release
-if /I "%~1"=="RelWithDebInfo" goto cfg_reldeb
-if /I "%~1"=="MinSizeRel" goto cfg_minsize
-if /I "%~1"=="--tests" goto flag_tests
-if /I "%~1"=="--clean" goto flag_clean
-echo Usage: build.bat [Debug^|Release^|RelWithDebInfo^|MinSizeRel] [--tests] [--clean]
+if /I "%~1"=="Release" (
+    set "CONFIG=Release"
+    goto next
+)
+if /I "%~1"=="Debug" (
+    set "CONFIG=Debug"
+    goto next
+)
+if /I "%~1"=="RelWithDebInfo" (
+    set "CONFIG=RelWithDebInfo"
+    goto next
+)
+if /I "%~1"=="MinSizeRel" (
+    set "CONFIG=MinSizeRel"
+    goto next
+)
+if /I "%~1"=="--tests" (
+    set "TESTS=ON"
+    goto next
+)
+if /I "%~1"=="--clean" (
+    set "CLEAN_ARG=--clean-first"
+    goto next
+)
+echo Usage: build.bat [Release^|Debug^|RelWithDebInfo^|MinSizeRel] [--tests] [--clean]
 exit /b 2
 
-:cfg_debug
-set "CONFIG=Debug"
-shift
-goto parse
-:cfg_release
-set "CONFIG=Release"
-shift
-goto parse
-:cfg_reldeb
-set "CONFIG=RelWithDebInfo"
-shift
-goto parse
-:cfg_minsize
-set "CONFIG=MinSizeRel"
-shift
-goto parse
-:flag_tests
-set "TESTS=ON"
-shift
-goto parse
-:flag_clean
-set "CLEAN=1"
+:next
 shift
 goto parse
 
 :parsed
-where cmake >nul 2>nul
-if errorlevel 1 (
-    echo Required tool 'cmake' was not found in PATH.
-    exit /b 127
+set "GAME_BUILD_TESTS=%TESTS%"
+call "%~dp0configure.bat" "%CONFIG%"
+if errorlevel 1 exit /b %ERRORLEVEL%
+set "OTHER_CONFIG=Debug"
+if /I "%CONFIG%"=="Debug" set "OTHER_CONFIG=Release"
+for %%C in (%CONFIG% %OTHER_CONFIG%) do (
+    cmake --build build\windows --config %%C --parallel %GAME_BUILD_JOBS% %CLEAN_ARG%
+    if errorlevel 1 exit /b 1
 )
-if "%CLEAN%"=="1" if exist "build\windows" rmdir /s /q "build\windows"
-cmake -S . -B build\windows -G "Visual Studio 17 2022" -A x64 -DGAME_BUILD_NAVIGATION_TESTS=%TESTS%
-if errorlevel 1 exit /b 1
-cmake --build build\windows --config %CONFIG% --parallel
-if errorlevel 1 exit /b 1
+if not exist "build\windows\bin\game.exe" exit /b 1
+if not exist "build\windows\bin\game-debug.exe" exit /b 1
 echo.
-echo Windows build complete: %CD%\build\windows\bin\game.exe
-echo Backend: Win32 + Direct3D 12
-echo Run: run.bat
+echo Release: %CD%\build\windows\bin\game.exe
+echo Debug:   %CD%\build\windows\bin\game-debug.exe
 exit /b 0

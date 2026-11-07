@@ -183,7 +183,8 @@ void GameApp::render_selection_panel(Renderer& r){
                 game_label(r,{x,y},line.str(),0.48f,theme_);
                 y+=19.0f;
             }
-            game_label(r,{x,p.y+content_height-28.0f},debug_mode_active()?"DEL  MOVE SELECTED BOXES TO STORAGE":"DEBUG REQUIRED FOR DEL",0.43f,theme_,true);
+            if(debug_mode_active())
+                game_label(r,{x,p.y+content_height-28.0f},"DEL  MOVE SELECTED BOXES TO STORAGE",0.43f,theme_,true);
             return;
         }
         if(selected_ground_resource_<0 || (std::size_t)selected_ground_resource_>=ground_resource_piles_.size()) return;
@@ -207,14 +208,16 @@ void GameApp::render_selection_panel(Renderer& r){
         game_label(r,{x,p.y+31},material_resource_name(box.resource),0.72f,theme_);
         game_label(r,{x,p.y+55},amount.str(),0.52f,theme_);
         game_label(r,{x,p.y+76},cond.str(),0.50f,theme_,true);
-        bool can_store=false;
-        for(const auto& structure:placed_resources_){
-            if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
-            const std::int64_t used=stored_resource_box_totals(structure).total_amount();
-            if(used+stored_ore_mass_kg(structure)+box.amount<=storage_dome_capacity_kg(structure.storage_size)){ can_store=true; break; }
+        if(debug_mode_active()){
+            bool can_store=false;
+            for(const auto& structure:placed_resources_){
+                if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
+                const std::int64_t used=stored_resource_box_totals(structure).total_amount();
+                if(used+stored_ore_mass_kg(structure)+box.amount<=storage_dome_capacity_kg(structure.storage_size)){ can_store=true; break; }
+            }
+            const char* action=can_store?"DEL  MOVE TO STORAGE DOME":"NO AVAILABLE STORAGE DOME";
+            game_label(r,{x,p.y+97},action,0.44f,theme_,true);
         }
-        const char* action=!debug_mode_active()?"DEBUG REQUIRED FOR DEL":(can_store?"DEL  MOVE TO STORAGE DOME":"NO AVAILABLE STORAGE DOME");
-        game_label(r,{x,p.y+97},action,0.44f,theme_,true);
         return;
     }
 
@@ -338,7 +341,7 @@ void GameApp::render_selection_panel(Renderer& r){
                 break;
         }
 
-        if(robot.debug_move_active){
+        if(build::debug_features && robot.debug_move_active){
             task.str("");task.clear();
             const auto delta=robot.position-robot.debug_move_destination;
             task<<((std::hypot(delta.x,delta.z)<0.25f && std::abs(robot.current_speed_mps)<0.04f)?"TASK  DEBUG HOLD AT SELECTED PLACE":"TASK  DEBUG MOVE TO SELECTED PLACE");

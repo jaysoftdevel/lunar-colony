@@ -2,6 +2,7 @@
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/world_labels.hpp"
+#include "game/world/lunar_look.hpp"
 #include "game/version.hpp"
 #include <algorithm>
 #include <cmath>
@@ -17,13 +18,47 @@ using namespace world_labels;
 
 void GameApp::render_playfield(Renderer& r){
     const float aspect=(float)r.width()/std::max(1,r.height());
-    if(first_person_mode_==FirstPersonMode::Active) r.set_3d(first_person_.view_projection(aspect));
-    else r.set_3d(lander_.in_flight()?camera_.campus_view_projection(aspect):camera_.view_projection(aspect));
-
-    if(lander_.in_flight())r.draw_triangles_3d({{-900,-0.035f,-900},{900,-0.035f,-900},{900,-0.035f,900},
-        {-900,-0.035f,-900},{900,-0.035f,900},{-900,-0.035f,900}},{0.055f,0.075f,0.088f,1});
-    r.draw_triangles_3d(playfield_.floor_triangles(),{0.055f,0.075f,0.088f,1});
-    r.draw_lines_3d(playfield_.grid_lines(),{0.22f,0.43f,0.47f,1},1.0f);
+    const bool fpv=first_person_mode_==FirstPersonMode::Active;
+    const Mat4 view=fpv?first_person_.view_projection(aspect):
+        lander_.in_flight()?camera_.campus_view_projection(aspect):camera_.view_projection(aspect);
+    r.set_3d(view);
+    bool lunar=false;
+    if(!mesh_layout_active() && graphics_.path!=GraphicsPath::Classic){
+        const auto sun=status_.sun_pose();
+        const Vec3 eye=fpv?first_person_.eye_position():camera_.eye_position();
+        Vec3 focus=fpv?eye+first_person_.look_direction()*12.0f:camera_.target();
+        focus.y=0;
+        LunarScene scene{view,eye,focus,sun.direction,sun.irradiance_fraction,playfield_.size()*0.5f};
+        scene.seconds=static_cast<float>(ui_time_seconds_);
+        std::vector<LunarLight> lights;
+        for(const auto& habitat:placed_habitats_){
+            if(habitat.construction.complete() && lunar_look::powered(habitat.supply,habitat.power_enabled))
+                lights.push_back(lunar_look::habitat_fixture(habitat,habitat_models_.mesh(habitat)).light());
+        }
+        for(const auto& pad:placed_resources_){
+            if(pad.kind!=ResourceKind::LandingPad || !pad.construction.complete() ||
+               !lunar_look::powered(pad.supply,pad.power_enabled)) continue;
+            for(const auto& fixture:lunar_look::pad_fixtures(pad,resource_models_.mesh(pad)))
+                lights.push_back(fixture.light());
+        }
+        scene.light_count=std::min(lights.size(),scene.lights.size());
+        const auto distance_to_focus=[&](const LunarLight& light){
+            const Vec3 offset=light.position-focus;
+            return dot(offset,offset);
+        };
+        std::partial_sort(lights.begin(),lights.begin()+scene.light_count,lights.end(),
+            [&](const LunarLight& a,const LunarLight& b){ return distance_to_focus(a)<distance_to_focus(b); });
+        std::copy_n(lights.begin(),scene.light_count,scene.lights.begin());
+        lunar=r.begin_lunar_scene(scene);
+    }
+    const bool show_build_guides=!lunar || build_catalog_.selected() || storage_gate_placement_active_;
+    if(!lunar){
+        if(lander_.in_flight()) r.draw_triangles_3d({{-900,-0.035f,-900},{900,-0.035f,-900},{900,-0.035f,900},
+            {-900,-0.035f,-900},{900,-0.035f,900},{-900,-0.035f,900}},{0.055f,0.075f,0.088f,1});
+        r.draw_triangles_3d(playfield_.floor_triangles(),{0.055f,0.075f,0.088f,1});
+    }
+    if(show_build_guides)
+        r.draw_lines_3d(playfield_.grid_lines(),lunar?Color{0.35f,0.64f,0.71f,0.36f}:Color{0.22f,0.43f,0.47f,1},1.0f);
     // Mark the inner edge of the permanent rover perimeter lane. This is a
     // placement reserve only; robots remain free to use the entire band.
     const float lane_half=(float)playfield_.size()*0.5f-geometry::kPlayfieldRobotPerimeterLane;
@@ -32,7 +67,8 @@ void GameApp::render_playfield(Renderer& r){
         { lane_half,0.018f,-lane_half},{ lane_half,0.018f, lane_half},
         { lane_half,0.018f, lane_half},{-lane_half,0.018f, lane_half},
         {-lane_half,0.018f, lane_half},{-lane_half,0.018f,-lane_half}};
-    r.draw_lines_3d(perimeter_lane,{0.72f,0.52f,0.18f,0.72f},1.35f);
+    if(show_build_guides)
+        r.draw_lines_3d(perimeter_lane,{0.72f,0.52f,0.18f,0.72f},1.35f);
     if(first_person_mode_!=FirstPersonMode::Active)render_ore_deposits(r);
     render_ground_resources(r);
     render_corridors(r);
@@ -46,7 +82,9 @@ void GameApp::render_playfield(Renderer& r){
     render_trader(r);
     render_builder_robot(r);
     render_gate_areas(r);
-    if(astronaut_test_active())render_test_astronauts(r);
+    if constexpr(build::debug_features){
+        if(astronaut_test_active()) render_test_astronauts(r);
+    }
 
     if(first_person_mode_==FirstPersonMode::Active){
         r.set_2d(ui_scale_);
@@ -76,7 +114,9 @@ void GameApp::render_playfield(Renderer& r){
     render_build_bar(r);
     render_ore_survey(r);
     render_selection_marquee(r);
-    if(debug_mode_active() && !astronaut_test_active()) render_debug_frame(r);
+    if constexpr(build::debug_features){
+        if(debug_mode_active() && !astronaut_test_active()) render_debug_frame(r);
+    }
     if(selection_kind_!=SelectionKind::None) render_selection_panel(r);
     render_corridor_placement_tooltip(r);
     if(astronaut_test_active())render_astronaut_status(r,camera_.view_projection(aspect));
@@ -172,7 +212,7 @@ void GameApp::render_first_person_hud(Renderer& r){
         Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,580.0f,54.0f};
         r.draw_rect(help,{0.025f,0.035f,0.045f,0.86f});
         game_label(r,{help.x+12.0f,help.y+8.0f},"FIRST PERSON TEST VIEW",0.64f,theme_);
-        game_label(r,{help.x+12.0f,help.y+30.0f},"WASD WALK / SHIFT FAST / SPACE JUMP / LMB GRAB-DROP / MOUSE LOOK / V OR ESC EXIT",0.43f,theme_,true);
+        game_label(r,{help.x+12.0f,help.y+30.0f},"WASD WALK / SHIFT FAST / J JUMP / LMB GRAB-DROP / MOUSE LOOK / V OR ESC EXIT / SPACE PAUSE",0.43f,theme_,true);
 
         const std::string environment=first_person_environment_label();
         Rect env{help.x,help.y+help.h+8.0f,580.0f,34.0f};

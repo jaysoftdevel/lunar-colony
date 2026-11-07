@@ -1002,6 +1002,7 @@ void GameApp::deploy_lunar_base_from_mission(){
     storage_gate_placement_owner_=kNoRobotIndex;
     habitat_view_mode_=HabitatViewMode::Default;
     game_speed_=GameSpeed::Normal;
+    last_running_speed_=1;
     clear_world_selection();
     selection_marquee_active_=false;
     selection_marquee_dragged_=false;
@@ -1244,7 +1245,9 @@ void GameApp::render_planning_game(Renderer& r){
     // Highlight urgent completed customer reports there as well instead
     // of showing Research forever as the only apparent destination.
     const auto next_facility=campaign_advice(planning_).facility;
-    if(planning_.view==PlanningView::Site)campus_daylight_sky(r);
+    if(planning_.view==PlanningView::Site &&
+       (mesh_layout_active() || !r.draw_campus_atmosphere(planning_vp,camera_.eye_position(),static_cast<float>(ui_time_seconds_))))
+        campus_daylight_sky(r);
     r.set_3d(planning_vp);
     if(planning_.view==PlanningView::Site){
         render_campus_landscape(r);

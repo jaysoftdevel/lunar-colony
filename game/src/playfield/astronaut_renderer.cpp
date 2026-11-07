@@ -26,7 +26,7 @@ struct CrewMesh {
 static_assert(kEVA.frames.size()==kEVA.vertex_count*3*(1+kCrewWalkFrames));
 static_assert(kCoverall.frames.size()==kCoverall.vertex_count*3*(1+kCrewWalkFrames));
 
-void draw_actor(Renderer& r,const CrewMesh& mesh,const AstronautTestActor& actor,const AstronautRole& role,const AstronautRestPose& pose){
+void draw_actor(Renderer& r,const CrewMesh& mesh,const AstronautTestActor& actor,const AstronautRole& role,const AstronautRestPose& pose,bool animated_cloth){
     const float phase=actor.stride_phase*kCrewWalkFrames;
     const int frame=(int)phase;
     const float alpha=phase-frame;
@@ -37,6 +37,7 @@ void draw_actor(Renderer& r,const CrewMesh& mesh,const AstronautTestActor& actor
     const float weight=std::clamp(actor.speed/astronaut_walk_speed(actor.suited),0.f,1.f);
     const float blend=weight*weight*(3.f-2.f*weight);
     const bool lying=astronaut_resting(actor);
+    const bool detailed=r.lunar_scene_active();
     const float yaw=radians(pose.heading_degrees);
     const float c=std::cos(yaw),s=std::sin(yaw);
     std::vector<Vec3> vertices(mesh.vertex_count);
@@ -47,6 +48,10 @@ void draw_actor(Renderer& r,const CrewMesh& mesh,const AstronautTestActor& actor
                    *(.0001f*geometry::kAstronautScale);
         };
         Vec3 p{sample(0),sample(1),sample(2)};
+        if(detailed && animated_cloth && !actor.suited && !lying){
+            const float cloth=std::clamp((p.y-0.38f)*3.0f,0.0f,1.0f)*std::clamp((1.48f-p.y)*4.0f,0.0f,1.0f);
+            p.z+=cloth*blend*0.0065f*std::sin(p.y*32.0f+p.x*18.0f+actor.stride_phase*6.2831853f);
+        }
         if(lying)p={-p.x,p.z+.28f,p.y};
         vertices[i]=pose.feet+Vec3{p.x*c+p.z*s,p.y,-p.x*s+p.z*c};
     }
@@ -66,10 +71,19 @@ void draw_actor(Renderer& r,const CrewMesh& mesh,const AstronautTestActor& actor
         const bool teal=rgb[1]>rgb[0] && rgb[2]>rgb[0];
         const bool coverall=rgb[0]>rgb[1] && rgb[0]<145 && rgb[1]>40 && rgb[2]<100;
         const float tint=actor.suited?(pale?.38f:teal?.90f:0.f):coverall?.86f:0.f;
-        r.draw_triangles_3d(triangles,{
+        const Color color{
             std::lerp(rgb[0]/255.f,light*role.color[0],tint),
             std::lerp(rgb[1]/255.f,light*role.color[1],tint),
-            std::lerp(rgb[2]/255.f,light*role.color[2],tint),1.f});
+            std::lerp(rgb[2]/255.f,light*role.color[2],tint),1.f};
+        if(detailed){
+            // The final five coverall material batches form the baked hair cap.
+            const bool hair=!actor.suited && (&batch-mesh.batches.data())>=static_cast<std::ptrdiff_t>(mesh.batches.size()-5);
+            const bool skin=!actor.suited && !coverall && rgb[0]>110 &&
+                int(rgb[0])-rgb[1]>13 && int(rgb[1])-rgb[2]>10;
+            const bool cloth=actor.suited?(pale || teal):coverall;
+            const auto material=hair?LunarMaterial::Hair:skin?LunarMaterial::Skin:cloth?LunarMaterial::Fabric:LunarMaterial::Paint;
+            r.draw_lunar_surface(triangles,material,color);
+        }else r.draw_triangles_3d(triangles,color);
     }
 }
 
@@ -96,7 +110,7 @@ void GameApp::render_test_astronauts(Renderer& r) const {
         const auto& actor=test_astronauts_[i];
         const auto& role=kAstronautRoles[i];
         const auto pose=astronaut_rest_pose(actor);
-        draw_actor(r,actor.suited?kEVA:kCoverall,actor,role,pose);
+        draw_actor(r,actor.suited?kEVA:kCoverall,actor,role,pose,graphics_.enabled(GraphicsFeature::Cloth));
         const bool selected=(int)i==selected_astronaut_;
         Color color{role.color[0],role.color[1],role.color[2],1.f};
         if(!selected)color.a=.66f;

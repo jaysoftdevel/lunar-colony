@@ -25,7 +25,29 @@ float GameApp::game_speed_multiplier() const {
     return 1.0f;
 }
 
+bool GameApp::simulation_paused() const {
+    return active_game_phase_==GamePhase::Planning?planning_.time_speed==0:game_speed_==GameSpeed::Pause;
+}
+
+void GameApp::update_speed_shortcuts(const InputState& in){
+    const bool planning=active_game_phase_==GamePhase::Planning;
+    const int current=planning?planning_.time_speed:(game_speed_==GameSpeed::Pause?0:static_cast<int>(game_speed_)+1);
+    if(current>=1 && current<=3) last_running_speed_=static_cast<std::uint8_t>(current);
+
+    auto next=in.key_number_pressed;
+    if(in.key_space_pressed) next=current==0?last_running_speed_:0;
+    else if(next<1 || next>3) return;
+    if(next>0) last_running_speed_=next;
+    if(planning) planning_.time_speed=next;
+    else game_speed_=next>0?static_cast<GameSpeed>(next-1):GameSpeed::Pause;
+}
+
 void GameApp::update(float dt,const InputState& in){
+    update_simulation(dt,in);
+    update_soundscape(dt,in);
+}
+
+void GameApp::update_simulation(float dt,const InputState& in){
     input_=in;
 
     // Keep the press pending until release. A right-button drag belongs to
@@ -50,6 +72,7 @@ void GameApp::update(float dt,const InputState& in){
     }
 
     if(screen_==Screen::Playfield){
+        update_speed_shortcuts(in);
         if(active_game_phase_==GamePhase::Planning){
             // Stage 1 owns a separate company/mission-planning simulation. It
             // intentionally never advances Stage-2 robots, construction, colony
@@ -75,8 +98,16 @@ void GameApp::update(float dt,const InputState& in){
             return;
         }
         const float sim_dt=dt*game_speed_multiplier();
-        update_lunar_lander(sim_dt);
-        if(active_game_phase_==GamePhase::RobotPreparation)update_trader(sim_dt);
+        const bool paused=simulation_paused();
+        if(!paused){
+            update_lunar_lander(sim_dt);
+            if(active_game_phase_==GamePhase::RobotPreparation) update_trader(sim_dt);
+        }
+        const auto advance_colony=[&]{
+            if(paused) return;
+            status_.update(sim_dt);
+            update_construction(sim_dt);
+        };
         if(lander_.deploying()){
             if(in.escape_pressed){screen_=Screen::MainMenu;return;}
             if(lander_.in_flight()){
@@ -102,7 +133,7 @@ void GameApp::update(float dt,const InputState& in){
             }
             return;
         }
-        update_pressure_doors(dt);
+        if(!paused) update_pressure_doors(dt);
         if(in.key_v_pressed){
             selection_marquee_active_=false;
             selection_marquee_dragged_=false;
@@ -112,9 +143,8 @@ void GameApp::update(float dt,const InputState& in){
         }
 
         if(first_person_mode_==FirstPersonMode::DropPending){
-            status_.update(sim_dt);
-            update_construction(sim_dt);
-            if(astronaut_test_active())update_astronaut_test(sim_dt);
+            advance_colony();
+            if(!paused && astronaut_test_active()) update_astronaut_test(sim_dt);
             if(in.escape_pressed){ exit_first_person_mode(); return; }
             camera_.update(in,playfield_.size(),viewport_height_,dt);
             const float logical_y=(float)in.mouse_y/ui_scale_;
@@ -139,10 +169,9 @@ void GameApp::update(float dt,const InputState& in){
 
         if(first_person_mode_==FirstPersonMode::Active){
             if(in.escape_pressed){ exit_first_person_mode(); return; }
-            status_.update(sim_dt);
-            update_construction(sim_dt);
+            advance_colony();
             update_first_person(dt,in);
-            if(astronaut_test_active())update_astronaut_test(sim_dt);
+            if(!paused && astronaut_test_active()) update_astronaut_test(sim_dt);
             return;
         }
 
@@ -256,8 +285,7 @@ void GameApp::update(float dt,const InputState& in){
         const float pointer_y=(float)in.mouse_y/ui_scale_;
         if(pointer_y<STATUS_BAR_H || pointer_y>=(float)viewport_height_/ui_scale_-BUILD_BAR_H || over_selection_panel)camera_input.wheel=0;
         camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
-        status_.update(sim_dt);
-        update_construction(sim_dt);
+        advance_colony();
 
         // World selection uses a click-or-drag marquee whenever no placement
         // tool is active. A short click keeps the old single-object selection;
@@ -268,7 +296,7 @@ void GameApp::update(float dt,const InputState& in){
         const bool selection_idle=!storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 &&
                                   !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_;
         if(astronaut_test_active()){
-            update_astronaut_test(sim_dt);
+            if(!paused) update_astronaut_test(sim_dt);
             if(selection_idle && over_world && !over_selection_panel && handle_astronaut_click(in)){
                 selection_marquee_active_=false;
                 return;
@@ -299,6 +327,7 @@ void GameApp::update(float dt,const InputState& in){
         // When the pause/game menu is open, ESC is a direct resume shortcut.
         // Sub-pages still use ESC to return one level to that menu first.
         if(screen_==Screen::MainMenu && game_session_active_) screen_=Screen::Playfield;
+        else if(screen_==Screen::GraphicsSettings) screen_=Screen::Settings;
         else if(screen_==Screen::Stage3Modes){
             new_game_status_message_.clear();
             screen_=Screen::NewGame;

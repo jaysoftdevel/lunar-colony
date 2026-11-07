@@ -6,19 +6,21 @@
       "name": "linux-base",
       "hidden": true,
       "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/linux",
+      "cacheVariables": { "GAME_BIN_DIR": "${sourceDir}/build/linux/bin" },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     },
     {
       "name": "linux-release",
       "inherits": "linux-base",
       "displayName": "Linux x64 - X11/OpenGL - Release",
+      "binaryDir": "${sourceDir}/build/linux/Release",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "GAME_BUILD_NAVIGATION_TESTS": "ON" }
     },
     {
       "name": "linux-debug",
       "inherits": "linux-base",
       "displayName": "Linux x64 - X11/OpenGL - Debug",
+      "binaryDir": "${sourceDir}/build/linux/Debug",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "GAME_BUILD_NAVIGATION_TESTS": "ON" }
     },
     {
@@ -38,8 +40,8 @@
     { "name": "windows-debug", "configurePreset": "windows-x64", "configuration": "Debug" }
   ],
   "testPresets": [
-    { "name": "linux-release", "configurePreset": "linux-release", "output": { "outputOnFailure": true } },
-    { "name": "linux-debug", "configurePreset": "linux-debug", "output": { "outputOnFailure": true } },
+    { "name": "linux-release", "configurePreset": "linux-release", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "linux-debug", "configurePreset": "linux-debug", "configuration": "Debug", "output": { "outputOnFailure": true } },
     { "name": "windows-release", "configurePreset": "windows-x64", "configuration": "Release", "output": { "outputOnFailure": true } },
     { "name": "windows-debug", "configurePreset": "windows-x64", "configuration": "Debug", "output": { "outputOnFailure": true } }
   ]
