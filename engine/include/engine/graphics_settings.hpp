@@ -34,6 +34,28 @@ constexpr std::uint32_t graphics_bit(GraphicsFeature feature){
 inline constexpr auto all_graphics_features=static_cast<std::uint32_t>(
     (std::uint64_t{1}<<graphics_feature_keys.size())-1);
 
+inline constexpr std::array scalable_graphics_features{
+    GraphicsFeature::TerrainRelief,GraphicsFeature::StreamedGeometry,GraphicsFeature::VirtualTextures,
+    GraphicsFeature::MaterialDetail,GraphicsFeature::Decals,GraphicsFeature::Hair,GraphicsFeature::Cloth,
+    GraphicsFeature::Skin,GraphicsFeature::LocalLights,GraphicsFeature::RayShadows,GraphicsFeature::RayReflections,
+    GraphicsFeature::RayOcclusion,GraphicsFeature::RayIndirect,GraphicsFeature::ReservoirLights,
+    GraphicsFeature::ScreenOcclusion,GraphicsFeature::ScreenIndirect,GraphicsFeature::ScreenReflections,
+    GraphicsFeature::RayDenoise,GraphicsFeature::Vignette,GraphicsFeature::Clouds,GraphicsFeature::Haze,
+    GraphicsFeature::VolumetricPlumes,GraphicsFeature::VolumetricDust
+};
+inline constexpr auto scalable_graphics_mask=[]{
+    std::uint32_t mask{};
+    for(auto feature:scalable_graphics_features) mask|=graphics_bit(feature);
+    return mask;
+}();
+constexpr bool scalable_graphics_feature(GraphicsFeature feature){
+    return feature<GraphicsFeature::Count && (scalable_graphics_mask&graphics_bit(feature))!=0;
+}
+
+template<class T> constexpr T quality_budget(int quality,T low,T medium,T high){
+    return quality<=1?low:quality==2?medium:high;
+}
+
 struct GraphicsSettings {
     GraphicsPath path{GraphicsPath::Auto};
     GraphicsAA aa{GraphicsAA::Temporal};
@@ -43,7 +65,11 @@ struct GraphicsSettings {
     int ray_scale{50};
     int bloom{100};
     int exposure_tenths{};
+    int aa_quality{3};
+    int shadow_quality{3};
+    int bloom_quality{3};
     std::uint32_t features{all_graphics_features};
+    std::uint32_t low_quality{},medium_quality{};
 #ifdef _WIN32
     bool terrain_vrs{};
 #endif
@@ -52,6 +78,16 @@ struct GraphicsSettings {
     void set(GraphicsFeature feature,bool enabled){
         if(enabled) features|=graphics_bit(feature);
         else features&=~graphics_bit(feature);
+    }
+    constexpr int quality(GraphicsFeature feature) const {
+        const auto bit=graphics_bit(feature);
+        return !(features&bit)?0:(low_quality&bit)?1:(medium_quality&bit)?2:3;
+    }
+    void set_quality(GraphicsFeature feature,int level){
+        const auto bit=graphics_bit(feature);
+        set(feature,level>0);
+        low_quality=(low_quality&~bit)|(level==1?bit:0);
+        medium_quality=(medium_quality&~bit)|(level==2?bit:0);
     }
     bool operator==(const GraphicsSettings&) const = default;
     void normalize();

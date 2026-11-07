@@ -27,6 +27,8 @@
 
 The advanced Linux graphics path uses desktop OpenGL 4.3 compute shaders.
 The deferred raster fallback uses desktop OpenGL 3.3. OpenAL Soft supplies
-audio on both platforms. The Windows dependency script installs the Win64
-runtime in `build/windows/bin`. The game can run silently when an audio
-device is unavailable.
+audio on both platforms. Linux builds stage the installed OpenAL library
+under `build/linux/bin/lib`. The Windows dependency script installs the
+Win64 runtime in `build/windows/bin`. The host provides the graphics and
+audio system libraries. The game can run silently when an audio device is
+unavailable.

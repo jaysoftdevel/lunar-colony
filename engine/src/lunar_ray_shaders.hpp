@@ -114,7 +114,7 @@ void main(){
     if(lightCount>4 && depth<0.99997 && texture(materialMap,uv).g<0.5){
         MaterialSample surface=sampleMaterial(uv,depth);
         uint seed=uint(pixel.x)+uint(pixel.y)*16259u+uint(frameIndex)*524287u;
-        for(int candidate=0;candidate<6;++candidate){
+        for(int candidate=0;candidate<taps(OPT_reservoir_lights,2,4,6);++candidate){
             uint index=randomBits(seed)%uint(lightCount);
             float p=dot(fixtureContribution(surface,index),kLuma);
             resample(reservoir,index,p*float(lightCount),1.0,p,seed);
@@ -252,11 +252,14 @@ void main(){
         bool tracedShadows=traced && option(OPT_ray_shadows);
         if(traced && reach<182.0){
             vec3 randomDirection=hemisphere(surface.n,seed);
-            if(option(OPT_ray_indirect) || option(OPT_ray_occlusion)){
-                RayHit bounce=trace(origin,randomDirection,36.0,false);
-                if(option(OPT_ray_indirect)) diffuse.rgb=hitRadiance(bounce,origin,randomDirection)*0.54;
-                if(option(OPT_ray_occlusion) && bounce.index>=0)
-                    diffuse.a=mix(0.42,1.0,smoothstep(0.0,4.0,bounce.t));
+            bool indirect=option(OPT_ray_indirect),occlusion=option(OPT_ray_occlusion);
+            if(indirect || occlusion){
+                float aoReach=float(taps(OPT_ray_occlusion,2,3,4));
+                float giReach=float(taps(OPT_ray_indirect,14,24,36));
+                RayHit bounce=trace(origin,randomDirection,indirect?giReach:aoReach,false);
+                if(indirect) diffuse.rgb=hitRadiance(bounce,origin,randomDirection)*0.54;
+                if(occlusion && bounce.index>=0)
+                    diffuse.a=mix(0.42,1.0,smoothstep(0.0,aoReach,bounce.t));
             }
 
             float strength=(1.0-smoothstep(0.20,0.63,surface.roughness))*(0.15+0.85*surface.metal);
@@ -264,7 +267,7 @@ void main(){
                 vec3 reflection=reflect(-surface.view,surface.n);
                 vec3 direction=normalize(mix(reflection,randomDirection,surface.roughness*surface.roughness*0.65));
                 if(dot(direction,surface.n)>0.01){
-                    RayHit reflected=trace(origin,direction,88.0,false);
+                    RayHit reflected=trace(origin,direction,float(taps(OPT_ray_reflections,30,56,88)),false);
                     vec3 f0=mix(vec3(0.04),surface.albedo,surface.metal);
                     vec3 f=f0+(1.0-f0)*pow(1.0-max(dot(surface.n,surface.view),0.0),5.0);
                     spec=vec4(hitRadiance(reflected,origin,direction)*f*strength,strength);
@@ -272,7 +275,7 @@ void main(){
             }
 
             if(tracedShadows && daylight>0.001 && dot(surface.n,sun)>0.055){
-                RayHit blocker=trace(origin,sun,150.0,true);
+                RayHit blocker=trace(origin,sun,float(taps(OPT_ray_shadows,45,90,150)),true);
                 direct.a=blocker.index<0?1.0:0.0;
             }
         }
@@ -285,7 +288,7 @@ void main(){
         }else{
             vec4 reservoir=texelFetch(reservoirMap,pixel,0);
             const ivec2 offsets[4]=ivec2[4](ivec2(-2,0),ivec2(1,-1),ivec2(0,2),ivec2(2,1));
-            for(int k=0;k<4;++k){
+            for(int k=0;k<taps(OPT_reservoir_lights,1,2,4);++k){
                 ivec2 nearPixel=clamp(pixel+offsets[k],ivec2(0),size-1);
                 vec2 at=(vec2(nearPixel)+0.5)/vec2(size);
                 float z=texture(depthMap,at).r;
@@ -343,7 +346,7 @@ void main(){
     float luminance=dot(indirect.rgb,vec3(0.2126,0.7152,0.0722));
     float variation=0.0;
     const vec2 offsets[6]=vec2[6](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1),vec2(-2,0),vec2(2,0));
-    for(int i=0;i<6;++i){
+    for(int i=0;i<taps(OPT_ray_denoise,2,4,6);++i){
         vec2 at=clamp(uv+offsets[i]*pixelSize,0.0,1.0);
         float z=texture(depthMap,at).r;
         if(z>=0.99997) continue;

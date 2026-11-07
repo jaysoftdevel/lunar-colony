@@ -69,6 +69,19 @@ void GameApp::render(Renderer& r){
     ui_input_.mouse_dx=(int)std::lround((float)input_.mouse_dx/ui_scale_);
     ui_input_.mouse_dy=(int)std::lround((float)input_.mouse_dy/ui_scale_);
 
+    if(graphics_benchmark_.running() && !graphics_benchmark_.same_size(r.width(),r.height()))
+        graphics_benchmark_.stop(BenchmarkStatus::Resized);
+    const bool benchmarking=graphics_benchmark_.running();
+    r.set_graphics_benchmark(benchmarking);
+    if(benchmarking){
+        r.set_graphics_settings(graphics_benchmark_.current().settings);
+        r.begin_frame({0.018f,0.024f,0.032f,1});
+        const bool rendered=render_benchmark_scene(r);
+        r.end_frame();
+        graphics_benchmark_.record(r.benchmark_frame_ms(),rendered);
+        return;
+    }
+
     auto render_options=graphics_;
     if(mesh_layout_active()) render_options.path=GraphicsPath::Classic;
     r.set_graphics_settings(render_options);

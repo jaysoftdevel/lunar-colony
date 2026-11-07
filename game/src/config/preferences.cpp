@@ -31,7 +31,9 @@ std::filesystem::path config_path(){
 
 constexpr std::pair<const char*,int GraphicsSettings::*> numbers[]{
     {"render_scale",&GraphicsSettings::render_scale},{"ray_scale",&GraphicsSettings::ray_scale},
-    {"bloom",&GraphicsSettings::bloom},{"exposure_tenths",&GraphicsSettings::exposure_tenths}
+    {"bloom",&GraphicsSettings::bloom},{"exposure_tenths",&GraphicsSettings::exposure_tenths},
+    {"aa_quality",&GraphicsSettings::aa_quality},{"shadow_quality",&GraphicsSettings::shadow_quality},
+    {"bloom_quality",&GraphicsSettings::bloom_quality}
 };
 }
 
@@ -54,6 +56,18 @@ Preferences load_preferences(){
         if(key=="shadows" && value>=0 && value<=2) settings.shadows=static_cast<GraphicsShadows>(value);
         if(key=="transparency" && value>=0 && value<=1) settings.transparency=static_cast<GraphicsTransparency>(value);
         for(const auto& [name,field]:numbers) if(key==name) settings.*field=value;
+        if(key.ends_with("_quality") && value>=1 && value<=3){
+            const auto name=key.substr(0,key.size()-8);
+            const auto it=std::find(graphics_feature_keys.begin(),graphics_feature_keys.end(),name);
+            if(it!=graphics_feature_keys.end()){
+                const auto feature=static_cast<GraphicsFeature>(it-graphics_feature_keys.begin());
+                if(scalable_graphics_feature(feature)){
+                    const bool enabled=settings.enabled(feature);
+                    settings.set_quality(feature,value);
+                    settings.set(feature,enabled);
+                }
+            }
+        }
         if(value!=0 && value!=1) continue;
         if(key=="mesh_layout") preferences.mesh_layout=value==1;
         if(key=="music") preferences.music_enabled=value==1;
@@ -89,6 +103,11 @@ bool save_preferences(const Preferences& preferences){
     for(const auto& [name,field]:numbers) file<<name<<'='<<settings.*field<<'\n';
     for(std::size_t i=0;i<graphics_feature_keys.size();++i)
         file<<graphics_feature_keys[i]<<'='<<settings.enabled(static_cast<GraphicsFeature>(i))<<'\n';
+    for(const auto feature:scalable_graphics_features){
+        const auto bit=graphics_bit(feature);
+        const int quality=(settings.low_quality&bit)?1:(settings.medium_quality&bit)?2:3;
+        file<<graphics_feature_keys[static_cast<unsigned>(feature)]<<"_quality="<<quality<<'\n';
+    }
     file<<"mesh_layout="<<preferences.mesh_layout<<'\n'
         <<"music="<<preferences.music_enabled<<'\n';
 #ifdef _WIN32

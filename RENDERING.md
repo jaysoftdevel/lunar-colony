@@ -1,17 +1,18 @@
-# Rendering in v0.52.4
+# Rendering in v0.52.6
 
 ## Windows
 
 The Direct3D 12 lunar pass renders physically based materials, procedural
 regolith and crater detail, and powered fixtures into an FP16 scene buffer.
-A quarter-resolution bloom pass and an SDR tone-mapping pass apply exposure
+A reduced-resolution bloom pass and an SDR tone-mapping pass apply exposure
 and optional FXAA before the game draws its HUD. The buildable floor stays flat.
 
-The Output tab offers Enhanced and Classic views, FXAA, and terrain variable-rate
-shading. VRS applies 2×2 shading beyond the playfield on supported adapters and
-defaults to off. World controls material and terrain detail. Lighting controls
-PBR and local fixtures. Image controls bloom, exposure, the tone curve, and
-vignette. The Graphics screen reports enhanced or legacy barriers.
+The Output tab offers Enhanced and Classic views, lunar render scale, FXAA
+mode and quality, and terrain variable-rate shading. VRS applies 2×2 shading
+beyond the playfield on supported adapters and defaults to off. World controls
+material detail, terrain detail, and decals. Lighting controls PBR and fixture
+count. Image controls bloom resolution and intensity, exposure, the tone curve,
+and vignette. The HUD draws at display resolution.
 
 The Windows settings file is `%APPDATA%/Lunar Frontier/graphics.cfg`.
 Direct3D code and Windows-only settings are compiled into the Windows targets.
@@ -54,25 +55,49 @@ ray-tracing pipelines, native mesh-shader stages, and the DLSS, FSR, and XeSS
 SDKs require separate backend integrations. The resident detail geometry
 system currently covers the lunar terrain and boulder field.
 
-## Linux runtime controls
+## Runtime controls
 
 Open **Settings → Graphics** from the title or pause menu. Settings take
 effect when rendering resumes and are saved for future sessions. **Reset
 Defaults** restores the release defaults. Controls explain dependencies and
 are dimmed when the selected renderer or the GPU cannot run them.
 
-| Tab | Controls |
+Scalable effects have their own Off, Low, Medium, and High control. Resolution
+and image adjustments keep their separate percentage or exposure controls.
+Rendering techniques such as PBR, visibility buffers, and transparency retain
+their mode or enable controls. Existing on/off preferences are read as High
+or Off.
+
+| Linux tab | Controls |
 | --- | --- |
-| Output | Auto, Deferred, or Classic renderer, 3D render scale, temporal AA, FXAA, learned upscaling, and visibility buffer |
+| Output | Auto, Deferred, or Classic renderer, 3D render scale, AA mode and spatial sample quality, learned upscaling, and visibility buffer |
 | World | Terrain relief, GPU culling, streamed geometry, virtual textures, material detail, decals, hair, cloth, skin, and transparency |
-| Lighting | PBR, fixtures, cascaded and paged sun shadows, ReSTIR, and screen-space AO, GI, and reflections |
-| Ray Tracing | Software tracing, individual shadow, reflection, AO, and GI switches, compute lighting resolution, denoising, and the neural cache |
-| Image | Bloom intensity, exposure, tone mapping, and vignette |
+| Lighting | PBR, fixture count, sun shadow mode and filtering, ReSTIR, and separate screen-space AO, GI, and reflection workloads |
+| Ray Tracing | Software tracing, individual shadow, reflection, AO, and GI reach, compute lighting resolution, denoising, and the neural cache |
+| Image | Bloom resolution and intensity, exposure, tone mapping, and vignette |
 | Atmosphere | Earth sky, clouds, distance haze, exhaust, and lunar dust |
 
 **Settings → Debug Layout** switches between the configured renderer and a
 mesh view that bypasses the lunar effects and campus material textures.
 The in-game debug frame uses the same switch.
+
+## Hardware benchmark
+
+**Graphics → Benchmark** shows the adapter and driver used by the active
+renderer. Choose a 30, 60, 90, or 120 FPS target and run the suite. The benchmark
+warms up each supported profile, then times a fixed lunar orbit view and a
+surface view. Linux also tests the Earth campus when enhanced rendering is
+available. The results show per-scene render throughput and the worst 90th
+percentile frame time. Each timed frame waits for rendering completion before
+presentation. The test excludes simulation and uses the current display size.
+
+The game recommends the highest tested quality within the target frame budget,
+or the fastest tested profile when the target is out of reach. **Apply
+Recommendation** saves it. Escape cancels a run and a display-size change
+requires new measurements. The benchmark runs its own scene and leaves the
+current colony and saved settings available while you review the results.
+
+## Preferences
 
 The Linux preferences file is `$XDG_CONFIG_HOME/lunar-frontier/graphics.cfg`
 or `~/.config/lunar-frontier/graphics.cfg` when XDG_CONFIG_HOME is unset.

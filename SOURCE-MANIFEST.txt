@@ -63,8 +63,10 @@ engine/src/task_pool.cpp
 engine/src/ui.cpp
 game/CMakeLists.txt
 game/cmake/GameClusters.cmake
+game/cmake/StageRuntime.cmake
 game/debug-templates/0-40-32-debug-start.gmsave
 game/include/game/build_mode.hpp
+game/include/game/config/graphics_benchmark.hpp
 game/include/game/config/preferences.hpp
 game/include/game/features/.gitkeep
 game/include/game/features/build_catalog.hpp
@@ -119,6 +121,7 @@ game/include/game/world/supply_state.hpp
 game/include/game/world/utility_network.hpp
 game/include/game/world/walkway_network.hpp
 game/include/game/world/world_labels.hpp
+game/src/config/graphics_benchmark.cpp
 game/src/config/preferences.cpp
 game/src/features/.gitkeep
 game/src/features/build_catalog.cpp
@@ -140,6 +143,7 @@ game/src/robots/incremental_path_planner.cpp
 game/src/robots/path_planner.cpp
 game/src/robots/safety_coordinator.cpp
 game/src/screens/credits.cpp
+game/src/screens/graphics_benchmark.cpp
 game/src/screens/graphics_settings.cpp
 game/src/screens/main_menu.cpp
 game/src/screens/new_game.cpp

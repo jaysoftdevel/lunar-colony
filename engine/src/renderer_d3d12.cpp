@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -42,7 +43,7 @@ constexpr DXGI_FORMAT kLunarFormat=DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr std::array kLunarClear{0.002f,0.003f,0.005f,1.0f};
 constexpr UINT kSceneRtv=kFrameCount;
 constexpr UINT kBloomRtv=kFrameCount+1;
-constexpr int kBloomScale=4;
+
 static_assert(sizeof(Vec3)==3*sizeof(float));
 
 std::string wide_to_utf8(const wchar_t* text){
@@ -101,9 +102,11 @@ struct SceneConstants {
     UINT pbr{};
     UINT material_detail{};
     UINT terrain_relief{};
+    UINT decals{};
+    UINT padding[3]{};
     std::array<Fixture,64> lights{};
 };
-static_assert(offsetof(SceneConstants,lights)==48 && sizeof(SceneConstants::Fixture)==32);
+static_assert(offsetof(SceneConstants,lights)==64 && sizeof(SceneConstants::Fixture)==32);
 static_assert(static_cast<int>(LunarMaterial::Paint)==0 && static_cast<int>(LunarMaterial::Alloy)==1 &&
               static_cast<int>(LunarMaterial::Regolith)==2 && static_cast<int>(LunarMaterial::Solar)==3 &&
               static_cast<int>(LunarMaterial::Glass)==4 && static_cast<int>(LunarMaterial::Fabric)==5 &&
@@ -118,7 +121,7 @@ struct PostConstants {
     UINT fxaa{};
     UINT filmic{};
     UINT vignette{};
-    UINT padding{};
+    UINT bloom_quality{};
 };
 static_assert(sizeof(PostConstants)==8*sizeof(UINT));
 
@@ -280,11 +283,10 @@ D3D12_RESOURCE_DESC target_desc(int width,int height,DXGI_FORMAT format,D3D12_RE
 }
 
 // The first ring joins the flat build plane. Relief grows only outside it.
-std::vector<Vec3> lunar_horizon(float half,bool relief){
+std::vector<Vec3> lunar_horizon(float half,int relief){
     constexpr std::array offsets{0.0f,32.0f,72.0f,128.0f,210.0f,340.0f,540.0f,810.0f,1150.0f,1700.0f};
-    constexpr int segments=32;
-    using Ring=std::array<Vec3,4*segments>;
-    Ring previous{},current{};
+    const int segments=relief?quality_budget(relief,12,20,32):4;
+    std::vector<Vec3> previous(4*segments),current(4*segments);
     std::vector<Vec3> terrain;
     terrain.reserve((offsets.size()-1)*current.size()*6);
     for(float offset:offsets){
@@ -333,7 +335,7 @@ class D3D12Renderer final : public Renderer {
     ComPtr<IDXGISwapChain3> swap_chain_{};
     ComPtr<ID3D12DescriptorHeap> rtv_heap_{};
     ComPtr<ID3D12DescriptorHeap> dsv_heap_{};
-    UINT rtv_increment_{};
+    UINT rtv_increment_{},dsv_increment_{};
     std::array<ComPtr<ID3D12Resource>,kFrameCount> render_targets_{};
     ComPtr<ID3D12Resource> depth_buffer_{};
     std::array<FrameResources,kFrameCount> frames_{};
@@ -353,7 +355,11 @@ class D3D12Renderer final : public Renderer {
     bool coarse_shading_{};
     bool lunar_active_{};
     float terrain_half_{};
-    bool terrain_relief_{};
+    int terrain_relief_{};
+    int lunar_width_{},lunar_height_{},target_scale_{},target_bloom_quality_{};
+    bool benchmarking_{};
+    double benchmark_ms_{};
+    std::chrono::steady_clock::time_point benchmark_begin_{};
     std::vector<Vec3> horizon_{};
     D3D12_GPU_VIRTUAL_ADDRESS scene_constants_{};
 #ifdef __ID3D12GraphicsCommandList7_INTERFACE_DEFINED__
@@ -377,6 +383,7 @@ class D3D12Renderer final : public Renderer {
     UINT srv_increment_{};
     ComPtr<ID3D12Resource> lunar_target_{};
     ComPtr<ID3D12Resource> bloom_target_{};
+    ComPtr<ID3D12Resource> lunar_depth_{};
 
     bool create_factory_and_device(){
         UINT flags=0;
@@ -496,8 +503,9 @@ class D3D12Renderer final : public Renderer {
 
         D3D12_DESCRIPTOR_HEAP_DESC dsv{};
         dsv.Type=D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-        dsv.NumDescriptors=1;
+        dsv.NumDescriptors=2;
         if(FAILED(device_->CreateDescriptorHeap(&dsv,IID_PPV_ARGS(&dsv_heap_)))) return false;
+        dsv_increment_=device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
         return true;
     }
 
@@ -509,33 +517,46 @@ class D3D12Renderer final : public Renderer {
             device_->CreateRenderTargetView(render_targets_[i].Get(),nullptr,handle);
             handle.ptr += rtv_increment_;
         }
-        return create_depth_buffer();
+        return create_depth_buffer(width_,height_,0,depth_buffer_);
     }
 
-    bool create_depth_buffer(){
-        depth_buffer_.Reset();
-        const auto d=target_desc(width_,height_,kDepthFormat,D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv_handle(UINT index) const {
+        auto handle=dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        handle.ptr+=static_cast<SIZE_T>(index)*dsv_increment_;
+        return handle;
+    }
+
+    bool create_depth_buffer(int width,int height,UINT slot,ComPtr<ID3D12Resource>& depth){
+        const auto d=target_desc(width,height,kDepthFormat,D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
         D3D12_CLEAR_VALUE clear{};
         clear.Format=kDepthFormat;
         clear.DepthStencil.Depth=1.0f;
         clear.DepthStencil.Stencil=0;
         const auto heap=heap_props(D3D12_HEAP_TYPE_DEFAULT);
         HRESULT hr=device_->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_DEPTH_WRITE,
-                                                    &clear,IID_PPV_ARGS(&depth_buffer_));
+                                                    &clear,IID_PPV_ARGS(&depth));
         if(FAILED(hr)){ log_hresult("Create depth buffer",hr); return false; }
         D3D12_DEPTH_STENCIL_VIEW_DESC view{};
         view.Format=kDepthFormat;
         view.ViewDimension=D3D12_DSV_DIMENSION_TEXTURE2D;
-        device_->CreateDepthStencilView(depth_buffer_.Get(),&view,dsv_heap_->GetCPUDescriptorHandleForHeapStart());
+        device_->CreateDepthStencilView(depth.Get(),&view,dsv_handle(slot));
         return true;
     }
 
-    int bloom_width() const { return (width_+kBloomScale-1)/kBloomScale; }
-    int bloom_height() const { return (height_+kBloomScale-1)/kBloomScale; }
+    int bloom_divisor() const { return quality_budget(target_bloom_quality_,8,6,4); }
+    int bloom_width() const { return (lunar_width_+bloom_divisor()-1)/bloom_divisor(); }
+    int bloom_height() const { return (lunar_height_+bloom_divisor()-1)/bloom_divisor(); }
 
     bool create_lunar_targets(){
         lunar_target_.Reset();
         bloom_target_.Reset();
+        lunar_depth_.Reset();
+        target_scale_=graphics_.render_scale;
+        target_bloom_quality_=graphics_.bloom_quality;
+        lunar_width_=std::max(1,width_*target_scale_/100);
+        lunar_height_=std::max(1,height_*target_scale_/100);
+        if((lunar_width_!=width_ || lunar_height_!=height_) &&
+           !create_depth_buffer(lunar_width_,lunar_height_,1,lunar_depth_)) return false;
         D3D12_CLEAR_VALUE clear{};
         clear.Format=kLunarFormat;
         std::copy(kLunarClear.begin(),kLunarClear.end(),clear.Color);
@@ -547,7 +568,7 @@ class D3D12Renderer final : public Renderer {
                 D3D12_RESOURCE_STATE_RENDER_TARGET,optimized_clear,IID_PPV_ARGS(&out));
         };
         ComPtr<ID3D12Resource> scene,bloom;
-        HRESULT hr=make_target(width_,height_,&clear,scene);
+        HRESULT hr=make_target(lunar_width_,lunar_height_,&clear,scene);
         if(SUCCEEDED(hr)) hr=make_target(bloom_width(),bloom_height(),nullptr,bloom);
         if(FAILED(hr)){
             log_hresult("Create lunar render targets",hr);
@@ -851,8 +872,8 @@ class D3D12Renderer final : public Renderer {
         DrawConstants constants{};
         std::memcpy(constants.mvp,mvp_.m.data(),sizeof(constants.mvp));
         constants.color[0]=c.r; constants.color[1]=c.g; constants.color[2]=c.b; constants.color[3]=c.a;
-        constants.viewport[0]=(float)std::max(1,width_);
-        constants.viewport[1]=(float)std::max(1,height_);
+        constants.viewport[0]=static_cast<float>(lunar_active_?lunar_width_:width_);
+        constants.viewport[1]=static_cast<float>(lunar_active_?lunar_height_:height_);
         constants.line_width=std::max(1.0f,width);
         constants.material=static_cast<float>(material);
         command_list_->SetGraphicsRoot32BitConstants(0,sizeof(constants)/sizeof(UINT),&constants,0);
@@ -868,9 +889,10 @@ class D3D12Renderer final : public Renderer {
         transition(lunar_target_.Get(),TextureUse::RenderTarget,TextureUse::PixelRead);
 
         const PostConstants constants{
-            {1.0f/width_,1.0f/height_},std::exp2(graphics_.exposure_tenths*0.1f),graphics_.bloom*0.006f,
-            graphics_.aa!=GraphicsAA::Off,graphics_.enabled(GraphicsFeature::Filmic),
-            graphics_.enabled(GraphicsFeature::Vignette)
+            {1.0f/lunar_width_,1.0f/lunar_height_},std::exp2(graphics_.exposure_tenths*0.1f),graphics_.bloom*0.006f,
+            graphics_.aa==GraphicsAA::Off?0u:static_cast<UINT>(graphics_.aa_quality),
+            graphics_.enabled(GraphicsFeature::Filmic),static_cast<UINT>(graphics_.quality(GraphicsFeature::Vignette)),
+            static_cast<UINT>(graphics_.bloom_quality)
         };
         ID3D12DescriptorHeap* heaps[]{lunar_srv_heap_.Get()};
         command_list_->SetDescriptorHeaps(1,heaps);
@@ -948,7 +970,14 @@ public:
     }
 
     void begin_frame(Color clear) override {
+        benchmark_ms_=0.0;
         if(frame_open_ || !swap_chain_ || !depth_buffer_) return;
+        if(lunar_srv_heap_ && graphics_.path!=GraphicsPath::Classic &&
+           (target_scale_!=graphics_.render_scale || target_bloom_quality_!=graphics_.bloom_quality)){
+            wait_for_gpu();
+            create_lunar_targets();
+        }
+        if(benchmarking_) benchmark_begin_=std::chrono::steady_clock::now();
         frame_index_=swap_chain_->GetCurrentBackBufferIndex();
         if(!render_targets_[frame_index_]) return;
         auto& frame=frames_[frame_index_];
@@ -983,7 +1012,16 @@ public:
 
         auto& frame=frames_[frame_index_];
         const UINT64 signal=next_fence_value_++;
-        if(SUCCEEDED(queue_->Signal(fence_.Get(),signal))) frame.fence_value=signal;
+        if(SUCCEEDED(queue_->Signal(fence_.Get(),signal))){
+            frame.fence_value=signal;
+            if(benchmarking_){
+                wait_for_fence(signal);
+                const auto completed=fence_->GetCompletedValue();
+                if(completed>=signal && completed!=std::numeric_limits<UINT64>::max())
+                    benchmark_ms_=std::chrono::duration<double,std::milli>(
+                        std::chrono::steady_clock::now()-benchmark_begin_).count();
+            }
+        }
         const UINT sync=vsync_?1u:0u;
         const UINT flags=(!vsync_&&tearing_supported_)?DXGI_PRESENT_ALLOW_TEARING:0u;
         const HRESULT present=swap_chain_->Present(sync,flags);
@@ -1017,11 +1055,15 @@ public:
     }
     GraphicsCapabilities graphics_capabilities() override {
         GraphicsCapabilities caps{};
-        caps.enhanced=lunar_target_ && bloom_target_;
+        caps.enhanced=lunar_srv_heap_.Get()!=nullptr;
         caps.enhanced_barriers=enhanced_barriers_;
         caps.variable_rate_shading=variable_rate_shading_;
         return caps;
     }
+
+    bool supports_graphics_benchmark() const override { return fence_.Get()!=nullptr && fence_event_; }
+    void set_graphics_benchmark(bool enabled) override { benchmarking_=enabled && supports_graphics_benchmark(); }
+    double benchmark_frame_ms() const override { return benchmark_ms_; }
 
     bool begin_lunar_scene(const LunarScene& scene) override {
         if(!frame_open_ || lunar_active_ || !lunar_target_ || !bloom_target_ ||
@@ -1037,10 +1079,12 @@ public:
         constants.eye[1]=scene.eye.y;
         constants.eye[2]=scene.eye.z;
         constants.pbr=graphics_.enabled(GraphicsFeature::Pbr);
-        constants.material_detail=graphics_.enabled(GraphicsFeature::MaterialDetail);
-        constants.terrain_relief=graphics_.enabled(GraphicsFeature::TerrainRelief);
+        constants.material_detail=graphics_.quality(GraphicsFeature::MaterialDetail);
+        constants.terrain_relief=graphics_.quality(GraphicsFeature::TerrainRelief);
+        constants.decals=graphics_.quality(GraphicsFeature::Decals);
         if(graphics_.enabled(GraphicsFeature::LocalLights)){
-            const auto count=std::min(scene.light_count,scene.lights.size());
+            const auto light_budget=quality_budget(graphics_.quality(GraphicsFeature::LocalLights),8u,24u,64u);
+            const auto count=std::min<std::size_t>(scene.light_count,light_budget);
             for(std::size_t i=0;i<count;++i){
                 const auto& light=scene.lights[i];
                 if(light.radius<=0.0f || light.power<=0.0f) continue;
@@ -1054,15 +1098,17 @@ public:
         if(!scene_constants_) return false;
 
         const auto rtv=rtv_handle(kSceneRtv);
-        const auto dsv=dsv_heap_->GetCPUDescriptorHandleForHeapStart();
+        const auto dsv=dsv_handle(lunar_depth_?1u:0u);
         command_list_->OMSetRenderTargets(1,&rtv,FALSE,&dsv);
         command_list_->ClearRenderTargetView(rtv,kLunarClear.data(),0,nullptr);
+        if(lunar_depth_) command_list_->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
+        set_viewport(lunar_width_,lunar_height_);
         mvp_=scene.view_projection;
         depth_enabled_=true;
         lunar_active_=true;
 
         const float half=std::max(1.0f,scene.half_extent);
-        const bool relief=constants.terrain_relief!=0;
+        const int relief=static_cast<int>(constants.terrain_relief);
         if(terrain_half_!=half || terrain_relief_!=relief){
             horizon_=lunar_horizon(half,relief);
             terrain_half_=half;
@@ -1078,6 +1124,7 @@ public:
 
     bool lunar_scene_active() const override { return lunar_active_; }
     void draw_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint) override {
+        if(lunar_active_ && material==LunarMaterial::Marking && !graphics_.enabled(GraphicsFeature::Decals)) return;
         draw(vertices.data(),vertices.size(),false,tint,1.0f,material);
     }
 

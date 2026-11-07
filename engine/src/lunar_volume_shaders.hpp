@@ -43,10 +43,11 @@ void main(){
         float root=sqrt(discriminant);
         float first=max(0.0,-b-root),last=min(surfaceDepth-0.008,-b+root);
         if(last<=first) continue;
-        float stepLength=(last-first)/15.0;
+        int steps=taps(cone?OPT_volumetric_plumes:OPT_volumetric_dust,5,10,15);
+        float stepLength=(last-first)/float(steps);
         float transmittance=1.0;
         vec3 scattered=vec3(0.0);
-        for(int s=0;s<15;++s){
+        for(int s=0;s<steps;++s){
             vec3 p=eye+ray*(first+(float(s)+0.5)*stepLength)-origin;
             float axial=dot(p,axis);
             if(axial<0.0 || axial>lengthAlong) continue;

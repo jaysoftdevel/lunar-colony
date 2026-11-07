@@ -29,6 +29,18 @@ The direct paired scripts (`build.*`, `run.*`, `test.*`, `clean.*`, `configure.*
 
 Linux builds in `build/linux/Release` and `build/linux/Debug`. Windows uses the corresponding configurations in `build/windows`. Each platform writes `game` and `game-debug` into its `bin` directory, with an `.exe` extension on Windows.
 
+| Runtime file | Linux | Windows |
+|---|---|---|
+| Executables | `build/linux/bin` | `build/windows/bin` |
+| OpenAL Soft | `bin/lib/libopenal.so.1` when installed | `bin/OpenAL32.dll` from `install-deps.bat` |
+| Scenario template for Debug | `bin/debug/0-40-32-debug-start.gmsave` | `bin/debug/0-40-32-debug-start.gmsave` |
+| Optional Agility runtime | — | `bin/D3D12` |
+| Player saves | `bin/savegames` | `bin/savegames` |
+
+The game can run from its platform's `bin` directory without the source tree. Keep its runtime subdirectories with the executables. The host still provides its graphics driver, window system, and OS libraries. Graphics preferences use the user's existing configuration directory.
+
+The static engine and RVO2 archives are collected in the CMake build tree's `lib` directory. CMake builds the game clusters as object targets and links them into each executable. The archives and objects are inputs to the build.
+
 Shared code belongs in `game/`, `engine/src/ui.cpp`, `engine/src/task_pool.cpp`, and common engine headers. Platform-specific behavior should remain in:
 
 - `engine/src/platform_x11.cpp`

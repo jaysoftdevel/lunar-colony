@@ -14,7 +14,12 @@ void GraphicsSettings::normalize(){
     ray_scale=std::clamp(ray_scale,25,75);
     bloom=std::clamp(bloom,0,150);
     exposure_tenths=std::clamp(exposure_tenths,-20,20);
+    aa_quality=std::clamp(aa_quality,1,3);
+    shadow_quality=std::clamp(shadow_quality,1,3);
+    bloom_quality=std::clamp(bloom_quality,1,3);
     features&=all_graphics_features;
+    low_quality&=scalable_graphics_mask;
+    medium_quality&=scalable_graphics_mask&~low_quality;
 }
 
 GraphicsSettings graphics_settings_from_environment(){

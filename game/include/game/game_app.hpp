@@ -2,6 +2,7 @@
 #pragma once
 #include "engine/engine.hpp"
 #include "game/build_mode.hpp"
+#include "game/config/graphics_benchmark.hpp"
 #include "game/features/build_catalog.hpp"
 #include "game/systems/camera_controller.hpp"
 #include "game/systems/astronaut_test.hpp"
@@ -102,6 +103,8 @@ private:
     eng::ui::Theme theme_{};
     eng::GraphicsSettings graphics_;
     int graphics_tab_{},graphics_page_{};
+    GraphicsBenchmark graphics_benchmark_;
+    std::size_t benchmark_target_index_{1};
     bool preferences_save_failed_{};
     static constexpr int kNewGamePlayfieldMin=32;
     static constexpr int kNewGamePlayfieldMax=1024;
@@ -285,6 +288,8 @@ private:
     bool simulation_paused() const;
     void render_pause_frame(eng::Renderer& r) const;
     void render_graphics_settings(eng::Renderer& r);
+    void render_benchmark_settings(eng::Renderer& r,eng::Rect panel,const eng::GraphicsCapabilities& caps);
+    bool render_benchmark_scene(eng::Renderer& r);
     void render_credits(eng::Renderer& r);
     void render_playfield(eng::Renderer& r);
     bool handle_astronaut_click(const eng::InputState& input);

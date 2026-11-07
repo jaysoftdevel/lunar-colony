@@ -41,6 +41,8 @@ cbuffer SceneConstants : register(b1)
     uint gPbr;
     uint gMaterialDetail;
     uint gTerrainRelief;
+    uint gDecals;
+    uint3 gScenePadding;
     Fixture gLights[64];
 };
 
@@ -100,17 +102,22 @@ void crater(float2 p, float spacing, out float2 slope, out float ejecta)
 void shade_regolith(float3 world, inout float3 n, inout float3 albedo, inout float roughness)
 {
     if (gTerrainRelief != 0u) {
-        float2 largeSlope, smallSlope;
-        float largeEjecta, smallEjecta;
-        crater(world.xz, 60.0, largeSlope, largeEjecta);
-        crater(world.xz, 17.0, smallSlope, smallEjecta);
-        float2 slope = largeSlope + 0.55 * smallSlope;
+        float2 slope;
+        float ejecta;
+        crater(world.xz, 60.0, slope, ejecta);
+        if (gTerrainRelief >= 3u) {
+            float2 smallSlope;
+            float smallEjecta;
+            crater(world.xz, 17.0, smallSlope, smallEjecta);
+            slope += 0.55 * smallSlope;
+            ejecta *= smallEjecta;
+        }
         n = safe_normalize(n - float3(slope.x, 0.0, slope.y));
-        albedo *= largeEjecta * smallEjecta;
+        albedo *= ejecta;
     }
     if (gMaterialDetail != 0u) {
         float patch = value_noise(world.xz * 0.10);
-        float grain = value_noise(world.xz * 5.6);
+        float grain = gMaterialDetail >= 2u ? value_noise(world.xz * 5.6) : 0.5;
         float pixelSize = max(length(ddx(world.xz)), length(ddy(world.xz)));
         grain = lerp(grain, 0.5, smoothstep(0.07, 0.28, pixelSize));
         albedo *= 0.72 + 0.43 * patch + 0.16 * grain;
@@ -161,20 +168,21 @@ float4 PSLunar(SurfaceVertex input) : SV_TARGET
         shade_regolith(world, n, albedo, roughness);
     } else if (gMaterialDetail != 0u && kind != Glass && kind != Marking && kind != Skin) {
         float2 uv = abs(n.y) > 0.6 ? world.xz : abs(n.x) > 0.6 ? world.zy : world.xy;
-        float grain = value_noise(uv * (kind == Fabric ? 19.0 : 8.0));
+        float grain = value_noise(uv * (gMaterialDetail == 1u ? 2.0 : kind == Fabric ? 19.0 : 8.0));
         float footprint = max(length(ddx(world)), length(ddy(world)));
         float detail = 1.0 - smoothstep(0.012, 0.16, footprint);
         albedo *= lerp(1.0, 0.88 + 0.23 * grain, detail);
-        if (kind == Solar && abs(n.y) > 0.28) {
+        if (gMaterialDetail >= 2u && kind == Solar && abs(n.y) > 0.28) {
             float2 cell = abs(frac(uv * 4.0) - 0.5);
             float seam = smoothstep(0.42, 0.5, max(cell.x, cell.y));
             albedo = lerp(albedo, albedo * 0.32, detail * seam);
         }
-        if (kind == Paint || kind == Pad) {
-            float dust = value_noise(world.xz * 0.88) * (1.0 - smoothstep(0.1, 1.8, world.y));
-            albedo = lerp(albedo, float3(0.21, 0.18, 0.16), 0.32 * dust);
-            roughness = lerp(roughness, 0.88, dust);
-        }
+    }
+    if (gDecals >= 2u && (kind == Paint || kind == Pad)) {
+        float dust = value_noise(world.xz * 0.88) * (1.0 - smoothstep(0.1, 1.8, world.y));
+        dust *= gDecals == 2u ? 0.55 : 1.0;
+        albedo = lerp(albedo, float3(0.21, 0.18, 0.16), 0.32 * dust);
+        roughness = lerp(roughness, 0.88, dust);
     }
 
     float day = gSunDaylight.w;
@@ -218,7 +226,7 @@ cbuffer PostConstants : register(b0)
     uint gFxaa;
     uint gFilmic;
     uint gVignette;
-    uint gUnused;
+    uint gBloomQuality;
 };
 
 struct FullscreenVertex
@@ -253,6 +261,7 @@ float4 PSBloom(FullscreenVertex input) : SV_TARGET
     blur += 2.0 * (bright_sample(uv + nearOffset) + bright_sample(uv - nearOffset) +
                    bright_sample(uv + float2(nearOffset.x, -nearOffset.y)) +
                    bright_sample(uv + float2(-nearOffset.x, nearOffset.y)));
+    if (gBloomQuality == 1u) return float4(blur * (1.0 / 12.0), 1.0);
     blur += bright_sample(uv + float2(farOffset.x, 0)) + bright_sample(uv - float2(farOffset.x, 0)) +
             bright_sample(uv + float2(0, farOffset.y)) + bright_sample(uv - float2(0, farOffset.y));
     return float4(blur * (1.0 / 16.0), 1.0);
@@ -294,6 +303,14 @@ float3 fxaa(float2 uv, float3 center)
     float contrast = brightest - darkest;
     if (contrast < max(0.035, brightest * 0.13)) return center;
 
+    float3 adjacent = (north + south + west + east) * 0.25;
+    if (gFxaa == 1u) return lerp(center, adjacent, 0.45 * saturate(contrast / 0.18));
+    if (gFxaa == 2u) {
+        float2 tangent = float2(s - n, w - e);
+        tangent /= max(max(abs(tangent.x), abs(tangent.y)), 1e-3);
+        return 0.5 * (scene_at(uv - 0.55 * tangent * pixel) + scene_at(uv + 0.55 * tangent * pixel));
+    }
+
     float nw = luma(scene_at(uv - pixel));
     float se = luma(scene_at(uv + pixel));
     float ne = luma(scene_at(uv + float2(pixel.x, -pixel.y)));
@@ -304,7 +321,6 @@ float3 fxaa(float2 uv, float3 center)
     float3 aligned = 0.5 * (scene_at(uv - 0.55 * tangent * pixel) +
                             scene_at(uv + 0.55 * tangent * pixel));
     float subpixel = abs(0.25 * (n + s + w + e) - m) / contrast;
-    float3 adjacent = (north + south + west + east) * 0.25;
     return lerp(aligned, adjacent, 0.45 * saturate(subpixel * subpixel));
 }
 
@@ -319,7 +335,7 @@ float4 PSComposite(FullscreenVertex input) : SV_TARGET
     color = tone_map(color);
     if (gVignette != 0u) {
         float2 edge = uv * 2.0 - 1.0;
-        color *= 1.0 - 0.18 * smoothstep(0.2, 1.7, dot(edge, edge));
+        color *= 1.0 - (0.18 * float(gVignette) / 3.0) * smoothstep(0.2, 1.7, dot(edge, edge));
     }
     return float4(pow(color, 1.0 / 2.2), 1.0);
 }

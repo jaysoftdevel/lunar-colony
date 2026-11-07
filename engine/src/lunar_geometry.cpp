@@ -79,7 +79,7 @@ TerrainPages make_terrain_pages(std::span<const TerrainVertex> landscape,std::si
     return out;
 }
 
-std::vector<GeometryUpload> TerrainPages::update(Vec3 eye,Vec3 focus){
+std::vector<GeometryUpload> TerrainPages::update(Vec3 eye,Vec3 focus,std::size_t resident_limit){
     struct Candidate { std::size_t page; float score; };
     std::vector<Candidate> near;
     for(std::size_t i=0;i<pages.size();++i){
@@ -93,13 +93,21 @@ std::vector<GeometryUpload> TerrainPages::update(Vec3 eye,Vec3 focus){
             near.push_back({i,score});
         }
     }
-    const auto limit=std::min(near.size(),slots.size());
+    const auto limit=std::min({near.size(),slots.size(),resident_limit});
     std::partial_sort(near.begin(),near.begin()+limit,near.end(),
         [](const Candidate& a,const Candidate& b){ return a.score==b.score?a.page<b.page:a.score<b.score; });
     for(std::size_t i=0;i<limit;++i) pages[near[i].page].wanted=true;
 
+    if(resident_limit<slots.size()){
+        for(auto& resident:slots){
+            if(resident && !pages[resident-1].wanted){
+                clusters[pages[resident-1].cluster].detail={};
+                resident=0;
+            }
+        }
+    }
     std::vector<GeometryUpload> uploads;
-    constexpr std::size_t frame_upload_limit=8;
+    const auto frame_upload_limit=std::max<std::size_t>(1,resident_limit/8);
     for(std::size_t i=0;i<limit && uploads.size()<frame_upload_limit;++i){
         const auto index=near[i].page;
         const auto& page=pages[index];

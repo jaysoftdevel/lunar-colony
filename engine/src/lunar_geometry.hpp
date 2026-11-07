@@ -38,7 +38,7 @@ struct TerrainPages {
     std::array<std::size_t,detail_slot_count> slots{};
 
     std::size_t buffer_vertices() const { return coarse.size()+detail_slot_count*detail_slot_vertices; }
-    std::vector<GeometryUpload> update(Vec3 eye,Vec3 focus);
+    std::vector<GeometryUpload> update(Vec3 eye,Vec3 focus,std::size_t resident_limit=detail_slot_count);
 };
 
 TerrainPages make_terrain_pages(std::span<const TerrainVertex> landscape,std::size_t rocks_begin);

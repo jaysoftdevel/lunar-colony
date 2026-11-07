@@ -22,7 +22,9 @@ add_library(game_cluster_app OBJECT
     src/screens/save_load.cpp
     src/screens/settings.cpp
     src/screens/graphics_settings.cpp
+    src/screens/graphics_benchmark.cpp
     src/config/preferences.cpp
+    src/config/graphics_benchmark.cpp
     src/screens/credits.cpp
 )
 configure_game_cluster(game_cluster_app)

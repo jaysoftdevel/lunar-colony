@@ -794,3 +794,15 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Use enhanced barriers on supported runtimes and offer optional variable-rate shading for outer terrain.
 - Add Windows graphics controls for the new renderer and its effects.
 - Support an optional app-local Agility SDK 1.620.1 runtime for both Windows executables.
+
+0.52.5 - Runtime build layout
+- Stage the Debug scenario template next to its executable on both platforms.
+- Stage the installed Linux OpenAL runtime and prefer the executable-relative copy.
+- Keep the static engine and RVO2 archives under the build tree's lib directory and link the game clusters into both executables.
+- Link the MSVC runtime statically for first-party Windows build targets.
+
+0.52.6 - Individual graphics quality and benchmark
+- Add independent quality levels for scalable rendering effects and preserve existing graphics preferences.
+- Scale the Direct3D 12 lunar render targets while drawing the HUD at display resolution.
+- Measure fixed rendering scenes on the active adapter and recommend a profile for the selected frame-rate target.
+- Show benchmark results before applying any graphics changes.

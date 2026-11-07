@@ -598,6 +598,94 @@ struct UiRegression {
         std::cout<<"Mesh override, Music persistence, stage speed shortcuts and pause frame passed\n";
     }
 
+    static void graphics_quality(){
+        using namespace eng;
+        struct BenchmarkRecorder : Recorder {
+            bool benchmarking{};
+            GraphicsCapabilities graphics_capabilities() override {
+                GraphicsCapabilities caps{};
+                caps.enhanced=true;
+                caps.ray_lighting=caps.visibility_buffer=caps.gpu_terrain=caps.pages=true;
+                return caps;
+            }
+            bool supports_graphics_benchmark() const override { return true; }
+            void set_graphics_benchmark(bool enabled) override { benchmarking=enabled; }
+            double benchmark_frame_ms() const override {
+                if(!benchmarking) return 0;
+                if(graphics.path==GraphicsPath::Classic) return 6;
+                return graphics.render_scale==100?24:graphics.render_scale==85?13:9;
+            }
+            bool begin_lunar_scene(const LunarScene&) override { return graphics.path!=GraphicsPath::Classic; }
+            bool draw_campus_atmosphere(const Mat4&,Vec3,float) override { return graphics.path!=GraphicsPath::Classic; }
+        };
+        const auto saved=load_preferences();
+        {
+            std::ofstream legacy(std::getenv("GAME_GRAPHICS_CONFIG"));
+            legacy<<"terrain_relief=1\nmaterial_detail=0\n";
+        }
+        using F=GraphicsFeature;
+        const auto migrated=load_preferences().graphics;
+        require(migrated.quality(F::TerrainRelief)==3 && migrated.quality(F::MaterialDetail)==0,
+                "legacy on and off settings changed meaning");
+        Application engine;
+        GameApp app(engine);
+        BenchmarkRecorder r;
+        app.screen_=GameApp::Screen::GraphicsSettings;
+        const auto click=[&](const char* text){
+            app.input_={};
+            app.render(r);
+            const auto box=r.button(text);
+            app.input_.mouse_x=int((box.x+box.w*0.5f)*r.scale);
+            app.input_.mouse_y=int((box.y+box.h*0.5f)*r.scale);
+            app.input_.left_pressed=true;
+            app.render(r);
+            app.input_={};
+        };
+        click("WORLD");
+        click("HIGH");
+        require(app.graphics_.quality(F::TerrainRelief)==0,"terrain quality did not turn off");
+        click("OFF");
+        require(app.graphics_.quality(F::TerrainRelief)==1 && app.graphics_.quality(F::MaterialDetail)==3,
+                "terrain and material quality settings interfered");
+        require(load_preferences().graphics==app.graphics_,"individual graphics quality did not persist");
+
+        const auto custom=app.graphics_;
+        click("BENCHMARK");
+        click("RUN BENCHMARK");
+        require(app.graphics_benchmark_.running(),"benchmark did not start");
+        for(int frame=0;frame<1000 && app.graphics_benchmark_.running();++frame) app.render(r);
+        require(app.graphics_benchmark_.status()==BenchmarkStatus::Complete,"benchmark did not finish");
+        require(app.graphics_==custom && load_preferences().graphics==custom,"benchmark changed settings before Apply");
+        const auto* recommended=app.graphics_benchmark_.recommendation();
+        require(recommended && recommended->profile==BenchmarkProfile::Balanced && recommended->worst_p90()==13,
+                "benchmark did not choose highest quality within the frame budget");
+        click("60 FPS TARGET");
+        require(app.graphics_benchmark_.recommendation()->profile==BenchmarkProfile::Performance,
+                "changing FPS target did not reuse the completed measurements");
+        click("90 FPS TARGET");
+        click("120 FPS TARGET");
+        click("30 FPS TARGET");
+        click("APPLY RECOMMENDATION");
+        require(app.graphics_.render_scale==85 && app.graphics_.quality(F::MaterialDetail)==2 &&
+                load_preferences().graphics==app.graphics_,"benchmark recommendation did not persist");
+
+        click("RUN BENCHMARK");
+        InputState escape{};
+        escape.escape_pressed=true;
+        app.update_simulation(0.01f,escape);
+        app.render(r);
+        require(app.graphics_benchmark_.status()==BenchmarkStatus::Cancelled && !r.benchmarking &&
+                app.screen_==GameApp::Screen::GraphicsSettings,"cancelling benchmark left the graphics menu or timing active");
+        click("RUN BENCHMARK");
+        r.resize(1280,720);
+        app.render(r);
+        require(app.graphics_benchmark_.status()==BenchmarkStatus::Resized && !r.benchmarking,
+                "benchmark mixed measurements across display sizes");
+        r.check_bounds("benchmark display resize");
+        require(save_preferences(saved),"could not restore isolated test preferences");
+        std::cout<<"Independent quality settings and benchmark start, apply, cancel, and resize passed\n";
+    }
+
     static void build_mode(){
         using namespace eng;
         Application engine;
@@ -1218,6 +1306,9 @@ struct UiRegression {
             // template must leave that session intact and allow another choice.
             sandbox.screen_=GameApp::Screen::Stage3Modes;
             const bool template_exists=std::filesystem::is_regular_file(sandbox.debug_blueprint_template_path());
+#ifdef GAME_EXPECT_STAGED_DEBUG_TEMPLATE
+            require(template_exists,"Debug scenario template is missing from the runtime directory");
+#endif
             click_menu("TEMPLATE MODE");
             if(template_exists){
                 require(sandbox.screen_==GameApp::Screen::Playfield &&
@@ -1734,6 +1825,7 @@ int main(int argc,char** argv){
     try{
         const std::string out=argc>1?argv[1]:"";
         if(out=="build-mode") game::UiRegression::build_mode();
+        else if(out=="graphics-quality") game::UiRegression::graphics_quality();
         else{
             if(!out.empty()) std::filesystem::create_directories(out);
             game::UiRegression::run(out);

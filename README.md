@@ -1,10 +1,11 @@
-# JSD Lunar Base v0.52.4
+# JSD Lunar Base v0.52.6
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
 The game includes a Direct3D 12 lunar renderer on Windows and an OpenGL
 compute renderer with a deferred fallback on Linux. Use **Settings → Graphics** to adjust
-the active renderer and its effects. See [RENDERING.md](RENDERING.md) for
+the active renderer and its effects. **Graphics → Benchmark** measures the
+current renderer and recommends a profile for your frame-rate target. See [RENDERING.md](RENDERING.md) for
 the feature breakdown and hardware requirements.
 
 ## What you can do
@@ -23,6 +24,6 @@ Press **1–3** to select a simulation speed and **Space** to pause or resume. A
 
 ## Build and run
 
-The workspace separates the engine in `engine/` from the simulation and game in `game/`. The Linux and Windows build scripts each produce Release and Debug executables. The default launcher starts Release. Pass `Debug` to start the developer build. The [cross-platform guide](CROSS-PLATFORM-DEVELOPMENT.md) lists the paired commands. The [dependency list](DEPENDENCIES.md), [architecture guide](ARCHITECTURE.md), and [Windows build guide](README-WINDOWS.md) cover the toolchains and source layout.
+The workspace separates the engine in `engine/` from the simulation and game in `game/`. The Linux and Windows build scripts each produce Release and Debug executables and stage their app-local runtime files under the platform's `build` directory. The default launcher starts Release. Pass `Debug` to start the developer build. The [cross-platform guide](CROSS-PLATFORM-DEVELOPMENT.md) lists the paired commands. The [dependency list](DEPENDENCIES.md), [architecture guide](ARCHITECTURE.md), and [Windows build guide](README-WINDOWS.md) cover the toolchains and source layout.
 
 See [UPDATE_HISTORY.log](UPDATE_HISTORY.log) for release notes and [README-HISTORY.md](README-HISTORY.md) for the archived README and earlier feature history.

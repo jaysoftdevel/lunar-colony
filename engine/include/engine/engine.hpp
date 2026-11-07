@@ -100,6 +100,10 @@ public:
     }
     virtual void set_graphics_settings(const GraphicsSettings&) {}
     virtual GraphicsCapabilities graphics_capabilities() { return {}; }
+    // Benchmark samples cover the completed rendering work before presentation.
+    virtual bool supports_graphics_benchmark() const { return false; }
+    virtual void set_graphics_benchmark(bool) {}
+    virtual double benchmark_frame_ms() const { return 0.0; }
     // Optional lunar scene pass. Other backends retain the standard mesh view.
     virtual bool begin_lunar_scene(const LunarScene&) { return false; }
     virtual bool lunar_scene_active() const { return false; }

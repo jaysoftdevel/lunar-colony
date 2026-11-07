@@ -3,6 +3,11 @@ add_compile_definitions(GAME_DEBUG_FEATURES=$<IF:$<CONFIG:Debug>,1,0>)
 
 include(cmake/GameClusters.cmake)
 
+set(DEBUG_BLUEPRINT_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/debug-templates/0-40-32-debug-start.gmsave")
+if(EXISTS "${DEBUG_BLUEPRINT_FIXTURE}")
+    set(staged_debug_template "$<$<CONFIG:Debug>:${DEBUG_BLUEPRINT_FIXTURE}>")
+endif()
+
 add_executable(game src/main.cpp)
 target_include_directories(game PRIVATE include)
 target_link_libraries(game PRIVATE game_engine Threads::Threads rvo2)
@@ -30,7 +35,18 @@ if(GAME_BUILD_NAVIGATION_TESTS)
     foreach(cluster IN LISTS GAME_CLUSTER_TARGETS)
         target_sources(ui_regression PRIVATE $<TARGET_OBJECTS:${cluster}>)
     endforeach()
+    if(staged_debug_template)
+        target_compile_definitions(ui_regression PRIVATE "$<$<CONFIG:Debug>:GAME_EXPECT_STAGED_DEBUG_TEMPLATE=1>")
+        add_custom_target(stage_ui_test_runtime
+            COMMAND "${CMAKE_COMMAND}" "-DRUNTIME_DIR=$<TARGET_FILE_DIR:ui_regression>"
+                "-DDEBUG_TEMPLATE=${staged_debug_template}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRuntime.cmake"
+            VERBATIM
+        )
+        add_dependencies(ui_regression stage_ui_test_runtime)
+    endif()
     add_test(NAME game_build_mode COMMAND ui_regression build-mode)
+    add_test(NAME game_graphics_quality COMMAND ui_regression graphics-quality)
     function(add_debug_regression name)
         add_test(NAME "${name}" ${ARGN} CONFIGURATIONS Debug)
     endfunction()
@@ -66,7 +82,6 @@ if(GAME_BUILD_NAVIGATION_TESTS)
     add_debug_regression(colony_power_switches COMMAND navigation_regression power-switches)
     add_debug_regression(navigation_utilities COMMAND navigation_regression utilities)
     # Optional regression fixture. Building the game and tests requires only sources.
-    set(DEBUG_BLUEPRINT_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/debug-templates/0-40-32-debug-start.gmsave")
     if(EXISTS "${DEBUG_BLUEPRINT_FIXTURE}")
         add_debug_regression(navigation_fault_construction COMMAND navigation_regression fault-construction "${DEBUG_BLUEPRINT_FIXTURE}")
         add_debug_regression(navigation_construction COMMAND navigation_regression construction "${DEBUG_BLUEPRINT_FIXTURE}")
@@ -81,6 +96,31 @@ set_target_properties(game PROPERTIES
     # The generator expression keeps multi-config generators from adding a
     # configuration subdirectory, so both variants share the save directory.
     RUNTIME_OUTPUT_DIRECTORY "$<1:${GAME_BIN_DIR}>")
+
+if(WIN32)
+    set(GAME_OPENAL_RUNTIME "${PROJECT_SOURCE_DIR}/build/windows/bin/OpenAL32.dll" CACHE FILEPATH
+        "OpenAL Soft Win64 DLL staged beside the game")
+    set(openal_destination "OpenAL32.dll")
+else()
+    find_file(GAME_OPENAL_RUNTIME NAMES libopenal.so.1 PATHS ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
+    set(openal_destination "lib/libopenal.so.1")
+    set_property(TARGET game APPEND PROPERTY BUILD_RPATH "$ORIGIN/lib")
+    if(NOT CMAKE_CROSSCOMPILING)
+        set(openal_notice "/usr/share/doc/libopenal1/copyright")
+    endif()
+endif()
+
+# Stage loose runtime files on incremental builds as well as fresh builds.
+add_custom_target(stage_game_runtime
+    COMMAND "${CMAKE_COMMAND}" "-DRUNTIME_DIR=$<TARGET_FILE_DIR:game>"
+        "-DDEBUG_TEMPLATE=${staged_debug_template}"
+        "-DOPENAL_LIBRARY=${GAME_OPENAL_RUNTIME}"
+        "-DOPENAL_DESTINATION=${openal_destination}"
+        "-DOPENAL_NOTICE=${openal_notice}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRuntime.cmake"
+    VERBATIM
+)
+add_dependencies(game stage_game_runtime)
 
 if(WIN32)
     set(GAME_D3D12_AGILITY_DIR "" CACHE PATH

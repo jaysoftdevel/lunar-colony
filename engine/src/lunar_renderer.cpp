@@ -58,8 +58,14 @@ constexpr auto glsl430="#version 430 core\n";
 
 const char* graphics_shader_options(){
     static const std::string options=[]{
-        std::string code="uniform uint graphicsFlags;\n"
-                         "bool option(uint bit){return (graphicsFlags&bit)!=0u;}\n";
+        std::string code=R"GLSL(uniform uint graphicsFlags,graphicsLow,graphicsMedium;
+bool option(uint bit){return (graphicsFlags&bit)!=0u;}
+int quality(uint bit){return !option(bit)?0:(graphicsLow&bit)!=0u?1:(graphicsMedium&bit)!=0u?2:3;}
+int taps(uint bit,int low,int medium,int high){
+    int level=quality(bit);
+    return level<=1?low:level==2?medium:high;
+}
+)GLSL";
         for(std::size_t i=0;i<graphics_feature_keys.size();++i){
             code+="#define OPT_";
             code+=graphics_feature_keys[i];
@@ -139,7 +145,7 @@ enum Uniform {
     PreviousSpecular, PreviousIndirect, PreviousDirect, UseRays, VisibilityMap, ClusterCount, VolumeCount, VolumeOrigin, VolumeAxis, VolumeColor, VolumeParams,
     UseVolumes, VolumeMap, OverlayMap, Sharpen, GroundPageMap, GroundTable, GroundOrigin, UseGroundPages,
     ShadowPageMap, ShadowTable, ShadowOrigin, ShadowX, ShadowY, ShadowSun, UseShadowPages,
-    NeuralFocus, UseNeural, LearnedUpscale, InputPixelSize, GraphicsFlags, UseShadowMaps,
+    NeuralFocus, UseNeural, LearnedUpscale, InputPixelSize, GraphicsFlags,GraphicsLow,GraphicsMedium,ShadowQuality,AAQuality, UseShadowMaps,
     UseReflection, WeightedTransparency, BloomStrength, Exposure, UniformCount
 };
 constexpr std::array<const char*,UniformCount> uniform_names{
@@ -152,7 +158,7 @@ constexpr std::array<const char*,UniformCount> uniform_names{
     "previousSpecular","previousIndirect","previousDirect","useRays","visibilityMap","clusterCount","volumeCount","volumeOriginLength[0]","volumeAxisRadius[0]",
     "volumeColorDensity[0]","volumeParameters[0]","useVolumes","volumeMap","overlayMap","sharpen",
     "groundPageMap","groundTable","groundOrigin","useGroundPages","shadowPageMap","shadowTable",
-    "shadowOrigin","shadowX","shadowY","shadowSun","useShadowPages","neuralFocus","useNeural","learnedUpscale","inputPixelSize","graphicsFlags","useShadowMaps",
+    "shadowOrigin","shadowX","shadowY","shadowSun","useShadowPages","neuralFocus","useNeural","learnedUpscale","inputPixelSize","graphicsFlags","graphicsLow","graphicsMedium","shadowQuality","aaQuality","useShadowMaps",
     "useReflection","weightedTransparency","bloomStrength","exposure"
 };
 
@@ -363,12 +369,12 @@ TerrainVertex terrain_vertex(float x,float z,float half){
     return {{x,terrain_height(x,z,half),z},normalize({-dx,2.0f*step,-dz}),0};
 }
 
-void add_boulders(std::vector<TerrainVertex>& vertices,float half){
+void add_boulders(std::vector<TerrainVertex>& vertices,float half,int quality){
     constexpr float spacing=7.2f;
     const Int cells=static_cast<Int>(std::ceil((half+170.0f)/spacing));
     for(Int z=-cells;z<=cells;++z) for(Int x=-cells;x<=cells;++x){
         const float chance=random(x,z,312);
-        if(chance<0.78f) continue;
+        if(chance<quality_budget(quality,0.93f,0.85f,0.78f)) continue;
         const float px=(x+0.14f+0.70f*random(x,z,314))*spacing;
         const float pz=(z+0.14f+0.70f*random(x,z,327))*spacing;
         const float edge=std::max(std::abs(px),std::abs(pz))-half;
@@ -401,21 +407,21 @@ void add_boulders(std::vector<TerrainVertex>& vertices,float half){
     }
 }
 
-std::vector<TerrainVertex> terrain_mesh(float half,bool relief){
+std::vector<TerrainVertex> terrain_mesh(float half,int quality){
     // The inner quad stays on the build/pick plane. The flat mode extends
     // the plane to the same horizon as the normal terrain.
-    const float inner=relief?half:half+1700.0f;
+    const float inner=quality?half:half+1700.0f;
     std::vector<TerrainVertex> vertices{
         {{-inner,0,-inner}},{{inner,0,inner}},{{inner,0,-inner}},
         {{-inner,0,-inner}},{{-inner,0,inner}},{{inner,0,inner}}
     };
-    if(!relief) return vertices;
-    constexpr Int segments=96;
+    if(!quality) return vertices;
+    const Int segments=quality_budget(quality,32,64,96);
     constexpr std::array<float,38> distances{
         0,4,8,12,16,21,26,32,38,45,53,62,72,83,95,108,122,137,153,
         171,191,213,237,263,293,325,361,401,445,494,550,614,686,770,872,1002,1190,1700
     };
-    std::array<std::array<TerrainVertex,segments+1>,2> row{};
+    std::array<std::array<TerrainVertex,97>,2> row{};
     vertices.reserve(vertices.size()+(distances.size()-1)*4*segments*6);
     for(Int side=0;side<4;++side){
         for(std::size_t i=0;i<distances.size();++i){
@@ -435,7 +441,7 @@ std::vector<TerrainVertex> terrain_mesh(float half,bool relief){
             }
         }
     }
-    add_boulders(vertices,half);
+    add_boulders(vertices,half,quality);
     return vertices;
 }
 
@@ -725,7 +731,7 @@ struct LunarRenderer::Impl {
         history_height=std::max(1,Int(h*history_scale));
         history_valid=false;
         history_index=jitter=0;
-        const Int bw=std::max(1,width/4),bh=std::max(1,height/4);
+        const Int bw=std::max(1,width/bloom_divisor()),bh=std::max(1,height/bloom_divisor());
         targets_ready=make_target(gbuffer,width,height,{{rgba8},{rgba16f},{rgba8}},true)
             && make_target(hdr,width,height,{{rgba16f,true}})
             && make_target(reflections,std::max(1,width/2),std::max(1,height/2),{{rgba16f,true}})
@@ -857,13 +863,13 @@ struct LunarRenderer::Impl {
         if(!link(geometry,mesh_vertex,{geometry_inputs,options,gbuffer_outputs,surface_common,geometry_sample,gbuffer_fragment}) ||
            !link(shadow,depth_vertex,{depth_fragment}) || !link(sky,screen_vertex,{sky_fragment}) ||
            !link(lighting,screen_vertex,{scene_inputs,options,lighting_uniforms,lighting_common,reconstruct_common,deferred_fragment}) ||
-           !link(reflection,screen_vertex,{scene_inputs,reflection_inputs,reconstruct_common,reflection_fragment}) ||
+           !link(reflection,screen_vertex,{scene_inputs,options,reflection_inputs,reconstruct_common,reflection_fragment}) ||
            !link(transparency,mesh_vertex,{geometry_inputs,options,lighting_uniforms,transparency_outputs,
                                           surface_common,geometry_sample,lighting_common,transparency_fragment}) ||
            !link(temporal,screen_vertex,{temporal_inputs,options,reconstruct_common,temporal_fragment}) ||
            !link(line,mesh_vertex,{line_fragment}) || !link(bloom,screen_vertex,{bloom_fragment}) ||
            !link(composite,screen_vertex,{glsl330,options,composite_fragment}) || !link(fxaa,screen_vertex,{fxaa_fragment,learned_upscale}) ||
-           !link(volume_program,screen_vertex,{volume_inputs,reconstruct_common,volume_fragment}) ||
+           !link(volume_program,screen_vertex,{volume_inputs,options,reconstruct_common,volume_fragment}) ||
            !initialize_shadow()) return false;
 
         gl.GenTextures(1,&surface_maps);
@@ -910,6 +916,7 @@ struct LunarRenderer::Impl {
         return true;
     }
 
+    Int bloom_divisor() const { return quality_budget(graphics.bloom_quality,8,6,4); }
     bool temporal_aa() const { return graphics.aa==GraphicsAA::Temporal; }
     bool auto_path() const { return graphics.path==GraphicsPath::Auto; }
     bool use_ground_pages() const { return auto_path() && page_support && graphics.enabled(Feature::VirtualTextures); }
@@ -923,13 +930,14 @@ struct LunarRenderer::Impl {
         if(next==graphics) return;
         finish();
         const bool resolution_changed=(next.aa==GraphicsAA::Temporal)!=temporal_aa() ||
-            next.render_scale!=graphics.render_scale || next.ray_scale!=graphics.ray_scale;
+            next.render_scale!=graphics.render_scale || next.ray_scale!=graphics.ray_scale ||
+            next.bloom_quality!=graphics.bloom_quality;
         if(next.path!=graphics.path || resolution_changed) output_width=0;
         if(loaded && next.path==GraphicsPath::Classic && graphics.path!=GraphicsPath::Classic){
             destroy_screen_targets();
             targets_ready=false;
         }
-        if(next.enabled(Feature::TerrainRelief)!=graphics.enabled(Feature::TerrainRelief))
+        if(next.quality(Feature::TerrainRelief)!=graphics.quality(Feature::TerrainRelief))
             terrain_extent=0.0f;
         if(!graphics.enabled(Feature::NeuralRadiance) && next.enabled(Feature::NeuralRadiance))
             neural_initialized=false;
@@ -942,7 +950,7 @@ struct LunarRenderer::Impl {
         if(output_width!=w || output_height!=h) resize(w,h);
         if(!targets_ready) return false;
         if(terrain_extent!=next.half_extent){
-            const auto landscape=terrain_mesh(next.half_extent,graphics.enabled(Feature::TerrainRelief));
+            const auto landscape=terrain_mesh(next.half_extent,graphics.quality(Feature::TerrainRelief));
             terrain_vertices=static_cast<Int>(landscape.size());
             const auto rocks=std::find_if(landscape.begin(),landscape.end(),[](const TerrainVertex& v){ return v.stone>0.0f; });
             stone_start=static_cast<Int>(rocks-landscape.begin());
@@ -1034,6 +1042,10 @@ struct LunarRenderer::Impl {
 
     void shader_options(const Program& program,std::uint32_t features){
         gl.Uniform1ui(program[GraphicsFlags],features);
+        gl.Uniform1ui(program[GraphicsLow],graphics.low_quality);
+        gl.Uniform1ui(program[GraphicsMedium],graphics.medium_quality);
+        gl.Uniform1i(program[ShadowQuality],graphics.shadow_quality);
+        gl.Uniform1i(program[AAQuality],graphics.aa_quality);
     }
 
     void render_shadows(){
@@ -1065,7 +1077,7 @@ struct LunarRenderer::Impl {
         ground_origin=page_origin(scene.focus.x,scene.focus.z,material_page_meters);
         lunar::PageRevisions revisions;
         revisions.fill(1);
-        const auto plan=ground_pages.plan(ground_origin,revisions,4);
+        const auto plan=ground_pages.plan(ground_origin,revisions,quality_budget(graphics.quality(Feature::VirtualTextures),1,2,4));
         if(!plan.uploads.empty()){
             bind_texture(0,ground_atlas,texture_array);
             for(const auto& upload:plan.uploads){
@@ -1136,7 +1148,7 @@ struct LunarRenderer::Impl {
         page_x=normalize(cross(page_sun*-1.0f,up));
         page_y=normalize(cross(page_x,page_sun*-1.0f));
         shadow_origin=page_origin(dot(scene.focus,page_x),dot(scene.focus,page_y),shadow_page_meters);
-        const auto plan=shadow_pages.plan(shadow_origin,shadow_revisions(),4);
+        const auto plan=shadow_pages.plan(shadow_origin,shadow_revisions(),quality_budget(graphics.shadow_quality,1,2,4));
         upload_page_table(shadow_table,plan);
         if(plan.uploads.empty()) return;
         const Mat4 view=look_at(page_sun*2048.0f,Vec3{},up);
@@ -1174,7 +1186,8 @@ struct LunarRenderer::Impl {
         vector(program,ShadowY,page_y);
         vector(program,ShadowSun,page_sun);
         std::array<float,32> position{},colors{};
-        const auto count=graphics.enabled(Feature::LocalLights)?std::min<std::size_t>(scene.light_count,8):0;
+        const auto light_budget=quality_budget(graphics.quality(Feature::LocalLights),2u,4u,8u);
+        const auto count=graphics.enabled(Feature::LocalLights)?std::min<std::size_t>(scene.light_count,light_budget):0;
         for(std::size_t i=0;i<count;++i){
             const auto& light=scene.lights[i];
             const auto j=i*4;
@@ -1248,7 +1261,8 @@ struct LunarRenderer::Impl {
 
     void prepare_cluster_draws(){
         if(graphics.enabled(Feature::StreamedGeometry)){
-            const auto uploads=terrain_pages.update(scene.eye,scene.focus);
+            const auto uploads=terrain_pages.update(scene.eye,scene.focus,
+                quality_budget(graphics.quality(Feature::StreamedGeometry),16u,32u,64u));
             gl.BindBuffer(array_buffer,cluster_vertices);
             for(const auto& upload:uploads){
                 const auto& data=terrain_pages.pages[upload.page].vertices;
@@ -1462,7 +1476,9 @@ struct LunarRenderer::Impl {
         if(resample) frame_features|=graphics_bit(Feature::ReservoirLights);
         const bool trace_fixtures=local_lights && tracing && graphics.enabled(Feature::RayShadows);
         ++ray_frame;
-        upload_fixtures(resample?scene.lights.size():trace_fixtures?8:0);
+        const int light_quality=graphics.quality(Feature::LocalLights);
+        upload_fixtures(resample?quality_budget(light_quality,8u,24u,64u):
+                        trace_fixtures?quality_budget(light_quality,2u,4u,8u):0u);
         compute.bind_buffer(storage_buffer,0,ray_buffers[0]);
         compute.bind_buffer(storage_buffer,1,ray_buffers[1]);
         // The compute shaders sample the geometry textures. Their source
@@ -1551,6 +1567,7 @@ struct LunarRenderer::Impl {
         gl.BindFramebuffer(framebuffer,reflections.fbo);
         gl.Viewport(0,0,std::max(1,width/2),std::max(1,height/2));
         screen(reflection);
+        shader_options(reflection,graphics.features);
         gbuffer_state(reflection);
         sample(reflection,Source,4,hdr.color);
         matrix(reflection,ViewProjection,view_projection);
@@ -1595,6 +1612,7 @@ struct LunarRenderer::Impl {
         gl.BindFramebuffer(framebuffer,volume_target.fbo);
         gl.Viewport(0,0,std::max(1,width/2),std::max(1,height/2));
         screen(volume_program);
+        shader_options(volume_program,graphics.features);
         sample(volume_program,DepthMap,0,gbuffer.depth);
         matrix(volume_program,InverseViewProjection,inverse);
         vector(volume_program,Eye,scene.eye);
@@ -1681,7 +1699,7 @@ struct LunarRenderer::Impl {
 
     void post_process(UInt resolved){
         if(graphics.bloom>0){
-            const Int bw=std::max(1,width/4),bh=std::max(1,height/4);
+            const Int bw=std::max(1,width/bloom_divisor()),bh=std::max(1,height/bloom_divisor());
             gl.Viewport(0,0,bw,bh);
             screen(bloom);
             gl.BindFramebuffer(framebuffer,bloom_a.fbo);
@@ -1719,6 +1737,7 @@ struct LunarRenderer::Impl {
         gl.Uniform1i(fxaa[UseTransparency],!lines.empty());
         const float spatial=graphics.aa==GraphicsAA::Off?0.0f:temporal_aa() && history_valid?0.52f:1.0f;
         gl.Uniform1f(fxaa[SpatialAA],spatial);
+        gl.Uniform1i(fxaa[AAQuality],graphics.aa_quality);
         gl.Uniform1f(fxaa[Sharpen],width<history_width?0.22f:0.05f);
         gl.Uniform1i(fxaa[LearnedUpscale],temporal_aa() && graphics.enabled(Feature::LearnedUpscale) && width*1.18f<history_width);
         gl.Uniform2f(fxaa[InputPixelSize],1.0f/width,1.0f/height);

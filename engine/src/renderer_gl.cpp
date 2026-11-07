@@ -8,6 +8,7 @@
 #include <X11/Xutil.h>
 #include <dlfcn.h>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -49,6 +50,7 @@ struct GLApi {
     void (*glActiveTexture)(GLenum)=nullptr;
     void (*glPixelStorei)(GLenum,GLint)=nullptr;
     void (*glGenerateMipmap)(GLenum)=nullptr; // optional; fall back to bilinear without mipmaps
+    void (*glFinish)()=nullptr;
 
 
     template<class T> bool load(T& out,const char* n){ out=(T)dlsym(lib,n); if(!out && glXGetProcAddressARB) out=(T)glXGetProcAddressARB((const GLubyte*)n); return out!=nullptr; }
@@ -63,6 +65,7 @@ struct GLApi {
 #define L(x) ok=load(x,#x)&&ok
         L(glGetString);L(glClearColor);L(glClear);L(glViewport);L(glEnable);L(glDisable);L(glBlendFunc);L(glLineWidth);L(glDepthMask);L(glBindAttribLocation);L(glCreateShader);L(glShaderSource);L(glCompileShader);L(glGetShaderiv);L(glGetShaderInfoLog);L(glCreateProgram);L(glAttachShader);L(glLinkProgram);L(glGetProgramiv);L(glGetProgramInfoLog);L(glUseProgram);L(glGenBuffers);L(glBindBuffer);L(glBufferData);L(glBufferSubData);L(glEnableVertexAttribArray);L(glVertexAttribPointer);L(glDisableVertexAttribArray);L(glDrawArrays);L(glGetUniformLocation);L(glUniform1f);L(glUniformMatrix4fv);L(glUniform4f);L(glUniform1i);L(glGenTextures);L(glBindTexture);L(glTexImage2D);L(glTexParameteri);L(glActiveTexture);L(glPixelStorei);
         load(glGenerateMipmap,"glGenerateMipmap");
+        load(glFinish,"glFinish");
 #undef L
         return ok&&glXCreateContext&&glXMakeCurrent&&glXIsDirect&&glXSwapBuffers;
     }
@@ -153,7 +156,10 @@ class GLRenderer final: public Renderer {
     std::unique_ptr<LunarRenderer> lunar_;
     bool lunar_attempted_{false};
     bool lunar_frame_{false};
-    bool campus_atmosphere_{false};
+    int campus_haze_level_{};
+    bool benchmarking_{};
+    double benchmark_ms_{};
+    std::chrono::steady_clock::time_point benchmark_begin_{};
     Vec3 campus_eye_{};
     GLint campus_haze_{},campus_eye_uniform_{};
     struct MaterialCommand {GLint first{},count{};int kind{};Color tint{};};
@@ -215,7 +221,7 @@ class GLRenderer final: public Renderer {
         gl_.glUseProgram(material_prog_);
         gl_.glUniformMatrix4fv(material_mvp_,1,GL_FALSE,mvp_.m.data());
         gl_.glUniform1i(material_tex_,0);
-        gl_.glUniform1i(campus_haze_,campus_atmosphere_?1:0);
+        gl_.glUniform1i(campus_haze_,campus_haze_level_);
         gl_.glUniform4f(campus_eye_uniform_,campus_eye_.x,campus_eye_.y,campus_eye_.z,0);
         gl_.glActiveTexture(GL_TEXTURE0);
         gl_.glBindBuffer(GL_ARRAY_BUFFER,vbo_);
@@ -345,7 +351,7 @@ void main(){
     vec3 lit=clamp(base*light,0.0,1.0);
     if(uHaze!=0){
         float d=max(0.0,length(vWorld-uEye.xyz)-80.0);
-        float haze=1.0-exp(-d*0.0013);
+        float haze=1.0-exp(-d*0.0013*(float(uHaze)/3.0));
         lit=mix(lit,vec3(0.65,0.76,0.82),haze*0.79);
     }
     gl_FragColor=vec4(lit,uColor.a);
@@ -385,11 +391,22 @@ void main(){
     }
     void resize(int w,int h) override { if(lunar_) lunar_->finish(); flush_geometry();flush_materials(); width_=w;height_=h; if(h<1)h=1; gl_.glViewport(0,0,w,h); }
     void begin_frame(Color c) override {
+        if(benchmarking_) benchmark_begin_=std::chrono::steady_clock::now();
         if(lunar_ && !lunar_frame_) lunar_->invalidate_history();
         lunar_frame_=false;
-        campus_atmosphere_=false;
+        campus_haze_level_=0;
         stream_.clear();material_vertices_.clear();material_commands_.clear(); gl_.glClearColor(c.r,c.g,c.b,c.a); gl_.glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); gl_.glEnable(GL_DEPTH_TEST); gl_.glEnable(GL_BLEND); gl_.glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA); }
-    void end_frame() override { if(lunar_) lunar_->finish(); flush_geometry();flush_materials(); gl_.glXSwapBuffers(d_,w_); }
+    void end_frame() override {
+        if(lunar_) lunar_->finish();
+        flush_geometry();
+        flush_materials();
+        if(benchmarking_){
+            gl_.glFinish();
+            benchmark_ms_=std::chrono::duration<double,std::milli>(
+                std::chrono::steady_clock::now()-benchmark_begin_).count();
+        }
+        gl_.glXSwapBuffers(d_,w_);
+    }
     void set_3d(const Mat4& vp) override { if(lunar_) lunar_->finish(); flush_geometry();flush_materials(); mvp_=vp; gl_.glEnable(GL_DEPTH_TEST); }
     void set_2d(float scale=1.0f) override {
         if(lunar_) lunar_->finish();
@@ -407,12 +424,15 @@ void main(){
     GraphicsCapabilities graphics_capabilities() override {
         return ensure_lunar()?lunar_->graphics_capabilities():GraphicsCapabilities{};
     }
+    bool supports_graphics_benchmark() const override { return gl_.glFinish!=nullptr; }
+    void set_graphics_benchmark(bool enabled) override { benchmarking_=enabled && supports_graphics_benchmark(); }
+    double benchmark_frame_ms() const override { return benchmark_ms_; }
     bool draw_campus_atmosphere(const Mat4& projection,Vec3 eye,float seconds) override {
         if(graphics_.path==GraphicsPath::Classic || !ensure_lunar()) return false;
         flush_geometry();
         flush_materials();
         campus_eye_=eye;
-        campus_atmosphere_=graphics_.enabled(GraphicsFeature::Haze);
+        campus_haze_level_=graphics_.quality(GraphicsFeature::Haze);
         return lunar_->campus_atmosphere(projection,eye,seconds,width_,height_);
     }
     bool begin_lunar_scene(const LunarScene& scene) override {

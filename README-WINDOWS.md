@@ -96,6 +96,7 @@ The complete gameplay feature set is retained, but these Linux implementation de
 - **GLX swap-interval extensions** are replaced by DXGI Present/VSync/tearing control.
 
 Windows loads the same sound mixer through the Win64 OpenAL Soft runtime. `install-deps.bat` installs that runtime beside both executables.
+MSVC builds link the C++ runtime statically for the game and its compiled libraries. The Debug build stages its scenario template under `build/windows/bin/debug`.
 
 ## Direct3D 12 graphics
 

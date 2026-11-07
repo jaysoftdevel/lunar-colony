@@ -42,6 +42,11 @@ fs::path executable_path(){
 #endif
 }
 
+fs::path runtime_directory(){
+    const auto executable=executable_path();
+    return executable.empty()?fs::current_path():executable.parent_path();
+}
+
 bool valid_storage_gate_links(const std::vector<PlacedResource>& items){
     std::unordered_map<std::uint64_t,std::size_t> owners;
     for(std::size_t i=0;i<items.size();++i) if(items[i].kind==ResourceKind::StorageDome && items[i].placement_sequence) owners[items[i].placement_sequence]=i;
@@ -478,10 +483,7 @@ std::string GameApp::save_game_directory() const {
     // Keep savegames with the installed game instead of placing them in the
     // user's global data directory. The platform-specific executable lookup
     // gives us a stable path even when launched from another working folder.
-    const fs::path executable=executable_path();
-    if(!executable.empty())
-        return (executable.parent_path()/"savegames").string();
-    return (fs::current_path()/"savegames").string();
+    return (runtime_directory()/"savegames").string();
 }
 
 void GameApp::refresh_save_games(){
@@ -741,20 +743,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
 
 
 std::string GameApp::debug_blueprint_template_path() const {
-    const fs::path executable=executable_path();
-    std::vector<fs::path> candidates;
-    if(!executable.empty()){
-        candidates.push_back(executable.parent_path()/"debug"/"0-40-32-debug-start.gmsave");
-        for(auto dir=executable.parent_path();!dir.empty();dir=dir.parent_path()){
-            candidates.push_back(dir/"game"/"debug-templates"/"0-40-32-debug-start.gmsave");
-            if(dir==dir.root_path())break;
-        }
-    }
-    candidates.push_back(fs::current_path()/"debug"/"0-40-32-debug-start.gmsave");
-    candidates.push_back(fs::current_path()/"game"/"debug-templates"/"0-40-32-debug-start.gmsave");
-    std::error_code ec;
-    for(const auto& candidate:candidates) if(fs::exists(candidate,ec) && !ec) return candidate.lexically_normal().string();
-    return candidates.empty()?std::string("debug/0-40-32-debug-start.gmsave"):candidates.front().lexically_normal().string();
+    return (runtime_directory()/"debug"/"0-40-32-debug-start.gmsave").string();
 }
 
 bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool completed){

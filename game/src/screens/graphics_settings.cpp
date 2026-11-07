@@ -11,7 +11,7 @@ namespace {
 using F=GraphicsFeature;
 
 enum class Control {
-    Feature, Path, Scale, RayScale, AA, Shadows, Transparency, Bloom, Exposure,
+    Feature, Path, Scale, RayScale, AA, AAQuality, Shadows, ShadowQuality, Transparency, Bloom, BloomQuality, Exposure,
 #ifdef _WIN32
     TerrainVrs,
 #endif
@@ -33,70 +33,76 @@ constexpr Row toggle(const char* label,const char* description,F feature,
 #ifdef _WIN32
 constexpr std::array output{
     Row{"RENDERER","Enhanced Direct3D 12 lunar lighting or classic mesh graphics.",Control::Path},
+    Row{"3D RENDER SCALE","Internal lunar resolution. Interface stays at display resolution.",Control::Scale},
     Row{"ANTI-ALIASING","FXAA smooths the lunar scene before the interface is drawn.",Control::AA},
+    Row{"AA QUALITY","Adjusts the number of samples used by FXAA.",Control::AAQuality},
     Row{"TERRAIN VRS","Use 2x2 shading on terrain outside the build area.",Control::TerrainVrs}
 };
 constexpr std::array world{
-    toggle("TERRAIN RELIEF","Adds crater detail and hills beyond the playfield.",F::TerrainRelief),
-    toggle("MATERIAL DETAIL","Adds regolith grain, solar cells, dust and surface finish.",F::MaterialDetail)
+    toggle("TERRAIN RELIEF","Scales terrain mesh density and crater detail.",F::TerrainRelief),
+    toggle("MATERIAL DETAIL","Scales regolith grain and solar cell detail.",F::MaterialDetail),
+    toggle("DECALS AND DUST","Adjusts landing-pad paint and dust on cladding.",F::Decals)
 };
 constexpr std::array lights{
     toggle("PHYSICALLY BASED LIGHTING","Uses material roughness and metalness in the lighting model.",F::Pbr),
-    toggle("LOCAL LIGHTS","Powered fixtures illuminate nearby surfaces.",F::LocalLights)
+    toggle("LOCAL LIGHTS","Scales the number of powered fixtures that illuminate surfaces.",F::LocalLights)
 };
 #else
 constexpr std::array output{
     Row{"RENDERER","Auto uses available compute features. Deferred uses raster effects.",Control::Path},
     Row{"3D RENDER SCALE","Internal resolution. Interface stays at display resolution.",Control::Scale},
     Row{"ANTI-ALIASING","Temporal reconstruction, spatial FXAA, or off.",Control::AA},
+    Row{"AA QUALITY","Adjusts the number of samples used for spatial edge smoothing.",Control::AAQuality},
     toggle("LEARNED UPSCALING","Learned detail recovery when temporal AA enlarges a low-resolution image.",F::LearnedUpscale,Requirement::Temporal),
     toggle("VISIBILITY BUFFER","Reconstructs materials from triangle IDs on the compute path.",F::VisibilityBuffer,Requirement::Visibility)
 };
 constexpr std::array world{
-    toggle("TERRAIN RELIEF","Draws the surrounding hills and boulders.",F::TerrainRelief),
+    toggle("TERRAIN RELIEF","Scales terrain mesh density and crater detail.",F::TerrainRelief),
     toggle("GPU TERRAIN CULLING","Uses GPU culling and indirect draws for terrain clusters.",F::GpuTerrain,Requirement::Terrain),
-    toggle("STREAMED TERRAIN DETAIL","Streams fine boulder meshes around the camera.",F::StreamedGeometry,Requirement::Streamed),
-    toggle("VIRTUAL TEXTURES","Streams near-field lunar ground material pages.",F::VirtualTextures,Requirement::Pages),
-    toggle("MATERIAL TEXTURES","Adds material grain, relief, and panel detail.",F::MaterialDetail),
-    toggle("DECALS AND DUST LAYERS","Shows landing-pad markings and dust buildup on surfaces.",F::Decals),
-    toggle("HAIR SHADING","Adds directional highlights and strand detail.",F::Hair),
-    toggle("CLOTH DETAIL","Adds fabric sheen, weave, and coverall wrinkles.",F::Cloth),
-    toggle("SKIN SHADING","Adds skin lighting and screen-space diffusion.",F::Skin),
+    toggle("STREAMED TERRAIN DETAIL","Sets the number of fine boulder pages resident near the camera.",F::StreamedGeometry,Requirement::Streamed),
+    toggle("VIRTUAL TEXTURES","Adjusts near-field ground texture detail and page uploads.",F::VirtualTextures,Requirement::Pages),
+    toggle("MATERIAL TEXTURES","Scales texture sampling, material grain and surface normals.",F::MaterialDetail),
+    toggle("DECALS AND DUST LAYERS","Adjusts landing-pad paint, wear and dust buildup.",F::Decals),
+    toggle("HAIR SHADING","Adds directional highlights and strand detail at higher levels.",F::Hair),
+    toggle("CLOTH DETAIL","Scales fabric texture detail.",F::Cloth),
+    toggle("SKIN SHADING","Adjusts the sample count for skin diffusion.",F::Skin),
     Row{"TRANSPARENCY","Weighted order-independent blending or sorted mesh blending.",Control::Transparency}
 };
 constexpr std::array lights{
     toggle("PHYSICALLY BASED LIGHTING","Uses material roughness and metalness in the lighting model.",F::Pbr),
-    toggle("LOCAL LIGHTS","Illuminates surfaces with nearby fixtures.",F::LocalLights),
+    toggle("LOCAL LIGHTS","Scales the number of powered fixtures that illuminate surfaces.",F::LocalLights),
     Row{"SUN SHADOW MAPS","Near shadow pages with cascades, cascades alone, or off.",Control::Shadows},
-    toggle("RESTIR DIRECT LIGHTING","Reuses fixture samples when many lights are visible.",F::ReservoirLights,Requirement::Reservoir),
-    toggle("SCREEN-SPACE AO","Adds contact shadows from visible geometry.",F::ScreenOcclusion),
-    toggle("SCREEN-SPACE GI","Adds diffuse bounce when ray-traced GI is inactive.",F::ScreenIndirect),
-    toggle("SCREEN-SPACE REFLECTIONS","Adds reflections when ray-traced reflections are inactive.",F::ScreenReflections)
+    Row{"SUN SHADOW QUALITY","Scales filter samples and updates to the near shadow pages.",Control::ShadowQuality},
+    toggle("RESTIR DIRECT LIGHTING","Adjusts fixture candidates and nearby samples.",F::ReservoirLights,Requirement::Reservoir),
+    toggle("SCREEN-SPACE AO","Adjusts the number of contact occlusion samples.",F::ScreenOcclusion),
+    toggle("SCREEN-SPACE GI","Adjusts diffuse bounce samples when ray GI is inactive.",F::ScreenIndirect),
+    toggle("SCREEN-SPACE REFLECTIONS","Adjusts steps and refinement for screen reflections.",F::ScreenReflections)
 };
 constexpr std::array rays{
     toggle("SOFTWARE RAY TRACING","Traces scene triangles using OpenGL compute.",F::RayTracing,Requirement::Compute),
-    toggle("RAY-TRACED SHADOWS","Traces sunlight and fixture visibility.",F::RayShadows,Requirement::Ray),
-    toggle("RAY-TRACED REFLECTIONS","Reflects geometry even when it is off screen.",F::RayReflections,Requirement::Ray),
-    toggle("RAY-TRACED AO","Traces near-field contact occlusion.",F::RayOcclusion,Requirement::Ray),
-    toggle("RAY-TRACED GI","Traces one diffuse bounce through the scene.",F::RayIndirect,Requirement::Ray),
+    toggle("RAY-TRACED SHADOWS","Adjusts sunlight ray reach and enables fixture visibility.",F::RayShadows,Requirement::Ray),
+    toggle("RAY-TRACED REFLECTIONS","Scales the maximum reflection ray distance.",F::RayReflections,Requirement::Ray),
+    toggle("RAY-TRACED AO","Scales the contact occlusion radius.",F::RayOcclusion,Requirement::Ray),
+    toggle("RAY-TRACED GI","Scales the diffuse bounce ray distance.",F::RayIndirect,Requirement::Ray),
     Row{"COMPUTE LIGHTING SCALE","Ray and reservoir buffer resolution relative to the 3D image.",Control::RayScale,F::Count,Requirement::Compute},
-    toggle("RAY DENOISING","Filters compute lighting across space and time.",F::RayDenoise,Requirement::Compute),
+    toggle("RAY DENOISING","Scales spatial filter samples for compute lighting.",F::RayDenoise,Requirement::Compute),
     toggle("LEARNED DENOISING","Uses learned confidence weights in the ray filter.",F::LearnedDenoise,Requirement::Denoise),
     toggle("NEURAL RADIANCE CACHE","Learns a local diffuse lighting estimate from ray samples.",F::NeuralRadiance,Requirement::Neural)
 };
 constexpr std::array atmosphere{
     toggle("EARTH ATMOSPHERE","Draws the scattering sky above the Earth campus.",F::EarthAtmosphere),
-    toggle("VOLUMETRIC CLOUDS","Adds ray-marched clouds to the Earth sky.",F::Clouds,Requirement::Atmosphere),
-    toggle("DISTANCE HAZE","Adds atmospheric haze to distant Earth campus surfaces.",F::Haze),
-    toggle("VOLUMETRIC EXHAUST","Renders depth-clipped rocket and trader engine plumes.",F::VolumetricPlumes),
-    toggle("VOLUMETRIC LUNAR DUST","Draws a dust cloud below a low lander.",F::VolumetricDust)
+    toggle("VOLUMETRIC CLOUDS","Adjusts ray-march steps in the Earth cloud layer.",F::Clouds,Requirement::Atmosphere),
+    toggle("DISTANCE HAZE","Adjusts the density of Earth campus haze.",F::Haze),
+    toggle("VOLUMETRIC EXHAUST","Adjusts integration steps for engine plumes.",F::VolumetricPlumes),
+    toggle("VOLUMETRIC LUNAR DUST","Adjusts integration steps for lander dust.",F::VolumetricDust)
 };
 #endif
 constexpr std::array image{
     Row{"BLOOM INTENSITY","Glow from bright surfaces and lights. Set to 0% to disable.",Control::Bloom},
+    Row{"BLOOM QUALITY","Scales the resolution of the glow buffer.",Control::BloomQuality},
     Row{"EXPOSURE","Adjusts world brightness in stops.",Control::Exposure},
     toggle("FILMIC TONE MAPPING","Uses a filmic highlight roll-off. Off uses a simpler tone curve.",F::Filmic),
-    toggle("VIGNETTE","Adds gentle shading at the edges of the 3D image.",F::Vignette)
+    toggle("VIGNETTE","Adjusts shading at the edges of the 3D image.",F::Vignette)
 };
 struct Tab { const char* name; const Row* rows; int count; };
 template<std::size_t N> constexpr Tab tab(const char* name,const std::array<Row,N>& rows){
@@ -124,6 +130,7 @@ constexpr std::array aa_names{"TEMPORAL","FXAA","OFF"};
 #endif
 constexpr std::array shadow_names{"PAGED + CSM","CASCADES","OFF"};
 constexpr std::array transparency_names{"WEIGHTED","SORTED"};
+constexpr std::array quality_names{"OFF","LOW","MEDIUM","HIGH"};
 
 const char* restriction(const Row& row,const GraphicsSettings& s,const GraphicsCapabilities& caps){
 #ifdef _WIN32
@@ -177,6 +184,9 @@ const char* restriction(const Row& row,const GraphicsSettings& s,const GraphicsC
             break;
     }
 #endif
+    if(row.control==Control::AAQuality && s.aa==GraphicsAA::Off) return "ENABLE ANTI-ALIASING";
+    if(row.control==Control::ShadowQuality && s.shadows==GraphicsShadows::Off) return "ENABLE SUN SHADOW MAPS";
+    if(row.control==Control::BloomQuality && s.bloom==0) return "INCREASE BLOOM INTENSITY";
     return nullptr;
 }
 } // namespace
@@ -205,14 +215,20 @@ void GameApp::render_graphics_settings(Renderer& r){
     ui::label_fitted(r,{x,panel.y+13.0f,inner,15.0f},status,1.05f,theme_,true);
 
     constexpr float gap=4.0f;
-    const float tab_width=(inner-gap*(tabs.size()-1))/tabs.size();
-    for(int i=0;i<int(tabs.size());++i){
+    constexpr int benchmark_tab=static_cast<int>(tabs.size());
+    const float tab_width=(inner-gap*benchmark_tab)/(benchmark_tab+1);
+    for(int i=0;i<=benchmark_tab;++i){
         const Rect box{x+(tab_width+gap)*i,panel.y+36.0f,tab_width,30.0f};
-        if(ui::button(r,ui_input_,box,tabs[i].name,theme_) && i!=graphics_tab_){
+        if(ui::button(r,ui_input_,box,i==benchmark_tab?"BENCHMARK":tabs[i].name,theme_) && i!=graphics_tab_){
             graphics_tab_=i;
             graphics_page_=0;
         }
         if(i==graphics_tab_) r.draw_rect({box.x,box.y+box.h-3,box.w,3},theme_.accent);
+    }
+
+    if(graphics_tab_==benchmark_tab){
+        render_benchmark_settings(r,panel,caps);
+        return;
     }
 
     const auto& page=tabs[graphics_tab_];
@@ -247,6 +263,9 @@ void GameApp::render_graphics_settings(Renderer& r){
             if(ui::button(r,ui_input_,control,names[int(value)],theme_,!blocked))
                 value=static_cast<std::decay_t<decltype(value)>>((int(value)+1)%names.size());
         };
+        const auto cycle_quality=[&](int& level){
+            if(ui::button(r,ui_input_,control,quality_names[level],theme_,!blocked)) level=level%3+1;
+        };
         const auto step=[&](int& value,int lower,int upper,int delta,const std::string& label){
             constexpr float arrow=30.0f;
             const Rect minus{control.x,control.y,arrow,control.h};
@@ -263,8 +282,14 @@ void GameApp::render_graphics_settings(Renderer& r){
         };
         switch(row.control){
             case Control::Feature:{
-                const bool on=graphics_.enabled(row.feature);
-                if(ui::button(r,ui_input_,control,on?"ON":"OFF",theme_,!blocked)) next.set(row.feature,!on);
+                if(scalable_graphics_feature(row.feature)){
+                    const int level=graphics_.quality(row.feature);
+                    if(ui::button(r,ui_input_,control,quality_names[level],theme_,!blocked))
+                        next.set_quality(row.feature,(level+1)%4);
+                }else{
+                    const bool on=graphics_.enabled(row.feature);
+                    if(ui::button(r,ui_input_,control,on?"ON":"OFF",theme_,!blocked)) next.set(row.feature,!on);
+                }
                 break;
             }
             case Control::Path:
@@ -290,6 +315,9 @@ void GameApp::render_graphics_settings(Renderer& r){
                 break;
 #endif
             case Control::Shadows: cycle(next.shadows,shadow_names); break;
+            case Control::AAQuality: cycle_quality(next.aa_quality); break;
+            case Control::ShadowQuality: cycle_quality(next.shadow_quality); break;
+            case Control::BloomQuality: cycle_quality(next.bloom_quality); break;
             case Control::Transparency: cycle(next.transparency,transparency_names); break;
             case Control::Scale: step(next.render_scale,50,100,5,std::to_string(next.render_scale)+"%"); break;
             case Control::RayScale: step(next.ray_scale,25,75,5,std::to_string(next.ray_scale)+"%"); break;

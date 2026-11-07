@@ -49,6 +49,10 @@ void GameApp::update(float dt,const InputState& in){
 
 void GameApp::update_simulation(float dt,const InputState& in){
     input_=in;
+    if(graphics_benchmark_.running()){
+        if(in.escape_pressed) graphics_benchmark_.stop(BenchmarkStatus::Cancelled);
+        return;
+    }
 
     // Keep the press pending until release. A right-button drag belongs to
     // the camera, and an active placement tool owns its cancellation click.
