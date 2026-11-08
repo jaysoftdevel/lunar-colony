@@ -15,7 +15,11 @@ constexpr float kRowHeight=38.f;
 constexpr float kPadding=8.f;
 constexpr int kMaxRows=8;
 
-Rect queue_header(Rect panel){return {panel.x,panel.y,panel.w,kHeaderHeight};}
+Rect queue_header(Rect panel){return {panel.x,panel.y+panel.h-kHeaderHeight,panel.w,kHeaderHeight};}
+
+Rect queue_row(Rect panel,int index){
+    return {panel.x+kPadding,panel.y+kPadding+index*kRowHeight,panel.w-2*kPadding,kRowHeight-3};
+}
 
 int visible_rows(Rect panel){
     return std::max(0,static_cast<int>((panel.h-kHeaderHeight-kFooterHeight-2*kPadding)/kRowHeight));
@@ -33,13 +37,27 @@ bool arrow(Renderer& r,const InputState& input,Rect rect,int direction,const ui:
 
 Rect GameApp::build_queue_panel_rect() const {
     const float width=viewport_width_/ui_scale_,height=viewport_height_/ui_scale_;
-    const float w=std::min(420.f,width*.40f);
-    const float y=STATUS_BAR_H+6.f;
-    const float available=height-BUILD_BAR_H-PLAYFIELD_MARGIN-y;
-    const float padding=kHeaderHeight+kFooterHeight+2*kPadding;
-    const int rows=std::clamp(static_cast<int>((available-padding)/kRowHeight),0,kMaxRows);
-    const float h=build_queue_expanded_ && rows>0?padding+rows*kRowHeight:kHeaderHeight;
-    return {width-w-PLAYFIELD_MARGIN,y,w,h};
+    const float w=std::min(390.f,width*.40f);
+    const float bottom=height-BUILD_BAR_H-PLAYFIELD_MARGIN;
+    float top=STATUS_BAR_H+PLAYFIELD_MARGIN;
+    if(debug_frame_visible())top+=DEBUG_FRAME_H+8.f;
+    else if(progress_tree_visible()){
+        const auto progress=progress_tree_panel_rect();
+        top=progress.y+progress.h+8.f;
+    }
+    float h=kHeaderHeight;
+    if(build_queue_expanded_){
+        const auto pending=[](const auto& items){
+            return static_cast<int>(std::count_if(items.begin(),items.end(),[](const auto& item){return !item.construction.complete();}));
+        };
+        const int count=pending(placed_habitats_)+pending(placed_resources_)+pending(corridor_network_.connections())+
+                        pending(utility_network_.connections())+pending(walkway_network_.connections());
+        const float padding=kHeaderHeight+kFooterHeight+2*kPadding;
+        const int rows=std::clamp(static_cast<int>((bottom-top-padding)/kRowHeight),0,kMaxRows);
+        if(count==0)h+=29.f;
+        else if(rows>0)h=padding+std::min(rows,count)*kRowHeight;
+    }
+    return {width-w-PLAYFIELD_MARGIN,bottom-h,w,h};
 }
 
 bool GameApp::mouse_over_build_queue(const InputState& input) const {
@@ -49,54 +67,111 @@ bool GameApp::mouse_over_build_queue(const InputState& input) const {
                                              static_cast<float>(std::lround(input.mouse_y/ui_scale_)));
 }
 
-void GameApp::render_build_queue(Renderer& r){
+std::string GameApp::construction_target_name(const ConstructionTargetRef& target) const {
     using namespace world_labels;
-    const Rect panel=build_queue_panel_rect();
-    const auto queue=construction_queue();
+    const auto sequence=construction_target_sequence(target);
+    const auto i=target.index;
+    switch(target.kind){
+        case ConstructionTargetKind::Habitat:
+            if(i<placed_habitats_.size())return habitat_instance_name(placed_habitats_[i]);
+            break;
+        case ConstructionTargetKind::Resource:
+            if(i<placed_resources_.size())return resource_instance_name(placed_resources_[i]);
+            break;
+        case ConstructionTargetKind::Corridor: return "CORRIDOR #"+std::to_string(sequence);
+        case ConstructionTargetKind::Utility:
+            if(i<utility_network_.connections().size())
+                return std::string(utility_kind_name(utility_network_.connections()[i].kind))+" #"+std::to_string(sequence);
+            break;
+        case ConstructionTargetKind::Walkway: return "WALKWAY #"+std::to_string(sequence);
+            default: break;
+    }
+    return "BLUEPRINT";
+}
+
+GameApp::BuildQueueView GameApp::prepare_build_queue_view(){
+    BuildQueueView view;
+    view.panel=build_queue_panel_rect();
+    view.jobs=construction_queue();
+    const int capacity=visible_rows(view.panel);
+    if(!build_queue_expanded_ || capacity<1){
+        build_queue_revealed_={};
+        return view;
+    }
+
+    const auto selected=selected_construction_target();
+    const auto sequence=construction_target_sequence(selected);
+    if(!selected.same_as(build_queue_revealed_) || sequence!=build_queue_revealed_sequence_ ||
+       capacity!=build_queue_revealed_capacity_){
+        const auto match=std::find_if(view.jobs.begin(),view.jobs.end(),[&](const auto& item){
+            return item.target.same_as(selected);
+        });
+        if(match!=view.jobs.end()){
+            const int row=(int)std::distance(view.jobs.begin(),match);
+            build_queue_scroll_=std::clamp(build_queue_scroll_,row-capacity+1,row);
+        }
+        build_queue_revealed_=selected;
+        build_queue_revealed_sequence_=sequence;
+        build_queue_revealed_capacity_=capacity;
+    }
+
+    const int count=static_cast<int>(view.jobs.size());
+    const int max_scroll=std::max(0,count-capacity);
+    if(mouse_over_build_queue(input_) && ui_input_.wheel!=0.f)
+        build_queue_scroll_+=ui_input_.wheel<0.f?1:-1;
+    build_queue_scroll_=std::clamp(build_queue_scroll_,0,max_scroll);
+
+    view.first=build_queue_scroll_;
+    view.last=std::min(count,view.first+capacity);
+    for(int row=view.first;row<view.last;++row){
+        if(queue_row(view.panel,row-view.first).contains(static_cast<float>(ui_input_.mouse_x),
+                                                        static_cast<float>(ui_input_.mouse_y))){
+            view.hovered_row=row;
+            break;
+        }
+    }
+    return view;
+}
+
+void GameApp::render_build_queue(Renderer& r,const BuildQueueView& view){
+    const Rect panel=view.panel;
+    const auto& queue=view.jobs;
     const auto count=static_cast<int>(queue.size());
     const std::string title=std::string(build_queue_expanded_?"-  BUILD ORDER  [":"+  BUILD ORDER  [")+std::to_string(count)+"]";
-    if(build_queue_expanded_ && visible_rows(panel)>0) ui::panel(r,panel,theme_);
-    if(ui::button(r,ui_input_,queue_header(panel),title,theme_)){
+    if(panel.h>kHeaderHeight)hud_panel(r,panel,theme_);
+    auto header_theme=theme_;
+    header_theme.panel2.a=kHudOpacity;
+    if(ui::button(r,ui_input_,queue_header(panel),title,header_theme)){
         build_queue_expanded_=!build_queue_expanded_;
+        build_queue_revealed_={};
         selection_marquee_active_=false;
         selection_marquee_dragged_=false;
+        return;
+    }
+    if(build_queue_expanded_ && queue.empty()){
+        game_label_fitted(r,{panel.x+12,panel.y+5,panel.w-24,18},"NO PENDING CONSTRUCTION",.54f,theme_,true);
         return;
     }
     const int capacity=visible_rows(panel);
     if(!build_queue_expanded_ || capacity<1) return;
 
+    const auto selected=selected_construction_target();
+    const int first=view.first,last=view.last;
     const int max_scroll=std::max(0,count-capacity);
-    if(mouse_over_build_queue(input_) && ui_input_.wheel!=0.f)
-        build_queue_scroll_+=ui_input_.wheel<0.f?1:-1;
-    build_queue_scroll_=std::clamp(build_queue_scroll_,0,max_scroll);
-    if(queue.empty()){
-        game_label_fitted(r,{panel.x+12,panel.y+44,panel.w-24,20},"NO PENDING CONSTRUCTION",.54f,theme_,true);
-        return;
-    }
-
-    const auto name=[&](const BuildQueueItem& job)->std::string{
-        const auto i=job.target.index;
-        switch(job.target.kind){
-            case ConstructionTargetKind::Habitat: return habitat_instance_name(placed_habitats_[i]);
-            case ConstructionTargetKind::Resource: return resource_instance_name(placed_resources_[i]);
-            case ConstructionTargetKind::Corridor: return "CORRIDOR #"+std::to_string(job.sequence);
-            case ConstructionTargetKind::Utility:
-                return std::string(utility_kind_name(utility_network_.connections()[i].kind))+" #"+std::to_string(job.sequence);
-            case ConstructionTargetKind::Walkway: return "WALKWAY #"+std::to_string(job.sequence);
-            default: return "BLUEPRINT";
-        }
-    };
-    const int first=build_queue_scroll_;
-    const int last=std::min(count,first+capacity);
     const float left=panel.x+kPadding;
     const float right=panel.x+panel.w-kPadding;
     const float badge_x=right-142.f;
     for(int row=first;row<last;++row){
         const auto& job=queue[static_cast<std::size_t>(row)];
-        const float y=panel.y+kHeaderHeight+kPadding+(row-first)*kRowHeight;
-        r.draw_rect({left,y,right-left,kRowHeight-3},row==0?Color{.085f,.17f,.20f,1}:theme_.panel2);
+        const Rect row_rect=queue_row(panel,row-first);
+        const float y=row_rect.y;
+        const bool highlighted=job.target.same_as(selected);
+        if(row==view.hovered_row) r.draw_rect(row_rect,{.14f,.42f,.49f,.63f});
+        else if(highlighted || row==0)
+            r.draw_rect(row_rect,highlighted?Color{.10f,.28f,.34f,.42f}:Color{.085f,.17f,.20f,.32f});
+        if(highlighted)r.draw_rect({left,y,3,kRowHeight-3},theme_.accent);
         game_label_fitted(r,{left+6,y+5,30,15},std::to_string(row+1),.53f,theme_,true);
-        game_label_fitted(r,{left+37,y+4,badge_x-left-42,15},name(job),.53f,theme_);
+        game_label_fitted(r,{left+37,y+4,badge_x-left-42,15},construction_target_name(job.target),.53f,theme_);
 
         const auto step=construction_target_step(job.target);
         const auto steps=construction_target_total_steps(job.target);
@@ -131,7 +206,7 @@ void GameApp::render_build_queue(Renderer& r){
         if(arrow(r,ui_input_,{right-30,y+4,28,27},1,theme_,down)) move(1);
     }
 
-    const float footer=panel.y+panel.h-kFooterHeight;
+    const float footer=queue_header(panel).y-kFooterHeight;
     game_label_fitted(r,{left+6,footer+7,panel.w-166,16},
         std::to_string(first+1)+"-"+std::to_string(last)+" / "+std::to_string(count),.47f,theme_,true);
     if(max_scroll>0){

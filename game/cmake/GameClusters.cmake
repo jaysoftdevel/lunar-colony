@@ -61,6 +61,7 @@ add_library(game_cluster_ui OBJECT
     "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/src/ui/debug_frame.cpp>"
     src/ui/build_bar.cpp
     src/ui/build_queue.cpp
+    src/ui/activity_log_panel.cpp
     src/ui/view_selector.cpp
     src/ui/build_icons.cpp
     src/ui/selection_panel.cpp
@@ -98,6 +99,7 @@ target_link_libraries(game_cluster_pathfinding PRIVATE rvo2)
 
 add_library(game_cluster_simulation OBJECT
     src/systems/colony_status.cpp
+    src/systems/activity_log.cpp
     src/systems/game_progress.cpp
     src/systems/planning_game.cpp
     src/systems/lunar_lander.cpp

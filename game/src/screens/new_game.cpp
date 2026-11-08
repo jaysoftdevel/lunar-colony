@@ -261,6 +261,7 @@ void GameApp::start_new_game(Stage3Mode stage3_mode){
     life_support_fraction_seconds_=0.0;
     reset_planning_game();
     lander_={};trader_={};trade_message_.clear();
+    colony_seeds_=use_template || new_game_phase_selection_==GamePhase::Debug?kStarterCropSeeds:CropSeeds{};
     if(new_game_phase_selection_==GamePhase::Planning){
         // Stage 1 opens on the company campus at a useful oblique overview.
         // The site remains freely orbitable/pannable/zoomable afterwards.
@@ -269,7 +270,7 @@ void GameApp::start_new_game(Stage3Mode stage3_mode){
     starter_stash_center_={};
     construction_priority_.clear();
     construction_order_.clear();
-    build_queue_expanded_=false;build_queue_scroll_=0;
+    build_queue_expanded_=false;progress_tree_expanded_=false;build_queue_scroll_=0;
     debug_move_pick_robot_=-1;
     first_person_carried_resource_.reset();
     first_person_hover_ground_resource_=-1;
@@ -322,6 +323,8 @@ void GameApp::start_new_game(Stage3Mode stage3_mode){
     new_game_status_message_.clear();
     game_session_active_=true;
     screen_=Screen::Playfield;
+    reset_activity_log("New game");
+    update_activity_log();
 }
 
 } // namespace game

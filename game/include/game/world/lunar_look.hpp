@@ -1,5 +1,6 @@
 #pragma once
 #include "game/util/world_math.hpp"
+#include "game/world/corridor_network.hpp"
 #include "game/world/habitat_mesh.hpp"
 #include "game/world/resource_builder.hpp"
 #include <array>
@@ -39,6 +40,32 @@ inline std::array<Fixture,4> pad_fixtures(const PlacedResource& pad,const Resour
             {0.45f,0.12f,0.45f},{0.30f,0.87f,1.0f,1},15.0f,76.0f};
     }
     return out;
+}
+
+inline void append_corridor_fixtures(std::vector<Fixture>& fixtures,const CorridorConnection& corridor){
+    if(!corridor.construction.complete() || !powered(corridor.supply,true))return;
+    // Space guide lights by metres along the deck, independent of path sampling.
+    constexpr float spacing=5.0f;
+    float length=0.f;
+    for(std::size_t i=1;i<corridor.path.size();++i)
+        length+=world_math::distance_xz(corridor.path[i-1],corridor.path[i]);
+    if(length<0.5f)return;
+    const int count=std::max(1,(int)std::ceil(length/spacing));
+    const float stride=length/count;
+    float next=stride*0.5f;
+    for(std::size_t i=1;i<corridor.path.size();++i){
+        const auto a=corridor.path[i-1],b=corridor.path[i];
+        const float span=world_math::distance_xz(a,b);
+        if(span<0.001f)continue;
+        const eng::Vec3 side{(b.z-a.z)/span,0,(a.x-b.x)/span};
+        while(next<span){
+            fixtures.push_back({a+(b-a)*(next/span)+side*0.82f+
+                eng::Vec3{0,geometry::kCorridorDeckY+0.07f,0},
+                {0.15f,0.10f,0.15f},{1.0f,0.68f,0.34f,1.f},4.8f,15.f});
+            next+=stride;
+        }
+        next-=span;
+    }
 }
 
 inline void draw_fixture(eng::Renderer& r,const Fixture& fixture,float rotation){

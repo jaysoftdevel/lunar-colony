@@ -1,4 +1,5 @@
 #include "game/game_app.hpp"
+#include "game/world/resource_builder.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -36,24 +37,44 @@ void draw_actor(Renderer& r,const CrewMesh& mesh,const AstronautTestActor& actor
     const auto* idle=mesh.frames.data();
     const float weight=std::clamp(actor.speed/astronaut_walk_speed(actor.suited),0.f,1.f);
     const float blend=weight*weight*(3.f-2.f*weight);
+    const float lift=actor.tool_carry_blend;
+    const float carry=lift*lift*(3.f-2.f*lift);
     const bool lying=astronaut_resting(actor);
     const bool detailed=r.lunar_scene_active();
     const float yaw=radians(pose.heading_degrees);
     const float c=std::cos(yaw),s=std::sin(yaw);
+    const auto world=[&](Vec3 p){return pose.feet+Vec3{p.x*c+p.z*s,p.y,-p.x*s+p.z*c};};
+    constexpr float scale=.0001f*geometry::kAstronautScale;
     std::vector<Vec3> vertices(mesh.vertex_count);
+    float sole=0.03f;
     for(std::size_t i=0;i<mesh.vertex_count;++i){
-        const auto sample=[&](std::size_t axis){
-            const std::size_t j=i*3+axis;
-            return std::lerp((float)idle[j],std::lerp((float)a[j],(float)b[j],alpha),blend)
-                   *(.0001f*geometry::kAstronautScale);
-        };
-        Vec3 p{sample(0),sample(1),sample(2)};
+        const std::size_t j=i*3;
+        const Vec3 rest{idle[j]*scale,idle[j+1]*scale,idle[j+2]*scale};
+        const Vec3 gait{std::lerp((float)a[j],(float)b[j],alpha)*scale,
+                        std::lerp((float)a[j+1],(float)b[j+1],alpha)*scale,
+                        std::lerp((float)a[j+2],(float)b[j+2],alpha)*scale};
+        Vec3 delta=(gait-rest)*blend;
+        const float leg=std::clamp((.78f-rest.y)*2.8f,0.f,1.f);
+        delta.z*=std::lerp(1.f,kAstronautStrideStretch,leg);
+        delta.y*=std::lerp(.80f,1.f,leg);
+        // Bias the tool hand toward its relaxed position while gripping the
+        // case. The mask falls away at the elbow and the side of the torso.
+        const float hand=std::clamp((rest.x-.148f)*30.f,0.f,1.f)*
+                         std::clamp((.88f-rest.y)*6.f,0.f,1.f)*std::clamp((rest.y-.52f)*18.f,0.f,1.f);
+        delta=delta*(1.f-hand*carry);
+        Vec3 p=rest+delta+Vec3{.015f,.035f,.038f}*(hand*carry);
         if(detailed && animated_cloth && !actor.suited && !lying){
             const float cloth=std::clamp((p.y-0.38f)*3.0f,0.0f,1.0f)*std::clamp((1.48f-p.y)*4.0f,0.0f,1.0f);
             p.z+=cloth*blend*0.0065f*std::sin(p.y*32.0f+p.x*18.0f+actor.stride_phase*6.2831853f);
         }
         if(lying)p={-p.x,p.z+.28f,p.y};
-        vertices[i]=pose.feet+Vec3{p.x*c+p.z*s,p.y,-p.x*s+p.z*c};
+        else sole=std::min(sole,p.y);
+        vertices[i]=p;
+    }
+    // Keep the lower boot on the deck through interpolated contact frames.
+    for(auto& vertex:vertices){
+        if(!lying)vertex.y-=sole;
+        vertex=world(vertex);
     }
     std::size_t first=0;
     std::vector<Vec3> triangles;
@@ -84,6 +105,15 @@ void draw_actor(Renderer& r,const CrewMesh& mesh,const AstronautTestActor& actor
             const auto material=hair?LunarMaterial::Hair:skin?LunarMaterial::Skin:cloth?LunarMaterial::Fabric:LunarMaterial::Paint;
             r.draw_lunar_surface(triangles,material,color);
         }else r.draw_triangles_3d(triangles,color);
+    }
+    if(!lying && (actor.construction_job || lift>0.f)){
+        resources::Builder box;
+        const Vec3 side{c,0,-s},forward{s,0,c};
+        const Vec3 center=world({.217f,std::lerp(.087f,.548f,carry),.077f});
+        box.oriented_box(box.mesh.body,center,side,{0,1,0},forward,{.12f,.174f,.24f});
+        box.oriented_box(box.mesh.details,center+Vec3{0,.097f,0},side,{0,1,0},forward,{.045f,.025f,.10f});
+        r.draw_lunar_surface(box.mesh.body,LunarMaterial::Paint,{.69f,.44f,.18f,1.f});
+        r.draw_lunar_surface(box.mesh.details,LunarMaterial::Fabric,{.16f,.17f,.18f,1.f});
     }
 }
 

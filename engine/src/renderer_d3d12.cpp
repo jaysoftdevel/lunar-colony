@@ -346,10 +346,9 @@ class D3D12Renderer final : public Renderer {
     UINT frame_index_{};
     bool frame_open_{false};
     bool tearing_supported_{false};
-    bool vsync_{false};
     bool upload_overflow_reported_{false};
 
-    GraphicsSettings graphics_{};
+    GraphicsSettings graphics_=graphics_settings_from_environment();
     bool enhanced_barriers_{};
     bool variable_rate_shading_{};
     bool coarse_shading_{};
@@ -451,17 +450,11 @@ class D3D12Renderer final : public Renderer {
         if(factory_ && SUCCEEDED(factory_->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING,&allow_tearing,sizeof(allow_tearing))))
             tearing_supported_=allow_tearing==TRUE;
 
-        if(const char* env=std::getenv("GAME_VSYNC")){
-            std::string v(env);
-            std::transform(v.begin(),v.end(),v.begin(),[](unsigned char c){return (char)std::tolower(c);});
-            vsync_=(v=="1"||v=="true"||v=="on");
-        }
-
         std::cout<<"GPU renderer: "<<vendor_name(adapter_desc_.VendorId)<<" | "<<wide_to_utf8(adapter_desc_.Description)
                  <<" | Direct3D 12 feature level "<<feature_level_name(max_feature_level_)<<"\n";
-        std::cout<<"DXGI present: "<<(vsync_?"vsync":"unlimited")
+        std::cout<<"DXGI present: "<<(graphics_.vertical_sync?"vsync":"unlimited")
                  <<(tearing_supported_?"; variable-refresh tearing supported":"; tearing unavailable")
-                 <<" (override with GAME_VSYNC=0|1)\n";
+                 <<'\n';
         return true;
     }
 
@@ -1027,8 +1020,9 @@ public:
                         std::chrono::steady_clock::now()-benchmark_begin_).count();
             }
         }
-        const UINT sync=vsync_?1u:0u;
-        const UINT flags=(!vsync_&&tearing_supported_)?DXGI_PRESENT_ALLOW_TEARING:0u;
+        const bool vsync=graphics_.vertical_sync && !benchmarking_;
+        const UINT sync=vsync?1u:0u;
+        const UINT flags=(!vsync&&tearing_supported_)?DXGI_PRESENT_ALLOW_TEARING:0u;
         const HRESULT present=swap_chain_->Present(sync,flags);
         if(FAILED(present) && present!=DXGI_STATUS_OCCLUDED){
             log_hresult("Present",present);
@@ -1061,6 +1055,7 @@ public:
     GraphicsCapabilities graphics_capabilities() override {
         GraphicsCapabilities caps{};
         caps.enhanced=lunar_srv_heap_.Get()!=nullptr;
+        caps.vertical_sync=true;
         caps.enhanced_barriers=enhanced_barriers_;
         caps.variable_rate_shading=variable_rate_shading_;
         return caps;

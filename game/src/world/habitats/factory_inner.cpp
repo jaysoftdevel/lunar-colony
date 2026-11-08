@@ -21,22 +21,16 @@ void robot_arm(Builder& b,eng::Vec3 base,float facing){
 }
 
 void build_factory_inner(Builder& b){
-    // Robotic production cells inside the assembly hall.
-    b.box(b.mesh.interior,{-2.6f,1.05f,0},{5.7f,0.18f,5.6f},false);
-    robot_arm(b,{-4.25f,1.2f,-1.35f},1.0f);
-    robot_arm(b,{-2.55f,1.2f,1.25f},1.0f);
-    robot_arm(b,{-0.75f,1.2f,-1.15f},-1.0f);
-    for(float x:{-4.2f,-2.6f,-1.0f}) b.box(b.mesh.interior,{x,1.25f,2.15f},{1.2f,0.45f,0.9f},false);
-
-    // Additional assembly conveyor, component shelving, inspection station and tool cabinets.
-    b.box(b.mesh.interior,{-2.6f,1.35f,0},{5.3f,0.20f,0.85f},false);
-    for(int i=0;i<7;++i) b.cylinder_z(b.mesh.interior,{-4.9f+0.75f*i,1.52f,0},0.92f,0.10f,8,false);
-    for(float x:{-4.5f,-2.8f,-1.1f}) for(float y:{1.65f,2.35f,3.05f})
-        b.box(b.mesh.interior,{x,y,2.7f},{1.25f,0.18f,0.55f},false);
-    b.box(b.mesh.interior,{0.15f,1.65f,-2.65f},{1.8f,1.25f,0.65f},false);
-    console(b,{-0.1f,2.6f,-2.65f},1.25f,-1.0f);
-    b.cylinder_y(b.mesh.interior,{-4.7f,2.25f,-2.45f},2.3f,0.35f,10,false);
-    for(float x:{-4.4f,-2.2f,0.0f}) ceiling_light(b,{x,5.65f,-2.4f},{x,5.65f,2.4f});
+    const float floor=b.mesh.walkable_floor_y;
+    b.box(b.mesh.interior,{0,floor-.08f,0},{12.6f,.16f,5.9f},false);
+    for(float x:{-4.14f,-1.42f,1.28f,4.06f}){
+        bench(b,{x,floor,-1.88f},1.31f,.92f,.54f);
+        robot_arm(b,{x-.39f,floor+.54f,-1.95f},.62f);
+        bench(b,{x,floor,1.89f},1.31f,.80f,.72f);
+        for(float dx:{-.37f,0.f,.37f})
+            b.cylinder_z(b.mesh.interior,{x+dx,floor+.82f,1.89f},.67f,.075f,8,false);
+        ceiling_light(b,{x,4.78f,-1.58f},{x,4.78f,1.58f});
+    }
 }
 
 } // namespace game::habitats

@@ -88,8 +88,22 @@ void GameApp::render(Renderer& r){
     r.set_graphics_settings(render_options);
     r.begin_frame({0.018f,0.024f,0.032f,1});
     if(screen_==Screen::Playfield){
-        if(active_game_phase_==GamePhase::Planning) render_planning_game(r);
-        else render_playfield(r);
+        if(active_game_phase_==GamePhase::Planning){
+            const auto planning_input=ui_input_;
+            if(mouse_over_activity_log(input_)){ui_input_.left_pressed=false;ui_input_.wheel=0.f;}
+            render_planning_game(r);
+            ui_input_=planning_input;
+            if(active_game_phase_==GamePhase::Planning && activity_log_visible())render_activity_log(r);
+        }else{
+            const auto first_placement=next_blueprint_placement_sequence_;
+            render_playfield(r);
+            if(game_session_active_){
+                const bool instant=build::debug_features && active_game_phase_==GamePhase::Debug && stage3_mode_==Stage3Mode::Sandbox;
+                for(auto id=first_placement;id<next_blueprint_placement_sequence_;++id)
+                    activity_log_.record(ui_time_seconds_,LogEvent::Note,"Blueprint #"+std::to_string(id)+
+                        (instant?" placed and completed in Sandbox":" placed"));
+            }
+        }
         if(simulation_paused()) render_pause_frame(r);
     } else {
         // Menus always use the normal desktop pointer. The crosshair is reserved

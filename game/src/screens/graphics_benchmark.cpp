@@ -167,7 +167,11 @@ void GameApp::render_benchmark_settings(Renderer& r,Rect panel,const GraphicsCap
         cell(scene_count+1,y,trial.available?number(trial.worst_p90(),1):"UNAVAILABLE",!trial.available);
     }
     if(ui::button(r,ui_input_,{x+inner-180,footer,180,31},"APPLY RECOMMENDATION",theme_,same_size)){
+        const auto display_sync=graphics_.vertical_sync;
+        const auto exposure=graphics_.exposure_tenths;
         graphics_=best->settings;
+        graphics_.vertical_sync=display_sync;
+        graphics_.exposure_tenths=exposure;
         persist_preferences();
     }
     if(preferences_save_failed_)

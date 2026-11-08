@@ -10,6 +10,9 @@ enum class BenchmarkProfile { High, Balanced, Performance, Classic };
 enum class BenchmarkScene { Orbit, Surface, Campus };
 enum class BenchmarkStatus { Idle, Running, Complete, Cancelled, Resized, Failed };
 
+eng::GraphicsSettings graphics_profile_settings(BenchmarkProfile profile,const eng::GraphicsSettings& current,
+                                                const eng::GraphicsCapabilities& caps);
+
 struct BenchmarkStats {
     double mean_ms{};
     double p90_ms{};

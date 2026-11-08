@@ -18,28 +18,37 @@ constexpr CategoryButton CATEGORIES[]={
     {BuildCategory::Structures,BuildIcon::CategoryResources,"RESOURCES / FACILITIES"}
 };
 constexpr int CATEGORY_COUNT=(int)(sizeof(CATEGORIES)/sizeof(CATEGORIES[0]));
+constexpr float category_size=42.f,category_gap=7.f,category_x=12.f;
+constexpr float category_right=category_x+CATEGORY_COUNT*(category_size+category_gap)-category_gap;
+}
+
+Rect GameApp::activity_log_button_rect() const {
+    const float h=viewport_height_/ui_scale_;
+    if(active_game_phase_==GamePhase::Planning)return {PLAYFIELD_MARGIN,h-18.f,115.f,17.f};
+    return {category_right+10.f,h-(BUILD_BAR_H+category_size)*.5f,76.f,category_size};
 }
 
 void GameApp::render_build_bar(Renderer& r){
     if(lander_.deploying()||lander_.awaiting_site||lander_.awaiting_stash){
         const float w=ui_width(r),y=ui_height(r)-BUILD_BAR_H;
-        r.draw_rect({0,y,w,BUILD_BAR_H},theme_.panel);
-        const char* message=lander_.awaiting_site?"CLICK TOUCHDOWN SITE  /  GREEN OUTLINE = CLEAR  /  ESC MENU":lander_.awaiting_stash?"CLICK STASH MARKER BESIDE SHIP  /  RIGHT CLICK TO CHANGE LANDING SITE  /  ESC MENU":"LUNAR DEPLOYMENT  /  SELECT LANDER FOR FLIGHT STATUS AND UNLOAD  /  ESC MENU";
-        game_label_fitted(r,{18,y+16,w-36,22},message,0.49f,theme_,true);
+        r.draw_rect({0,y,w,BUILD_BAR_H},kHudFill);
+        const char* message=lander_.awaiting_site?"CLICK TOUCHDOWN SITE  /  GREEN OUTLINE = CLEAR  /  ESC MENU":
+            lander_.phase<LanderPhase::Landed?"LANDER DESCENDING  /  PLACE THE STASH AFTER TOUCHDOWN":
+            lander_.awaiting_stash?"TOUCHDOWN COMPLETE  /  CLICK CLEAR GROUND BESIDE THE LANDER TO PLACE THE STASH":
+            "LUNAR DEPLOYMENT  /  SELECT LANDER FOR STATUS AND UNLOAD  /  ESC MENU";
+        const auto log=activity_log_button_rect();
+        const float x=activity_log_visible()?log.x+log.w+12.f:18.f;
+        game_label_fitted(r,{x,y+16,w-x-18,22},message,0.49f,theme_,true);
         return;
     }
     const float logical_w=ui_width(r);
     const float logical_h=ui_height(r);
     const float y=logical_h-BUILD_BAR_H;
-    r.draw_rect({0,y,logical_w,BUILD_BAR_H},{0.025f,0.035f,0.045f,0.97f});
+    r.draw_rect({0,y,logical_w,BUILD_BAR_H},kHudFill);
     r.draw_line({0,y},{logical_w,y},theme_.border,1.0f);
 
     constexpr float view_area_w=345.0f;
-    constexpr float category_size=42.0f;
-    constexpr float category_gap=7.0f;
-    constexpr float category_x=12.0f;
     const float category_y=y+(BUILD_BAR_H-category_size)*0.5f;
-    const float category_area_w=category_size*(float)CATEGORY_COUNT+category_gap*(float)(CATEGORY_COUNT-1)+28.0f;
 
     int hovered_category=-1;
     for(int i=0;i<CATEGORY_COUNT;++i){
@@ -73,7 +82,8 @@ void GameApp::render_build_bar(Renderer& r){
         }
     }
 
-    const float build_left=category_x+category_area_w;
+    const auto log=activity_log_button_rect();
+    const float build_left=(activity_log_visible()?log.x+log.w:category_right)+28.f;
     const float build_right=logical_w-view_area_w-18.0f;
     const float build_area_w=std::max(0.0f,build_right-build_left);
 
@@ -180,8 +190,9 @@ void GameApp::render_build_bar(Renderer& r){
     if(!line1.empty()){
         const float tw=std::min(logical_w-16.0f,std::max(168.0f,std::max(game_text_width(line1,0.78f,theme_),game_text_width(line2,0.60f,theme_))+22.0f));
         const float tx=std::clamp((float)ui_input_.mouse_x-tw*0.5f,8.0f,logical_w-tw-8.0f);
-        const Rect tip={tx,y-60.0f,tw,52.0f};
-        ui::panel(r,tip,theme_);
+        Rect tip={tx,y-60.0f,tw,52.0f};
+        if(!keep_clear_of_activity_log(tip))return;
+        layout::hud_panel(r,tip,theme_);
         game_label_fitted(r,{tip.x+10,tip.y+5,tip.w-20,16},line1,0.78f,theme_);
         game_label_fitted(r,{tip.x+10,tip.y+25,tip.w-20,16},line2,0.60f,theme_,true);
     }

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -22,6 +23,7 @@ struct ConstructionFrame {
     ResourceBundle needed{};
     ResourceBundle shipped{};
     float progress{0.0f};
+    float materials_progress{0.0f};
     std::uint8_t step{0};
     std::uint8_t total_steps{1};
     float screen_x{0.0f};
@@ -127,11 +129,12 @@ void GameApp::render_astronaut_status(Renderer& r,const Mat4& view_projection) c
     if(!project_world_to_logical(view_projection,anchor,r.width(),r.height(),ui_scale_,x,y))return;
 
     const float logical_w=ui_width(r),logical_h=ui_height(r);
-    constexpr float width=318.f,height=126.f,gap=10.f;
+    constexpr float width=290.f,height=124.f,gap=10.f;
     if(y<STATUS_BAR_H+height+gap || y>=logical_h-BUILD_BAR_H || x<0.f || x>logical_w)return;
-    const Rect panel{std::clamp(x-width*.5f,8.f,logical_w-width-8.f),y-height-gap,width,height};
+    Rect panel{std::clamp(x-width*.5f,8.f,logical_w-width-8.f),y-height-gap,width,height};
+    if(!keep_clear_of_activity_log(panel))return;
     r.draw_line({x,y},{std::clamp(x,panel.x,panel.x+panel.w),panel.y+panel.h},theme_.accent,1.f);
-    ui::panel(r,panel,theme_);
+    hud_panel(r,panel,theme_);
 
     const auto& role=kAstronautRoles[selected_astronaut_];
     const char* activity="IDLE";
@@ -181,23 +184,7 @@ void GameApp::render_construction_status_frames(Renderer& r){
                    corridor_network_.connections().size()+utility_network_.connections().size()+
                    walkway_network_.connections().size());
 
-    auto target_selected=[&](const ConstructionTargetRef& target){
-        switch(target.kind){
-            case ConstructionTargetKind::Habitat:
-                return selection_kind_==SelectionKind::Habitat && selected_habitat_==(int)target.index;
-            case ConstructionTargetKind::Resource:
-                return selection_kind_==SelectionKind::Resource && selected_resource_==(int)target.index;
-            case ConstructionTargetKind::Corridor:
-                return selection_kind_==SelectionKind::Corridor && selected_corridor_==(int)target.index;
-            case ConstructionTargetKind::Utility:
-                return selection_kind_==SelectionKind::Utility && selected_utility_==(int)target.index;
-            case ConstructionTargetKind::Walkway:
-                return selection_kind_==SelectionKind::Walkway && selected_walkway_==(int)target.index;
-            case ConstructionTargetKind::None:
-                break;
-        }
-        return false;
-    };
+    const auto selected=selected_construction_target();
 
     auto add_frame=[&](ConstructionTargetRef target,Vec3 anchor,std::string title,float progress,
                        const ConstructionResourcePlan& plan,std::uint8_t step){
@@ -209,13 +196,13 @@ void GameApp::render_construction_status_frames(Renderer& r){
         f.progress=std::clamp(progress,0.0f,1.0f);
         f.step=step;
         f.total_steps=construction_target_total_steps(target);
-        f.selected=target_selected(target);
-        // Keep the passive blueprint HUD intentionally cheap and quiet. The
-        // material ledger is only needed for the blueprint the player actually
-        // selected; every other unfinished blueprint renders a progress bar only.
+        f.selected=target.same_as(selected);
+        const ResourceBundle* delivered=construction_site_buffer(target);
+        const auto total=plan.total().total_amount();
+        const auto undelivered=remaining_need(plan,step,delivered,{}).total_amount();
+        f.materials_progress=total>0?std::clamp(1.f-(float)undelivered/(float)total,0.f,1.f):1.f;
         if(f.selected){
-            const ResourceBundle* delivered=construction_site_buffer(target);
-            const ResourceBundle reserved=construction_site_reserved(target);
+            const auto reserved=construction_site_reserved(target);
             f.shipped=shipped_resources(plan,step,delivered,reserved);
             f.needed=remaining_need(plan,step,delivered,reserved);
         }
@@ -266,7 +253,10 @@ void GameApp::render_construction_status_frames(Renderer& r){
     for(auto& frame:frames){
         if(project_world_to_logical(vp,frame.anchor,r.width(),r.height(),ui_scale_,frame.screen_x,frame.screen_y)) visible.push_back(std::move(frame));
     }
-    std::sort(visible.begin(),visible.end(),[](const ConstructionFrame& a,const ConstructionFrame& b){ return a.screen_y<b.screen_y; });
+    std::sort(visible.begin(),visible.end(),[](const ConstructionFrame& a,const ConstructionFrame& b){
+        if(a.selected!=b.selected)return a.selected;
+        return a.screen_y<b.screen_y;
+    });
 
     const float logical_w=ui_width(r),logical_h=ui_height(r);
     const float bottom_guard=first_person_mode_==FirstPersonMode::Active?8.0f:BUILD_BAR_H+8.0f;
@@ -275,55 +265,75 @@ void GameApp::render_construction_status_frames(Renderer& r){
     if(first_person_mode_!=FirstPersonMode::Active){
         if(selection_kind_!=SelectionKind::None)occupied.push_back(selection_kind_==SelectionKind::GroundResource && selected_ground_resources_.size()<=1?ground_resource_panel_rect():selection_panel_rect());
         else occupied.push_back({PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,560,130});
-        if(debug_mode_active() && !build_queue_expanded_)occupied.push_back({logical_w-360-PLAYFIELD_MARGIN,logical_h-BUILD_BAR_H-198-PLAYFIELD_MARGIN,360,198});
+        if(debug_frame_visible())occupied.push_back(debug_frame_rect());
+        const auto log=activity_log_panel_rect();
+        if(activity_log_visible() && log.h>0.f)occupied.push_back(log);
     }
     // Normal gameplay reserves the right-edge progression checklist so floating
     // construction frames never cover objectives or the crew-readiness milestone.
-    if(!debug_mode_active() && (!build_queue_expanded_ || first_person_mode_!=FirstPersonMode::Off))occupied.push_back(progress_tree_panel_rect());
+    if(progress_tree_visible())occupied.push_back(progress_tree_panel_rect());
     if(first_person_mode_==FirstPersonMode::Off) occupied.push_back(build_queue_panel_rect());
     for(auto& frame:visible){
         const auto needed_lines=frame.selected?resource_lines("NEEDED",frame.needed,"NONE"):std::vector<std::string>{};
         const auto shipped_lines=frame.selected?resource_lines("SHIPPED",frame.shipped,"NONE"):std::vector<std::string>{};
         const float width=frame.selected?255.0f:126.0f;
-        const float height=frame.selected?82.0f+18.0f*(float)(needed_lines.size()+shipped_lines.size()):9.0f;
+        const float height=frame.selected?108.0f+18.0f*(float)(needed_lines.size()+shipped_lines.size()):17.0f;
         float x=frame.screen_x-width*0.5f;
         float y=frame.screen_y-height-13.0f;
         x=std::clamp(x,6.0f,std::max(6.0f,logical_w-width-6.0f));
         y=std::clamp(y,STATUS_BAR_H+6.0f,std::max(STATUS_BAR_H+6.0f,logical_h-bottom_guard-height));
         Rect candidate{x,y,width,height};
-        if(frame.selected && !occupied.empty() && overlaps(candidate,occupied.front())){
-            const float right=occupied.front().x+occupied.front().w+8;
-            if(right+width<=logical_w-6)candidate.x=right;
+        const auto obstructed=[&](const Rect& bounds){
+            return std::any_of(occupied.begin(),occupied.end(),[&](const Rect& other){return overlaps(bounds,other);});
+        };
+        if(frame.selected && obstructed(candidate)){
+            std::vector<float> columns{x,6.f,logical_w-width-6.f};
+            std::vector<float> rows{y,STATUS_BAR_H+6.f,logical_h-bottom_guard-height};
+            for(const auto& other:occupied){
+                columns.push_back(other.x-width-6.f);
+                columns.push_back(other.x+other.w+6.f);
+                rows.push_back(other.y-height-6.f);
+                rows.push_back(other.y+other.h+6.f);
+            }
+            float best=std::numeric_limits<float>::max();
+            for(float left:columns)for(float top:rows){
+                if(left<6.f || left+width>logical_w-6.f || top<STATUS_BAR_H+6.f ||
+                   top+height>logical_h-bottom_guard)continue;
+                const float cost=(left-x)*(left-x)+(top-y)*(top-y);
+                if(cost>=best)continue;
+                const Rect shifted{left,top,width,height};
+                if(obstructed(shifted))continue;
+                candidate=shifted;
+                best=cost;
+            }
+        }else{
+            // Offset small markers vertically before they can cover another panel.
+            for(int attempt=0;attempt<12 && obstructed(candidate);++attempt){
+                const float direction=(attempt%2==0)?1.f:-1.f;
+                const float distance=(float)(attempt/2+1)*(height+5.f);
+                candidate.y=std::clamp(y+direction*distance,STATUS_BAR_H+6.f,
+                                       std::max(STATUS_BAR_H+6.f,logical_h-bottom_guard-height));
+            }
         }
-
-        // Dense construction sites can project several objects onto almost the
-        // same screen location. Keep every progress indicator visible, while
-        // selected detailed frames reserve their larger footprint.
-        for(int attempt=0;attempt<12;++attempt){
-            bool hit=false;
-            for(const Rect& other:occupied) if(overlaps(candidate,other)){ hit=true; break; }
-            if(!hit) break;
-            const float direction=(attempt%2==0)?1.0f:-1.0f;
-            const float distance=(float)(attempt/2+1)*(height+5.0f);
-            candidate.y=std::clamp(y+direction*distance,STATUS_BAR_H+6.0f,
-                                   std::max(STATUS_BAR_H+6.0f,logical_h-bottom_guard-height));
-        }
+        if(!keep_clear_of_activity_log(candidate))continue;
         frame.rect=candidate;
         occupied.push_back(candidate);
 
         const Color track{0.09f,0.13f,0.15f,0.96f};
-        const Color bar{1.00f,0.68f,0.12f,0.98f};
+        const Color build_bar{1.00f,0.68f,0.12f,0.98f};
+        const Color material_bar{0.21f,0.78f,0.93f,0.98f};
+        const auto draw_bar=[&](Rect bounds,float fraction,Color fill){
+            r.draw_rect(bounds,track);
+            if(fraction>0.f)r.draw_rect({bounds.x,bounds.y,bounds.w*fraction,bounds.h},fill);
+        };
         if(!frame.selected){
-            // Unselected blueprints intentionally expose no name, stage,
-            // percentage or material details: only construction progress.
-            r.draw_rect(candidate,track);
-            if(frame.progress>0.0f)
-                r.draw_rect({candidate.x,candidate.y,candidate.w*frame.progress,candidate.h},bar);
+            draw_bar({candidate.x,candidate.y,candidate.w,7},frame.materials_progress,material_bar);
+            draw_bar({candidate.x,candidate.y+10,candidate.w,7},frame.progress,build_bar);
             continue;
         }
 
         const Color border{0.31f,0.79f,0.93f,0.95f};
-        const Color fill{0.020f,0.032f,0.041f,0.93f};
+        const Color fill=kHudFill;
         r.draw_rect(candidate,fill);
         r.draw_line({candidate.x,candidate.y},{candidate.x+candidate.w,candidate.y},border,1.5f);
 
@@ -335,11 +345,16 @@ void GameApp::render_construction_status_frames(Renderer& r){
         else if(construction_automatic_priority(frame.target))title<<"   AUTO LINK";
         game_label_fitted(r,{candidate.x+8.0f,candidate.y+6.0f,candidate.w-16.0f,13.0f},title.str(),0.43f,theme_);
 
-        const Rect progress_track{candidate.x+8.0f,candidate.y+23.0f,candidate.w-16.0f,7.0f};
-        r.draw_rect(progress_track,track);
-        if(frame.progress>0.0f) r.draw_rect({progress_track.x,progress_track.y,progress_track.w*frame.progress,progress_track.h},bar);
+        const float bar_x=candidate.x+8.f;
+        const float bar_width=candidate.w-16.f;
+        game_label_fitted(r,{bar_x,candidate.y+23,bar_width,12},"MATERIALS AT SITE  "+
+            std::to_string((int)std::lround(frame.materials_progress*100.f))+"%",.40f,theme_);
+        draw_bar({bar_x,candidate.y+36,bar_width,7},frame.materials_progress,material_bar);
+        game_label_fitted(r,{bar_x,candidate.y+46,bar_width,12},"CONSTRUCTION  "+
+            std::to_string((int)std::lround(frame.progress*100.f))+"%",.40f,theme_);
+        draw_bar({bar_x,candidate.y+59,bar_width,7},frame.progress,build_bar);
 
-        float text_y=candidate.y+36.0f;
+        float text_y=candidate.y+71.0f;
         for(const std::string& line:needed_lines){
             game_label_fitted(r,{candidate.x+8.0f,text_y,candidate.w-16.0f,14.0f},line,0.36f,theme_,true);
             text_y+=18.0f;

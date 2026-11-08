@@ -17,11 +17,11 @@ void build_oxygen_dome_outer(Builder& b){
         }
     }
     // Oxygen processing tanks / electrolyzer bank.
-    b.cylinder_y(b.mesh.details,{-4.05f,2.05f,1.05f},3.4f,0.72f,14,true);
-    for(int i=0;i<3;++i) b.cylinder_y(b.mesh.details,{-3.65f+i*0.72f,1.75f,2.75f},2.5f,0.26f,10,true);
-    b.box(b.mesh.details,{-2.2f,1.55f,3.45f},{1.3f,1.8f,0.55f});
+    b.cylinder_y(b.mesh.details,{-4.88f,2.05f,1.05f},3.4f,0.72f,14,true);
+    for(int i=0;i<3;++i) b.cylinder_y(b.mesh.details,{-3.95f+i*0.72f,1.75f,3.68f},2.5f,0.26f,10,true);
+    b.box(b.mesh.details,{-2.8f,1.55f,4.1f},{1.3f,1.8f,0.55f});
     // Piping from processing bank into dome.
-    b.cylinder_between(b.mesh.details,{-4.05f,3.35f,1.05f},{-2.75f,4.05f,0.65f},0.10f,8,true,true);
+    b.cylinder_between(b.mesh.details,{-4.88f,3.35f,1.05f},{-2.75f,4.05f,0.65f},0.10f,8,true,true);
     b.cylinder_between(b.mesh.details,{-2.75f,4.05f,0.65f},{-1.35f,4.7f,0.35f},0.10f,8,true,true);
     // Roof scrubber tower and vents.
     b.cylinder_y(b.mesh.details,{0,5.45f,0},1.45f,0.72f,16,true);

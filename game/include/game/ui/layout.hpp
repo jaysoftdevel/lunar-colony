@@ -11,7 +11,15 @@ constexpr float SCREEN_MARGIN=22.0f;
 constexpr float PANEL_PADDING=22.0f;
 constexpr float CONTROL_GAP=10.0f;
 constexpr float SECTION_GAP=18.0f;
-constexpr float STATUS_BAR_H=92.0f;
+constexpr float STATUS_BAR_H=72.0f;
+constexpr float DEBUG_FRAME_H=220.0f;
+constexpr float kHudOpacity=.40f;
+constexpr eng::Color kHudFill{.025f,.035f,.045f,kHudOpacity};
+
+inline void hud_panel(eng::Renderer& r,eng::Rect bounds,eng::ui::Theme theme){
+    theme.panel.a=kHudOpacity;
+    eng::ui::panel(r,bounds,theme);
+}
 constexpr float BUILD_BAR_H=80.0f;
 constexpr float BUILD_ICON_SIZE=50.0f;
 constexpr float BUILD_ICON_GAP=9.0f;

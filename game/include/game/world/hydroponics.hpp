@@ -33,6 +33,33 @@ struct HydroponicsBay {
 };
 
 inline constexpr std::size_t kMaxHydroponicsBays=8;
+inline constexpr auto kCropKindCount=static_cast<std::size_t>(HydroponicPlant::Count)-1;
+inline constexpr std::uint8_t kMaxSeedPacketsPerCrop=99;
+using CropSeeds=std::array<std::uint8_t,kCropKindCount>;
+inline constexpr CropSeeds kStarterCropSeeds=[]{
+    CropSeeds seeds{};
+    seeds.fill(3);
+    return seeds;
+}();
+
+constexpr int seed_packet_total(const CropSeeds& seeds){
+    int total=0;
+    for(const auto count:seeds)total+=count;
+    return total;
+}
+
+inline bool plant_hydroponic_crop(HydroponicsBay& bay,CropSeeds& seeds,HydroponicPlant plant){
+    if(plant>=HydroponicPlant::Count)return false;
+    if(plant==bay.plant)return true;
+    if(plant!=HydroponicPlant::Empty){
+        auto& packets=seeds[static_cast<std::size_t>(plant)-1];
+        if(packets==0)return false;
+        --packets;
+    }
+    bay.plant=plant;
+    bay.growth_fraction=0.0;
+    return true;
+}
 
 inline const HydroponicPlantProfile& hydroponic_profile(HydroponicPlant plant){
     static constexpr std::array<HydroponicPlantProfile,(std::size_t)HydroponicPlant::Count> profiles{{

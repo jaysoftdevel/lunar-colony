@@ -65,7 +65,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
     services=topology;
     const auto sun=status_.sun_pose();
     const bool hydroponics_light_phase=hydroponics_lights_on(status_.hour());
-    struct Component {std::vector<std::size_t> tanks,batteries,solars,drillers,hydrogen_generators,hydrogen_tanks,oxygen_tanks,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;};
+    struct Component {std::vector<std::size_t> tanks,batteries,solars,drillers,hydrogen_generators,hydrogen_tanks,oxygen_tanks,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;bool bus_live=false;};
     std::map<std::size_t,Component> groups;
     // Charging is a real network load. Clear transient telemetry before this
     // dispatch pass; powered workshop bays set it again only when energy is
@@ -247,6 +247,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
         if(hydrogen_total(g)>1e-9)for(auto i:g.hydrogen_generators)available_kw+=hydrogen_generator_peak_kw(placed_resources_[i]);
         for(auto i:g.solars)if(placed_resources_[i].supply.energy_kwh>0)available_kw+=kSolarPeakKw*scale(placed_resources_[i]);
         for(auto i:g.batteries)if(placed_resources_[i].supply.energy_kwh>0)available_kw+=10.0*scale(placed_resources_[i]);
+        g.bus_live=available_kw>1e-9;
         g.power=g.load_kw>0?std::clamp(available_kw/g.load_kw,0.0,1.0):1.0;
     }
     std::size_t occupied=0;for(auto& h:placed_habitats_)if(h.construction.complete() && h.kind!=HabitatKind::OxygenGeneratorDome)++occupied;
@@ -594,6 +595,15 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             if(r.kind==ResourceKind::LandingPad && (r.rocket_fuel_kg<landing_pad_rocket_fuel_capacity_kg()-1e-5 || r.lander_fuel_kg<landing_pad_lander_fuel_capacity_kg()-1e-5) && hydrogen_total(g)<1e-8)r.supply.warnings|=NoHydrogen;
             if(r.kind==ResourceKind::StorageDome && r.supply.breathability()<95)r.supply.warnings|=LowAir;
         }
+    }
+    // Corridor guide lights read live power from the embedded service bus.
+    const std::size_t corridor_offset=placed_habitats_.size()+placed_resources_.size()+utility_network_.connections().size();
+    auto& corridors=corridor_network_.mutable_connections();
+    for(std::size_t i=0;i<corridors.size();++i){
+        if(!corridors[i].construction.complete())continue;
+        const auto group=groups.find(topology.node_components[corridor_offset+i]);
+        if(group!=groups.end() && group->second.bus_live)
+            corridors[i].supply.power_fraction=group->second.power;
     }
     for(auto* s:nodes)s->water_to_fill_litres=std::max(0.0,s->volume_m3*kOxygenKgPerM3-s->oxygen_kg)*kWaterPerOxygen;
     std::vector<double> needed(nodes.size(),0);for(std::size_t i=0;i<nodes.size();++i)needed[root(i)]+=nodes[i]->water_to_fill_litres;

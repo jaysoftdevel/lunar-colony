@@ -6,9 +6,9 @@ namespace game::habitats {
 HabitatMesh HabitatModule::instantiate() const {
     Builder b;
     if(outer_) outer_(b);
+    b.mesh.walkable_floor_y=access_.walkable_floor_y;
     if(inner_) inner_(b);
     b.future_detail_pass(access_.walkable_floor_y);
-    b.mesh.walkable_floor_y=access_.walkable_floor_y;
     b.mesh.crew_accessible=access_.crew_accessible;
     return std::move(b.mesh);
 }

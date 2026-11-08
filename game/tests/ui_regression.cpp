@@ -23,14 +23,16 @@ struct Recorder:eng::Renderer {
     int w=1920,h=1080;float scale=1;bool hud=false;std::vector<Draw> draws;
     eng::GraphicsSettings graphics;
     void set_graphics_settings(const eng::GraphicsSettings& settings) override { graphics=settings; }
-    std::vector<eng::Vec3> belt_preview_lines;
+    std::vector<eng::Vec3> belt_preview_lines,queue_hover_lines;
     std::size_t mesh_triangles=0;
     bool initialize(void*,std::uintptr_t,int,int)override{return true;}
     void resize(int width,int height)override{w=width;h=height;}
-    void begin_frame(eng::Color)override{draws.clear();belt_preview_lines.clear();mesh_triangles=0;hud=false;}void end_frame()override{}
+    void begin_frame(eng::Color)override{draws.clear();belt_preview_lines.clear();queue_hover_lines.clear();mesh_triangles=0;hud=false;}void end_frame()override{}
     void set_3d(const eng::Mat4&)override{hud=false;}void set_2d(float s)override{scale=s;hud=true;}
     void draw_lines_3d(const std::vector<eng::Vec3>& points,eng::Color color,float width)override{
         if(width==1.9f && color.r==.34f && color.g==.82f && color.b==1.0f)belt_preview_lines=points;
+        if(color.r==.31f && color.g==.94f && color.b==1.f && color.a==1.f)
+            queue_hover_lines.insert(queue_hover_lines.end(),points.begin(),points.end());
     }
     void draw_triangles_3d(const std::vector<eng::Vec3>& points,eng::Color)override{mesh_triangles+=points.size()/3;}
     void draw_rect(eng::Rect r,eng::Color c)override{if(hud)draws.push_back({'R',{r.x,r.y,r.w,r.h,scale,0},{},c});}
@@ -348,9 +350,28 @@ struct UiRegression {
         constexpr std::array<eng::Vec2,5> sizes{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}};
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:sizes){
             GameApp app(engine);setup(app,7,zoom);app.debug_frame_enabled_=false;Recorder r;r.resize((int)size.x,(int)size.y);app.render(r);r.check_bounds("progress tree");
-            bool title=false,stage=false,milestone=false;for(const auto& d:r.draws)if(d.type=='T'){title|=d.text.find("COLONY PROGRESS")!=std::string::npos;stage|=d.text.find("STAGE 1")!=std::string::npos;milestone|=d.text.find("READY FOR HUMAN CREW")!=std::string::npos;}
-            require(title&&stage&&milestone,"normal gameplay progression checklist is missing");
+            const auto has=[&](const std::string& text){
+                return std::any_of(r.draws.begin(),r.draws.end(),[&](const auto& d){return d.type=='T' && d.text.find(text)!=std::string::npos;});
+            };
+            require(has("STAGE 1 / Build a solar collector") && !has("Build a battery"),
+                    "collapsed progress did not show only the next target");
+            const auto collapsed=r.button("+  COLONY PROGRESS");
+            eng::InputState input{};
+            input.mouse_x=(int)std::lround((collapsed.x+collapsed.w*.5f)*r.scale);
+            input.mouse_y=(int)std::lround((collapsed.y+collapsed.h*.5f)*r.scale);
+            input.left_pressed=true;
+            app.update_simulation(0.f,input);
+            require(!app.selection_marquee_active_,"progress click reached the world");
+            app.render(r);
+            app.input_={};app.render(r);
+            require(app.progress_tree_expanded_ && has("STAGE 1") && has("READY FOR HUMAN CREW"),
+                    "expanding progress did not show the full checklist");
+            r.check_bounds("expanded progress tree");
             const auto panel=app.progress_tree_panel_rect();const float logical_h=size.y/app.ui_scale_;
+            require(std::any_of(r.draws.begin(),r.draws.end(),[&](const auto& d){
+                return d.type=='R' && d.v[0]==panel.x && d.v[1]==panel.y && d.v[2]==panel.w &&
+                    d.v[3]==panel.h && d.color.a==layout::kHudOpacity;
+            }),"colony progress backdrop was not 60% transparent");
             require(panel.y>=layout::STATUS_BAR_H+32.0f,"progress panel overlaps status tooltip area");
             require(panel.y+panel.h<=logical_h-layout::BUILD_BAR_H-4.0f,"progress panel overlaps build catalog");
             ++cases;
@@ -402,7 +423,7 @@ struct UiRegression {
         Recorder r;r.resize(1280,720);app.on_resize(1280,720);app.render(r);
         bool heading=false,progress_bar=false,photoperiod=false;float bay1_y=-1,bay2_y=-2,bay1_x=0,bay2_x=0;
         for(const auto& d:r.draws){
-            if(d.type=='T' && d.text.find("TWO-COLUMN GROW TABLE")!=std::string::npos)heading=true;
+            if(d.type=='T' && d.text.find("SEED PACKETS")!=std::string::npos)heading=true;
             if(d.type=='T' && d.text.find("PHOTOPERIOD")!=std::string::npos)photoperiod=true;
         }
         app.selection_panel_scroll_=120.0f;app.render(r);
@@ -434,6 +455,24 @@ struct UiRegression {
         app.render(r);
         require(first.plant==HydroponicPlant::Empty,"Bio Dome dropdown could not remove a selected crop");
         require(first.growth_fraction==0.0,"removing a Bio Dome crop did not reset its growth cycle");
+
+        const auto click_option=[&](const char* caption){
+            app.input_={};app.render(r);
+            const auto box=r.button(caption);
+            app.input_.mouse_x=(int)std::lround((box.x+box.w*.5f)*r.scale);
+            app.input_.mouse_y=(int)std::lround((box.y+box.h*.5f)*r.scale);
+            app.input_.left_pressed=true;
+            app.render(r);
+            app.input_={};
+        };
+        app.colony_seeds_[0]=1;
+        click_option("EMPTY / REMOVE  V");
+        click_option("WHEAT / 0 SEEDS");
+        require(first.plant==HydroponicPlant::Empty && app.colony_seeds_[0]==1,"planting ignored an empty seed inventory");
+        click_option("POTATO / 1 SEED");
+        require(first.plant==HydroponicPlant::Potato && app.colony_seeds_[0]==0,"new crop did not consume exactly one seed packet");
+        require(!plant_hydroponic_crop(first,app.colony_seeds_,HydroponicPlant::Wheat) && first.plant==HydroponicPlant::Potato,
+                "out-of-stock replacement destroyed an existing crop");
 
         app.input_.left_pressed=false;app.input_.mouse_x=-100;app.input_.mouse_y=-100;
         app.placed_habitats_[0].construction.step=kConstructionSteps-1;
@@ -598,13 +637,94 @@ struct UiRegression {
         std::cout<<"Mesh override, Music persistence, stage speed shortcuts and pause frame passed\n";
     }
 
+    static void playfield_surface(){
+        using namespace eng;
+        struct SurfaceRecorder : Recorder {
+            bool accept_enhanced{},saw_grid{};
+            int scene_attempts{},surface_batches{};
+            double surface_area{};
+            float darkest{},brightest{};
+            void begin_frame(Color clear) override {
+                Recorder::begin_frame(clear);
+                saw_grid=false;
+                scene_attempts=surface_batches=0;
+                surface_area=0;
+                darkest=1;
+                brightest=0;
+            }
+            bool begin_lunar_scene(const LunarScene&) override {
+                ++scene_attempts;
+                return accept_enhanced;
+            }
+            void draw_triangles_3d(const std::vector<Vec3>& points,Color color) override {
+                if(points.empty() || color.a!=1.f ||
+                   std::any_of(points.begin(),points.end(),[](Vec3 p){return p.y!=0.f;})) return;
+                ++surface_batches;
+                darkest=std::min(darkest,color.r);
+                brightest=std::max(brightest,color.r);
+                for(std::size_t i=0;i+2<points.size();i+=3){
+                    const auto b=points[i+1]-points[i],c=points[i+2]-points[i];
+                    const auto area=static_cast<double>(b.z)*c.x-static_cast<double>(b.x)*c.z;
+                    require(area>0,"regolith triangle inverted");
+                    surface_area+=area*.5;
+                }
+            }
+            void draw_lines_3d(const std::vector<Vec3>& points,Color color,float width) override {
+                Recorder::draw_lines_3d(points,color,width);
+                saw_grid|=points.size()>32 && points.front().y==.01f;
+            }
+        };
+        Application engine;
+        GameApp app(engine);
+        setup(app,7,0);
+        app.placed_habitats_.clear();
+        app.placed_resources_.clear();
+        app.ground_resource_piles_.clear();
+        app.builder_robots_.clear();
+        app.active_game_phase_=GameApp::GamePhase::RobotPreparation;
+        app.graphics_.features=0;
+        app.graphics_.path=GraphicsPath::Classic;
+        app.graphics_.surface_resolution=1;
+        SurfaceRecorder r;
+        for(int side:{32,1024}){
+            app.playfield_.rebuild(side);
+            app.render(r);
+            require(std::abs(r.surface_area-side*side)<.5 && r.surface_batches>2 && r.surface_batches<=9 &&
+                    r.darkest>.10f && r.brightest-r.darkest>.04f && !r.saw_grid && r.scene_attempts==0,
+                    "Classic graphics did not draw the complete shaded playfield");
+        }
+        app.graphics_.path=GraphicsPath::Auto;
+        app.render(r);
+        require(r.surface_batches>0 && r.scene_attempts==1,"enhanced initialization failure lost the surface");
+        r.accept_enhanced=true;
+        app.render(r);
+        require(r.surface_batches==0 && r.scene_attempts==1,"fallback surface overlapped enhanced terrain");
+        r.accept_enhanced=false;
+        app.world_layout_mode_=GameApp::WorldLayoutMode::Mesh;
+        app.render(r);
+        if constexpr(build::debug_features){
+            require(r.surface_batches==0 && r.scene_attempts==0 && r.saw_grid,"Debug Meshed showed a filled surface");
+        }else{
+            require(r.surface_batches>0 && r.scene_attempts==1 && !r.saw_grid,"Release hid the surface for a saved debug preference");
+        }
+        app.world_layout_mode_=GameApp::WorldLayoutMode::FullGraphics;
+        app.first_person_mode_=GameApp::FirstPersonMode::Active;
+        app.first_person_.spawn({0,0,0},0);
+        app.render(r);
+        require(r.surface_batches>0 && !r.saw_grid,"first-person graphics lost the playfield surface");
+        std::cout<<"Classic, enhanced fallback, first-person and Debug Meshed terrain checks passed\n";
+    }
+
     static void graphics_quality(){
+        playfield_surface();
         using namespace eng;
         struct BenchmarkRecorder : Recorder {
             bool benchmarking{};
             GraphicsCapabilities graphics_capabilities() override {
                 GraphicsCapabilities caps{};
                 caps.enhanced=true;
+                caps.vertical_sync=true;
+                caps.texture_anisotropy=8;
                 caps.ray_lighting=caps.visibility_buffer=caps.gpu_terrain=caps.pages=true;
                 return caps;
             }
@@ -631,23 +751,76 @@ struct UiRegression {
         GameApp app(engine);
         BenchmarkRecorder r;
         app.screen_=GameApp::Screen::GraphicsSettings;
-        const auto click=[&](const char* text){
-            app.input_={};
-            app.render(r);
-            const auto box=r.button(text);
+        const auto press=[&](Rect box){
             app.input_.mouse_x=int((box.x+box.w*0.5f)*r.scale);
             app.input_.mouse_y=int((box.y+box.h*0.5f)*r.scale);
             app.input_.left_pressed=true;
             app.render(r);
             app.input_={};
         };
-        click("WORLD");
-        click("HIGH");
-        require(app.graphics_.quality(F::TerrainRelief)==0,"terrain quality did not turn off");
-        click("OFF");
-        require(app.graphics_.quality(F::TerrainRelief)==1 && app.graphics_.quality(F::MaterialDetail)==3,
+        const auto click=[&](const char* text){
+            app.render(r);
+            press(r.button(text));
+        };
+        const auto row=[&](const char* name){
+            app.render(r);
+            const auto title=std::find_if(r.draws.begin(),r.draws.end(),[&](const Draw& draw){
+                return draw.type=='T' && draw.text==name;
+            });
+            require(title!=r.draws.end(),std::string("graphics row missing: ")+name);
+            const auto button=std::find_if(r.draws.begin(),r.draws.end(),[&](const Draw& draw){
+                return draw.type=='R' && draw.v[3]==31 && draw.v[0]>title->v[0] &&
+                    std::abs(draw.v[1]-title->v[1])<16.f;
+            });
+            require(button!=r.draws.end(),std::string("graphics row has no selector: ")+name);
+            press({button->v[0],button->v[1],button->v[2],button->v[3]});
+        };
+        const auto choose=[&](const char* name,const char* option){row(name);click(option);};
+        click("BALANCED");
+        require(app.graphics_.render_scale==85 && app.graphics_.particle_density==2,
+                "quality preset did not apply the expected scale and particles");
+        choose("VERTICAL SYNC","ON");
+        choose("DISPLAY MODE","WINDOWED");
+        require(app.graphics_.vertical_sync,"display mode changed vertical sync");
+        click("ENVIRONMENT");
+        choose("TERRAIN RELIEF","LOW");
+        require(app.graphics_.quality(F::TerrainRelief)==1 && app.graphics_.quality(F::MaterialDetail)==2,
                 "terrain and material quality settings interfered");
-        require(load_preferences().graphics==app.graphics_,"individual graphics quality did not persist");
+#ifndef _WIN32
+        choose("GROUND CLUTTER","OFF");
+        require(app.graphics_.ground_clutter==0 && app.graphics_.quality(F::TerrainRelief)==1,
+                "ground clutter changed terrain relief");
+        click("TEXTURES");
+        choose("SURFACE TEXTURE RESOLUTION","128 PX");
+        row("TEXTURE FILTERING");
+        r.check_bounds("texture filter dropdown");
+        require(std::none_of(r.draws.begin(),r.draws.end(),[](const Draw& draw){return draw.text=="16X ANISOTROPIC";}),
+                "texture filtering advertised a level above the GPU limit");
+        click("8X ANISOTROPIC");
+        click("LIGHTING");
+        choose("CASCADE SHADOW RESOLUTION","768 PX");
+        require(app.graphics_.shadow_resolution==1 && app.graphics_.shadow_quality==2,
+                "shadow resolution changed the filter quality");
+        require(app.graphics_.surface_resolution==1 && app.graphics_.texture_filter==4,
+                "surface resolution and filtering did not save independently");
+#endif
+        click("EFFECTS");
+        row("PARTICLE DENSITY");
+        click("PERFORMANCE");
+        require(app.graphics_.render_scale==85 && app.graphics_dropdown_==-1,
+                "dismissing a dropdown clicked through to another control");
+        choose("PARTICLE DENSITY","OFF");
+        require(app.graphics_.particle_density==0 && app.graphics_.bloom==75 &&
+                load_preferences().graphics==app.graphics_,"individual graphics quality did not persist");
+        app.ui_scale_index_=4;
+        r.resize(1280,720);
+        for(const auto* tab:{"DISPLAY","TEXTURES","ENVIRONMENT","LIGHTING","EFFECTS","ADVANCED","BENCHMARK"}){
+            click(tab);
+            app.render(r);
+            r.check_bounds(tab);
+        }
+        app.ui_scale_index_=0;
+        r.resize(1920,1080);
 
         const auto custom=app.graphics_;
         click("BENCHMARK");
@@ -667,7 +840,8 @@ struct UiRegression {
         click("30 FPS TARGET");
         click("APPLY RECOMMENDATION");
         require(app.graphics_.render_scale==85 && app.graphics_.quality(F::MaterialDetail)==2 &&
-                load_preferences().graphics==app.graphics_,"benchmark recommendation did not persist");
+                app.graphics_.vertical_sync && load_preferences().graphics==app.graphics_,
+                "benchmark recommendation did not persist or overwrote vertical sync");
 
         click("RUN BENCHMARK");
         InputState escape{};
@@ -683,7 +857,7 @@ struct UiRegression {
                 "benchmark mixed measurements across display sizes");
         r.check_bounds("benchmark display resize");
         require(save_preferences(saved),"could not restore isolated test preferences");
-        std::cout<<"Independent quality settings and benchmark start, apply, cancel, and resize passed\n";
+        std::cout<<"Graphics groups, dropdowns, persisted quality, VSync, and benchmark workflows passed\n";
     }
 
     static void build_mode(){
@@ -757,6 +931,7 @@ struct UiRegression {
         for(int zoom:{0,4}){
             GameApp app(engine);
             setup(app,7,zoom);
+            app.debug_frame_enabled_=false;
             app.placed_habitats_.clear();
             app.placed_resources_.clear();
             app.builder_robots_.clear();
@@ -791,8 +966,31 @@ struct UiRegression {
             recorder.button("NEXT");
             const auto expanded=app.build_queue_panel_rect();
             const float right=expanded.x+expanded.w-8;
-            const float first_row_y=expanded.y+38;
+            const float first_row_y=expanded.y+8;
+            require(expanded.y+expanded.h<=720/recorder.scale-layout::BUILD_BAR_H &&
+                    app.progress_tree_panel_rect().y+app.progress_tree_panel_rect().h<expanded.y,
+                    "bottom build order overlaps the toolbar or progress panel");
+            const auto hover=[&](float x,float y,float scroll=0.f){
+                eng::InputState input;
+                input.mouse_x=int(std::lround(x*recorder.scale));
+                input.mouse_y=int(std::lround(y*recorder.scale));
+                input.wheel=scroll;
+                app.update_simulation(0.f,input);
+                app.render(recorder);
+            };
+            const auto outline_center_x=[&]{
+                const auto& lines=recorder.queue_hover_lines;
+                require(lines.size()>=8,"hovered queue row has no playfield outline");
+                return (lines[0].x+lines[1].x)*.5f;
+            };
+            hover(right-90,first_row_y+17);
+            require(outline_center_x()==app.placed_resources_[1].position.x &&
+                    app.selection_kind_==GameApp::SelectionKind::None,
+                    "queue hover did not outline the correct blueprint independently of selection");
             click(right-16,first_row_y+17);
+            hover(right-90,first_row_y+17);
+            require(outline_center_x()==app.placed_resources_[0].position.x,
+                    "hover outline did not track a reordered row");
             require(app.construction_queue().front().sequence==1 &&
                     app.construction_priority_rank(promoted)==kNoRobotIndex,
                     "down arrow failed to demote the priority row");
@@ -800,18 +998,173 @@ struct UiRegression {
             require(app.construction_queue().front().sequence==2 &&
                     app.construction_priority_rank(promoted)==kNoRobotIndex,
                     "up arrow failed to move a normal row");
-            eng::InputState wheel=app.input_;
-            wheel.left_pressed=false;
-            wheel.wheel=-1;
             const auto distance=app.camera_.distance();
-            app.update_simulation(0.f,wheel);
-            app.render(recorder);
+            hover(right-90,first_row_y+17,-1.f);
             require(app.build_queue_scroll_==1 && app.camera_.distance()==distance,
                     "scrolling the queue zoomed the playfield or left the rows unchanged");
+            const auto visible=app.construction_queue()[1].target.index;
+            require(outline_center_x()==app.placed_resources_[visible].position.x,
+                    "queue scroll did not update the playfield hover in the same frame");
+            hover(header.x+header.w/2,header.y+header.h/2);
+            require(recorder.queue_hover_lines.empty(),"queue header left a playfield outline");
+            app.input_={};
+            app.selection_kind_=GameApp::SelectionKind::Resource;
+            app.selected_resource_=11;
+            app.render(recorder);
+            require(app.build_queue_scroll_>1,"selecting a late blueprint did not reveal its queue row");
+            const auto has_highlight=[&]{
+                return std::any_of(recorder.draws.begin(),recorder.draws.end(),[](const Draw& draw){
+                    return draw.type=='R' && draw.v[2]==3.f && draw.v[3]==35.f;
+                });
+            };
+            require(has_highlight(),"selected blueprint did not highlight its queue row");
+            app.clear_world_selection();
+            app.render(recorder);
+            require(!has_highlight(),"deselection left the queue highlight active");
             click(header.x+header.w/2,header.y+header.h/2);
             require(!app.build_queue_expanded_,"queue header did not collapse");
+            hover(right-90,first_row_y+17);
+            require(recorder.queue_hover_lines.empty(),"collapsed queue retained a playfield outline");
+            app.progress_tree_expanded_=true;
+            app.build_queue_expanded_=true;
+            app.input_={};app.render(recorder);
+            const auto progress=app.progress_tree_panel_rect(),both=app.build_queue_panel_rect();
+            require(progress.y+progress.h<both.y && both.h>30.f,"expanded progress and queue cannot coexist");
+            recorder.check_bounds("expanded colony progress and bottom build order");
+            if constexpr(build::debug_features){
+                app.debug_frame_enabled_=true;
+                app.build_queue_expanded_=true;
+                app.input_={};
+                app.render(recorder);
+                recorder.button("FULL GRAPHICS");
+                const auto queue=app.build_queue_panel_rect(),debug=app.debug_frame_rect();
+                require(debug.y+debug.h<queue.y,"expanded bottom queue overlaps debug frame");
+                require(queue.h>30.f,"debug frame left no room for the expanded queue");
+                recorder.check_bounds("combined queue and debug frame");
+            }
         }
-        std::cout<<"Build order mouse controls, priority demotion and scroll isolation passed\n";
+        std::cout<<"Build order mouse controls, priority demotion, playfield hover and scroll isolation passed\n";
+    }
+
+    static void activity_log_and_blueprint_progress(){
+        eng::Application engine;
+        GameApp app(engine);
+        setup(app,7,4);
+        app.game_session_active_=true;
+        app.reset_activity_log("Log regression");
+        app.placed_resources_[0].placement_sequence=2;
+        auto& rover=app.builder_robots_[0];
+        rover.mode=BuilderRobotMode::Delivering;
+        rover.safety.mode=robots::SafetyMode::Fault;
+        rover.safety.block_reason=robots::BlockReason::NoRoute;
+        app.ui_time_seconds_=1.25;
+        app.update_activity_log();
+        const auto first_count=app.activity_log_.entries().size();
+        app.update_activity_log();
+        require(app.activity_log_.entries().size()==first_count,"steady activities spam the log");
+        rover.mode=BuilderRobotMode::Idle;
+        rover.safety.mode=robots::SafetyMode::Idle;
+        rover.safety.block_reason=robots::BlockReason::None;
+        app.placed_resources_[0].supply.warnings=0;
+        app.ui_time_seconds_=2.75;
+        app.update_activity_log();
+        const auto has=[&](LogEvent event,double time,const std::string& text){
+            const auto& events=app.activity_log_.entries();
+            return std::any_of(events.begin(),events.end(),[&](const auto& entry){
+                return entry.event==event && entry.seconds==time && entry.message.find(text)!=std::string::npos;
+            });
+        };
+        require(has(LogEvent::Started,1.25,"DELIVERING") && has(LogEvent::Stopped,2.75,"DELIVERING"),"rover start and stop missing");
+        require(has(LogEvent::Warning,1.25,"NO SAFE ROUTE") && has(LogEvent::Resolved,2.75,"NO SAFE ROUTE"),"rover fault or resolution missing");
+        require(has(LogEvent::Warning,1.25,"AIR BELOW 95%") && has(LogEvent::Resolved,2.75,"AIR BELOW 95%"),"structure warning or resolution missing");
+
+        Recorder recorder;
+        recorder.resize(1280,720);
+        app.render(recorder);
+        const auto click=[&](eng::Rect button){
+            eng::InputState input;
+            input.mouse_x=(int)std::lround((button.x+button.w*.5f)*recorder.scale);
+            input.mouse_y=(int)std::lround((button.y+button.h*.5f)*recorder.scale);
+            input.left_pressed=true;
+            app.update_simulation(0.f,input);
+            require(!app.selection_marquee_active_,"activity log click reached the world");
+            app.render(recorder);
+        };
+        const auto closed_button=recorder.button("LOG +");
+        click(closed_button);
+        require(app.activity_log_expanded_,"activity log did not open");
+        app.input_={};
+        app.render(recorder);
+        const auto open_button=recorder.button("LOG -");
+        require(open_button.x==closed_button.x && open_button.y==closed_button.y,
+                "opening the log moved its toolbar button");
+        const auto dock=app.activity_log_panel_rect();
+        require(dock.y+dock.h<recorder.h/recorder.scale-layout::BUILD_BAR_H,
+                "activity log overlaps the build toolbar");
+        click(recorder.button("OLDER"));
+        require(app.activity_log_offset_>0,"older activity entries are inaccessible");
+        app.input_={};
+        app.render(recorder);
+        const auto distance=app.camera_.distance();
+        eng::InputState wheel;
+        const auto panel=app.activity_log_panel_rect();
+        wheel.mouse_x=(int)std::lround((panel.x+30)*recorder.scale);
+        wheel.mouse_y=(int)std::lround((panel.y+35)*recorder.scale);
+        wheel.wheel=-1;
+        const auto prior_offset=app.activity_log_offset_;
+        app.update_simulation(0.f,wheel);
+        app.render(recorder);
+        require(app.activity_log_offset_+1==prior_offset && app.camera_.distance()==distance,
+                "log wheel did not stay within the panel");
+        click(recorder.button("EXPORT LOG"));
+        require(app.activity_log_export_status_.starts_with("EXPORTED "),"log export failed");
+        const auto path=std::filesystem::path(app.save_game_directory())/app.activity_log_export_status_.substr(9);
+        std::ifstream log_file(path);
+        std::string contents((std::istreambuf_iterator<char>(log_file)),{});
+        log_file.close();
+        std::filesystem::remove(path);
+        require(contents.find("00:00:00.000  EVENT  Log regression")!=std::string::npos &&
+                contents.find("00:00:01.250  START")!=std::string::npos &&
+                contents.find("00:00:02.750  STOP")!=std::string::npos &&
+                contents.find("00:00:02.750  RESOLVED")!=std::string::npos,"export omitted history or timestamps");
+        recorder.check_bounds("expanded activity log");
+
+        auto& blueprint=app.placed_habitats_[0];
+        blueprint.placement_sequence=1;
+        blueprint.construction.step=2;
+        blueprint.resource_plan.total_steps=4;
+        blueprint.resource_plan.steps[0].iron=20;
+        blueprint.resource_plan.steps[1].iron=20;
+        blueprint.resource_plan.steps[2].iron=30;
+        blueprint.resource_plan.steps[3].iron=30;
+        blueprint.site_buffer.iron=10;
+        rover.mode=BuilderRobotMode::Delivering;
+        rover.target={ConstructionTargetKind::Habitat,0};
+        rover.cargo_committed_to_build=true;
+        rover.logistics_reservation.iron=10;
+        app.input_={};
+        app.selection_kind_=GameApp::SelectionKind::Habitat;
+        app.selected_habitat_=0;
+        app.render(recorder);
+        const auto label=[&](const std::string& value){
+            return std::any_of(recorder.draws.begin(),recorder.draws.end(),[&](const Draw& draw){return draw.text==value;});
+        };
+        require(label("MATERIALS AT SITE  50%") && label("CONSTRUCTION  "+std::to_string((int)std::lround(200.f/kConstructionSteps))+"%"),
+                "blueprint bars mixed materials in transit with on-site or assembly progress");
+        require(app.selection_panel_rect().y+app.selection_panel_rect().h<app.activity_log_panel_rect().y,
+                "activity log and selection inspector overlap");
+        app.clear_world_selection();
+        app.render(recorder);
+        const auto bar=[&](float red,float width){
+            return std::any_of(recorder.draws.begin(),recorder.draws.end(),[&](const Draw& draw){
+                return draw.type=='R' && draw.color.r==red && draw.v[3]==7.f && std::abs(draw.v[2]-width)<.001f;
+            });
+        };
+        require(bar(.21f,63.f) && bar(1.f,126.f*2.f/kConstructionSteps),"unselected blueprint is missing one of its progress bars");
+        click(recorder.button("LOG -"));
+        require(!app.activity_log_expanded_ && app.activity_log_panel_rect().h==0.f,
+                "collapsed log still occupies playfield space");
+        std::cout<<"Activity starts/stops, warning/resolution export, overlay input, and independent blueprint bars passed\n";
     }
 
     static void recent_saves(){
@@ -1110,6 +1463,23 @@ struct UiRegression {
             require(stages.complete_planning_mission_step() && stages.planning_.mission_step==MissionPreparationStep::Plan,"refine gate did not advance to plan");
             require(stages.planning_.mission_facility==MissionFacility::MissionControl,"refinement did not route to Mission Control");
 
+            stages.input_={};stages.render(stage_ui);
+            const auto press_mission=[&](const char* label){
+                const auto box=stage_ui.button(label);
+                stages.input_.mouse_x=(int)std::lround((box.x+box.w*.5f)*stage_ui.scale);
+                stages.input_.mouse_y=(int)std::lround((box.y+box.h*.5f)*stage_ui.scale);
+                stages.input_.left_pressed=true;
+                stages.render(stage_ui);
+                stages.input_={};stages.render(stage_ui);
+            };
+            press_mission("SEEDS");
+            require(stages.planning_seed_page_ && stages.planning_.mission_seeds==kStarterCropSeeds,
+                    "mission seed manifest is missing or has wrong starter quantities");
+            press_mission("+");
+            require(stages.planning_.mission_seeds[0]==4,"mission seed quantity could not be edited");
+            const auto selected_seeds=stages.planning_.mission_seeds;
+            press_mission("PAYLOAD");
+
             stages.planning_.mission_structures[(std::size_t)ResourceKind::SolarPanel]=2;
             stages.planning_.mission_structures[(std::size_t)ResourceKind::OxygenTank]=1;
             stages.planning_.mission_habitats[(std::size_t)HabitatKind::AirLock]=1;
@@ -1150,6 +1520,7 @@ struct UiRegression {
                     mid_loaded.planning_.mission_facility==MissionFacility::ProgramOffice &&
                     mid_loaded.planning_.mission_rocket==1 && mid_loaded.planning_.mission_lander==1 &&
                     mid_loaded.planning_.mission_cargo.total_amount()==selected_manifest.total_amount() &&
+                    mid_loaded.planning_.mission_seeds==selected_seeds &&
                     mid_loaded.planning_.mission_habitats==stages.planning_.mission_habitats &&
                     mid_loaded.planning_.mission_structures==stages.planning_.mission_structures &&
                     !mid_loaded.planning_.mission_paid,
@@ -1169,7 +1540,7 @@ struct UiRegression {
                 constexpr std::size_t empty_trade_trailer=1+sizeof(float)+sizeof(std::uint64_t)+3*sizeof(float)+2*kTradeGoodCount*sizeof(std::int64_t)+2*sizeof(std::int64_t)+1+3*sizeof(std::uint32_t);
                 require(bytes.size()>=lander_trailer+empty_trade_trailer+16,"schema-33 fixture missing trade trailer");
                 constexpr std::size_t empty_build_order_trailer=sizeof(std::uint64_t);
-                bytes.resize(bytes.size()-(lander_trailer+empty_trade_trailer+16+10+stages.ground_resource_piles_.size()+stages.planning_.mission_habitats.size()+stages.planning_.mission_structures.size()+7+empty_build_order_trailer));
+                bytes.resize(bytes.size()-(lander_trailer+empty_trade_trailer+16+10+stages.ground_resource_piles_.size()+stages.planning_.mission_habitats.size()+stages.planning_.mission_structures.size()+7+empty_build_order_trailer+3*kCropKindCount));
                 constexpr std::size_t record_bytes=sizeof(std::uint8_t)+sizeof(double)+sizeof(std::uint16_t);
                 constexpr std::size_t trailing=2+kMaterialResourceCount*sizeof(std::int64_t)+1+sizeof(std::int64_t)+3;
                 require(bytes.size()>trailing+kPlanningContractCount*record_bytes+12,
@@ -1189,7 +1560,8 @@ struct UiRegression {
                         "schema-29 contract migration failed: "+legacy_error);
                 require(migrated.planning_.contracts[0].status==PlanningContractStatus::Completed &&
                         migrated.planning_.contracts[kPlanningContractCount-1].status==PlanningContractStatus::Active &&
-                        migrated.planning_.contracts[11].status==PlanningContractStatus::Available,
+                        migrated.planning_.contracts[11].status==PlanningContractStatus::Available &&
+                        migrated.planning_.mission_seeds==kStarterCropSeeds,
                         "old lunar contract not remapped to last slot or old customer status not kept");
                 std::error_code ec;std::filesystem::remove(legacy_save,ec);
             }
@@ -1246,9 +1618,16 @@ struct UiRegression {
                     "campaign launch did not retain Career mode and initialize a normal lunar playfield");
             require(stages.lander_.phase==LanderPhase::Approach && stages.builder_robots_.empty() && stages.ground_resource_piles_.empty() && stages.resources_.amounts().empty(),
                     "launch must keep the paid cargo and rovers aboard during descent");
+            require(stages.lander_.seeds_aboard==selected_seeds && seed_packet_total(stages.colony_seeds_)==0,
+                    "career lander did not load the Stage 1 seed manifest");
             require(stages.prepare_default_landing(),"default landing/stash do not fit");
             stages.update_lunar_lander(200);
-            require(stages.lander_.phase==LanderPhase::Landed && stages.unload_lunar_lander(),"lander did not await an explicit UNLOAD command after touchdown");
+            require(stages.lander_.phase==LanderPhase::Landed && stages.lander_.awaiting_stash &&
+                    !stages.unload_lunar_lander(),"mission cargo could unload before post-touchdown stash placement");
+            require(stages.prepare_default_landing() && stages.unload_lunar_lander(),
+                    "lander did not unload after setting a stash");
+            require(stages.colony_seeds_==selected_seeds && seed_packet_total(stages.lander_.seeds_aboard)==0,
+                    "career landing did not deliver the selected seeds");
             stages.update_lunar_lander(10000);
             require(stages.lander_.phase==LanderPhase::Ready && stages.builder_robots_.size()==2 && stages.placed_habitats_.empty() && stages.placed_resources_.empty(),
                     "lander unloading did not commission the fresh robotic stage");
@@ -1373,17 +1752,30 @@ struct UiRegression {
                 sandbox.build_catalog_.set_category(item->category);
                 sandbox.build_catalog_.select((int)(item-items.begin()));
             };
-            const auto click_world=[&](float x,float z){
+            const auto click_world=[&](float x,float z,bool shift=false){
                 const auto vp=sandbox.camera_.view_projection((float)stage_ui.w/stage_ui.h);
                 const auto& m=vp.m;
                 const float w=m[3]*x+m[11]*z+m[15];
                 sandbox.input_.mouse_x=(int)std::lround((.5f+(m[0]*x+m[8]*z+m[12])/(2*w))*stage_ui.w);
                 sandbox.input_.mouse_y=(int)std::lround((.5f-(m[1]*x+m[9]*z+m[13])/(2*w))*stage_ui.h);
                 sandbox.input_.left_pressed=true;
+                sandbox.input_.key_shift_down=shift;
                 sandbox.render(stage_ui);
                 sandbox.input_={};
             };
-            select_build("crew_quarters");click_world(25,-20);
+            select_build("crew_quarters");
+            sandbox.placement_rotation_degrees_=90.f;
+            sandbox.placement_habitat_size_=HabitatSizeTier::Standard;
+            click_world(25,-20,true);
+            require(sandbox.placed_habitats_.size()==1 && sandbox.build_catalog_.selected() &&
+                    sandbox.placement_rotation_degrees_==90.f && sandbox.placement_habitat_size_==HabitatSizeTier::Standard,
+                    "Shift placement did not retain the blueprint, rotation and size");
+            click_world(25,14);
+            require(sandbox.placed_habitats_.size()==2 && !sandbox.build_catalog_.selected() &&
+                    sandbox.placed_habitats_.back().rotation_degrees==90.f &&
+                    sandbox.placed_habitats_.back().size==HabitatSizeTier::Standard,
+                    "second placement did not use the retained settings or clear the tool");
+            sandbox.placed_habitats_.pop_back();
             select_build("storage_dome");click_world(-25,22);
             select_build("corridor");click_world(10,8);click_world(32,8);
             select_build("supply_channel");click_world(-15,-17);click_world(5,-17);
@@ -1894,15 +2286,36 @@ struct UiRegression {
         // the 3D preview. Keep this in the HUD bounds at common small screens.
         {
             GameApp tooltip(engine);setup(tooltip,7,2);
-            tooltip.corridor_placement_failure_title_="NO CLEAR CORRIDOR ROUTE";
-            tooltip.corridor_placement_failure_detail_="All tested routes are blocked by structure or corridor clearance. Move an endpoint or create more free space.";
+            tooltip.placement_tip_title_="NO CLEAR CORRIDOR ROUTE";
+            tooltip.placement_tip_detail_="All tested routes are blocked by structure or corridor clearance. Move an endpoint or create more free space.";
             tooltip.input_.mouse_x=1210;tooltip.input_.mouse_y=650;
             Recorder tr;tr.resize(1280,720);tr.set_2d(tooltip.ui_scale_);
-            tooltip.render_corridor_placement_tooltip(tr);
+            tooltip.render_placement_tooltip(tr);
             tr.check_bounds("corridor rejection tooltip");
             bool title=false,body=false;
             for(const auto& d:tr.draws)if(d.type=='T'){title|=d.text.find("NO CLEAR CORRIDOR ROUTE")!=std::string::npos;body|=d.text.find("blocked")!=std::string::npos;}
             require(title && body,"corridor rejection tooltip omitted title or reason");
+
+            tooltip.placement_tip_title_="AIR LOCK + CORRIDOR";
+            tooltip.placement_tip_detail_.clear();
+            tooltip.resources_.restore({});
+            ConstructionResourcePlan habitat_cost;
+            habitat_cost.steps[0].iron=25;
+            GameApp::StructureAttachment attachment{};
+            attachment.corridor.emplace();
+            attachment.corridor->resource_plan.steps[0].iron=11;
+            attachment.corridor->resource_plan.steps[0].aluminum=3;
+            tooltip.set_placement_cost(habitat_cost,&attachment);
+            tr.draws.clear();
+            tooltip.render_placement_tooltip(tr);
+            tr.check_bounds("combined placement cost");
+            bool iron=false,aluminum=false,shortage=false;
+            for(const auto& d:tr.draws)if(d.type=='T'){
+                iron|=d.text.find("36 Fe")!=std::string::npos;
+                aluminum|=d.text.find("3 Al")!=std::string::npos;
+                shortage|=d.text.find("NEEDS MORE MATERIALS")!=std::string::npos;
+            }
+            require(iron && aluminum && shortage,"placement tooltip omits attached corridor cost or shortage");
         }
 
         // ESC from the in-game menu resumes the active session. ESC from a
@@ -1949,6 +2362,7 @@ int main(int argc,char** argv){
         }
         else if(out=="graphics-quality") game::UiRegression::graphics_quality();
         else if(out=="build-order") game::UiRegression::build_order_panel();
+        else if(out=="activity-log") game::UiRegression::activity_log_and_blueprint_progress();
         else{
             if(!out.empty()) std::filesystem::create_directories(out);
             game::UiRegression::run(out);

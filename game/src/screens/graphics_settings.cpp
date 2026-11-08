@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
+#include <span>
 #include <string_view>
+#include <vector>
 
 namespace game {
 using namespace eng;
@@ -11,7 +14,9 @@ namespace {
 using F=GraphicsFeature;
 
 enum class Control {
-    Feature, Path, Scale, RayScale, AA, AAQuality, Shadows, ShadowQuality, Transparency, Bloom, BloomQuality, Exposure,
+    Feature, DisplayMode, Resolution, ApplyResolution, Vsync, Path, Scale, RayScale, AA, AAQuality,
+    Shadows, ShadowQuality, ShadowResolution, Transparency, Bloom, BloomQuality, Exposure,
+    SurfaceResolution, TextureFilter, GroundClutter, ClutterRange, Particles,
 #ifdef _WIN32
     TerrainVrs,
 #endif
@@ -30,54 +35,78 @@ constexpr Row toggle(const char* label,const char* description,F feature,
     return {label,description,Control::Feature,feature,requirement};
 }
 
-#ifdef _WIN32
-constexpr std::array output{
-    Row{"RENDERER","Enhanced Direct3D 12 lunar lighting or classic mesh graphics.",Control::Path},
-    Row{"3D RENDER SCALE","Internal lunar resolution. Interface stays at display resolution.",Control::Scale},
-    Row{"ANTI-ALIASING","FXAA smooths the lunar scene before the interface is drawn.",Control::AA},
-    Row{"AA QUALITY","Adjusts the number of samples used by FXAA.",Control::AAQuality},
-    Row{"TERRAIN VRS","Use 2x2 shading on terrain outside the build area.",Control::TerrainVrs}
+constexpr std::array display{
+    Row{"DISPLAY MODE","Choose between fullscreen and a window.",Control::DisplayMode},
+    Row{"DISPLAY RESOLUTION","Choose a size reported by the current display.",Control::Resolution},
+    Row{"APPLY DISPLAY RESOLUTION","Resize the game to the selected display size.",Control::ApplyResolution},
+    Row{"VERTICAL SYNC","Sync presentation to the display refresh to reduce tearing.",Control::Vsync},
+    Row{"3D RENDER SCALE","Set internal 3D resolution independently of the interface.",Control::Scale},
+    Row{"ANTI-ALIASING","Choose the method used to smooth edges in the 3D image.",Control::AA},
+    Row{"ANTI-ALIASING QUALITY","Set the amount of spatial edge smoothing.",Control::AAQuality},
+#ifndef _WIN32
+    toggle("LEARNED UPSCALING","Reconstructs detail at reduced scale with temporal AA.",F::LearnedUpscale,Requirement::Temporal),
+#endif
 };
-constexpr std::array world{
-    toggle("TERRAIN RELIEF","Scales terrain mesh density and crater detail.",F::TerrainRelief),
-    toggle("MATERIAL DETAIL","Scales regolith grain and solar cell detail.",F::MaterialDetail),
-    toggle("DECALS AND DUST","Adjusts landing-pad paint and dust on cladding.",F::Decals)
-};
-constexpr std::array lights{
-    toggle("PHYSICALLY BASED LIGHTING","Uses material roughness and metalness in the lighting model.",F::Pbr),
-    toggle("LOCAL LIGHTS","Scales the number of powered fixtures that illuminate surfaces.",F::LocalLights)
-};
-#else
-constexpr std::array output{
-    Row{"RENDERER","Auto uses available compute features. Deferred uses raster effects.",Control::Path},
-    Row{"3D RENDER SCALE","Internal resolution. Interface stays at display resolution.",Control::Scale},
-    Row{"ANTI-ALIASING","Temporal reconstruction, spatial FXAA, or off.",Control::AA},
-    Row{"AA QUALITY","Adjusts the number of samples used for spatial edge smoothing.",Control::AAQuality},
-    toggle("LEARNED UPSCALING","Learned detail recovery when temporal AA enlarges a low-resolution image.",F::LearnedUpscale,Requirement::Temporal),
-    toggle("VISIBILITY BUFFER","Reconstructs materials from triangle IDs on the compute path.",F::VisibilityBuffer,Requirement::Visibility)
-};
-constexpr std::array world{
-    toggle("TERRAIN RELIEF","Scales terrain mesh density and crater detail.",F::TerrainRelief),
-    toggle("GPU TERRAIN CULLING","Uses GPU culling and indirect draws for terrain clusters.",F::GpuTerrain,Requirement::Terrain),
-    toggle("STREAMED TERRAIN DETAIL","Sets the number of fine boulder pages resident near the camera.",F::StreamedGeometry,Requirement::Streamed),
+constexpr std::array textures{
+#ifndef _WIN32
+    Row{"SURFACE TEXTURE RESOLUTION","Finest sampled mip of lunar terrain and structure maps.",Control::SurfaceResolution},
+    Row{"TEXTURE FILTERING","Choose mip filtering or GPU-supported anisotropy for angled surfaces.",Control::TextureFilter},
     toggle("VIRTUAL TEXTURES","Adjusts near-field ground texture detail and page uploads.",F::VirtualTextures,Requirement::Pages),
-    toggle("MATERIAL TEXTURES","Scales texture sampling, material grain and surface normals.",F::MaterialDetail),
-    toggle("DECALS AND DUST LAYERS","Adjusts landing-pad paint, wear and dust buildup.",F::Decals),
-    toggle("HAIR SHADING","Adds directional highlights and strand detail at higher levels.",F::Hair),
+    toggle("HAIR SHADING","Adds directional highlights and strand detail.",F::Hair),
     toggle("CLOTH DETAIL","Scales fabric texture detail.",F::Cloth),
     toggle("SKIN SHADING","Adjusts the sample count for skin diffusion.",F::Skin),
-    Row{"TRANSPARENCY","Weighted order-independent blending or sorted mesh blending.",Control::Transparency}
+#endif
+    toggle("MATERIAL DETAIL","Scales regolith grain and fine detail on lunar surfaces.",F::MaterialDetail),
+    toggle("PROJECTED SURFACE DETAIL","Controls landing-pad markings, wear and dust layers.",F::Decals)
+};
+constexpr std::array environment{
+    toggle("TERRAIN RELIEF","Scales the detail of cratered terrain around the build area.",F::TerrainRelief),
+#ifndef _WIN32
+    Row{"GROUND CLUTTER","Sets the density of decorative boulders outside the build area.",Control::GroundClutter},
+    Row{"GROUND CLUTTER RANGE","Controls how far the boulder field extends beyond the build area.",Control::ClutterRange},
+    toggle("STREAMED TERRAIN DETAIL","Sets the number of fine boulder pages resident near the camera.",F::StreamedGeometry,Requirement::Streamed),
+    toggle("EARTH ATMOSPHERE","Draws the scattering sky above the Earth campus.",F::EarthAtmosphere),
+    toggle("VOLUMETRIC CLOUDS","Adjusts ray-march steps in the Earth cloud layer.",F::Clouds,Requirement::Atmosphere),
+    toggle("DISTANCE HAZE","Adjusts the density of Earth campus haze.",F::Haze),
+#endif
 };
 constexpr std::array lights{
     toggle("PHYSICALLY BASED LIGHTING","Uses material roughness and metalness in the lighting model.",F::Pbr),
     toggle("LOCAL LIGHTS","Scales the number of powered fixtures that illuminate surfaces.",F::LocalLights),
+#ifndef _WIN32
     Row{"SUN SHADOW MAPS","Near shadow pages with cascades, cascades alone, or off.",Control::Shadows},
-    Row{"SUN SHADOW QUALITY","Scales filter samples and updates to the near shadow pages.",Control::ShadowQuality},
+    Row{"SHADOW FILTER QUALITY","Scales filter samples and near-shadow page updates.",Control::ShadowQuality},
+    Row{"CASCADE SHADOW RESOLUTION","Sets the pixel size of each directional shadow map.",Control::ShadowResolution},
     toggle("RESTIR DIRECT LIGHTING","Adjusts fixture candidates and nearby samples.",F::ReservoirLights,Requirement::Reservoir),
     toggle("SCREEN-SPACE AO","Adjusts the number of contact occlusion samples.",F::ScreenOcclusion),
     toggle("SCREEN-SPACE GI","Adjusts diffuse bounce samples when ray GI is inactive.",F::ScreenIndirect),
-    toggle("SCREEN-SPACE REFLECTIONS","Adjusts steps and refinement for screen reflections.",F::ScreenReflections)
+    toggle("SCREEN-SPACE REFLECTIONS","Adjusts steps and refinement for screen reflections.",F::ScreenReflections),
+#endif
 };
+constexpr std::array effects{
+    Row{"PARTICLE DENSITY","Controls airborne lander dust and rover welding sparks.",Control::Particles},
+    Row{"BLOOM INTENSITY","Glow from bright surfaces and lights. Set to 0% to disable.",Control::Bloom},
+    Row{"BLOOM QUALITY","Scales the resolution of the glow buffer.",Control::BloomQuality},
+    Row{"EXPOSURE","Adjusts world brightness in stops.",Control::Exposure},
+    toggle("FILMIC TONE MAPPING","Smooths the transition into bright highlights.",F::Filmic),
+    toggle("VIGNETTE","Adjusts shading at the edges of the 3D image.",F::Vignette),
+#ifndef _WIN32
+    toggle("VOLUMETRIC EXHAUST","Adjusts integration steps for engine plumes.",F::VolumetricPlumes),
+    toggle("VOLUMETRIC LUNAR DUST","Adjusts integration steps for the lander dust cloud.",F::VolumetricDust),
+    Row{"TRANSPARENCY","Weighted order-independent blending or sorted mesh blending.",Control::Transparency},
+#endif
+};
+constexpr std::array advanced{
+#ifdef _WIN32
+    Row{"RENDERER","Enhanced Direct3D 12 lunar lighting or classic mesh graphics.",Control::Path},
+    Row{"TERRAIN VRS","Use 2x2 shading on terrain outside the build area.",Control::TerrainVrs},
+#else
+    Row{"RENDERER","Auto uses available compute features. Deferred uses raster effects.",Control::Path},
+    toggle("VISIBILITY BUFFER","Reconstructs materials from triangle IDs on the compute path.",F::VisibilityBuffer,Requirement::Visibility),
+    toggle("GPU TERRAIN CULLING","Uses GPU culling and indirect draws for terrain clusters.",F::GpuTerrain,Requirement::Terrain),
+#endif
+};
+#ifndef _WIN32
 constexpr std::array rays{
     toggle("SOFTWARE RAY TRACING","Traces scene triangles using OpenGL compute.",F::RayTracing,Requirement::Compute),
     toggle("RAY-TRACED SHADOWS","Adjusts sunlight ray reach and enables fixture visibility.",F::RayShadows,Requirement::Ray),
@@ -89,30 +118,19 @@ constexpr std::array rays{
     toggle("LEARNED DENOISING","Uses learned confidence weights in the ray filter.",F::LearnedDenoise,Requirement::Denoise),
     toggle("NEURAL RADIANCE CACHE","Learns a local diffuse lighting estimate from ray samples.",F::NeuralRadiance,Requirement::Neural)
 };
-constexpr std::array atmosphere{
-    toggle("EARTH ATMOSPHERE","Draws the scattering sky above the Earth campus.",F::EarthAtmosphere),
-    toggle("VOLUMETRIC CLOUDS","Adjusts ray-march steps in the Earth cloud layer.",F::Clouds,Requirement::Atmosphere),
-    toggle("DISTANCE HAZE","Adjusts the density of Earth campus haze.",F::Haze),
-    toggle("VOLUMETRIC EXHAUST","Adjusts integration steps for engine plumes.",F::VolumetricPlumes),
-    toggle("VOLUMETRIC LUNAR DUST","Adjusts integration steps for lander dust.",F::VolumetricDust)
-};
 #endif
-constexpr std::array image{
-    Row{"BLOOM INTENSITY","Glow from bright surfaces and lights. Set to 0% to disable.",Control::Bloom},
-    Row{"BLOOM QUALITY","Scales the resolution of the glow buffer.",Control::BloomQuality},
-    Row{"EXPOSURE","Adjusts world brightness in stops.",Control::Exposure},
-    toggle("FILMIC TONE MAPPING","Uses a filmic highlight roll-off. Off uses a simpler tone curve.",F::Filmic),
-    toggle("VIGNETTE","Adjusts shading at the edges of the 3D image.",F::Vignette)
-};
 struct Tab { const char* name; const Row* rows; int count; };
 template<std::size_t N> constexpr Tab tab(const char* name,const std::array<Row,N>& rows){
     return {name,rows.data(),int(N)};
 }
-#ifdef _WIN32
-constexpr std::array tabs{tab("OUTPUT",output),tab("WORLD",world),tab("LIGHTING",lights),tab("IMAGE",image)};
-#else
-constexpr std::array tabs{tab("OUTPUT",output),tab("WORLD",world),tab("LIGHTING",lights),
-                          tab("RAY TRACING",rays),tab("IMAGE",image),tab("ATMOSPHERE",atmosphere)};
+constexpr std::array tabs{
+    tab("DISPLAY",display),tab("TEXTURES",textures),tab("ENVIRONMENT",environment),tab("LIGHTING",lights),
+    tab("EFFECTS",effects),tab("ADVANCED",advanced),
+#ifndef _WIN32
+    tab("RAY TRACING",rays),
+#endif
+};
+#ifndef _WIN32
 static_assert([]{
     std::uint32_t mask{};
     for(const auto& t:tabs)
@@ -131,8 +149,31 @@ constexpr std::array aa_names{"TEMPORAL","FXAA","OFF"};
 constexpr std::array shadow_names{"PAGED + CSM","CASCADES","OFF"};
 constexpr std::array transparency_names{"WEIGHTED","SORTED"};
 constexpr std::array quality_names{"OFF","LOW","MEDIUM","HIGH"};
+constexpr std::array detail_names{"LOW","MEDIUM","HIGH"};
+constexpr std::array display_names{"WINDOWED","FULLSCREEN"};
+constexpr std::array enabled_names{"OFF","ON"};
+constexpr std::array texture_names{"BILINEAR","TRILINEAR","2X ANISOTROPIC","4X ANISOTROPIC","8X ANISOTROPIC","16X ANISOTROPIC"};
+constexpr std::array surface_names{"128 PX","256 PX","512 PX"};
+constexpr std::array cascade_names{"768 PX","1024 PX","1536 PX"};
+constexpr std::array profiles{BenchmarkProfile::Performance,BenchmarkProfile::Balanced,BenchmarkProfile::High};
+constexpr std::array profile_labels{"PERFORMANCE","BALANCED","HIGH QUALITY"};
+
+struct Popup {
+    Rect rect;
+    std::vector<std::string> labels;
+    int selected{};
+};
+constexpr float popup_row=26.f;
 
 const char* restriction(const Row& row,const GraphicsSettings& s,const GraphicsCapabilities& caps){
+    switch(row.control){
+        case Control::DisplayMode:
+        case Control::Resolution:
+        case Control::ApplyResolution:
+        case Control::Particles: return nullptr;
+        case Control::Vsync: return caps.vertical_sync?nullptr:"SWAP INTERVAL CONTROL UNAVAILABLE";
+        default: break;
+    }
 #ifdef _WIN32
     if(!caps.enhanced) return "ENHANCED DIRECT3D 12 RENDERER UNAVAILABLE";
     if(row.control==Control::Path) return nullptr;
@@ -185,142 +226,225 @@ const char* restriction(const Row& row,const GraphicsSettings& s,const GraphicsC
     }
 #endif
     if(row.control==Control::AAQuality && s.aa==GraphicsAA::Off) return "ENABLE ANTI-ALIASING";
-    if(row.control==Control::ShadowQuality && s.shadows==GraphicsShadows::Off) return "ENABLE SUN SHADOW MAPS";
+    if((row.control==Control::ShadowQuality || row.control==Control::ShadowResolution) &&
+       s.shadows==GraphicsShadows::Off) return "ENABLE SUN SHADOW MAPS";
+    if((row.control==Control::GroundClutter || row.control==Control::ClutterRange) &&
+       !s.enabled(F::TerrainRelief)) return "ENABLE TERRAIN RELIEF";
+    if(row.control==Control::ClutterRange && !s.ground_clutter) return "ENABLE GROUND CLUTTER";
     if(row.control==Control::BloomQuality && s.bloom==0) return "INCREASE BLOOM INTENSITY";
     return nullptr;
 }
 } // namespace
 
 void GameApp::render_graphics_settings(Renderer& r){
-    ui::title(r,{32,24},"GRAPHICS",theme_);
-    const float width=std::min(950.0f,ui_width(r)-40.0f);
-    const float height=std::min(570.0f,ui_height(r)-82.0f);
-    const Rect panel{(ui_width(r)-width)*0.5f,65.0f,width,height};
+    ensure_display_modes();
+    const float width=std::min(1400.f,ui_width(r)-40.f);
+    const float height=std::min(690.f,ui_height(r)-82.f);
+    const Rect panel{(ui_width(r)-width)*.5f,std::max(65.f,(ui_height(r)-height)*.5f),width,height};
+    ui::title(r,{panel.x,panel.y-42.f},"GRAPHICS",theme_);
     ui::panel(r,panel,theme_);
+    r.draw_rect({panel.x,panel.y,panel.w,2.f},theme_.accent);
     const auto caps=r.graphics_capabilities();
 #ifdef _WIN32
-    const char* mode=mesh_layout_active()?"DEBUG MESH ACTIVE / SETTINGS APPLY TO FULL GRAPHICS":
+    const char* status=mesh_layout_active()?"DEBUG MESH ACTIVE / SETTINGS APPLY TO FULL GRAPHICS":
         !caps.enhanced?"DIRECT3D 12 CLASSIC / ENHANCED GRAPHICS UNAVAILABLE":
         graphics_.path==GraphicsPath::Classic?"DIRECT3D 12 CLASSIC":"DIRECT3D 12 ENHANCED LUNAR GRAPHICS";
-    const std::string status=std::string(mode)+(caps.enhanced_barriers?" / ENHANCED BARRIERS":" / LEGACY BARRIERS");
 #else
-    const char* status=mesh_layout_active()?"DEBUG MESH ACTIVE  /  SETTINGS APPLY TO FULL GRAPHICS":
-        !caps.enhanced?"STANDARD BACKEND  /  ENHANCED GRAPHICS UNAVAILABLE":
+    const char* status=mesh_layout_active()?"DEBUG MESH ACTIVE / SETTINGS APPLY TO FULL GRAPHICS":
+        !caps.enhanced?"STANDARD BACKEND / ENHANCED GRAPHICS UNAVAILABLE":
         graphics_.path==GraphicsPath::Classic?"CLASSIC VIEW":
-        graphics_.path==GraphicsPath::Auto && (caps.ray_lighting || caps.visibility_buffer || caps.pages)?"AUTO  /  OPENGL COMPUTE AVAILABLE":
-        "DEFERRED RASTER";
+        graphics_.path==GraphicsPath::Auto && (caps.ray_lighting || caps.visibility_buffer || caps.pages)?
+            "OPENGL AUTO / COMPUTE AVAILABLE":"OPENGL DEFERRED RASTER";
 #endif
-    const float x=panel.x+14.0f;
-    const float inner=panel.w-28.0f;
-    ui::label_fitted(r,{x,panel.y+13.0f,inner,15.0f},status,1.05f,theme_,true);
-
-    constexpr float gap=4.0f;
+    const float bottom=panel.y+panel.h;
+    const float footer=bottom-45.f;
     constexpr int benchmark_tab=static_cast<int>(tabs.size());
-    const float tab_width=(inner-gap*benchmark_tab)/(benchmark_tab+1);
+    const float nav_x=panel.x+14.f,nav_width=std::clamp(panel.w*.17f,126.f,182.f);
+    const float nav_height=std::min(37.f,(footer-panel.y-52.f)/(benchmark_tab+1));
+    const float x=nav_x+nav_width+22.f,inner=panel.x+panel.w-14.f-x;
+    const int open_at_start=graphics_dropdown_;
+    auto control_input=ui_input_;
+    if(open_at_start>=0)control_input.left_pressed=false;
+
+    ui::label_fitted(r,{nav_x+6,panel.y+18,nav_width-12,18},"CATEGORIES",1.04f,theme_,true);
+    r.draw_line({x-11,panel.y+12},{x-11,bottom-12},theme_.border,1.f);
     for(int i=0;i<=benchmark_tab;++i){
-        const Rect box{x+(tab_width+gap)*i,panel.y+36.0f,tab_width,30.0f};
-        if(ui::button(r,ui_input_,box,i==benchmark_tab?"BENCHMARK":tabs[i].name,theme_) && i!=graphics_tab_){
+        const Rect box{nav_x,panel.y+43.f+nav_height*i,nav_width,nav_height-4.f};
+        if(ui::button(r,control_input,box,i==benchmark_tab?"BENCHMARK":tabs[i].name,theme_) && i!=graphics_tab_){
             graphics_tab_=i;
             graphics_page_=0;
+            graphics_dropdown_=-1;
         }
-        if(i==graphics_tab_) r.draw_rect({box.x,box.y+box.h-3,box.w,3},theme_.accent);
+        if(i==graphics_tab_)r.draw_rect({box.x,box.y+2,3.f,box.h-4},theme_.accent);
     }
 
+    ui::label_fitted(r,{x,panel.y+12.f,inner,17.f},status,1.f,theme_,true);
     if(graphics_tab_==benchmark_tab){
-        render_benchmark_settings(r,panel,caps);
+        render_benchmark_settings(r,{x-14.f,panel.y,inner+28.f,panel.h},caps);
         return;
     }
 
+    auto next=graphics_;
+    int active_profile=-1;
+    std::array<GraphicsSettings,profiles.size()> preset_settings;
+    for(std::size_t i=0;i<profiles.size();++i){
+        preset_settings[i]=graphics_profile_settings(profiles[i],graphics_,caps);
+        if(graphics_==preset_settings[i])active_profile=static_cast<int>(i);
+    }
+    GraphicsSettings defaults;
+    defaults.vertical_sync=graphics_.vertical_sync;
+    const char* preset=active_profile>=0?profile_labels[active_profile]:graphics_==defaults?"DEFAULT":"CUSTOM";
+    const std::string preset_label=std::string("GRAPHICS QUALITY  /  ")+preset;
+    ui::label_fitted(r,{x,panel.y+38.f,inner,16.f},preset_label,1.22f,theme_);
+    const float preset_width=(inner-12.f)/3.f;
+    for(int i=0;i<static_cast<int>(profiles.size());++i){
+        const Rect box{x+i*(preset_width+6),panel.y+59.f,preset_width,31.f};
+        if(ui::button(r,control_input,box,profile_labels[i],theme_,caps.enhanced))next=preset_settings[i];
+        if(active_profile==i)r.draw_rect({box.x+2,box.y+box.h-3,box.w-4,2.f},theme_.accent);
+    }
+
     const auto& page=tabs[graphics_tab_];
-    constexpr float row_height=43.0f;
-    const float list_top=panel.y+74.0f;
-    const float bottom=panel.y+panel.h;
-    const float footer=bottom-48.0f;
-    const int rows_per_page=std::max(1,int((footer-list_top-8.0f)/row_height));
-    const int page_count=(page.count+rows_per_page-1)/rows_per_page;
+    const float list_top=panel.y+132.f;
+    ui::label_fitted(r,{x,panel.y+104.f,inner,18.f},std::string(page.name)+" SETTINGS",1.25f,theme_);
+    r.draw_line({x,panel.y+125.f},{x+inner,panel.y+125.f},theme_.border,1.f);
+    constexpr float row_height=54.f,column_gap=18.f;
+    const int columns=page.count>5 && inner>=620.f?2:1;
+    const float column_width=(inner-column_gap*(columns-1))/columns;
+    const int rows_available=std::max(1,static_cast<int>((footer-list_top-6.f)/row_height));
+    const int rows_per_column=std::min(rows_available,(page.count+columns-1)/columns);
+    const int per_page=rows_per_column*columns;
+    const int page_count=(page.count+per_page-1)/per_page;
     graphics_page_=std::clamp(graphics_page_,0,page_count-1);
-    if(Rect{x,list_top,inner,footer-list_top}.contains(float(ui_input_.mouse_x),float(ui_input_.mouse_y))
-       && ui_input_.wheel!=0.0f)
+    if(open_at_start<0 && Rect{x,list_top,inner,footer-list_top}.contains(float(ui_input_.mouse_x),float(ui_input_.mouse_y))
+       && ui_input_.wheel!=0.f)
         graphics_page_=std::clamp(graphics_page_+(ui_input_.wheel<0?1:-1),0,page_count-1);
 
-    auto next=graphics_;
-    const int first=graphics_page_*rows_per_page;
-    for(int i=first;i<std::min(first+rows_per_page,page.count);++i){
+    if(columns==2){
+        const float divider=x+column_width+column_gap*.5f;
+        r.draw_line({divider,list_top},{divider,list_top+rows_per_column*row_height},theme_.border,1.f);
+    }
+    std::optional<Popup> popup;
+    const int first=graphics_page_*per_page;
+    for(int i=first;i<std::min(first+per_page,page.count);++i){
         const Row& row=page.rows[i];
-        const float y=list_top+float(i-first)*row_height;
+        const int offset=i-first;
+        const float left=x+(offset/rows_per_column)*(column_width+column_gap);
+        const float y=list_top+(offset%rows_per_column)*row_height;
+        const float control_width=std::min(162.f,column_width*.40f);
+        const Rect control{left+column_width-control_width,y+5.f,control_width,31.f};
+        const float label_width=column_width-control_width-10.f;
         const char* blocked=restriction(row,graphics_,caps);
-        const float control_width=std::min(172.0f,inner*0.36f);
-        const Rect control{x+inner-control_width,y+6.0f,control_width,30.0f};
-        const float label_width=inner-control_width-12.0f;
         const bool paged=row.control==Control::Shadows && graphics_.shadows==GraphicsShadows::Paged;
         const char* description=paged && (!caps.pages || graphics_.path!=GraphicsPath::Auto)
             ?"USING CASCADES. SHADOW PAGES REQUIRE AUTO AND PAGE CACHE.":row.description;
-        r.draw_rect({x,y,inner,1.0f},theme_.border);
-        ui::label_fitted(r,{x+4,y+6,label_width,13},row.label,1.24f,theme_,blocked);
-        ui::label_fitted(r,{x+4,y+24,label_width,12},blocked?blocked:description,1.08f,theme_,true);
+        r.draw_rect({left,y+row_height-1,column_width,1.f},theme_.border);
+        ui::label_fitted(r,{left+2,y+12,label_width,17},row.label,1.24f,theme_,blocked);
+        ui::label_fitted(r,{left+2,y+37,column_width-4,15},blocked?blocked:description,1.03f,theme_,true);
 
-        const auto cycle=[&](auto& value,const auto& names){
-            if(ui::button(r,ui_input_,control,names[int(value)],theme_,!blocked))
-                value=static_cast<std::decay_t<decltype(value)>>((int(value)+1)%names.size());
+        const auto choose=[&](int selected,const auto& labels,auto set_value){
+            if(ui::button(r,control_input,control,std::string(labels[selected])+"  V",theme_,!blocked))
+                graphics_dropdown_=i;
+            if(graphics_dropdown_!=i || blocked)return;
+            const float list_height=popup_row*labels.size();
+            const float below=control.y+control.h+2.f;
+            const float top=below+list_height<=footer?below:std::max(panel.y+3.f,control.y-list_height-2.f);
+            const Rect bounds{control.x,top,control.w,list_height};
+            if(open_at_start==i && ui_input_.left_pressed){
+                if(bounds.contains(float(ui_input_.mouse_x),float(ui_input_.mouse_y))){
+                    const int option=std::clamp(static_cast<int>((ui_input_.mouse_y-top)/popup_row),
+                                                0,static_cast<int>(labels.size())-1);
+                    set_value(option);
+                }
+                graphics_dropdown_=-1;
+            }else{
+                popup=Popup{bounds,{},selected};
+                for(const auto& label:labels)popup->labels.emplace_back(label);
+            }
         };
-        const auto cycle_quality=[&](int& level){
-            if(ui::button(r,ui_input_,control,quality_names[level],theme_,!blocked)) level=level%3+1;
+        const auto cycle=[&](auto& value,const auto& names){
+            choose(static_cast<int>(value),names,[&](int index){
+                value=static_cast<std::decay_t<decltype(value)>>(index);
+            });
+        };
+        const auto quality=[&](int& level){
+            choose(level-1,detail_names,[&](int index){level=index+1;});
         };
         const auto step=[&](int& value,int lower,int upper,int delta,const std::string& label){
-            constexpr float arrow=30.0f;
-            const Rect minus{control.x,control.y,arrow,control.h};
-            const Rect plus{control.x+control.w-arrow,control.y,arrow,control.h};
-            if(ui::button(r,ui_input_,minus,"-",theme_,!blocked && value>lower))
+            constexpr float arrow=28.f;
+            if(ui::button(r,control_input,{control.x,control.y,arrow,control.h},"-",theme_,!blocked && value>lower))
                 value=std::max(lower,value-delta);
-            if(ui::button(r,ui_input_,plus,"+",theme_,!blocked && value<upper))
+            if(ui::button(r,control_input,{control.x+control.w-arrow,control.y,arrow,control.h},"+",theme_,!blocked && value<upper))
                 value=std::min(upper,value+delta);
-            const float space=control.w-2.0f*arrow-4.0f;
-            const float scale=ui::fit_text(label,ui::font_scale(0.84f,theme_),{space,15});
-            const auto extent=ui::text_extent(label,scale);
-            r.draw_text({control.x+(control.w-extent.x)*0.5f,control.y+(control.h-extent.y)*0.5f},
-                        label,scale,blocked?theme_.muted:theme_.text);
+            ui::label_fitted(r,{control.x+arrow+2,control.y+8,control.w-2*arrow-4,15},label,1.04f,theme_,blocked);
         };
         switch(row.control){
             case Control::Feature:{
-                if(scalable_graphics_feature(row.feature)){
-                    const int level=graphics_.quality(row.feature);
-                    if(ui::button(r,ui_input_,control,quality_names[level],theme_,!blocked))
-                        next.set_quality(row.feature,(level+1)%4);
-                }else{
-                    const bool on=graphics_.enabled(row.feature);
-                    if(ui::button(r,ui_input_,control,on?"ON":"OFF",theme_,!blocked)) next.set(row.feature,!on);
-                }
+                if(scalable_graphics_feature(row.feature))
+                    choose(graphics_.quality(row.feature),quality_names,[&](int index){next.set_quality(row.feature,index);});
+                else
+                    choose(graphics_.enabled(row.feature),enabled_names,[&](int index){next.set(row.feature,index!=0);});
                 break;
             }
+            case Control::DisplayMode:
+                choose(app_.fullscreen(),display_names,[&](int index){app_.set_fullscreen(index!=0);});
+                break;
+            case Control::Resolution:{
+                const auto& mode=display_modes_[display_mode_index_];
+                step(display_mode_index_,0,static_cast<int>(display_modes_.size())-1,1,
+                     std::to_string(mode.width)+" X "+std::to_string(mode.height));
+                break;
+            }
+            case Control::ApplyResolution:
+                if(ui::button(r,control_input,control,"APPLY SIZE",theme_)){
+                    const auto& mode=display_modes_[display_mode_index_];
+                    graphics_display_failed_=!app_.set_display_mode(mode.width,mode.height);
+                }
+                break;
+            case Control::Vsync:
+                cycle(next.vertical_sync,enabled_names);
+                break;
             case Control::Path:
 #ifdef _WIN32
-                if(ui::button(r,ui_input_,control,next.path==GraphicsPath::Classic?"CLASSIC":"ENHANCED",theme_,!blocked))
-                    next.path=next.path==GraphicsPath::Classic?GraphicsPath::Auto:GraphicsPath::Classic;
+                choose(next.path==GraphicsPath::Classic,std::array{"ENHANCED","CLASSIC"},
+                       [&](int index){next.path=index==0?GraphicsPath::Auto:GraphicsPath::Classic;});
 #else
                 cycle(next.path,path_names);
 #endif
                 break;
             case Control::AA:
 #ifdef _WIN32
-                if(ui::button(r,ui_input_,control,next.aa==GraphicsAA::Off?"OFF":"FXAA",theme_,!blocked))
-                    next.aa=next.aa==GraphicsAA::Off?GraphicsAA::Fxaa:GraphicsAA::Off;
+                choose(next.aa==GraphicsAA::Off,std::array{"FXAA","OFF"},
+                       [&](int index){next.aa=index==0?GraphicsAA::Fxaa:GraphicsAA::Off;});
 #else
                 cycle(next.aa,aa_names);
 #endif
                 break;
 #ifdef _WIN32
-            case Control::TerrainVrs:
-                if(ui::button(r,ui_input_,control,next.terrain_vrs?"ON":"OFF",theme_,!blocked))
-                    next.terrain_vrs=!next.terrain_vrs;
-                break;
+            case Control::TerrainVrs: cycle(next.terrain_vrs,enabled_names); break;
 #endif
             case Control::Shadows: cycle(next.shadows,shadow_names); break;
-            case Control::AAQuality: cycle_quality(next.aa_quality); break;
-            case Control::ShadowQuality: cycle_quality(next.shadow_quality); break;
-            case Control::BloomQuality: cycle_quality(next.bloom_quality); break;
+            case Control::AAQuality: quality(next.aa_quality); break;
+            case Control::ShadowQuality: quality(next.shadow_quality); break;
+            case Control::ShadowResolution:
+                choose(next.shadow_resolution-1,cascade_names,[&](int index){next.shadow_resolution=index+1;});
+                break;
+            case Control::BloomQuality: quality(next.bloom_quality); break;
+            case Control::SurfaceResolution:
+                choose(next.surface_resolution-1,surface_names,[&](int index){next.surface_resolution=index+1;});
+                break;
+            case Control::TextureFilter:{
+                int count=2;
+                while(count<static_cast<int>(texture_names.size()) && texture_anisotropy(count)<=caps.texture_anisotropy)++count;
+                choose(std::min(next.texture_filter,count-1),std::span(texture_names).first(count),
+                       [&](int index){next.texture_filter=index;});
+                break;
+            }
+            case Control::GroundClutter: cycle(next.ground_clutter,quality_names); break;
+            case Control::Particles: cycle(next.particle_density,quality_names); break;
             case Control::Transparency: cycle(next.transparency,transparency_names); break;
             case Control::Scale: step(next.render_scale,50,100,5,std::to_string(next.render_scale)+"%"); break;
             case Control::RayScale: step(next.ray_scale,25,75,5,std::to_string(next.ray_scale)+"%"); break;
+            case Control::ClutterRange: step(next.clutter_range,25,100,5,std::to_string(next.clutter_range)+"%"); break;
             case Control::Bloom: step(next.bloom,0,150,10,std::to_string(next.bloom)+"%"); break;
             case Control::Exposure:{
                 const int stops=std::abs(next.exposure_tenths);
@@ -332,21 +456,38 @@ void GameApp::render_graphics_settings(Renderer& r){
         }
     }
 
-    const float middle=x+inner*0.5f;
-    if(ui::button(r,ui_input_,{x,footer,82,31},"BACK",theme_)) screen_=Screen::Settings;
+    if(ui::button(r,control_input,{nav_x,footer,nav_width,30},"BACK",theme_))screen_=Screen::Settings;
+    const float middle=x+inner*.5f;
     if(page_count>1){
-        if(ui::button(r,ui_input_,{middle-66,footer,31,31},"<",theme_,graphics_page_>0)) --graphics_page_;
-        if(ui::button(r,ui_input_,{middle+35,footer,31,31},">",theme_,graphics_page_+1<page_count)) ++graphics_page_;
-        ui::label_fitted(r,{middle-26,footer+9,54,13},
-            std::to_string(graphics_page_+1)+"/"+std::to_string(page_count),0.84f,theme_,true);
+        if(ui::button(r,control_input,{middle-59,footer,30,30},"<",theme_,graphics_page_>0))--graphics_page_;
+        if(ui::button(r,control_input,{middle+29,footer,30,30},">",theme_,graphics_page_+1<page_count))++graphics_page_;
+        ui::label_fitted(r,{middle-21,footer+8,42,14},
+            std::to_string(graphics_page_+1)+"/"+std::to_string(page_count),.95f,theme_,true);
+    }else{
+        ui::label_fitted(r,{x,footer+8,inner-150,14},"GRAPHICS CHANGES APPLY IMMEDIATELY",.95f,theme_,true);
     }
-    const bool reset=ui::button(r,ui_input_,{x+inner-116,footer,116,31},"RESET DEFAULTS",theme_,caps.enhanced);
-    if(reset) next={};
+    const bool reset=ui::button(r,control_input,{x+inner-136,footer,136,30},"RESET DEFAULTS",theme_);
+    if(reset)next={};
     if(next!=graphics_ || reset){
         graphics_=next;
         persist_preferences();
     }
-    if(preferences_save_failed_)
-        ui::label_fitted(r,{x,bottom-13,inner,11},"APPLIED FOR THIS SESSION. PREFERENCES COULD NOT BE SAVED.",0.78f,theme_);
+    if(preferences_save_failed_ || (graphics_tab_==0 && graphics_display_failed_))
+        ui::label_fitted(r,{x,bottom-13,inner,11},
+            graphics_tab_==0 && graphics_display_failed_?"THE DISPLAY REJECTED THIS RESOLUTION.":
+            "APPLIED FOR THIS SESSION. PREFERENCES COULD NOT BE SAVED.",.84f,theme_);
+    if(popup){
+        const auto& [bounds,labels,selected]=*popup;
+        r.draw_rect(bounds,theme_.panel2);
+        for(int i=0;i<static_cast<int>(labels.size());++i){
+            const Rect item{bounds.x,bounds.y+i*popup_row,bounds.w,popup_row};
+            const bool hovered=item.contains(float(ui_input_.mouse_x),float(ui_input_.mouse_y));
+            r.draw_rect(item,hovered?Color{.16f,.30f,.36f,1}:i==selected?Color{.10f,.24f,.30f,1}:theme_.panel2);
+            if(i==selected)r.draw_rect({item.x,item.y,2.f,item.h},theme_.accent);
+            ui::label_fitted(r,{item.x+8,item.y+5,item.w-16,item.h-10},labels[i],1.04f,theme_);
+        }
+    }else if(open_at_start>=0){
+        graphics_dropdown_=-1;
+    }
 }
 } // namespace game

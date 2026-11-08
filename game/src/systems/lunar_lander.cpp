@@ -179,8 +179,6 @@ bool GameApp::lander_placement_clear(eng::Vec3 p,float rotation,float width,floa
     using namespace world_math;
     const auto candidate=footprint(p,rotation,width,depth);
     if(overlaps(candidate,footprint(lander_.site+eng::Vec3{0,0,2.6f},0,12.2f,17.4f),0.5f))return false;
-    // Crane sweep and pickup traffic aisle stay clear after the depot empties.
-    if(!lander_.boxed&&overlaps(candidate,footprint(lander_.site+eng::Vec3{-10.5f,0,0},0,8.0f,11.5f),0.5f))return false;
     if(lander_.deploying()&&!lunar_lander_deployment_clear(lander_,p,rotation,width,depth,.5f)) return false;
     return true;
 }
@@ -197,13 +195,15 @@ BuilderRobotState GameApp::lander_robot(int ordinal) const {
     r.battery_charge_kwh=r.battery_capacity_kwh;
     return r;
 }
-void GameApp::begin_lunar_landing(const ResourceBundle& manifest,int builders,int carriers){
+void GameApp::begin_lunar_landing(const ResourceBundle& manifest,int builders,int carriers,CropSeeds seeds){
     lander_={};lander_.phase=LanderPhase::Approach;lander_.awaiting_site=true;
     lander_.manifest=manifest;lander_.remaining=manifest;
+    lander_.seeds_aboard=seeds;
+    colony_seeds_={};
     lander_.builders=(std::uint8_t)std::clamp(builders,1,6);lander_.carriers=(std::uint8_t)std::clamp(carriers,1,6);
     starting_robot_count_=lander_.builders;starting_carrier_count_=lander_.carriers;
     resources_.reset();ground_resource_piles_.clear();builder_robots_.clear();
-    starter_stash_center_=lander_.site+eng::Vec3{-10.9f,0,0};
+    starter_stash_center_={};
     robot_safety_time_seconds_=0;robot_enclosure_legacy_scan_pending_=false;nav_wall_cache_.reset();
     selection_kind_=SelectionKind::Lander;
     camera_.reset(playfield_.size());
@@ -226,13 +226,16 @@ void GameApp::update_lunar_lander(float dt){
         float duration=0;
         switch(phase){
             case LanderPhase::Approach:duration=kLanderDescentSeconds;break;
-            case LanderPhase::Settling:duration=4;break;
+            case LanderPhase::Settling:duration=kLanderSettleSeconds;break;
             case LanderPhase::OpeningRamp:duration=kLanderRampSeconds;break;
             case LanderPhase::DeployingRobots:duration=lunar_lander_deployment_seconds(lander_,(int)builder_robots_.size());break;
             default:return;
         }
-        const float step=std::min(remaining,std::max(0.0f,duration-lander_.elapsed));
-        lander_.elapsed+=step;remaining-=step;
+        const float playback=phase==LanderPhase::Approach || phase==LanderPhase::Settling?
+            kLanderApproachPlaybackRate:1.f;
+        const float step=std::min(remaining*playback,std::max(0.0f,duration-lander_.elapsed));
+        lander_.elapsed+=step;
+        remaining=std::max(0.f,remaining-step/playback);
         if(phase==LanderPhase::Approach){
             const auto before=lunar_lander_flight(lander_.elapsed-step);
             const auto after=lunar_lander_flight(lander_.elapsed);
@@ -250,7 +253,10 @@ void GameApp::update_lunar_lander(float dt){
         if(lander_.elapsed+1e-5f<duration)return;
         lander_.elapsed=0;
         if(phase==LanderPhase::Approach){lander_.phase=LanderPhase::Settling;selection_kind_=SelectionKind::Lander;}
-        else if(phase==LanderPhase::Settling)lander_.phase=LanderPhase::Landed;
+        else if(phase==LanderPhase::Settling){
+            lander_.phase=LanderPhase::Landed;
+            lander_.awaiting_stash=!lander_.boxed;
+        }
         else if(phase==LanderPhase::OpeningRamp)lander_.phase=LanderPhase::DeployingRobots;
         else if(phase==LanderPhase::DeployingRobots){
             const int total=lander_.builders+lander_.carriers;
@@ -264,7 +270,7 @@ void GameApp::update_lunar_lander(float dt){
 
 void GameApp::render_lunar_lander_panel(eng::Renderer& r){
     using namespace eng;using namespace layout;
-    sync_selection_panel_scroll();const auto p=selection_panel_rect();ui::panel(r,p,theme_);
+    sync_selection_panel_scroll();const auto p=selection_panel_rect();layout::hud_panel(r,p,theme_);
     r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2);
     const auto label=[&](float y,const std::string& text,float scale=0.47f){
         y+=p.y-selection_panel_scroll_;
@@ -286,22 +292,28 @@ void GameApp::render_lunar_lander_panel(eng::Renderer& r){
     label(131,"PARKED "+std::to_string(parked)+" / "+std::to_string(total)+" ROVERS");
     label(152,"CARGO ABOARD "+std::to_string(lander_.remaining.total_amount())+" / "+std::to_string(lander_.manifest.total_amount())+" KG");
     for(std::size_t i=0;i<kMaterialResourceCount;++i){
-        const auto m=(MaterialResource)i;label(176+(float)i*16,std::string(material_resource_name(m))+"  "+std::to_string(lander_.remaining.amount(m))+" KG ABOARD",0.41f);
+        const auto m=(MaterialResource)i;label(170+(float)i*14,std::string(material_resource_name(m))+"  "+std::to_string(lander_.remaining.amount(m))+" KG ABOARD",0.41f);
     }
-    Rect button{p.x+14,p.y+310-selection_panel_scroll_,p.w-28,31};
+    label(285,"SEED PACKETS ABOARD "+std::to_string(seed_packet_total(lander_.seeds_aboard)),.43f);
+    Rect button{p.x+14,p.y+307-selection_panel_scroll_,p.w-28,28};
     if(button.y>=p.y+4 && button.y+button.h<=p.y+p.h-4){
-        const char* caption=lander_.phase==LanderPhase::Landed?"UNLOAD":lander_.phase==LanderPhase::Ready?"UNLOADED":lander_.phase<=LanderPhase::Settling?"WAIT FOR LANDING":"UNLOADING...";
-        if(ui::button(r,ui_input_,button,caption,theme_,lander_.phase==LanderPhase::Landed))unload_lunar_lander();
+        const char* caption=lander_.phase<LanderPhase::Landed?"WAIT FOR LANDING":
+            lander_.awaiting_stash?"PLACE STASH MARKER":lander_.phase==LanderPhase::Landed?"UNLOAD":
+            lander_.phase==LanderPhase::Ready?"UNLOADED":"UNLOADING...";
+        if(ui::button(r,ui_input_,button,caption,theme_,lander_.phase==LanderPhase::Landed && lander_.boxed))
+            unload_lunar_lander();
     }
-    std::string status=landing_message_.empty()?"CARGO STACKS AROUND THE STASH MARKER":landing_message_;
+    std::string status=lander_.phase<LanderPhase::Landed?"CHOOSE THE STASH AFTER TOUCHDOWN":
+        lander_.awaiting_stash?"CLICK CLEAR GROUND BESIDE THE LANDER":"CARGO STACKS AROUND THE STASH MARKER";
+    if(!landing_message_.empty()) status=landing_message_;
     if(lander_.salvage_requested&&lander_.salvage_worker>=0){
         const int percent=(int)(100*lander_.salvage_seconds/kLanderSalvageSeconds);
         status=percent>0?"BUILDER DISMANTLING LANDER / "+std::to_string(percent)+"%":"BUILDER HEADING TO LANDER";
     }
-    label(352,status,0.38f);
-    eng::Rect stash_button{p.x+14,p.y+378-selection_panel_scroll_,p.w-28,28};
-    if(stash_button.y>=p.y+4&&stash_button.y+28<=p.y+p.h-4&&eng::ui::button(r,ui_input_,stash_button,"SELECT STASH",theme_,lander_.boxed))selection_kind_=SelectionKind::Stash;
-    eng::Rect dismantle{p.x+14,p.y+414-selection_panel_scroll_,p.w-28,29};
+    label(341,status,0.38f);
+    eng::Rect stash_button{p.x+14,p.y+362-selection_panel_scroll_,p.w-28,28};
+    if(stash_button.y>=p.y+4&&stash_button.y+28<=p.y+p.h-4&&eng::ui::button(r,ui_input_,stash_button,"SELECT STASH",theme_,lander_.boxed && lander_.phase>=LanderPhase::Landed))selection_kind_=SelectionKind::Stash;
+    eng::Rect dismantle{p.x+14,p.y+396-selection_panel_scroll_,p.w-28,29};
     const bool ready_to_store=lander_.salvage_seconds>=kLanderSalvageSeconds;
     const char* salvage_caption=ready_to_store?"STORE RECOVERED PARTS":
         lander_.salvage_requested?"SALVAGE IN PROGRESS":"DECONSTRUCT / SALVAGE";

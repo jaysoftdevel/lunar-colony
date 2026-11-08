@@ -50,6 +50,7 @@ struct PlanningGameState {
     std::uint8_t mission_lander{1};
     std::uint8_t mission_builders{1}, mission_carriers{1};
     ResourceBundle mission_cargo{};
+    CropSeeds mission_seeds=kStarterCropSeeds;
     std::array<std::uint8_t,(std::size_t)HabitatKind::Count> mission_habitats{};
     std::array<std::uint8_t,(std::size_t)ResourceKind::Count> mission_structures{};
     bool mission_paid{false};

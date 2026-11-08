@@ -22,16 +22,21 @@ void GameApp::render_playfield(Renderer& r){
     const Mat4 view=fpv?first_person_.view_projection(aspect):
         lander_.in_flight()?camera_.campus_view_projection(aspect):camera_.view_projection(aspect);
     r.set_3d(view);
+    const bool meshed=mesh_layout_active();
+    const auto sun=status_.sun_pose();
     bool lunar=false;
-    if(!mesh_layout_active() && graphics_.path!=GraphicsPath::Classic){
-        const auto sun=status_.sun_pose();
+    std::vector<lunar_look::Fixture> corridor_fixtures;
+    if(!meshed && graphics_.path!=GraphicsPath::Classic){
         const Vec3 eye=fpv?first_person_.eye_position():camera_.eye_position();
         Vec3 focus=fpv?eye+first_person_.look_direction()*12.0f:camera_.target();
         focus.y=0;
         LunarScene scene{view,eye,focus,sun.direction,sun.irradiance_fraction,playfield_.size()*0.5f};
         scene.seconds=static_cast<float>(ui_time_seconds_);
+        for(const auto& corridor:corridor_network_.connections())
+            lunar_look::append_corridor_fixtures(corridor_fixtures,corridor);
         if(graphics_.enabled(GraphicsFeature::LocalLights)){
             std::vector<LunarLight> lights;
+            for(const auto& fixture:corridor_fixtures)lights.push_back(fixture.light());
             for(const auto& habitat:placed_habitats_){
                 if(habitat.construction.complete() && lunar_look::powered(habitat.supply,habitat.power_enabled))
                     lights.push_back(lunar_look::habitat_fixture(habitat,habitat_models_.mesh(habitat)).light());
@@ -53,14 +58,14 @@ void GameApp::render_playfield(Renderer& r){
         }
         lunar=r.begin_lunar_scene(scene);
     }
-    const bool show_build_guides=!lunar || build_catalog_.selected() || storage_gate_placement_active_;
-    if(!lunar){
+    const bool show_build_guides=meshed || build_catalog_.selected() || storage_gate_placement_active_;
+    if(!meshed && !lunar){
         if(lander_.in_flight()) r.draw_triangles_3d({{-900,-0.035f,-900},{900,-0.035f,-900},{900,-0.035f,900},
             {-900,-0.035f,-900},{900,-0.035f,900},{-900,-0.035f,900}},{0.055f,0.075f,0.088f,1});
-        r.draw_triangles_3d(playfield_.floor_triangles(),{0.055f,0.075f,0.088f,1});
+        playfield_.draw_surface(r,sun.irradiance_fraction);
     }
     if(show_build_guides)
-        r.draw_lines_3d(playfield_.grid_lines(),lunar?Color{0.35f,0.64f,0.71f,0.36f}:Color{0.22f,0.43f,0.47f,1},1.0f);
+        r.draw_lines_3d(playfield_.grid_lines(),meshed?Color{0.22f,0.43f,0.47f,1}:Color{0.35f,0.64f,0.71f,0.36f},1.0f);
     // Mark the inner edge of the permanent rover perimeter lane. This is a
     // placement reserve only; robots remain free to use the entire band.
     const float lane_half=(float)playfield_.size()*0.5f-geometry::kPlayfieldRobotPerimeterLane;
@@ -74,6 +79,7 @@ void GameApp::render_playfield(Renderer& r){
     if(first_person_mode_!=FirstPersonMode::Active)render_ore_deposits(r);
     render_ground_resources(r);
     render_corridors(r);
+    if(lunar)for(const auto& fixture:corridor_fixtures)lunar_look::draw_fixture(r,fixture,0.f);
     render_utilities(r);
     render_walkways(r);
     render_habitats(r);
@@ -98,35 +104,35 @@ void GameApp::render_playfield(Renderer& r){
         return;
     }
 
-    corridor_placement_failure_title_.clear();
-    corridor_placement_failure_detail_.clear();
-    const bool over_queue=mouse_over_build_queue(input_);
-    if(!over_queue){
+    placement_tip_title_.clear();
+    placement_tip_detail_.clear();
+    placement_tip_cost_={};
+    const bool over_overlay=mouse_over_playfield_overlay(input_);
+    if(!over_overlay){
         render_corridor_link_preview(r);
         render_corridor_placement(r);
         render_habitat_placement(r);
         render_resource_placement(r);
         render_utility_placement(r);
         render_walkway_placement(r);
+        if(game_session_active_ && input_.left_pressed && !placement_tip_detail_.empty())
+            activity_log_.record(ui_time_seconds_,LogEvent::Incident,
+                "Placement blocked / "+placement_tip_title_+" / "+placement_tip_detail_);
     }
+    const auto queue=first_person_mode_==FirstPersonMode::Off?prepare_build_queue_view():BuildQueueView{};
+    if(queue.hovered_row>=0) render_build_queue_highlight(r,queue.jobs[static_cast<std::size_t>(queue.hovered_row)].target);
     render_playfield_crosshair(r);
 
     const InputState hud_input=ui_input_;
-    if(over_queue){ui_input_.left_pressed=false;ui_input_.wheel=0.f;}
+    if(over_overlay){ui_input_.left_pressed=false;ui_input_.wheel=0.f;}
     r.set_2d(ui_scale_);
     render_construction_status_frames(r);
     render_supply_indicators(r);
     render_status_bar(r);
-    const bool queue_open=build_queue_expanded_ && first_person_mode_==FirstPersonMode::Off;
-    if(!queue_open) render_progress_tree(r);
     render_build_bar(r);
     render_ore_survey(r);
     render_selection_marquee(r);
-    if constexpr(build::debug_features){
-        if(debug_mode_active() && !astronaut_test_active() && !queue_open) render_debug_frame(r);
-    }
     if(selection_kind_!=SelectionKind::None) render_selection_panel(r);
-    render_corridor_placement_tooltip(r);
     if(astronaut_test_active())render_astronaut_status(r,camera_.view_projection(aspect));
 
     if(selection_kind_==SelectionKind::None){
@@ -145,15 +151,15 @@ void GameApp::render_playfield(Renderer& r){
         (active_build && active_build->kind==BuildObjectKind::Walkway?
             (walkway_build_start_?"MOVE TO ADJUST WALKWAY BLUEPRINT / LMB BUILD / ESC CANCEL":"LMB SET WALKWAY START / ESC CANCEL"):
         (active_build && (active_build->kind==BuildObjectKind::Habitat || active_build->kind==BuildObjectKind::Resource)?
-            "LMB PLACE / WHEEL SIZE / N-M ROTATE / ESC CANCEL":
-        (active_build?"LMB PLACE / N-M ROTATE / ESC CANCEL":astronaut_test_active()?
+            "LMB PLACE / SHIFT REPEAT / WHEEL SIZE / N-M ROTATE / ESC CANCEL":
+        (active_build?"LMB PLACE / SHIFT REPEAT / N-M ROTATE / ESC CANCEL":astronaut_test_active()?
             "LMB SELECT CREW / LMB SET WAYPOINT / RMB DESELECT / RMB DRAG PAN / WHEEL ZOOM / MMB ORBIT":
             "LMB SELECT / DRAG SELECT RESOURCE BOXES / RMB DESELECT / RMB DRAG PAN / WHEEL ZOOM / MMB ORBIT / V FPV / ESC MENU")))));
     const auto control_lines=ui::wrap_text(controls,406,ui::font_scale(0.52f*GAME_FONT_BOOST,theme_));
     const bool crew_test=astronaut_test_active();
     Rect info={PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,430,
                34.0f+13.0f*(float)control_lines.size()+(crew_test?17.f:0.f)};
-    r.draw_rect(info,{0.025f,0.035f,0.045f,0.88f});
+    r.draw_rect(info,kHudFill);
     game_label(r,{info.x+12,info.y+8},astronaut_test_active()?"STAGE 3 - TEST ASTRONAUTS":"PLAYFIELD "+std::to_string(playfield_.size())+" X "+std::to_string(playfield_.size()),0.78f,theme_);
     for(std::size_t i=0;i<control_lines.size();++i)game_label(r,{info.x+12,info.y+28+13*(float)i},control_lines[i],0.52f,theme_,true);
 
@@ -163,8 +169,8 @@ void GameApp::render_playfield(Renderer& r){
              <<astronaut_cache_.food_kg<<" KG / WATER "<<astronaut_cache_.water_litres<<" L";
         game_label_fitted(r,{info.x+12,info.y+info.h-21,406,15},stock.str(),.46f,theme_,true);
     }else{
-    Rect robot_info={info.x,info.y+info.h+6.0f,560,40};
-    r.draw_rect(robot_info,{0.025f,0.035f,0.045f,0.88f});
+    Rect robot_info={info.x,info.y+info.h+6.0f,504,31};
+    r.draw_rect(robot_info,kHudFill);
     std::size_t working=0,constructors=0,carriers=0;
     std::int64_t fleet_cargo=0;
     std::int64_t fleet_capacity=0;
@@ -183,11 +189,17 @@ void GameApp::render_playfield(Renderer& r){
             break;
         }
     }
-    game_label_fitted(r,{robot_info.x+12,robot_info.y+11,robot_info.w-24,16},robot_line.str(),0.47f,theme_);
+    game_label_fitted(r,{robot_info.x+12,robot_info.y+7,robot_info.w-24,16},robot_line.str(),0.47f,theme_);
     }
     }
     ui_input_=hud_input;
-    if(first_person_mode_==FirstPersonMode::Off) render_build_queue(r);
+    render_progress_tree(r);
+    if(first_person_mode_==FirstPersonMode::Off) render_build_queue(r,queue);
+    if constexpr(build::debug_features){
+        if(debug_frame_visible())render_debug_frame(r);
+    }
+    if(activity_log_visible())render_activity_log(r);
+    render_placement_tooltip(r);
 }
 
 void GameApp::render_selection_marquee(Renderer& r){
@@ -219,15 +231,16 @@ void GameApp::render_first_person_hud(Renderer& r){
         r.draw_line({cx,cy-8.0f},{cx,cy-2.0f},cross,1.5f);
         r.draw_line({cx,cy+2.0f},{cx,cy+8.0f},cross,1.5f);
 
-        Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,580.0f,54.0f};
-        r.draw_rect(help,{0.025f,0.035f,0.045f,0.86f});
+        Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,528.0f,49.0f};
+        r.draw_rect(help,kHudFill);
         game_label(r,{help.x+12.0f,help.y+8.0f},"FIRST PERSON TEST VIEW",0.64f,theme_);
-        game_label(r,{help.x+12.0f,help.y+30.0f},"WASD WALK / SHIFT FAST / J JUMP / LMB GRAB-DROP / MOUSE LOOK / V OR ESC EXIT / SPACE PAUSE",0.43f,theme_,true);
+        game_label_fitted(r,{help.x+12.f,help.y+28.f,help.w-24.f,15.f},
+            "WASD WALK / SHIFT FAST / J JUMP / LMB GRAB-DROP / MOUSE LOOK / V OR ESC EXIT / SPACE PAUSE",.43f,theme_,true);
 
         const std::string environment=first_person_environment_label();
-        Rect env{help.x,help.y+help.h+8.0f,580.0f,34.0f};
+        Rect env{help.x,help.y+help.h+8.0f,help.w,31.0f};
         const bool exterior=environment.find("EXTERIOR")!=std::string::npos;
-        r.draw_rect(env,exterior?Color{0.20f,0.055f,0.045f,0.92f}:Color{0.035f,0.095f,0.085f,0.92f});
+        r.draw_rect(env,exterior?Color{0.20f,0.055f,0.045f,kHudOpacity}:Color{0.035f,0.095f,0.085f,kHudOpacity});
         game_label_fitted(r,{env.x+10,env.y+8,env.w-20,20},environment,0.48f,theme_);
         const auto feet=first_person_.feet_position();
         for(std::size_t i=0;i<placed_habitats_.size();++i){
@@ -235,7 +248,7 @@ void GameApp::render_first_person_hud(Renderer& r){
             const auto& mesh=habitat_models_.mesh(h);const auto local=rotate_y(feet-h.position,-h.rotation_degrees);
             if(std::abs(local.x)>mesh.footprint_x*0.5f+0.2f || std::abs(local.z)>mesh.footprint_z*0.5f)continue;
             const airlock::Cycle idle{};const auto& cycle=i<airlock_cycles_.size()?airlock_cycles_[i]:idle;
-            Rect status{env.x,env.y+env.h,env.w,44};r.draw_rect(status,{0.035f,0.075f,0.085f,0.92f});
+            Rect status{env.x,env.y+env.h,env.w,44};r.draw_rect(status,{0.035f,0.075f,0.085f,kHudOpacity});
             std::ostringstream text;text<<"CENTER "<<std::fixed<<std::setprecision(0)<<cycle.pressure*100<<"% OF INSIDE / "<<airlock::phase(cycle);
             game_label_fitted(r,{status.x+10,status.y+6,status.w-20,16},text.str(),0.46f,theme_);
             game_label_fitted(r,{status.x+10,status.y+25,status.w-20,13},"APPROACH NEXT DOOR / WAIT FOR PRESSURE / WALK EITHER DIRECTION",0.39f,theme_,true);
@@ -247,7 +260,7 @@ void GameApp::render_first_person_hud(Renderer& r){
             std::ostringstream line;
             line<<"CARRYING  "<<material_resource_name(carried.resource)<<"  "<<carried.amount<<" kg";
             Rect carry{PLAYFIELD_MARGIN,env.y+env.h+8.0f,300.0f,44.0f};
-            r.draw_rect(carry,{0.035f,0.055f,0.065f,0.92f});
+            r.draw_rect(carry,{0.035f,0.055f,0.065f,kHudOpacity});
             game_label(r,{carry.x+10.0f,carry.y+8.0f},line.str(),0.54f,theme_);
             game_label(r,{carry.x+10.0f,carry.y+26.0f},"LMB DROP  |  DROP INSIDE DOME TO STORE",0.39f,theme_,true);
         }
@@ -277,7 +290,7 @@ void GameApp::render_first_person_hud(Renderer& r){
             const float panel_w=245.0f,panel_h=86.0f;
             Rect hover{std::min(cx+18.0f,ui_width(r)-panel_w-12.0f),
                        std::min(cy+18.0f,ui_height(r)-panel_h-12.0f),panel_w,panel_h};
-            r.draw_rect(hover,{0.025f,0.040f,0.050f,0.95f});
+            r.draw_rect(hover,kHudFill);
             std::ostringstream amount;
             amount<<hover_amount<<" / "<<resource_package_capacity_kg(hover_resource)<<" kg CARRY";
             std::ostringstream condition;
@@ -295,7 +308,7 @@ void GameApp::render_playfield_crosshair(Renderer& r){
     const float top_px=STATUS_BAR_H*ui_scale_;
     const float bottom_px=(ui_height(r)-BUILD_BAR_H)*ui_scale_;
     if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px ||
-       mouse_over_selection_panel(input_) || mouse_over_build_queue(input_)){
+       mouse_over_selection_panel(input_) || mouse_over_playfield_overlay(input_)){
         app_.set_cursor_visible(true);
         return;
     }

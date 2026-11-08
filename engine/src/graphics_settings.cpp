@@ -1,7 +1,9 @@
 #include "engine/graphics_settings.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <string>
 #include <string_view>
 
 namespace eng {
@@ -17,6 +19,12 @@ void GraphicsSettings::normalize(){
     aa_quality=std::clamp(aa_quality,1,3);
     shadow_quality=std::clamp(shadow_quality,1,3);
     bloom_quality=std::clamp(bloom_quality,1,3);
+    surface_resolution=std::clamp(surface_resolution,1,3);
+    texture_filter=std::clamp(texture_filter,0,5);
+    shadow_resolution=std::clamp(shadow_resolution,1,3);
+    ground_clutter=std::clamp(ground_clutter,0,3);
+    clutter_range=std::clamp(clutter_range,25,100);
+    particle_density=std::clamp(particle_density,0,3);
     features&=all_graphics_features;
     low_quality&=scalable_graphics_mask;
     medium_quality&=scalable_graphics_mask&~low_quality;
@@ -28,6 +36,11 @@ GraphicsSettings graphics_settings_from_environment(){
         return setting && setting==value;
     };
     GraphicsSettings settings;
+    if(const char* value=std::getenv("GAME_VSYNC")){
+        std::string sync(value);
+        std::transform(sync.begin(),sync.end(),sync.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+        settings.vertical_sync=sync=="1" || sync=="true" || sync=="on";
+    }
     if(is("GAME_LUNAR_EXPERIMENT","0")) settings.path=GraphicsPath::Classic;
     else if(is("GAME_RENDER_PATH","deferred")) settings.path=GraphicsPath::Deferred;
     if(is("GAME_LUNAR_TAA","0")) settings.aa=GraphicsAA::Fxaa;

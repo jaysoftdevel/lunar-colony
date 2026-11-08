@@ -74,7 +74,13 @@ void GameApp::render_walkway_placement(Renderer& r){
     Vec3 hit{};
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
     const auto hover=walkway_anchor_at(hit,!walkway_build_start_.has_value());
-    if(!hover) return;
+    if(!hover){
+        if(walkway_build_start_){
+            placement_tip_title_=selected->name;
+            placement_tip_detail_="Select a valid walkway endpoint.";
+        }
+        return;
+    }
 
     const auto highlight=[&](const WalkwayBuildAnchor& a){
         if(a.kind==WalkwayEndpointKind::Habitat && a.index<placed_habitats_.size()){
@@ -134,8 +140,14 @@ void GameApp::render_walkway_placement(Renderer& r){
                                                     placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     }
 
-    const bool affordable=preview && (can_start_construction(construction_costs::walkway(preview_length(*preview))) && gate_route_clear(preview->path,geometry::kWalkwayHalfWidth+0.2f));
+    const auto plan=preview?construction_costs::walkway(preview_length(*preview)):ConstructionResourcePlan{};
+    const bool route_clear=preview && gate_route_clear(preview->path,geometry::kWalkwayHalfWidth+0.2f);
+    const bool affordable=route_clear && can_start_construction(plan);
+    placement_tip_title_=selected->name;
     if(preview){
+        set_placement_cost(plan);
+        if(!route_clear)placement_tip_detail_="The walkway crosses a protected service area.";
+        else if(!affordable)placement_tip_detail_="This blueprint cannot be queued here.";
         // Valid geometry is still shown red when the colony cannot reserve the
         // complete staged material plan for this walkway.
         draw_blueprint(r,*preview,theme_,affordable);
@@ -145,6 +157,7 @@ void GameApp::render_walkway_placement(Renderer& r){
         // Invalid structure/corridor entrance, blocked route, or conflicting snap:
         // keep drawing the attempted full walkway, but in red. A click cannot
         // commit this fallback preview.
+        placement_tip_detail_="No clear walkway route joins these endpoints.";
         const auto invalid=walkway_network_.preview_invalid_connection(*walkway_build_start_,*hover,corridor_network_,utility_network_,
                                                                         placed_habitats_,habitat_models_,placed_resources_,resource_models_);
         if(invalid){
@@ -164,7 +177,10 @@ void GameApp::render_walkway_placement(Renderer& r){
         selected_habitat_=selected_corridor_=selected_resource_=selected_utility_=-1;
         selection_kind_=SelectionKind::Walkway;
         walkway_build_start_.reset();
-        build_catalog_.clear_selection();
+        if(input_.key_shift_down)clear_world_selection();
+        else build_catalog_.clear_selection();
+        placement_tip_title_.clear();
+        placement_tip_cost_={};
     }
 }
 

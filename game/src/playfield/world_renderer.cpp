@@ -419,7 +419,7 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
         transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees):std::vector<Vec3>{};
     if(lunar){
         const bool cutaway=habitat_view_mode_==HabitatViewMode::Full && first_person_mode_!=FirstPersonMode::Active;
-        Color cladding{0.84f,0.83f,0.78f,cutaway?0.18f:1.0f};
+        Color cladding{0.84f,0.83f,0.78f,cutaway?0.10f:1.0f};
         Color fittings{0.64f,0.52f,0.32f,1};
         switch(kind){
             case HabitatKind::AirLock: cladding.r=0.79f;cladding.g=0.84f;cladding.b=0.87f;break;
@@ -428,8 +428,8 @@ void GameApp::render_habitat_mesh(Renderer& r,const HabitatMesh& mesh,Vec3 posit
             case HabitatKind::SickBay: fittings={0.75f,0.37f,0.37f,1};break;
             default: break;
         }
-        const Color glass=greenhouse_dark?Color{0.14f,0.25f,0.27f,cutaway?0.20f:0.68f}:
-            Color{0.27f,0.51f,0.63f,cutaway?0.22f:0.58f};
+        const Color glass=greenhouse_dark?Color{0.14f,0.25f,0.27f,cutaway?0.12f:0.68f}:
+            Color{0.27f,0.51f,0.63f,cutaway?0.12f:0.58f};
         r.draw_lunar_surface(foundation,LunarMaterial::Pad,{0.48f,0.49f,0.50f,1});
         r.draw_lunar_surface(interior,LunarMaterial::Paint,{0.58f,0.66f,0.67f,1});
         r.draw_lunar_surface(details,LunarMaterial::Alloy,fittings);
@@ -515,7 +515,7 @@ void GameApp::render_resource_mesh(Renderer& r,const ResourceMesh& mesh,Vec3 pos
         const bool pad=kind==ResourceKind::LandingPad;
         const bool cutaway=kind==ResourceKind::StorageDome && habitat_view_mode_==HabitatViewMode::Full &&
                            first_person_mode_!=FirstPersonMode::Active;
-        Color paint=pad?Color{0.37f,0.40f,0.44f,1}:Color{0.80f,0.82f,0.78f,cutaway?0.22f:1.0f};
+        Color paint=pad?Color{0.37f,0.40f,0.44f,1}:Color{0.80f,0.82f,0.78f,cutaway?0.12f:1.0f};
         Color trim{0.66f,0.51f,0.28f,1};
         if(kind==ResourceKind::WaterStorage || kind==ResourceKind::WaterDriller) trim={0.35f,0.58f,0.71f,1};
         if(kind==ResourceKind::HydrogenTank || kind==ResourceKind::OxygenTank) trim={0.51f,0.65f,0.61f,1};
@@ -599,6 +599,35 @@ void GameApp::render_workshop_gate(Renderer& r,const PlacedResource& item,bool p
         const Vec3 c=workshop::world(item,{workshop::kApproachHalfWidth,0.04f,-workshop::kHalfZ});
         const Vec3 d=workshop::world(item,{-workshop::kApproachHalfWidth,0.04f,-workshop::kHalfZ});
         r.draw_lines_3d({a,b,b,c,c,d,d,a},valid?Color{1,0.70f,0.18f,1}:Color{1,0.15f,0.10f,1},2.4f);
+    }
+}
+
+void GameApp::render_build_queue_highlight(Renderer& r,const ConstructionTargetRef& target) const {
+    constexpr Color cyan{.31f,.94f,1.f,1.f};
+    constexpr Vec3 lift{0,.08f,0};
+    const auto structure=[&](const auto& instance,const auto& mesh){
+        const Vec3 position=instance.position+lift;
+        draw_structure_ground_reservation(r,mesh.footprint_x,mesh.footprint_z,position,
+                                          instance.rotation_degrees,cyan,3.4f);
+        r.draw_lines_3d(transformed_vertices(mesh.edges,position,instance.rotation_degrees),cyan,3.4f);
+    };
+    const auto route=[&](const auto& link){
+        auto lines=link.mesh.edges.empty()?construction_path_lines(link.path):link.mesh.edges;
+        for(auto& point:lines) point+=lift;
+        r.draw_lines_3d(lines,cyan,3.4f);
+    };
+    const auto i=target.index;
+    switch(target.kind){
+        case ConstructionTargetKind::Habitat:
+            structure(placed_habitats_[i],habitat_models_.mesh(placed_habitats_[i]));
+            break;
+        case ConstructionTargetKind::Resource:
+            structure(placed_resources_[i],resource_models_.mesh(placed_resources_[i]));
+            break;
+        case ConstructionTargetKind::Corridor: route(corridor_network_.connections()[i]);break;
+        case ConstructionTargetKind::Utility: route(utility_network_.connections()[i]);break;
+        case ConstructionTargetKind::Walkway: route(walkway_network_.connections()[i]);break;
+        default: break;
     }
 }
 
@@ -699,7 +728,7 @@ void GameApp::render_resources(Renderer& r){
         for(std::size_t kind=0;kind<ore::materials.size();++kind){
             // Show up to a rack of small crates per ore type. The inventory
             // panel and capacity accounting retain the exact stored mass.
-            const auto visible=std::min<std::uint32_t>(instance.stored_ore_boxes[kind],12);
+            const auto visible=std::min(instance.stored_ore_boxes[kind],kVisibleOreBoxesPerType);
             for(std::uint32_t box=0;box<visible;++box){
                 Vec3 base{};float half=0,box_h=0;
                 stored_resource_box_pose(instance,mesh,raw_slot++,base,half,box_h);
@@ -829,8 +858,9 @@ void GameApp::render_corridors(Renderer& r){
 
         if(r.lunar_scene_active()){
             const bool cutaway=habitat_view_mode_==HabitatViewMode::Full && first_person_mode_!=FirstPersonMode::Active;
-            r.draw_lunar_surface(connection.mesh.details,LunarMaterial::Alloy,{0.60f,0.63f,0.64f,1});
-            r.draw_lunar_surface(connection.mesh.shell,LunarMaterial::Paint,{0.76f,0.78f,0.73f,cutaway?0.20f:1.0f});
+            const Color deck=cutaway?Color{0.76f,0.72f,0.63f,1}:Color{0.60f,0.63f,0.64f,1};
+            r.draw_lunar_surface(connection.mesh.details,LunarMaterial::Alloy,deck);
+            r.draw_lunar_surface(connection.mesh.shell,LunarMaterial::Paint,{0.76f,0.78f,0.73f,cutaway?0.11f:1.0f});
             if(selected || link_source) r.draw_lines_3d(connection.mesh.edges,edge_color,2.2f);
             continue;
         }

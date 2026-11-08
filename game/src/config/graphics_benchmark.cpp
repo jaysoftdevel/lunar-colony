@@ -3,11 +3,10 @@
 #include <cmath>
 
 namespace game {
-namespace {
 using namespace eng;
 using F=GraphicsFeature;
 
-GraphicsSettings profile_settings(BenchmarkProfile profile,const GraphicsSettings& current,const GraphicsCapabilities& caps){
+GraphicsSettings graphics_profile_settings(BenchmarkProfile profile,const GraphicsSettings& current,const GraphicsCapabilities& caps){
     if(profile==BenchmarkProfile::Classic){
         auto settings=current;
         settings.path=GraphicsPath::Classic;
@@ -16,12 +15,19 @@ GraphicsSettings profile_settings(BenchmarkProfile profile,const GraphicsSetting
 
     GraphicsSettings settings;
     settings.exposure_tenths=current.exposure_tenths;
+    settings.vertical_sync=current.vertical_sync;
     const int quality=profile==BenchmarkProfile::High?3:profile==BenchmarkProfile::Balanced?2:1;
     for(const auto feature:scalable_graphics_features) settings.set_quality(feature,quality);
     settings.render_scale=quality_budget(quality,65,85,100);
     settings.ray_scale=quality_budget(quality,25,40,50);
     settings.aa_quality=settings.shadow_quality=settings.bloom_quality=quality;
     settings.bloom=quality_budget(quality,50,75,100);
+    settings.particle_density=quality;
+#ifndef _WIN32
+    settings.surface_resolution=settings.shadow_resolution=settings.ground_clutter=quality;
+    settings.clutter_range=quality_budget(quality,50,75,100);
+    settings.texture_filter=quality==3 && caps.texture_anisotropy>=4?3:quality==1?0:1;
+#endif
     if(quality==1) settings.aa=GraphicsAA::Fxaa;
 
 #ifdef _WIN32
@@ -50,7 +56,6 @@ GraphicsSettings profile_settings(BenchmarkProfile profile,const GraphicsSetting
 #endif
     return settings;
 }
-}
 
 double BenchmarkTrial::worst_p90() const {
     double worst{};
@@ -69,9 +74,9 @@ void GraphicsBenchmark::start(const eng::GraphicsSettings& current,const eng::Gr
 #endif
     if(caps.enhanced){
         for(const auto profile:{BenchmarkProfile::High,BenchmarkProfile::Balanced,BenchmarkProfile::Performance})
-            trials_[trial_count_++]={profile,profile_settings(profile,current,caps)};
+            trials_[trial_count_++]={profile,graphics_profile_settings(profile,current,caps)};
     }
-    trials_[trial_count_++]={BenchmarkProfile::Classic,profile_settings(BenchmarkProfile::Classic,current,caps)};
+    trials_[trial_count_++]={BenchmarkProfile::Classic,graphics_profile_settings(BenchmarkProfile::Classic,current,caps)};
     status_=BenchmarkStatus::Running;
 }
 

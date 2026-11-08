@@ -122,7 +122,7 @@ void GameApp::render_status_bar(Renderer& r){
             battery_net_kw_,supply_power_load_kw_,supply_power_delivered_kw_,water_net_litres_per_day_,supply_water_load_litres_per_day_};
     }
     const auto& rates=status_rate_display_;
-    r.draw_rect({0,0,logical_w,STATUS_BAR_H},{0.025f,0.035f,0.045f,0.97f});
+    r.draw_rect({0,0,logical_w,STATUS_BAR_H},kHudFill);
     r.draw_line({0,STATUS_BAR_H-1},{logical_w,STATUS_BAR_H-1},theme_.border,1.0f);
 
     const int total_minutes=(int)std::floor(status_.hour()*60.0f);
@@ -176,7 +176,7 @@ void GameApp::render_status_bar(Renderer& r){
     crew<<"CREW "<<status_.crew_current()<<"/"<<status_.crew_capacity();
 
     // Colony telemetry and the complete inventory each own a readable row.
-    constexpr float row_h=46;
+    constexpr float row_h=42;
     const float day_w=logical_w*0.20f;
     const float power_w=logical_w*0.22f;
     const float air_w=logical_w*0.12f;
@@ -237,7 +237,7 @@ void GameApp::render_status_bar(Renderer& r){
         const float x=resource_start+(float)i*resource_w;
         const Rect cell{x,row_h,resource_w,STATUS_BAR_H-row_h};
         if(i>0)r.draw_line({x,row_h+5},{x,STATUS_BAR_H-5},theme_.border,1);
-        const Rect icon{x+6,row_h+9,18,26};
+        const Rect icon{x+5,row_h+3,16,24};
         std::string amount;
         if(i<kMaterialResourceCount){
             const auto material=(MaterialResource)i;
@@ -249,14 +249,21 @@ void GameApp::render_status_bar(Renderer& r){
             std::ostringstream exact;exact<<std::fixed<<std::setprecision(1)<<stock;
             amount=stock<10000?exact.str()+" KG":amount_text((std::int64_t)stock)+" KG";
             tips[i]=std::string(names[i])+" / "+exact.str()+" KG STORED / "+(i==kMaterialResourceCount?"TANKS + BOTTLED EXPORT STOCK; EXCLUDES CABIN AIR":"TANKS + GENERATORS; ALLOCATED VEHICLE FUEL EXCLUDED");
-            r.draw_line({x+9,row_h+14},{x+21,row_h+14},theme_.accent,1.4f);
-            r.draw_line({x+9,row_h+14},{x+9,row_h+35},theme_.accent,1.4f);
-            r.draw_line({x+21,row_h+14},{x+21,row_h+35},theme_.accent,1.4f);
-            r.draw_line({x+9,row_h+35},{x+21,row_h+35},theme_.accent,1.4f);
-            r.draw_line({x+15,row_h+9},{x+15,row_h+14},theme_.accent,1.4f);
+            r.draw_line({x+9,row_h+8},{x+21,row_h+8},theme_.accent,1.4f);
+            r.draw_line({x+9,row_h+8},{x+9,row_h+23},theme_.accent,1.4f);
+            r.draw_line({x+21,row_h+8},{x+21,row_h+23},theme_.accent,1.4f);
+            r.draw_line({x+9,row_h+23},{x+21,row_h+23},theme_.accent,1.4f);
+            r.draw_line({x+15,row_h+4},{x+15,row_h+8},theme_.accent,1.4f);
         }
-        game_label_fitted(r,{x+29,row_h+5,resource_w-35,14},names[i],.43f,theme_,true);
-        game_label_fitted(r,{x+29,row_h+23,resource_w-35,18},amount,.52f,theme_);
+        const float name_width=game_text_width(names[i],.42f,theme_);
+        const float amount_width=game_text_width(amount,.49f,theme_);
+        if(name_width+amount_width+33.f<=resource_w){
+            game_label_fitted(r,{x+24,row_h+7,name_width+2,16},names[i],.42f,theme_,true);
+            game_label_fitted(r,{x+resource_w-amount_width-5,row_h+7,amount_width+1,16},amount,.49f,theme_);
+        }else{
+            game_label_fitted(r,{x+23,row_h+2,resource_w-28,11},names[i],.40f,theme_,true);
+            game_label_fitted(r,{x+23,row_h+14,resource_w-28,13},amount,.47f,theme_);
+        }
         if(contains(cell,mouse_x,mouse_y)){hovered=(int)i;hovered_rect=cell;}
     }
 
@@ -282,7 +289,7 @@ void GameApp::render_status_bar(Renderer& r){
         const float tooltip_w=std::min(logical_w-8,std::max(72.0f,game_text_width(name,0.62f,theme_)+20.0f));
         const float tx=std::clamp(hovered_rect.x+(hovered_rect.w-tooltip_w)*0.5f,4.0f,logical_w-tooltip_w-4.0f);
         const Rect tooltip{tx,STATUS_BAR_H+4.0f,tooltip_w,28.0f};
-        r.draw_rect(tooltip,{0.025f,0.035f,0.045f,0.96f});
+        r.draw_rect(tooltip,kHudFill);
         r.draw_line({tooltip.x,tooltip.y},{tooltip.x+tooltip.w,tooltip.y},theme_.accent,1.5f);
         game_label_fitted(r,{tooltip.x+10,tooltip.y+5,tooltip.w-20,18},name,0.62f,theme_);
     }

@@ -49,7 +49,7 @@ int astronaut_at(const std::array<AstronautTestActor,kAstronautRoles.size()>& cr
 }
 
 template<class ClearPoint,class ClearSegment,class MoveClear,class Floor>
-void walk_to(AstronautTestActor& actor,float half_extent,float dt,
+void walk_to(AstronautTestActor& actor,float half_extent,float dt,bool indoors,
              const ClearPoint& clear_point,const ClearSegment& clear_segment,
              const MoveClear& move_clear,const Floor& floor){
     actor.waiting_for_door=false;
@@ -85,7 +85,7 @@ void walk_to(AstronautTestActor& actor,float half_extent,float dt,
         request.goal=destination;
         request.world_half_extent=half_extent;
         request.corridor_half_width=18.0f;
-        request.cell_size=.48f;
+        request.cell_size=indoors?.32f:.48f;
         request.max_expansions=1750;
         robots::PathPlannerCallbacks callbacks;
         callbacks.floor_height=floor;
@@ -107,10 +107,28 @@ void walk_to(AstronautTestActor& actor,float half_extent,float dt,
     }
     const float target_heading=std::atan2(delta.x,delta.z)*57.2957795f;
     const float turn=std::remainder(target_heading-actor.heading_degrees,360.f);
-    actor.heading_degrees=std::fmod(actor.heading_degrees+std::clamp(turn,-240.f*dt,240.f*dt)+360.f,360.f);
+    const float eased_turn=turn*-std::expm1(-14.f*dt);
+    actor.heading_degrees=std::fmod(actor.heading_degrees+std::clamp(eased_turn,-240.f*dt,240.f*dt)+360.f,360.f);
     const float error=std::abs(std::remainder(target_heading-actor.heading_degrees,360.f));
     const float facing=std::clamp(1.f-error/50.f,0.f,1.f);
-    const float desired=std::min(astronaut_walk_speed(actor.suited),std::sqrt(2.f*kWalkBraking*remaining))*facing;
+    const float walk_speed=astronaut_walk_speed(actor.suited);
+    float junction_speed=0.f;
+    if(actor.route_step+1<actor.route.size()){
+        Vec3 outgoing=actor.route[actor.route_step+1]-actor.route[actor.route_step];
+        outgoing.y=0.f;
+        const float span=length(outgoing);
+        if(span>kArrivalDistance){
+            // Keep momentum through gentle bends, with time to steer at
+            // sharper corners. The final point of each air-lock leg still stops.
+            const float alignment=dot(delta,outgoing)/(remaining*span);
+            const float corner=std::clamp((alignment-.45f)/.52f,0.f,1.f);
+            junction_speed=std::min(walk_speed*corner,std::sqrt(2.f*kWalkBraking*span));
+        }
+    }
+    const bool last_point=actor.route_step+1==actor.route.size();
+    const float braking_distance=last_point?remaining-kArrivalDistance*.75f:remaining;
+    const float speed_limit=std::sqrt(junction_speed*junction_speed+2.f*kWalkBraking*braking_distance);
+    const float desired=std::min(walk_speed,speed_limit)*facing;
     actor.speed+=std::clamp(desired-actor.speed,-kWalkBraking*dt,kWalkAcceleration*dt);
     const float traveled=std::min(remaining,actor.speed*dt)*std::min(1.f,2.f*facing);
     if(traveled<=0.f)return;
@@ -119,6 +137,8 @@ void walk_to(AstronautTestActor& actor,float half_extent,float dt,
     if(move_clear(actor.position,next)){
         actor.position=next;
         actor.stride_phase=std::fmod(actor.stride_phase+traveled/astronaut_stride(actor.suited),1.f);
+        if(remaining-traveled<=kArrivalDistance && actor.route_step+1<actor.route.size())
+            ++actor.route_step;
     }else{
         actor.speed=std::max(0.f,actor.speed-kWalkBraking*dt);
         actor.waiting_for_door=clear_segment(actor.position,next);
@@ -214,7 +234,9 @@ void GameApp::update_astronaut_test(float dt){
         }
         for(std::size_t i=0;i<test_astronauts_.size();++i){
             auto& actor=test_astronauts_[i];
-            if(astronaut_resting(actor))continue;
+            if(astronaut_resting(actor)){actor.tool_carry_blend=0.f;continue;}
+            const float carry=actor.activity==AstronautActivity::Construction && actor.construction_job && actor.destination?1.f:0.f;
+            actor.tool_carry_blend+=std::clamp(carry-actor.tool_carry_blend,-3.f*step,3.f*step);
             if(!actor.destination){actor.speed=std::max(0.f,actor.speed-kWalkBraking*step);continue;}
             actor.passing_cooldown=std::max(0.f,actor.passing_cooldown-step);
             const bool indoors=inside[i];
@@ -277,7 +299,7 @@ void GameApp::update_astronaut_test(float dt){
                     break;
                 }
             }
-            walk_to(actor,half,step,clear_point,clear_segment,move_clear,floor);
+            walk_to(actor,half,step,indoors,clear_point,clear_segment,move_clear,floor);
         }
         time-=step;
     }

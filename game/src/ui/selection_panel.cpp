@@ -150,7 +150,7 @@ void GameApp::render_selection_panel(Renderer& r){
     if(selection_kind_==SelectionKind::GroundResource){
         if(selected_ground_resources_.size()>1){
             const Rect p=selection_panel_rect();
-            ui::panel(r,p,theme_);
+            layout::hud_panel(r,p,theme_);
             r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2.0f);
             draw_scrollbar(p);
             const float x=p.x+14.0f;
@@ -190,7 +190,7 @@ void GameApp::render_selection_panel(Renderer& r){
         if(selected_ground_resource_<0 || (std::size_t)selected_ground_resource_>=ground_resource_piles_.size()) return;
         const auto& box=ground_resource_piles_[(std::size_t)selected_ground_resource_];
         const Rect p=ground_resource_panel_rect();
-        ui::panel(r,p,theme_);
+        layout::hud_panel(r,p,theme_);
         r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2.0f);
         const float x=p.x+11.0f;
         const int condition=(int)std::lround(std::clamp(box.condition,0.0f,1.0f)*100.0f);
@@ -222,7 +222,7 @@ void GameApp::render_selection_panel(Renderer& r){
     }
 
     const Rect p=selection_panel_rect();
-    ui::panel(r,p,theme_);
+    layout::hud_panel(r,p,theme_);
     r.draw_line({p.x,p.y},{p.x+p.w,p.y},theme_.accent,2.0f);
     draw_scrollbar(p);
     const float x=p.x+14.0f;
@@ -550,7 +550,7 @@ void GameApp::render_selection_panel(Renderer& r){
 
                 const bool light_phase=hydroponics_lights_on(status_.hour());
                 const float phase_left=hydroponics_hours_until_phase_change(status_.hour());
-                std::ostringstream heading;heading<<"HYDROPONICS  "<<bay_count<<" BAYS / TWO-COLUMN GROW TABLE";
+                std::ostringstream heading;heading<<"HYDROPONICS  "<<bay_count<<" BAYS / "<<seed_packet_total(colony_seeds_)<<" SEED PACKETS";
                 game_label(r,{x,p.y+278},heading.str(),0.45f,theme_);
                 std::ostringstream cycle;cycle<<"PHOTOPERIOD  LIGHT 06:00-22:00 / DARK 22:00-06:00 / NOW "<<(light_phase?"LIGHT":"DARK")<<"  "<<std::fixed<<std::setprecision(1)<<phase_left<<" H LEFT";
                 game_label(r,{x,p.y+298},cycle.str(),0.37f,theme_,true);
@@ -583,7 +583,7 @@ void GameApp::render_selection_panel(Renderer& r){
                     if(!row_visible(cell_y,row_h-4.0f)) continue;
 
                     const Rect cell{cell_x,cell_y,cell_w,row_h-6.0f};
-                    r.draw_rect(cell,theme_.panel2);
+                    r.draw_rect(cell,{.09f,.12f,.15f,.24f});
                     r.draw_line({cell.x,cell.y},{cell.x+cell.w,cell.y},theme_.border);
                     r.draw_line({cell.x+cell.w,cell.y},{cell.x+cell.w,cell.y+cell.h},theme_.border);
                     r.draw_line({cell.x+cell.w,cell.y+cell.h},{cell.x,cell.y+cell.h},theme_.border);
@@ -592,7 +592,10 @@ void GameApp::render_selection_panel(Renderer& r){
                     layout::game_label_fitted(r,{cell.x+7.0f,cell.y+5.0f,42.0f,17.0f},"BAY "+std::to_string(bay_index+1),0.39f,theme_,true);
                     const Rect selector{cell.x+50.0f,cell.y+3.0f,cell.w-57.0f,23.0f};
                     std::string selector_text=(bay.plant==HydroponicPlant::Empty?"EMPTY / REMOVE":std::string(crop.name))+"  V";
-                    if(ui::button(r,ui_input_,selector,selector_text,theme_,true)){
+                    auto selector_input=ui_input_;
+                    if(hydroponics_dropdown_bay_>=0 && hydroponics_dropdown_bay_!=static_cast<int>(bay_index))
+                        selector_input.left_pressed=false;
+                    if(ui::button(r,selector_input,selector,selector_text,theme_)){
                         const bool was_open=hydroponics_dropdown_habitat_==selected_habitat_ && hydroponics_dropdown_bay_==(int)bay_index;
                         hydroponics_dropdown_habitat_=was_open?-1:selected_habitat_;
                         hydroponics_dropdown_bay_=was_open?-1:(int)bay_index;
@@ -631,13 +634,13 @@ void GameApp::render_selection_panel(Renderer& r){
                     for(int plant_value=0;plant_value<(int)HydroponicPlant::Count;++plant_value){
                         const auto plant=(HydroponicPlant)plant_value;
                         const auto& profile=hydroponic_profile(plant);
-                        const std::string label=plant==HydroponicPlant::Empty?"EMPTY / REMOVE CROP":profile.name;
+                        const int seeds=plant_value==0?0:colony_seeds_[static_cast<std::size_t>(plant_value-1)];
+                        const bool available=plant_value==0 || plant==bay.plant || seeds>0;
+                        const std::string label=plant_value==0?"EMPTY / REMOVE CROP":
+                            std::string(profile.name)+" / "+std::to_string(seeds)+(seeds==1?" SEED":" SEEDS");
                         const Rect option{menu.x+2.0f,menu.y+2.0f+(float)plant_value*item_h,menu.w-4.0f,item_h};
-                        if(ui::button(r,ui_input_,option,label,theme_,true)){
-                            if(plant!=bay.plant){
-                                bay.plant=plant;
-                                bay.growth_fraction=0.0;
-                            }
+                        if(ui::button(r,ui_input_,option,label,theme_,available)){
+                            plant_hydroponic_crop(bay,colony_seeds_,plant);
                             hydroponics_dropdown_habitat_=-1;
                             hydroponics_dropdown_bay_=-1;
                             option_clicked=true;

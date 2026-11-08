@@ -273,7 +273,7 @@ void GameApp::update_soundscape(float dt,const eng::InputState& input){
             selected_corridor_+selected_utility_+selected_walkway_+selected_ground_resource_+8);
     if(const auto previous=audio.observe(key(Global,9),selection); previous && *previous!=selection && input.left_pressed)
         ui_sound(Cue::Pick,.23f);
-    if(input.left_pressed && (!corridor_placement_failure_title_.empty() || !corridor_placement_failure_detail_.empty()))
+    if(input.left_pressed && !placement_tip_detail_.empty())
         ui_sound(Cue::Reject,.21f);
 
     for(std::size_t i=0;i<placed_habitats_.size();++i){

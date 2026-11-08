@@ -68,6 +68,13 @@ struct GraphicsSettings {
     int aa_quality{3};
     int shadow_quality{3};
     int bloom_quality{3};
+    int surface_resolution{3}; // 128, 256 or 512 pixels at the base mip
+    int texture_filter{1}; // bilinear mip, trilinear, then 2x through 16x anisotropy
+    int shadow_resolution{3};
+    int ground_clutter{3};
+    int clutter_range{100};
+    int particle_density{3};
+    bool vertical_sync{};
     std::uint32_t features{all_graphics_features};
     std::uint32_t low_quality{},medium_quality{};
 #ifdef _WIN32
@@ -104,7 +111,13 @@ struct GraphicsCapabilities {
     bool enhanced_barriers{};
     bool variable_rate_shading{};
 #endif
+    bool vertical_sync{};
+    int texture_anisotropy{1};
 };
+
+constexpr int surface_resolution_pixels(int level){ return quality_budget(level,128,256,512); }
+constexpr int cascade_resolution_pixels(int level){ return quality_budget(level,768,1024,1536); }
+constexpr int texture_anisotropy(int filter){ return filter<2?1:1<<(filter-1); }
 
 GraphicsSettings graphics_settings_from_environment();
 } // namespace eng

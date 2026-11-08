@@ -185,16 +185,7 @@ inline ResourceMesh refine_future_resource(ResourceMesh source,ResourceKind kind
             b.box(b.mesh.details,{0,0.59f,5.95f},{5.4f,0.12f,0.58f});
             for(float x:{-2.4f,-0.8f,0.8f,2.4f}) b.cylinder_y(b.mesh.details,{x,0.86f,-7.1f},0.28f,0.12f,8,true);
             break;
-        case ResourceKind::StorageDome:
-            // Four independent hull-health/service stations around the warehouse.
-            for(int i=0;i<4;++i){
-                const float a=PI*0.5f*(float)i;
-                const Vec3 n{std::sin(a),0.0f,-std::cos(a)};
-                const Vec3 c=n*(std::min(hx,hz)*0.78f)+Vec3{0,1.05f,0};
-                b.box(b.mesh.details,c,{0.56f,0.88f,0.56f});
-                b.cylinder_y(b.mesh.details,{c.x,1.62f,c.z},0.22f,0.14f,8,true);
-            }
-            break;
+        case ResourceKind::StorageDome: break; // Cabinet locations are authored around the aisles.
         case ResourceKind::OxygenTank: break;
         case ResourceKind::HydrogenTank:
             // External cryogenic pump skid and low-height service hookups;

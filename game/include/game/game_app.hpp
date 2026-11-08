@@ -6,6 +6,7 @@
 #include "game/features/build_catalog.hpp"
 #include "game/systems/camera_controller.hpp"
 #include "game/systems/astronaut_test.hpp"
+#include "game/systems/activity_log.hpp"
 #include "game/systems/first_person_controller.hpp"
 #include "game/systems/colony_status.hpp"
 #include "game/systems/game_progress.hpp"
@@ -105,7 +106,8 @@ private:
     eng::InputState ui_input_{};
     eng::ui::Theme theme_{};
     eng::GraphicsSettings graphics_;
-    int graphics_tab_{},graphics_page_{};
+    int graphics_tab_{},graphics_page_{},graphics_dropdown_{-1};
+    bool graphics_display_failed_{};
     GraphicsBenchmark graphics_benchmark_;
     std::size_t benchmark_target_index_{1};
     bool preferences_save_failed_{};
@@ -143,6 +145,7 @@ private:
     AstronautCache astronaut_cache_{};
     float astronaut_schedule_seconds_{};
     PlanningGameState planning_{};
+    CropSeeds colony_seeds_{};
     LunarLanderState lander_{};
     TraderState trader_{};
     std::string trade_message_{};
@@ -156,6 +159,7 @@ private:
     float planning_tech_pan_x_{0.0f};
     float planning_tech_pan_y_{0.0f};
     int planning_tech_selected_{0};
+    bool planning_seed_page_{};
     int planning_structure_page_{-1}; // -1 is the payload editor
     // A single click selects; a second click on the same card within the
     // double-click window performs its primary action. Transient UI state only.
@@ -226,8 +230,16 @@ private:
         bool prioritized() const { return automatic_priority || manual_priority; }
     };
     std::vector<BuildOrderSlot> construction_order_{};
-    bool build_queue_expanded_{};
+    bool build_queue_expanded_{},progress_tree_expanded_{};
     int build_queue_scroll_{};
+    ConstructionTargetRef build_queue_revealed_{};
+    std::uint64_t build_queue_revealed_sequence_{};
+    int build_queue_revealed_capacity_{};
+    ActivityLog activity_log_;
+    bool activity_log_expanded_{};
+    std::size_t activity_log_offset_{};
+    std::size_t activity_log_seen_count_{};
+    std::string activity_log_export_status_;
     eng::Rect construction_priority_button_rect_{};
     ConstructionTargetRef construction_priority_button_target_{};
     int debug_move_pick_robot_{-1};
@@ -282,8 +294,9 @@ private:
     std::uint64_t selection_panel_scroll_key_{0};
     int corridor_link_source_=-1;
     std::optional<CorridorBuildAnchor> corridor_build_start_{};
-    std::string corridor_placement_failure_title_{};
-    std::string corridor_placement_failure_detail_{};
+    std::string placement_tip_title_{};
+    std::string placement_tip_detail_{};
+    ResourceBundle placement_tip_cost_{};
     std::optional<UtilityBuildAnchor> utility_build_start_{};
     std::optional<WalkwayBuildAnchor> walkway_build_start_{};
     std::optional<WalkwayBuildAnchor> walkway_build_target_{};
@@ -312,7 +325,28 @@ private:
     void render_playfield(eng::Renderer& r);
     eng::Rect build_queue_panel_rect() const;
     bool mouse_over_build_queue(const eng::InputState& input) const;
-    void render_build_queue(eng::Renderer& r);
+    struct BuildQueueView {
+        eng::Rect panel{};
+        std::vector<BuildQueueItem> jobs;
+        int first{}, last{}, hovered_row{-1};
+    };
+    BuildQueueView prepare_build_queue_view();
+    void render_build_queue(eng::Renderer& r,const BuildQueueView& view);
+    void render_build_queue_highlight(eng::Renderer& r,const ConstructionTargetRef& target) const;
+    std::string construction_target_name(const ConstructionTargetRef& target) const;
+    eng::Rect debug_frame_rect() const;
+    bool debug_frame_visible() const;
+    bool mouse_over_playfield_overlay(const eng::InputState& input) const;
+    eng::Rect activity_log_button_rect() const;
+    eng::Rect activity_log_panel_rect() const;
+    bool keep_clear_of_activity_log(eng::Rect& panel) const;
+    bool activity_log_visible() const;
+    bool mouse_over_activity_log(const eng::InputState& input) const;
+    void render_activity_log(eng::Renderer& r);
+    void reset_activity_log(std::string message);
+    void update_activity_log();
+    void log_planning_activities();
+    void export_activity_log();
     bool handle_astronaut_click(const eng::InputState& input);
     void reset_astronaut_test();
     void update_astronaut_test(float dt);
@@ -330,6 +364,7 @@ private:
     void render_planning_technology_tree(eng::Renderer& r,eng::Rect panel,bool compact);
     void render_status_bar(eng::Renderer& r);
     void render_progress_tree(eng::Renderer& r);
+    bool progress_tree_visible() const;
     void render_build_bar(eng::Renderer& r);
     void render_view_selector(eng::Renderer& r,float y,float logical_w);
     void render_debug_frame(eng::Renderer& r);
@@ -353,7 +388,7 @@ private:
     void render_utility_placement(eng::Renderer& r);
     void render_walkway_placement(eng::Renderer& r);
     void render_corridor_placement(eng::Renderer& r);
-    void render_corridor_placement_tooltip(eng::Renderer& r);
+    void render_placement_tooltip(eng::Renderer& r);
     void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false,HabitatKind kind=HabitatKind::AirLock) const;
     void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,ResourceKind kind=ResourceKind::Count) const;
     struct StructureAttachment {
@@ -365,9 +400,10 @@ private:
         eng::Vec3 hit,const PlacedHabitat* habitat,const PlacedResource* resource) const;
     void render_structure_attachment(eng::Renderer& r,const StructureAttachment& attachment) const;
     void commit_structure_attachment(StructureAttachment attachment);
+    void set_placement_cost(const ConstructionResourcePlan& plan,const StructureAttachment* attachment=nullptr);
     bool structure_routes_clear(eng::Vec3 position,float rotation,float width,float depth) const;
-    bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees) const;
-    bool resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees) const;
+    bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees,const char** reason=nullptr) const;
+    bool resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees,const char** reason=nullptr) const;
     bool placement_preserves_robot_escape(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z) const;
     eng::Vec3 snap_storage_dome(eng::Vec3 hit,StorageDomeSize size,float& rotation_degrees) const;
     void select_world_at(int screen_x,int screen_y);
@@ -414,13 +450,14 @@ private:
 
     void reset_builder_robot_and_starter_stash(const ResourceBundle* shipped_cargo=nullptr);
     void deploy_lunar_base_from_mission();
-    void begin_lunar_landing(const ResourceBundle& manifest,int builders,int carriers);
+    void begin_lunar_landing(const ResourceBundle& manifest,int builders,int carriers,CropSeeds seeds=kStarterCropSeeds);
     void update_lunar_lander(float dt);
     bool unload_lunar_lander();
     bool confirm_lander_site(eng::Vec3 p);
     bool confirm_stash_site(eng::Vec3 p);
     bool lander_site_valid(eng::Vec3 p) const;
     bool stash_site_valid(eng::Vec3 p) const;
+    bool pick_lander_placement_ground(eng::Vec3& hit) const;
     bool prepare_default_landing();
     bool salvage_lander();
     bool complete_lander_salvage();

@@ -818,3 +818,41 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Show a collapsible Build Order panel in the colony HUD with priority badges and row controls.
 - Share the queue between construction rovers, material carriers, and the Stage 3 astronaut test crew.
 - Drop priority when a row moves below a normal job. Persist edited order by blueprint ID.
+
+0.52.9 - Colony presentation and astronaut movement
+- Carry speed through gentle navigation bends. Keep the full stop at destinations and air-lock transitions.
+- Ground the longer crew gait and show a tool case on construction assignments.
+- Compact the inventory strip and show costs and placement feedback next to blueprints.
+- Read rover work and cargo from the chassis. Show the route of the selected rover.
+- Add powered amber corridor guide lights and clearer cutaway decks.
+
+0.52.10 - Activity log and blueprint HUD
+- Reveal and highlight the selected blueprint in the expanded Build Order panel.
+- Keep the Debug panel visible below the queue.
+- Show separate bars for materials at the site and construction progress.
+- Trace colony activities and complications with timestamped starts, stops, warnings and resolutions. Export the full session log to the savegame folder.
+
+0.52.11 - Interior circulation and placement controls
+- Refit walkable rooms with floor-mounted furniture, clear cross aisles and cargo-free docking lanes.
+- Accelerate the lunar lander approach and settling.
+- Hold Shift when committing a blueprint or link to keep its placement tool active.
+- Open the scrollable Activity Log from the bottom-left build toolbar.
+
+0.52.12 - Detailed graphics settings
+- Organize graphics controls by display, textures, environment, lighting, effects and advanced rendering.
+- Add one-click quality presets, direct option lists and display controls with vertical sync.
+- Set lunar texture sampling, shadow-map resolution, ground clutter density and range, and particle density independently.
+
+0.52.13 - Bio Dome seeds, enclosed lander and colony HUD
+- Choose seed quantities in the Stage 1 manifest. Direct Stage 2 landers carry three of every crop, with seed stock delivered on unload.
+- Require one seed packet per newly planted Bio Dome bay and persist all seed stocks in saves.
+- Enclose the cargo lander and remove the external crane while preserving the rover ramp.
+- Collapse Colony Progress to the next goal, move Build Order to the bottom, and compact translucent colony panels.
+
+0.52.14 - Post-landing stash placement and Build Order hover
+- Start descent when the touchdown site is chosen. Prompt for the cargo stash only after landing and require a valid marker before unloading.
+- Outline the blueprint or route under the pointer in the Build Order panel.
+
+0.52.15 - Lunar surface at every graphics quality
+- Draw an opaque low-cost regolith surface in Classic and when enhanced terrain is unavailable.
+- Keep the underlying build plane flat and reserve grid-only terrain for Debug Meshed mode.

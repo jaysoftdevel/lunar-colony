@@ -6,6 +6,7 @@
 #include "game/robots/safety_coordinator.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/mesh_portals.hpp"
+#include "game/world/lunar_look.hpp"
 #include "game/world/storage_loading_gate.hpp"
 #include <filesystem>
 #include <fstream>
@@ -1696,6 +1697,30 @@ struct NavigationRegression {
         std::cout<<cases<<" rotated small/standard three-chamber air locks: physical traversal both ways, center retreat, noninstant pressure matching, four-door interlock and bulkhead collision passed\n";
     }
 
+    static void astronaut_waypoints(){
+        eng::Application engine;
+        GameApp app(engine);
+        app.new_game_phase_selection_=GameApp::GamePhase::Debug;
+        app.start_new_game(GameApp::Stage3Mode::AstronautTest);
+        auto& actor=app.test_astronauts_.front();
+        actor.position={0,0,16};
+        actor.activity=AstronautActivity::Manual;
+        actor.route={{0,0,19},{.12f,0,20},{.50f,0,22}};
+        const auto destination=actor.route.back();
+        actor.destination=destination;
+        float first_corner_speed=0.f;
+        bool passed=false;
+        for(int i=0;i<700 && actor.destination;++i){
+            app.update_astronaut_test(.02f);
+            if(!passed && actor.route_step==1){first_corner_speed=actor.speed;passed=true;}
+        }
+        require(passed && first_corner_speed>.9f*astronaut_walk_speed(true),
+                "crew brakes at a gentle intermediate waypoint");
+        require(!actor.destination && distance(actor.position,destination)<.001f &&
+                actor.speed<.65f*astronaut_walk_speed(true),"crew did not brake and arrive at the destination");
+        std::cout<<"Crew carries speed through a gentle bend and brakes at the destination\n";
+    }
+
     static void astronaut_access(){
         eng::Application engine;
         GameApp app(engine);
@@ -1735,6 +1760,9 @@ struct NavigationRegression {
         crew.activity=AstronautActivity::Manual;
         crew.destination=goal;
         app.update_supply_simulation(0.f);
+        std::vector<lunar_look::Fixture> guide_lights;
+        lunar_look::append_corridor_fixtures(guide_lights,app.corridor_network_.connections().front());
+        require(guide_lights.empty(),"an unpowered corridor rendered live guide lights");
 
         const auto travel=[&](int frames){
             for(int i=0;i<frames && crew.destination;++i){
@@ -1759,6 +1787,8 @@ struct NavigationRegression {
         commission(app.utility_network_.mutable_connections().back());
         app.update_supply_simulation(0.f);
         require(app.airlock_powered(0),"connected battery did not power the air lock");
+        lunar_look::append_corridor_fixtures(guide_lights,app.corridor_network_.connections().front());
+        require(guide_lights.size()>1,"powered corridor omitted its guide lights");
         travel(1300);
         require(!crew.destination && distance(crew.position,goal)<.04f && crew.suited,
                 "crew did not walk through the air lock to the unpressurized habitat");
@@ -2668,6 +2698,61 @@ struct NavigationRegression {
         require(restored.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)==30,"construction cargo ledger mismatch");
         std::cout<<"Pressure seals, swept door collision, 20 rotated loading gates, reserved routing, shared deposits/withdrawals, construction and save round trip passed\n";
     }
+    static void interior_aisles(){
+        eng::Application engine;
+        GameApp app(engine);
+        app.playfield_.rebuild(128);
+        const auto walk=[&](Vec3 a,Vec3 b,GameApp::CrewTraversal traversal,const std::string& label){
+            const int slices=std::max(1,(int)std::ceil(distance(a,b)/.08f));
+            for(int i=1;i<=slices;++i){
+                const Vec3 from=a+(b-a)*((float)(i-1)/slices);
+                const Vec3 to=a+(b-a)*((float)i/slices);
+                require(app.first_person_move_allowed(from,to,traversal),
+                        label+" blocked at "+std::to_string(to.x)+","+std::to_string(to.z));
+            }
+        };
+        for(int kind=1;kind<(int)HabitatKind::Count;++kind){
+            for(int tier=0;tier<(int)HabitatSizeTier::Count;++tier){
+                PlacedHabitat room;
+                room.kind=(HabitatKind)kind;
+                room.size=(HabitatSizeTier)tier;
+                room.construction.step=kConstructionSteps;
+                app.placed_habitats_={room};
+                const auto& mesh=app.habitat_models_.mesh(room);
+                const float x=mesh.footprint_x*.26f,z=mesh.footprint_z*.17f,y=mesh.walkable_floor_y;
+                const auto label="habitat "+std::to_string(kind)+" tier "+std::to_string(tier);
+                for(const auto traversal:{GameApp::CrewTraversal::Player,GameApp::CrewTraversal::Astronaut}){
+                    walk({-x,y,0},{x,y,0},traversal,label+" main aisle");
+                    walk({0,y,-z},{0,y,z},traversal,label+" cross aisle");
+                }
+            }
+        }
+        app.placed_habitats_.clear();
+        for(int tier=0;tier<4;++tier){
+            PlacedResource storage;
+            storage.kind=ResourceKind::StorageDome;
+            storage.storage_size=(StorageDomeSize)tier;
+            storage.rotation_degrees=37.f;
+            storage.construction.step=kConstructionSteps;
+            storage.stored_boxes.resize(30,{MaterialResource::Plastic,18,1.f});
+            storage.stored_ore_boxes[0]=12;
+            app.placed_resources_={storage};
+            const auto& mesh=app.resource_models_.mesh(storage);
+            const float end=mesh.footprint_x*.34f,y=mesh.walkable_floor_y;
+            const auto label="loaded storage tier "+std::to_string(tier);
+            for(const auto traversal:{GameApp::CrewTraversal::Player,GameApp::CrewTraversal::Astronaut}){
+                for(Vec3 axis:{Vec3{end,0,0},Vec3{0,0,end}}){
+                    const Vec3 d=world_math::rotate_y(axis,storage.rotation_degrees);
+                    walk({-d.x,y,-d.z},{d.x,y,d.z},traversal,label);
+                }
+                Vec3 cargo{};float half=0.f,height=0.f;
+                app.stored_resource_box_pose(storage,mesh,0,cargo,half,height);
+                require(!app.first_person_move_allowed(cargo,cargo,traversal),label+" cargo became passable");
+            }
+        }
+        std::cout<<"Crew and POV main and cross aisles passed for room tiers and loaded Storage Domes\n";
+    }
+
     static void geometry(){
         eng::Application engine;
         GameApp app(engine);app.playfield_.rebuild(256);
@@ -2932,6 +3017,7 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="hydrogen-refueling") game::NavigationRegression::hydrogen_refueling();
         else if(argc>1 && std::string(argv[1])=="debug-orders") game::NavigationRegression::debug_orders();
         else if(argc>1 && std::string(argv[1])=="priority") game::NavigationRegression::build_priority();
+        else if(argc>1 && std::string(argv[1])=="crew-waypoints") game::NavigationRegression::astronaut_waypoints();
         else if(argc>1 && std::string(argv[1])=="crew-autonomy") game::NavigationRegression::astronaut_autonomy();
         else if(argc>1 && std::string(argv[1])=="airlock-cycle"){
             game::NavigationRegression::airlock_cycle();
@@ -2948,6 +3034,7 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="workshops") game::NavigationRegression::workshops();
         else if(argc>1 && std::string(argv[1])=="utilities") game::NavigationRegression::utilities();
         else if(argc>1 && std::string(argv[1])=="gates") game::NavigationRegression::gates();
+        else if(argc>1 && std::string(argv[1])=="interior-aisles") game::NavigationRegression::interior_aisles();
         else if(argc>1 && std::string(argv[1])=="geometry") game::NavigationRegression::geometry();
         else if(argc>2 && std::string(argv[1])=="fault-construction") game::NavigationRegression::construction(argv[2],true,true);
         else if(argc>2 && std::string(argv[1])=="construction") game::NavigationRegression::construction(argv[2]);

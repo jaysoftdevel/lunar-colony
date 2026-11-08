@@ -13,9 +13,9 @@ void build_processing_facility_outer(Builder& b){
     // Left feed hoppers and conveyor assembly.
     for(int i=0;i<3;++i){
         const float z=-2.55f+2.55f*(float)i;
-        b.box(b.mesh.details,{-5.65f,3.05f,z},{2.15f,3.25f,1.95f});
-        b.box(b.mesh.details,{-5.65f,1.28f,z},{1.35f,0.70f,1.35f});
-        b.cylinder_y(b.mesh.details,{-5.65f,0.74f,z},0.72f,0.34f,10,true);
+        b.box(b.mesh.details,{-6.45f,3.05f,z},{2.15f,3.25f,1.95f});
+        b.box(b.mesh.details,{-6.45f,1.28f,z},{1.35f,0.70f,1.35f});
+        b.cylinder_y(b.mesh.details,{-6.45f,0.74f,z},0.72f,0.34f,10,true);
     }
     b.box(b.mesh.details,{-6.55f,0.72f,0},{3.8f,0.52f,2.5f});
     for(int i=0;i<5;++i){
@@ -27,13 +27,9 @@ void build_processing_facility_outer(Builder& b){
 
     // Refining columns, filters and pipe manifolds on the right side.
     for(int i=0;i<3;++i){
-        const float z=-2.25f+2.25f*(float)i;
-        b.cylinder_y(b.mesh.details,{4.65f,3.35f,z},4.5f,0.62f,14,true);
-        b.cylinder_y(b.mesh.details,{3.55f,2.75f,z},3.2f,0.28f,10,true);
-    }
-    for(int i=0;i<4;++i){
-        const float z=-2.1f+1.4f*(float)i;
-        b.cylinder_y(b.mesh.details,{2.55f,2.15f,z},2.6f,0.22f,10,true);
+        const float z=-2.55f+2.55f*(float)i;
+        b.cylinder_y(b.mesh.details,{5.80f,3.35f,z},4.5f,0.62f,14,true);
+        b.cylinder_y(b.mesh.details,{5.46f,2.75f,z},3.2f,0.28f,10,true);
     }
     b.box(b.mesh.details,{5.0f,5.65f,-2.95f},{1.6f,4.1f,0.55f});
     for(int i=0;i<8;++i){

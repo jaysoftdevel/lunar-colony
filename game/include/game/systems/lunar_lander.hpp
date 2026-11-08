@@ -1,6 +1,7 @@
 #pragma once
 #include "engine/math.hpp"
 #include "game/systems/resource_management.hpp"
+#include "game/world/hydroponics.hpp"
 #include <cstdint>
 
 namespace game {
@@ -12,6 +13,7 @@ struct LunarLanderState {
     float elapsed{0};
     eng::Vec3 site{};
     ResourceBundle manifest{}, remaining{};
+    CropSeeds seeds_aboard{};
     std::uint8_t builders{1}, carriers{1};
     eng::Vec3 stash_center{};
     bool awaiting_site{false},awaiting_stash{false},salvaged{false},boxed{false};
@@ -25,7 +27,7 @@ struct LunarLanderState {
     }
     bool has_depot()const{return phase!=LanderPhase::Inactive;}
     bool active() const { return has_depot()&&!salvaged; }
-    bool in_flight() const { return phase==LanderPhase::Approach&&!awaiting_site&&!awaiting_stash; }
+    bool in_flight() const { return phase==LanderPhase::Approach&&!awaiting_site; }
     bool deploying() const { return active() && phase!=LanderPhase::Ready; }
 };
 struct LanderFlightSample {
@@ -33,9 +35,10 @@ struct LanderFlightSample {
     float roll_degrees{0}, thrust_acceleration{0}, gear{0};
 };
 inline constexpr float kLanderDescentSeconds=79.0f;
+inline constexpr float kLanderSettleSeconds=4.0f;
+// Preserve authored flight keyframes and the phase clock recorded in saves.
+inline constexpr float kLanderApproachPlaybackRate=2.5f;
 inline constexpr float kLanderRampSeconds=6.0f;
-inline constexpr float kLanderCraneSeconds=10.0f;
-inline constexpr std::int64_t kLanderCraneCapacityKg=2500;
 inline constexpr std::int64_t kMissionBuilderMassKg=850, kMissionCarrierMassKg=1000;
 inline constexpr float kStashMarkerRadius = 1.25f;
 inline constexpr float kLanderSalvageSeconds = 18.0f;

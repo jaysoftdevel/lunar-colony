@@ -242,6 +242,15 @@ std::optional<GameApp::StructureAttachment> GameApp::preview_structure_attachmen
 void GameApp::render_structure_attachment(Renderer& r,const StructureAttachment& attachment) const {
     const auto& edges=attachment.corridor?attachment.corridor->mesh.edges:attachment.utility->mesh.edges;
     r.draw_lines_3d(edges,theme_.accent,2.0f);
+    const auto& path=attachment.corridor?attachment.corridor->path:attachment.utility->path;
+    std::vector<Vec3> guide;
+    guide.reserve(path.size()*2);
+    constexpr Vec3 offset{0,.27f,0};
+    for(std::size_t i=1;i<path.size();++i){
+        guide.push_back(path[i-1]+offset);
+        guide.push_back(path[i]+offset);
+    }
+    r.draw_lines_3d(guide,{.40f,1.f,.70f,1.f},2.35f);
 }
 
 void GameApp::commit_structure_attachment(StructureAttachment attachment){
@@ -254,7 +263,11 @@ void GameApp::commit_structure_attachment(StructureAttachment attachment){
     }
 }
 
-bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 position,float rotation_degrees) const {
+bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 position,float rotation_degrees,const char** reason) const {
+    const auto blocked=[reason](const char* detail){
+        if(reason)*reason=detail;
+        return false;
+    };
     const HabitatMesh& candidate=habitat_models_.mesh(kind,size);
     const float half_field=(float)playfield_.size()*0.5f;
     const float ground_x=geometry::structure_ground_extent(candidate.footprint_x);
@@ -264,9 +277,9 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
     const float hz=std::abs(std::sin(a))*ground_x*0.5f+std::abs(std::cos(a))*ground_z*0.5f;
     const float build_limit=half_field-geometry::kPlayfieldRobotPerimeterLane;
     if(position.x-hx<-build_limit || position.x+hx>build_limit ||
-       position.z-hz<-build_limit || position.z+hz>build_limit) return false;
+       position.z-hz<-build_limit || position.z+hz>build_limit) return blocked("The footprint crosses the reserved rover perimeter lane.");
 
-    if(!lander_placement_clear(position,rotation_degrees,ground_x,ground_z) || !trader_placement_clear(position,rotation_degrees,ground_x,ground_z))return false;
+    if(!lander_placement_clear(position,rotation_degrees,ground_x,ground_z) || !trader_placement_clear(position,rotation_degrees,ground_x,ground_z))return blocked("Keep the lander and trader landing areas clear.");
     const auto candidate_box=footprint(position,rotation_degrees,ground_x,ground_z);
     constexpr float clearance=geometry::kStructurePlacementGap;
     for(const auto& placed:placed_habitats_){
@@ -274,28 +287,28 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
         const auto other_box=footprint(placed.position,placed.rotation_degrees,
                                        geometry::structure_ground_extent(other.footprint_x),
                                        geometry::structure_ground_extent(other.footprint_z));
-        if(overlaps(candidate_box,other_box,clearance)) return false;
+        if(overlaps(candidate_box,other_box,clearance)) return blocked("Move farther from the existing structure or blueprint.");
     }
     for(const auto& placed:placed_resources_){
-        if(placed.kind==ResourceKind::RobotWorkshop && overlaps(candidate_box,workshop::approach(placed),clearance)) return false;
+        if(placed.kind==ResourceKind::RobotWorkshop && overlaps(candidate_box,workshop::approach(placed),clearance)) return blocked("Keep the workshop ramp clear.");
         if(placed.kind==ResourceKind::StorageDome) for(int face:storage_loading::faces(placed))
-            if(face>=0 && overlaps(candidate_box,storage_loading::apron(placed,face),clearance)) return false;
+            if(face>=0 && overlaps(candidate_box,storage_loading::apron(placed,face),clearance)) return blocked("Keep the storage loading apron clear.");
         const ResourceMesh& other=resource_models_.mesh(placed);
         const auto other_box=footprint(placed.position,placed.rotation_degrees,
                                        geometry::structure_ground_extent(other.footprint_x),
                                        geometry::structure_ground_extent(other.footprint_z));
-        if(overlaps(candidate_box,other_box,clearance)) return false;
+        if(overlaps(candidate_box,other_box,clearance)) return blocked("Move farther from the existing structure or blueprint.");
     }
     for(const auto& pile:ground_resource_piles_){
         const float diameter=std::max(0.20f,pile.radius*2.0f);
         const auto pile_box=footprint(pile.position,0.0f,diameter,diameter);
-        if(overlaps(candidate_box,pile_box,0.12f)) return false;
+        if(overlaps(candidate_box,pile_box,0.12f)) return blocked("The footprint overlaps stored cargo.");
     }
-    if(!structure_routes_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return false;
+    if(!structure_routes_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return blocked("The footprint crosses an existing corridor, channel or walkway.");
     PlacedHabitat candidate_item;candidate_item.kind=kind;candidate_item.size=size;candidate_item.position=position;candidate_item.rotation_degrees=rotation_degrees;
-    if(!gate_layout_clear(&candidate_item,nullptr))return false;
-    if(!astronaut_placement_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return false;
-    if(!placement_preserves_robot_escape(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z)) return false;
+    if(!gate_layout_clear(&candidate_item,nullptr))return blocked("Keep the nearby gate and its approach clear.");
+    if(!astronaut_placement_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return blocked("An astronaut is standing inside the footprint.");
+    if(!placement_preserves_robot_escape(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z)) return blocked("Leave the rovers an escape route around the footprint.");
     return true;
 }
 
@@ -318,8 +331,13 @@ void GameApp::render_habitat_placement(Renderer& r){
     auto attachment=preview_structure_attachment(hit,&candidate,nullptr);
     if(attachment)snapped=attachment->position;
     const auto plan=construction_costs::habitat(selected->habitat_kind,size,habitat_models_.mesh(selected->habitat_kind,size));
-    const bool valid=(attachment || placement_valid(selected->habitat_kind,size,snapped,placement_rotation_degrees_)) &&
+    const char* reason=nullptr;
+    const bool valid=(attachment || placement_valid(selected->habitat_kind,size,snapped,placement_rotation_degrees_,&reason)) &&
         can_start_construction(plan);
+    set_placement_cost(plan,attachment?&*attachment:nullptr);
+    placement_tip_title_=selected->name;
+    if(attachment)placement_tip_title_+=attachment->corridor?" + CORRIDOR":" + SUPPLY CHANNEL";
+    if(!valid)placement_tip_detail_=reason?reason:"This blueprint cannot be queued here.";
 
     render_habitat_mesh(r,habitat_models_.mesh(selected->habitat_kind,size),snapped,placement_rotation_degrees_,true,valid);
 
@@ -340,9 +358,13 @@ void GameApp::render_habitat_placement(Renderer& r){
         finalize_placement(placed);
         placed_habitats_.push_back(std::move(placed));
         if(attachment)commit_structure_attachment(std::move(*attachment));
-        build_catalog_.clear_selection();
-        placement_rotation_degrees_=0.0f;
-        placement_habitat_size_=HabitatSizeTier::Small;
+        if(!input_.key_shift_down){
+            build_catalog_.clear_selection();
+            placement_rotation_degrees_=0.0f;
+            placement_habitat_size_=HabitatSizeTier::Small;
+        }
+        placement_tip_title_.clear();
+        placement_tip_cost_={};
         corridor_build_start_.reset();
     }
 }

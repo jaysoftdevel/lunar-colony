@@ -44,7 +44,7 @@ void build_bio_dome_outer(Builder& b){
         b.cylinder_between(b.mesh.details,{-5.25f,y,z},{5.25f,y,z},0.07f,6,true,true);
     }
     // Environmental control column and ducting.
-    b.cylinder_y(b.mesh.details,{0,3.1f,0},3.6f,0.38f,12,true);
+    b.cylinder_y(b.mesh.details,{0,3.87f,0},.85f,0.38f,12,true);
     b.cylinder_between(b.mesh.details,{-4.7f,4.2f,0},{4.7f,4.2f,0},0.12f,8,true,true);
     // Support legs.
     b.supports(-4.2f,4.1f,2.65f,0.78f);

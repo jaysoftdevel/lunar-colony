@@ -283,14 +283,12 @@ void GameApp::render_builder_robot(Renderer& r){
     for(std::size_t i=0;i<walkway_network_.connections().size();++i)
         render_site_buffer({ConstructionTargetKind::Walkway,i},walkway_network_.connections()[i].site_buffer);
 
-    // Every moving robot exposes only its current rolling ~0.5 s trajectory on
-    // the ground. Cyan is the locally validated motion horizon; amber means the
-    // reciprocal speed governor is currently yielding right-of-way. The short
-    // line therefore updates as the rover observes new structures/traffic rather
-    // than drawing a precomputed path all the way to the task destination.
+    // Show the selected rover's short validated motion horizon. Use the
+    // chassis lamps for fleet-wide status without drawing paths over the base.
     for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
         const auto& robot=builder_robots_[robot_index];
-        if(!robot.route_active || robot.route_cursor>=robot.planned_route.size()) continue;
+        if((int)robot_index!=selected_robot_ || !robot.route_active ||
+           robot.route_cursor>=robot.planned_route.size())continue;
         std::vector<Vec3> route_lines;
         Vec3 previous=robot.position;
         previous.y=first_person_floor_height(previous)+0.055f;
@@ -331,7 +329,7 @@ void GameApp::render_builder_robot(Renderer& r){
             pitch=pose.pitch;
         }
         const float phase=action_fraction(robot);
-        MeshBits cargo,arm,gripper;
+        MeshBits cargo,arm,gripper,lamps;
         const bool cargo_in_bay=robot.cargo.total_amount()>0 &&
             !(robot.action==BuilderRobotAction::PutDown && phase>0.18f);
         if(cargo_in_bay){
@@ -367,13 +365,26 @@ void GameApp::render_builder_robot(Renderer& r){
         const bool carrier=robot.role==RobotRole::Carrier;
         const auto& chassis=carrier?carrier_body:body;
         const auto& sensor_mesh=carrier?carrier_sensors:sensors;
+        const bool working=robot.action!=BuilderRobotAction::None;
+        const bool loaded=cargo_in_bay || robot.ore_haul.loaded;
+        const Color lamp=working || robot.route_waiting_for_clearance?Color{1.f,.63f,.24f,1.f}:
+            loaded?Color{.29f,.90f,.56f,1.f}:robot.route_active?Color{.36f,.81f,.97f,1.f}:Color{.44f,.49f,.54f,1.f};
+        for(float x:{-.31f,.31f})add_box(lamps,{x,.54f,.65f},{.14f,.08f,.07f});
+        r.draw_lunar_surface(transform(lamps.tris,pos,heading,pitch),eng::LunarMaterial::Emissive,lamp);
         r.draw_triangles_3d(transform(chassis.tris,pos,heading,pitch),carrier?Color{0.34f,0.48f,0.56f,1.0f}:Color{0.58f,0.61f,0.60f,1.0f});
         r.draw_lunar_surface(transform(wheels.tris,pos,heading,pitch),eng::LunarMaterial::Fabric,{0.08f,0.10f,0.11f,1.0f});
         r.draw_triangles_3d(transform(suspension.tris,pos,heading,pitch),{0.35f,0.37f,0.36f,1.0f});
         r.draw_triangles_3d(transform(arm.tris,pos,arm_heading,pitch),carrier?Color{0.28f,0.56f,0.68f,1.0f}:Color{0.72f,0.46f,0.14f,1.0f});
         r.draw_triangles_3d(transform(gripper.tris,pos,arm_heading,pitch),{0.23f,0.25f,0.24f,1.0f});
         r.draw_triangles_3d(transform(sensor_mesh.tris,pos,heading,pitch),carrier?Color{0.18f,0.50f,0.62f,1.0f}:Color{0.30f,0.40f,0.43f,1.0f});
-        if(!cargo.tris.empty()) r.draw_triangles_3d(transform(cargo.tris,pos,heading,pitch),{0.28f,0.48f,0.56f,0.95f});
+        if(cargo_in_bay){
+            auto material=MaterialResource::Iron;
+            for(std::size_t i=1;i<kMaterialResourceCount;++i){
+                const auto candidate=static_cast<MaterialResource>(i);
+                if(robot.cargo.amount(candidate)>robot.cargo.amount(material))material=candidate;
+            }
+            r.draw_lunar_surface(transform(cargo.tris,pos,heading,pitch),eng::LunarMaterial::Paint,resource_color(material));
+        }
         const Color edge{0.04f,0.06f,0.07f,1.0f};
         r.draw_lines_3d(transform(chassis.edges,pos,heading,pitch),edge,1.15f);
         r.draw_lines_3d(transform(wheels.edges,pos,heading,pitch),{0.30f,0.34f,0.34f,1.0f},1.0f);
@@ -415,9 +426,10 @@ void GameApp::render_builder_robot(Renderer& r){
         }
         if(robot.action==BuilderRobotAction::Welding||robot.action==BuilderRobotAction::Dismantle){
             const float active=segment(phase,0.14f,0.86f)*(1.0f-segment(phase,0.86f,1.0f));
-            if(active>0.05f){
+            if(active>0.05f && graphics_.particle_density>0){
+                const int count=eng::quality_budget(graphics_.particle_density,3,6,9);
                 std::vector<Vec3> sparks;
-                for(int i=0;i<9;++i){
+                for(int i=0;i<count;++i){
                     const float a=phase*23.0f+(float)i*0.77f;
                     const float len=0.10f+0.20f*(float)((i%4)+1)/4.0f;
                     const Vec3 tip=tool_world+Vec3{std::sin(a)*len,-0.05f-0.04f*(float)(i%3),std::cos(a)*len};

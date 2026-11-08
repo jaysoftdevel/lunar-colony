@@ -102,6 +102,7 @@ std::vector<GameApp::BuildQueueItem> GameApp::construction_queue() const {
 }
 
 void GameApp::set_construction_order(const std::vector<BuildQueueItem>& queue){
+    build_queue_revealed_={};
     construction_order_.clear();
     construction_order_.reserve(queue.size());
     construction_priority_.clear();
@@ -129,6 +130,9 @@ bool GameApp::move_construction_order(std::uint64_t sequence,int direction){
         queue[lower].automatic_priority=false;
     }
     set_construction_order(queue);
+    if(game_session_active_)
+        activity_log_.record(ui_time_seconds_,LogEvent::Note,construction_target_name(queue[neighbor].target)+
+            " / build order moved to "+std::to_string(neighbor+1));
     return true;
 }
 
@@ -136,6 +140,11 @@ void GameApp::toggle_construction_priority(const ConstructionTargetRef& t){
     if(!t.valid() || construction_target_complete(t))return;
     prune_construction_priorities();
     auto seq=construction_target_sequence(t);if(!seq)return;
+    const auto log_priority=[&](bool enabled){
+        if(game_session_active_)
+            activity_log_.record(ui_time_seconds_,LogEvent::Note,construction_target_name(t)+
+                (enabled?" / build priority set":" / build priority cleared"));
+    };
     if(!construction_order_.empty()){
         auto queue=construction_queue();
         const auto row=std::find_if(queue.begin(),queue.end(),[&](const auto& item){return item.sequence==seq;});
@@ -148,11 +157,15 @@ void GameApp::toggle_construction_priority(const ConstructionTargetRef& t){
             queue.insert(ordinary,item);
         }else *row=item;
         set_construction_order(queue);
+        log_priority(item.manual_priority);
         return;
     }
     const auto it=std::find(construction_priority_.begin(),construction_priority_.end(),seq);
-    if(it==construction_priority_.end())construction_priority_.push_back(seq);
+    const bool enabled=it==construction_priority_.end();
+    if(enabled)construction_priority_.push_back(seq);
     else construction_priority_.erase(it);
+    log_priority(enabled);
+    build_queue_revealed_={};
     astronaut_schedule_seconds_=0.f;
 }
 bool GameApp::construction_ready_connection(const ConstructionTargetRef& t) const {

@@ -44,6 +44,7 @@ void GameApp::update_speed_shortcuts(const InputState& in){
 
 void GameApp::update(float dt,const InputState& in){
     update_simulation(dt,in);
+    update_activity_log();
     update_soundscape(dt,in);
 }
 
@@ -56,8 +57,14 @@ void GameApp::update_simulation(float dt,const InputState& in){
 
     // Keep the press pending until release. A right-button drag belongs to
     // the camera, and an active placement tool owns its cancellation click.
-    const bool over_build_queue=mouse_over_build_queue(in);
-    const bool selection_click=(in.right_pressed || right_click_pending_) && !over_build_queue &&
+    const bool over_overlay=mouse_over_playfield_overlay(in);
+    auto world_camera_input=in;
+    if(over_overlay){
+        world_camera_input.wheel=0.f;
+        world_camera_input.right_down=false;
+        world_camera_input.middle_down=false;
+    }
+    const bool selection_click=(in.right_pressed || right_click_pending_) && !over_overlay &&
         screen_==Screen::Playfield && active_game_phase_!=GamePhase::Planning &&
         first_person_mode_==FirstPersonMode::Off && !in.key_v_pressed && !in.escape_pressed &&
         !storage_gate_placement_active_ && !build_catalog_.selected() && corridor_link_source_<0 &&
@@ -84,7 +91,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
             // resources or first-person systems.
             if(in.escape_pressed){ screen_=Screen::MainMenu; return; }
             if(planning_.view==PlanningView::Site)
-                camera_.update(in,playfield_.size(),viewport_height_,dt);
+                camera_.update(world_camera_input,playfield_.size(),viewport_height_,dt);
             update_planning_game(dt);
             return;
         }
@@ -92,14 +99,13 @@ void GameApp::update_simulation(float dt,const InputState& in){
         if(debug_move_pick_robot_>=0 && (in.escape_pressed || in.right_pressed)){debug_move_pick_robot_=-1;return;}
 
         if(lander_.awaiting_site||lander_.awaiting_stash){
-            if(in.right_pressed&&lander_.awaiting_stash&&lander_.phase==LanderPhase::Approach&&lander_.elapsed==0){lander_.awaiting_site=true;lander_.awaiting_stash=false;return;}
             if(in.escape_pressed){screen_=Screen::MainMenu;return;}
-            camera_.update(in,playfield_.size(),viewport_height_,dt);
-            if(in.left_pressed && !over_build_queue && !mouse_over_selection_panel(in) &&
-               (float)in.mouse_y/ui_scale_>=STATUS_BAR_H && (float)in.mouse_y/ui_scale_<(float)viewport_height_/ui_scale_-BUILD_BAR_H){
-                Vec3 hit{};if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
-                    if(lander_.awaiting_site)confirm_lander_site(hit);else confirm_stash_site(hit);
-                }
+            if(mouse_over_selection_panel(in)) world_camera_input.wheel=0;
+            camera_.update(world_camera_input,playfield_.size(),viewport_height_,dt);
+            Vec3 hit{};
+            if(in.left_pressed && pick_lander_placement_ground(hit)){
+                if(lander_.awaiting_site) confirm_lander_site(hit);
+                else confirm_stash_site(hit);
             }
             return;
         }
@@ -122,19 +128,19 @@ void GameApp::update_simulation(float dt,const InputState& in){
                 auto view=camera_.state();
                 view.target=view.target-origin;
                 camera_.restore(view);
-                auto camera_input=in;
-                if(over_build_queue || mouse_over_selection_panel(in)) camera_input.wheel=0;
+                auto camera_input=world_camera_input;
+                if(mouse_over_selection_panel(in))camera_input.wheel=0;
                 camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
                 view=camera_.state();
                 view.target+=origin;
                 camera_.restore(view);
             }else{
-                auto camera_input=in;
-                if(over_build_queue || mouse_over_selection_panel(in))camera_input.wheel=0;
+                auto camera_input=world_camera_input;
+                if(mouse_over_selection_panel(in))camera_input.wheel=0;
                 camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
-                if(!over_build_queue) update_selection_panel_scroll(in);
+                if(!over_overlay) update_selection_panel_scroll(in);
                 const float y=(float)in.mouse_y/ui_scale_;
-                if(in.left_pressed && !over_build_queue && y>=STATUS_BAR_H &&
+                if(in.left_pressed && !lander_.awaiting_stash && !over_overlay && y>=STATUS_BAR_H &&
                    y<(float)viewport_height_/ui_scale_-BUILD_BAR_H && !mouse_over_selection_panel(in))
                     select_world_at(in.mouse_x,in.mouse_y);
             }
@@ -153,10 +159,10 @@ void GameApp::update_simulation(float dt,const InputState& in){
             advance_colony();
             if(!paused && astronaut_test_active()) update_astronaut_test(sim_dt);
             if(in.escape_pressed){ exit_first_person_mode(); return; }
-            camera_.update(in,playfield_.size(),viewport_height_,dt);
+            camera_.update(world_camera_input,playfield_.size(),viewport_height_,dt);
             const float logical_y=(float)in.mouse_y/ui_scale_;
             const bool over_world=logical_y>=STATUS_BAR_H && logical_y<((float)viewport_height_/ui_scale_-BUILD_BAR_H);
-            if(in.left_pressed && over_world){
+            if(in.left_pressed && over_world && !over_overlay){
                 Vec3 hit{};
                 if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
                     // POV placement is exterior-only.  We still resolve the
@@ -245,9 +251,9 @@ void GameApp::update_simulation(float dt,const InputState& in){
             return;
         }
 
-        const bool over_panel=over_build_queue || mouse_over_selection_panel(in);
-        if(!over_build_queue) update_selection_panel_scroll(in);
-        InputState camera_input=in;
+        const bool over_panel=over_overlay || mouse_over_selection_panel(in);
+        if(!over_overlay) update_selection_panel_scroll(in);
+        InputState camera_input=world_camera_input;
         if(const BuildObjectDefinition* selected=build_catalog_.selected(); !over_panel && selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
             constexpr float step=15.0f;
             if(selected->kind==BuildObjectKind::Habitat){
@@ -334,7 +340,10 @@ void GameApp::update_simulation(float dt,const InputState& in){
         // When the pause/game menu is open, ESC is a direct resume shortcut.
         // Sub-pages still use ESC to return one level to that menu first.
         if(screen_==Screen::MainMenu && game_session_active_) screen_=Screen::Playfield;
-        else if(screen_==Screen::GraphicsSettings) screen_=Screen::Settings;
+        else if(screen_==Screen::GraphicsSettings){
+            if(graphics_dropdown_>=0)graphics_dropdown_=-1;
+            else screen_=Screen::Settings;
+        }
         else if(screen_==Screen::Stage3Modes){
             new_game_status_message_.clear();
             screen_=Screen::NewGame;

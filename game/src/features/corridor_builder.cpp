@@ -210,18 +210,21 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     if(target<0 || target==corridor_link_source_) return;
     auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     if(!preview){
-        corridor_placement_failure_title_="CORRIDOR LINK CANNOT BE PLACED";
-        corridor_placement_failure_detail_="No collision-free connector can be routed between the selected corridor sections.";
+        placement_tip_title_="CORRIDOR LINK CANNOT BE PLACED";
+        placement_tip_detail_="No collision-free connector can be routed between the selected corridor sections.";
         return;
     }
+    const auto plan=corridor_plan(*preview);
+    set_placement_cost(plan);
+    placement_tip_title_="CORRIDOR LINK";
     const bool gate_clear=corridor_gate_layout_clear(*preview);
-    const bool affordable=(can_start_construction(corridor_plan(*preview)) && gate_clear);
+    const bool affordable=can_start_construction(plan) && gate_clear;
     if(!gate_clear){
-        corridor_placement_failure_title_="GATE / SERVICE CLEARANCE BLOCKED";
-        corridor_placement_failure_detail_="The connector or its junction area overlaps a crew member, structure, route or reserved service space.";
-    }else if(!can_start_construction(corridor_plan(*preview))){
-        corridor_placement_failure_title_="CORRIDOR CANNOT BE FUNDED";
-        corridor_placement_failure_detail_="Required construction resources are not available for this corridor.";
+        placement_tip_title_="GATE / SERVICE CLEARANCE BLOCKED";
+        placement_tip_detail_="The connector or its junction area overlaps a crew member, structure, route or reserved service space.";
+    }else if(!can_start_construction(plan)){
+        placement_tip_title_="CORRIDOR CANNOT BE FUNDED";
+        placement_tip_detail_="Required construction resources are not available for this corridor.";
     }
     draw_compact_corridor_blueprint(r,*preview,affordable);
     render_endpoint_highlight(r,preview->endpoint_a,affordable?theme_.accent:Color{1.00f,0.28f,0.22f,1.0f},2.8f);
@@ -241,6 +244,8 @@ void GameApp::render_corridor_link_preview(Renderer& r){
         selected_utility_=-1;
         selection_kind_=SelectionKind::Corridor;
         corridor_link_source_=-1;
+        placement_tip_title_.clear();
+        placement_tip_cost_={};
     }
 }
 
@@ -276,8 +281,8 @@ void GameApp::render_corridor_placement(Renderer& r){
             placed_habitats_,corridor_network_.connections(),utility_network_.connections(),walkway_network_.connections());
     };
     const auto fail=[&](std::string title,std::string detail){
-        corridor_placement_failure_title_=std::move(title);
-        corridor_placement_failure_detail_=std::move(detail);
+        placement_tip_title_=std::move(title);
+        placement_tip_detail_=std::move(detail);
     };
     const auto invalid_anchor=[&](const CorridorBuildAnchor& anchor,bool source){
         if(anchor.kind==CorridorEndpointKind::Habitat){
@@ -357,11 +362,13 @@ void GameApp::render_corridor_placement(Renderer& r){
         if(preview){
             source_endpoint=preview->endpoint_a;
             destination_endpoint=preview->endpoint_b;
+            const auto plan=corridor_plan(*preview);
+            set_placement_cost(plan);
             const bool gate_clear=corridor_gate_layout_clear(*preview);
-            const bool affordable=(can_start_construction(corridor_plan(*preview)) && gate_clear);
+            const bool affordable=(can_start_construction(plan) && gate_clear);
             if(!gate_clear){
                 fail("GATE / SERVICE CLEARANCE BLOCKED","The corridor or entrance service area overlaps a structure, existing corridor, walkway, supply channel, or protected perimeter space.");
-            }else if(!can_start_construction(corridor_plan(*preview))){
+            }else if(!can_start_construction(plan)){
                 fail("CORRIDOR CANNOT BE FUNDED","Required construction resources are not available for this corridor.");
             }
             draw_compact_corridor_blueprint(r,*preview,affordable);
@@ -417,46 +424,77 @@ void GameApp::render_corridor_placement(Renderer& r){
             selected_habitat_=-1;
             selection_kind_=SelectionKind::Corridor;
             corridor_build_start_.reset();
-            build_catalog_.clear_selection();
-            corridor_placement_failure_title_.clear();
-            corridor_placement_failure_detail_.clear();
+            if(input_.key_shift_down)clear_world_selection();
+            else build_catalog_.clear_selection();
+            placement_tip_title_.clear();
+            placement_tip_detail_.clear();
+            placement_tip_cost_={};
         }else{
             fail("CORRIDOR NETWORK MERGE REJECTED","The route preview is clear, but joining it to the existing pressure network would create an invalid overlap or reserved-area conflict.");
         }
     }
 }
 
-void GameApp::render_corridor_placement_tooltip(Renderer& r){
-    if(corridor_placement_failure_title_.empty()) return;
+void GameApp::set_placement_cost(const ConstructionResourcePlan& plan,const StructureAttachment* attachment){
+    placement_tip_cost_=plan.total();
+    if(attachment){
+        const auto extra=(attachment->corridor?attachment->corridor->resource_plan:attachment->utility->resource_plan).total();
+        for(auto material:kConstructionMaterialResources)
+            placement_tip_cost_.amount(material)+=extra.amount(material);
+    }
+}
+
+void GameApp::render_placement_tooltip(Renderer& r){
+    const bool blocked=!placement_tip_detail_.empty();
+    const bool has_cost=!placement_tip_cost_.empty();
+    if(placement_tip_title_.empty() && !has_cost) return;
     const float logical_w=ui_width(r);
     const float logical_h=ui_height(r);
     if(logical_w<80.0f || logical_h<80.0f) return;
 
-    const float width=std::min(440.0f,std::max(250.0f,logical_w-16.0f));
-    const auto lines=ui::wrap_text(corridor_placement_failure_detail_,width-20.0f,
-                                   ui::font_scale(0.43f*GAME_FONT_BOOST,theme_));
-    const float height=38.0f+14.0f*(float)std::max<std::size_t>(1,lines.size());
+    const float width=std::min(blocked?370.0f:290.0f,logical_w-16.0f);
+    const float text_scale=ui::font_scale(0.43f*GAME_FONT_BOOST,theme_);
+    const auto lines=blocked?ui::wrap_text(placement_tip_detail_,width-20.0f,text_scale):std::vector<std::string>{};
+    std::string cost;
+    for(auto material:kConstructionMaterialResources){
+        const auto amount=placement_tip_cost_.amount(material);
+        if(amount<=0)continue;
+        if(!cost.empty())cost+="  /  ";
+        cost+=std::to_string(amount)+" "+material_resource_symbol(material);
+    }
+    if(!cost.empty())cost+=" KG";
+    const auto costs=has_cost?ui::wrap_text(cost,width-20.0f,text_scale):std::vector<std::string>{};
+    const bool waiting=has_cost && !resources_.can_consume(placement_tip_cost_);
+    const float height=33.0f+14.0f*(float)(lines.size()+costs.size()+(waiting?1:0));
     const float mx=(float)input_.mouse_x/ui_scale_;
     const float my=(float)input_.mouse_y/ui_scale_;
     float x=mx+18.0f;
     if(x+width>logical_w-8.0f) x=mx-width-18.0f;
     x=std::clamp(x,8.0f,std::max(8.0f,logical_w-width-8.0f));
     const float min_y=STATUS_BAR_H+6.0f;
-    const float max_y=std::max(min_y,logical_h-BUILD_BAR_H-height-6.0f);
+    const float max_y=logical_h-BUILD_BAR_H-height-6.0f;
+    if(max_y<min_y)return;
     float y=my+18.0f;
     if(y>max_y) y=my-height-18.0f;
     y=std::clamp(y,min_y,max_y);
 
-    const Rect tip{x,y,width,height};
-    ui::panel(r,tip,theme_);
-    r.draw_line({tip.x,tip.y},{tip.x+tip.w,tip.y},{1.0f,0.30f,0.22f,1.0f},2.0f);
-    game_label_fitted(r,{tip.x+10.0f,tip.y+7.0f,tip.w-20.0f,17.0f},corridor_placement_failure_title_,0.58f,theme_);
-    float ty=tip.y+27.0f;
-    if(lines.empty()) game_label_fitted(r,{tip.x+10.0f,ty,tip.w-20.0f,13.0f},corridor_placement_failure_detail_,0.43f,theme_,true);
-    else for(const auto& line_text:lines){
-        game_label_fitted(r,{tip.x+10.0f,ty,tip.w-20.0f,13.0f},line_text,0.43f,theme_,true);
+    Rect tip{x,y,width,height};
+    if(!keep_clear_of_activity_log(tip))return;
+    layout::hud_panel(r,tip,theme_);
+    const Color accent=blocked?Color{1.0f,0.30f,0.22f,1.0f}:theme_.accent;
+    r.draw_line({tip.x,tip.y},{tip.x+tip.w,tip.y},accent,2.0f);
+    const auto* selected=build_catalog_.selected();
+    const std::string title=!placement_tip_title_.empty()?placement_tip_title_:
+        selected?selected->name:"CONSTRUCTION MATERIALS";
+    game_label_fitted(r,{tip.x+10.0f,tip.y+7.0f,tip.w-20.0f,17.0f},title,0.58f,theme_);
+    float ty=tip.y+26.0f;
+    const auto line=[&](const std::string& text,bool muted){
+        game_label_fitted(r,{tip.x+10.0f,ty,tip.w-20.0f,13.0f},text,0.43f,theme_,muted);
         ty+=14.0f;
-    }
+    };
+    for(const auto& text:lines)line(text,true);
+    for(const auto& text:costs)line(text,false);
+    if(waiting)line("NEEDS MORE MATERIALS",true);
 }
 
 } // namespace game

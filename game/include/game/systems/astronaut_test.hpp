@@ -52,6 +52,7 @@ struct AstronautTestActor {
     float heading_degrees{};
     float stride_phase{};
     float speed{};
+    float tool_carry_blend{}; // Render transition, derived from the active assignment.
     float health{1.f};
     double suit_oxygen_kg{kSuitOxygenCapacityKg};
     double food_pack_kg{};
@@ -77,13 +78,15 @@ inline bool astronaut_resting(const AstronautTestActor& actor){
     return actor.activity==AstronautActivity::Sleeping || actor.activity==AstronautActivity::Knockout || actor.health<=0.f;
 }
 
+inline constexpr float kAstronautStrideStretch=1.08f;
+
 inline constexpr float astronaut_stride(bool suited){
-    // Distance covered by the complete baked gait cycle at game scale.
-    return (suited?1.24f:1.28f*1.035f)*geometry::kAstronautScale;
+    // Distance covered by the longer, distance-driven gait cycle.
+    return (suited?1.24f:1.28f*1.035f)*geometry::kAstronautScale*kAstronautStrideStretch;
 }
 
 inline constexpr float astronaut_walk_speed(bool suited){
-    constexpr float base=astronaut_stride(false)/1.12f;
+    constexpr float base=(1.28f*1.035f)*geometry::kAstronautScale/1.12f;
     return suited?base*.70f:base;
 }
 

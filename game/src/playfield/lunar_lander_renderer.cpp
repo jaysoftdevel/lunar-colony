@@ -13,11 +13,20 @@ struct Mesh {
     explicit Mesh(bool solid):solid(solid){}
     bool solid;
     std::vector<Part> parts;
-    void quad(Color c,Vec3 a,Vec3 b,Vec3 d,Vec3 e){
+    std::vector<Vec3>& vertices(Color c){
         auto it=std::find_if(parts.begin(),parts.end(),[&](const Part& p){return p.color.r==c.r&&p.color.g==c.g&&p.color.b==c.b&&p.color.a==c.a;});
         if(it==parts.end()){parts.push_back({c,{}});it=parts.end()-1;}
-        if(solid) it->vertices.insert(it->vertices.end(),{a,b,d,a,d,e});
-        else it->vertices.insert(it->vertices.end(),{a,b,b,d,d,e,e,a});
+        return it->vertices;
+    }
+    void triangle(Color c,Vec3 a,Vec3 b,Vec3 d){
+        auto& points=vertices(c);
+        if(solid)points.insert(points.end(),{a,b,d});
+        else points.insert(points.end(),{a,b,b,d,d,a});
+    }
+    void quad(Color c,Vec3 a,Vec3 b,Vec3 d,Vec3 e){
+        auto& points=vertices(c);
+        if(solid)points.insert(points.end(),{a,b,d,a,d,e});
+        else points.insert(points.end(),{a,b,b,d,d,e,e,a});
     }
     void box(Vec3 p,Vec3 size,Color c){
         Vec3 h=size*0.5f;
@@ -56,12 +65,6 @@ struct Mesh {
 constexpr Color white{0.76f,0.79f,0.78f,1},gold{0.60f,0.39f,0.14f,1},dark{0.075f,0.095f,0.12f,1},metal{0.35f,0.40f,0.44f,1},blue{0.10f,0.26f,0.42f,1};
 float smooth(float u){u=std::clamp(u,0.0f,1.0f);return u*u*(3-2*u);}
 
-void crate(Mesh& m,Vec3 p,Color c){
-    m.box(p+Vec3{0,.65f,0},{1.7f,1.2f,1.45f},c);
-    for(float x:{-.65f,.65f})m.box(p+Vec3{x,.65f,0},{.10f,1.27f,1.53f},metal);
-    m.box(p+Vec3{0,.65f,.74f},{.55f,.32f,.035f},white);
-    for(float x:{-.6f,.6f})m.box(p+Vec3{x,.04f,0},{.22f,.12f,1.5f},dark);
-}
 }
 void GameApp::render_lunar_lander(eng::Renderer& r){
     if(!lander_.active()||lander_.awaiting_site)return;
@@ -69,14 +72,31 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
     Vec3 origin=lander_.site+flight.offset;
     const float settle=lander_.phase==LanderPhase::Settling?std::exp(-lander_.elapsed*2.5f)*std::sin(lander_.elapsed*8)*.055f:0;
     origin.y+=settle;
-    const bool solid=r.lunar_scene_active();
+    const bool solid=!mesh_layout_active();
     Mesh frame(solid),top(solid),tanks(solid),gear(solid),lights(solid);
-    // A low, wide octagonal chassis with an open, beveled portal at the nose.
-    // The ramp hinge stays aligned with the rover's deck and deployment path.
+    // The pressure shell has an armored floor, roof and side panels.
+    // The only bay opening is the ramp portal at the front.
     const std::array<Vec3,8> chassis{{
         {-3.35f,2.36f,-4.15f},{3.35f,2.36f,-4.15f},{5.05f,2.36f,-2.85f},{5.05f,2.36f,2.0f},
         {3.25f,2.36f,3.60f},{-3.25f,2.36f,3.60f},{-5.05f,2.36f,2.0f},{-5.05f,2.36f,-2.85f}
     }};
+    constexpr Vec3 roof_lift{0,2.56f,0};
+    constexpr Vec3 floor_drop{0,.36f,0};
+    for(std::size_t i=0;i<chassis.size();++i){
+        const auto a=chassis[i],b=chassis[(i+1)%chassis.size()];
+        if(i!=4)frame.quad(i%2?white:metal,a-floor_drop,b-floor_drop,b+roof_lift,a+roof_lift);
+        frame.triangle(metal,{0,2.0f,0},b-floor_drop,a-floor_drop);
+        frame.triangle(dark,{0,2.36f,0},a,b);
+        frame.triangle(white,{0,4.92f,0},a+roof_lift,b+roof_lift);
+    }
+    constexpr float front=3.60f;
+    for(float side:{-1.f,1.f}){
+        const float outer=side*3.25f,edge=side*2.42f,upper=side*1.75f;
+        frame.quad(white,{outer,2.0f,front},{edge,2.0f,front},{edge,4.92f,front},{outer,4.92f,front});
+        frame.quad(white,{edge,4.12f,front},{upper,4.88f,front},{upper,4.92f,front},{edge,4.92f,front});
+    }
+    frame.box({0,4.9f,front},{3.5f,.04f,.12f},white);
+    frame.box({0,2.21f,front},{4.84f,.42f,.13f},metal);
     for(std::size_t i=0;i<chassis.size();++i){
         const auto a=chassis[i],b=chassis[(i+1)%chassis.size()];
         frame.beam(a,b,.23f,metal);
@@ -112,14 +132,14 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
         }
         for(int i=0;i<3;++i){
             const float z=-2.15f+(float)i*1.73f;
-            const Vec3 base{x*3.85f,2.52f,z};
+            const Vec3 base{x*4.63f,2.52f,z};
             tanks.cylinder(base,.47f,.36f,gold,.70f);
             tanks.cylinder(base+Vec3{0,.36f,0},.70f,1.19f,gold);
             tanks.cylinder(base+Vec3{0,1.55f,0},.70f,.43f,gold,.29f);
             tanks.cylinder(base+Vec3{0,.85f,0},.74f,.09f,metal);
             tanks.beam(base+Vec3{0,1.98f,0},base+Vec3{0,2.16f,0},.12f,white);
         }
-        tanks.beam({x*3.85f,4.68f,-2.2f},{x*3.85f,4.68f,1.38f},.11f,metal);
+        tanks.beam({x*4.63f,4.68f,-2.2f},{x*4.63f,4.68f,1.38f},.11f,metal);
         for(int i=0;i<5;++i)
             tanks.beam({x*4.78f,3.0f+i*.20f,-3.64f},{x*4.78f,3.0f+i*.20f,-2.6f},.08f,blue);
     }
@@ -133,20 +153,22 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
             frame.cylinder({x+side,2.55f,z+dz},.13f,.25f,dark);
     }
 
-    // Raised tapered command cabin, freight trays and a parabolic antenna.
+    // Closed command cabin and a compact communications antenna.
     const Vec3 cabin_lower[]={{-1.65f,4.91f,.52f},{1.65f,4.91f,.52f},{1.65f,4.91f,-2.29f},{-1.65f,4.91f,-2.29f}};
     const Vec3 cabin_upper[]={{-1.16f,6.17f,-.13f},{1.16f,6.17f,-.13f},{1.16f,6.17f,-1.95f},{-1.16f,6.17f,-1.95f}};
     for(int i=0;i<4;++i){
         const int next=(i+1)%4;
         top.quad(white,cabin_lower[i],cabin_lower[next],cabin_upper[next],cabin_upper[i]);
     }
+    top.quad(white,cabin_upper[0],cabin_upper[1],cabin_upper[2],cabin_upper[3]);
+    top.quad(metal,cabin_lower[3],cabin_lower[2],cabin_lower[1],cabin_lower[0]);
     for(float x:{-.72f,.72f}) top.quad(blue,{x-.48f,5.32f,.31f},{x+.48f,5.32f,.31f},{x+.42f,5.92f,-.01f},{x-.42f,5.92f,-.01f});
     for(float x:{-1.f,1.f}){
         const float rail=x*4.72f;
         for(float z:{-2.8f,-.8f,1.3f}) top.beam({rail,4.63f,z},{rail,5.25f,z},.05f,gold);
         top.beam({rail,5.25f,-2.8f},{rail,5.25f,1.3f},.07f,gold);
         top.beam({x*2.45f,4.86f,-2.8f},{x*4.72f,4.63f,-2.8f},.18f,metal);
-        if(!lander_.remaining.empty()) for(float z:{-1.83f,.11f}) crate(top,{x*3.4f,4.83f,z},gold);
+        for(float z:{-1.83f,.11f})top.box({x*3.45f,4.98f,z},{1.32f,.12f,1.32f},metal);
     }
     top.beam({.8f,6.18f,-1.28f},{.8f,7.42f,-1.28f},.085f,white);
     top.cylinder({.8f,7.35f,-1.28f},.26f,.41f,white,.94f);
@@ -187,16 +209,18 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
         for(float x:{-2.02f,2.02f})m.beam(seg[0]+Vec3{x,.08f,0},seg[1]+Vec3{x,.08f,0},.09f,gold);
         for(int i=0;i<12;++i){Vec3 p=seg[0]+(seg[1]-seg[0])*((float)i/12);m.beam(p+Vec3{-1.92f,.028f,0},p+Vec3{1.92f,.028f,0},.04f,white);}
     }
-    // Side crane with a pivot, telescoping boom and two drop lines.
-    const Vec3 pivot{-4.64f,4.77f,-1.92f},elbow{-5.20f,7.00f,-1.98f},head{-8.35f,8.22f,-1.98f};
-    top.cylinder({pivot.x,4.54f,pivot.z},.47f,.48f,gold);
-    top.beam(pivot,elbow,.37f,white);
-    top.beam(elbow,head,.32f,white);
-    top.beam(elbow+Vec3{.15f,.18f,.17f},head+Vec3{0,.18f,.17f},.10f,gold);
-    top.beam(pivot+Vec3{.28f,-.08f,.25f},elbow+Vec3{.35f,-.14f,.25f},.13f,metal);
-    top.cylinder(head-Vec3{0,.16f,0},.20f,.32f,gold);
-    for(float z:{-.12f,.12f}) top.beam(head+Vec3{0,0,z},head+Vec3{0,-1.7f,z},.025f,metal);
-    top.box(head+Vec3{0,-1.74f,0},{.24f,.22f,.34f},gold);
+    // The hatch retracts into the roof as the two-part ramp unfolds.
+    const float hatch_bottom=2.42f+2.46f*smooth(ramp*1.5f);
+    if(hatch_bottom<4.88f){
+        const float shoulder=std::max(4.12f,hatch_bottom);
+        const float edge=2.42f-(shoulder-4.12f)*(.67f/.76f);
+        constexpr float hatch_z=3.59f;
+        frame.quad(metal,{-edge,shoulder,hatch_z},{edge,shoulder,hatch_z},
+                   {1.75f,4.88f,hatch_z},{-1.75f,4.88f,hatch_z});
+        if(hatch_bottom<4.12f)
+            frame.quad(blue,{-2.42f,hatch_bottom,hatch_z},{2.42f,hatch_bottom,hatch_z},
+                       {2.42f,4.12f,hatch_z},{-2.42f,4.12f,hatch_z});
+    }
 
     const float work=lander_.salvage_seconds;
     const auto draw_module=[&](const Mesh& module,float removal){
@@ -228,9 +252,10 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
             r.draw_lunar_volume({origin-Vec3{0,origin.y-0.06f,0},{0,1,0},
                 0.75f+1.2f*dust,2.2f+5.6f*dust,{0.46f,0.43f,0.38f,1},0.66f*dust,0.0f,false});
         }
-        if(origin.y<16){
+        const int particles=graphics_.particle_density==0?0:eng::quality_budget(graphics_.particle_density,12,24,42);
+        if(origin.y<16 && particles>0){
             Mesh dust(solid);
-            for(int i=0;i<42;++i){
+            for(int i=0;i<particles;++i){
                 const float angle=(float)i*2.399963f,age=std::fmod(lander_.elapsed*.85f+(float)i*.071f,1.1f);
                 const float speed=3.0f+((float)(i%5))*.6f;
                 const float radial=1+age*speed,height=std::max(.03f,1.1f*age-.81f*age*age);

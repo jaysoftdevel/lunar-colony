@@ -16,6 +16,7 @@
 #include <chrono>
 #include <iostream>
 #include <initializer_list>
+#include <string_view>
 #include <vector>
 
 namespace eng {
@@ -46,7 +47,10 @@ constexpr Enum framebuffer=0x8D40, color_attachment=0x8CE0, depth_attachment=0x8
 constexpr Enum color_bit=0x4000, depth_bit=0x0100, depth_test=0x0B71, blend=0x0BE2;
 constexpr Enum offset_fill=0x8037, src_alpha=0x0302, inv_src_alpha=0x0303, one=1;
 constexpr Enum triangles_mode=4, lines_mode=1, line_width_range=0x846E;
-constexpr Int shadow_size=1536, cascade_count=3, map_size=512;
+constexpr Enum mip_bilinear=0x2701,base_level=0x813C;
+constexpr Enum extensions_enum=0x1F03,extension_count_enum=0x821D;
+constexpr Enum anisotropy_enum=0x84FE,max_anisotropy_enum=0x84FF;
+constexpr Int cascade_count=3,map_size=surface_resolution_pixels(3);
 constexpr Int material_page_layers=25,shadow_page_layers=14,page_shadow_size=320;
 constexpr Int material_page_texels=96,material_border=2,material_tile_size=material_page_texels+material_border*2;
 constexpr float material_page_meters=32.0f,shadow_page_meters=19.0f;
@@ -369,16 +373,16 @@ TerrainVertex terrain_vertex(float x,float z,float half){
     return {{x,terrain_height(x,z,half),z},normalize({-dx,2.0f*step,-dz}),0};
 }
 
-void add_boulders(std::vector<TerrainVertex>& vertices,float half,int quality){
+void add_boulders(std::vector<TerrainVertex>& vertices,float half,int quality,float range){
     constexpr float spacing=7.2f;
-    const Int cells=static_cast<Int>(std::ceil((half+170.0f)/spacing));
+    const Int cells=static_cast<Int>(std::ceil((half+range)/spacing));
     for(Int z=-cells;z<=cells;++z) for(Int x=-cells;x<=cells;++x){
         const float chance=random(x,z,312);
         if(chance<quality_budget(quality,0.93f,0.85f,0.78f)) continue;
         const float px=(x+0.14f+0.70f*random(x,z,314))*spacing;
         const float pz=(z+0.14f+0.70f*random(x,z,327))*spacing;
         const float edge=std::max(std::abs(px),std::abs(pz))-half;
-        if(edge<3.4f || edge>170.0f) continue;
+        if(edge<3.4f || edge>range) continue;
         const float radius=0.28f+std::pow(random(x,z,345),3.0f)*2.0f;
         const float angle=random(x,z,353)*6.2831853f;
         const float y=terrain_height(px,pz,half);
@@ -407,7 +411,7 @@ void add_boulders(std::vector<TerrainVertex>& vertices,float half,int quality){
     }
 }
 
-std::vector<TerrainVertex> terrain_mesh(float half,int quality){
+std::vector<TerrainVertex> terrain_mesh(float half,int quality,int clutter,int range){
     // The inner quad stays on the build/pick plane. The flat mode extends
     // the plane to the same horizon as the normal terrain.
     const float inner=quality?half:half+1700.0f;
@@ -441,7 +445,7 @@ std::vector<TerrainVertex> terrain_mesh(float half,int quality){
             }
         }
     }
-    add_boulders(vertices,half,quality);
+    if(clutter>0)add_boulders(vertices,half,clutter,170.0f*range/100.0f);
     return vertices;
 }
 
@@ -470,7 +474,7 @@ bool invert(const Mat4& matrix,Mat4& inverse){
     return true;
 }
 
-Mat4 light_projection(const LunarScene& scene,float reach){
+Mat4 light_projection(const LunarScene& scene,float reach,int shadow_size){
     const Vec3 sun=normalize(scene.sun_direction);
     const Vec3 up=std::abs(sun.y)>0.92f?Vec3{0,0,1}:Vec3{0,1,0};
     const Vec3 x=normalize(cross(sun,up)),y=normalize(cross(x,sun));
@@ -552,6 +556,7 @@ struct LunarRenderer::Impl {
     Program geometry,shadow,sky,earth_sky,lighting,reflection,transparency,temporal,line,bloom,composite,fxaa;
     UInt mesh_vao{},terrain_vao{},screen_vao{},mesh_buffer{},terrain_buffer{},surface_maps{};
     UInt shadow_fbo{},shadow_layers{};
+    Int shadow_size{},max_anisotropy{1};
     Size buffer_capacity{};
     Target gbuffer,hdr,reflections,oit,bloom_a,bloom_b,ldr;
     std::array<Target,2> history{};
@@ -794,10 +799,11 @@ struct LunarRenderer::Impl {
         }
     }
 
-    bool initialize_shadow(){
-        gl.GenTextures(1,&shadow_layers);
-        bind_texture(0,shadow_layers,texture_array);
-        gl.TexImage3D(texture_array,0,depth24,shadow_size,shadow_size,cascade_count,0,depth_component,int_type,nullptr);
+    bool resize_shadow_maps(Int size){
+        UInt candidate{};
+        gl.GenTextures(1,&candidate);
+        bind_texture(0,candidate,texture_array);
+        gl.TexImage3D(texture_array,0,depth24,size,size,cascade_count,0,depth_component,int_type,nullptr);
         gl.TexParameteri(texture_array,compare_mode,compare_ref);
         gl.TexParameteri(texture_array,compare_func,less_equal);
         gl.TexParameteri(texture_array,min_filter,linear);
@@ -806,14 +812,53 @@ struct LunarRenderer::Impl {
         gl.TexParameteri(texture_array,wrap_t,clamp_edge);
         bind_texture(0,0,texture_array);
 
-        gl.GenFramebuffers(1,&shadow_fbo);
         gl.BindFramebuffer(framebuffer,shadow_fbo);
-        gl.FramebufferTextureLayer(framebuffer,depth_attachment,shadow_layers,0,0);
+        gl.FramebufferTextureLayer(framebuffer,depth_attachment,candidate,0,0);
         gl.DrawBuffer(0);
         gl.ReadBuffer(0);
         const bool ok=gl.CheckFramebufferStatus(framebuffer)==complete;
+        if(ok){
+            gl.DeleteTextures(1,&shadow_layers);
+            shadow_layers=candidate;
+            shadow_size=size;
+        }else{
+            gl.FramebufferTextureLayer(framebuffer,depth_attachment,shadow_layers,0,0);
+            gl.DeleteTextures(1,&candidate);
+        }
         gl.BindFramebuffer(framebuffer,0);
         return ok;
+    }
+
+    bool initialize_shadow(){
+        gl.GenFramebuffers(1,&shadow_fbo);
+        return resize_shadow_maps(cascade_resolution_pixels(graphics.shadow_resolution));
+    }
+
+    void initialize_texture_filtering(const Resolve& resolve){
+        const auto get_extension=reinterpret_cast<const unsigned char*(*)(Enum,UInt)>(resolve("glGetStringi"));
+        if(!get_extension)return;
+        Int count{};
+        gl.GetIntegerv(extension_count_enum,&count);
+        for(Int i=0;i<count;++i){
+            const auto* text=get_extension(extensions_enum,static_cast<UInt>(i));
+            if(!text)continue;
+            const std::string_view extension(reinterpret_cast<const char*>(text));
+            if(extension=="GL_EXT_texture_filter_anisotropic" || extension=="GL_ARB_texture_filter_anisotropic"){
+                float limit=1.0f;
+                gl.GetFloatv(max_anisotropy_enum,&limit);
+                max_anisotropy=static_cast<Int>(std::clamp(limit,1.f,16.f));
+                break;
+            }
+        }
+    }
+
+    void configure_surface_sampling(){
+        bind_texture(0,surface_maps,texture_array);
+        gl.TexParameteri(texture_array,base_level,3-graphics.surface_resolution);
+        gl.TexParameteri(texture_array,min_filter,graphics.texture_filter==0?mip_bilinear:trilinear);
+        if(max_anisotropy>1)
+            gl.TexParameteri(texture_array,anisotropy_enum,std::min(max_anisotropy,texture_anisotropy(graphics.texture_filter)));
+        bind_texture(0,0,texture_array);
     }
 
     bool initialize_pages(){
@@ -911,7 +956,8 @@ struct LunarRenderer::Impl {
         gl.TexParameteri(texture_array,min_filter,trilinear);
         gl.TexParameteri(texture_array,mag_filter,linear);
         gl.GenerateMipmap(texture_array);
-        bind_texture(0,0,texture_array);
+        initialize_texture_filtering(resolve);
+        configure_surface_sampling();
 
         gl.GenVertexArrays(1,&mesh_vao);
         gl.GenVertexArrays(1,&terrain_vao);
@@ -968,11 +1014,18 @@ struct LunarRenderer::Impl {
             destroy_screen_targets();
             targets_ready=false;
         }
-        if(next.quality(Feature::TerrainRelief)!=graphics.quality(Feature::TerrainRelief))
+        if(next.quality(Feature::TerrainRelief)!=graphics.quality(Feature::TerrainRelief) ||
+           next.ground_clutter!=graphics.ground_clutter || next.clutter_range!=graphics.clutter_range)
             terrain_extent=0.0f;
         if(!graphics.enabled(Feature::NeuralRadiance) && next.enabled(Feature::NeuralRadiance))
             neural_initialized=false;
+        const bool texture_changed=next.surface_resolution!=graphics.surface_resolution ||
+                                   next.texture_filter!=graphics.texture_filter;
         graphics=next;
+        if(ready && texture_changed)configure_surface_sampling();
+        if(ready && graphics.shadows!=GraphicsShadows::Off &&
+           shadow_size!=cascade_resolution_pixels(graphics.shadow_resolution))
+            resize_shadow_maps(cascade_resolution_pixels(graphics.shadow_resolution));
         reset_history(false);
     }
 
@@ -981,7 +1034,8 @@ struct LunarRenderer::Impl {
         if(output_width!=w || output_height!=h) resize(w,h);
         if(!targets_ready) return false;
         if(terrain_extent!=next.half_extent){
-            const auto landscape=terrain_mesh(next.half_extent,graphics.quality(Feature::TerrainRelief));
+            const auto landscape=terrain_mesh(next.half_extent,graphics.quality(Feature::TerrainRelief),
+                                              graphics.ground_clutter,graphics.clutter_range);
             terrain_vertices=static_cast<Int>(landscape.size());
             const auto rocks=std::find_if(landscape.begin(),landscape.end(),[](const TerrainVertex& v){ return v.stone>0.0f; });
             stone_start=static_cast<Int>(rocks-landscape.begin());
@@ -1011,7 +1065,7 @@ struct LunarRenderer::Impl {
             const float distance=length(scene.eye-scene.focus);
             const float reach[]{std::clamp(distance*.32f,22.0f,58.0f),std::clamp(distance*.70f,58.0f,148.0f),
                                 std::clamp(distance*1.50f,140.0f,390.0f)};
-            for(Int i=0;i<cascade_count;++i) cascades[i]=light_projection(scene,reach[i]);
+            for(Int i=0;i<cascade_count;++i) cascades[i]=light_projection(scene,reach[i],shadow_size);
         }else cascades.fill(Mat4::identity());
 
         view_projection=scene.view_projection;
@@ -1840,7 +1894,9 @@ bool LunarRenderer::initialize(const Resolve& resolve){ return impl_->initialize
 bool LunarRenderer::begin(const LunarScene& scene,int width,int height){ return impl_->begin(scene,width,height); }
 void LunarRenderer::set_graphics_settings(const GraphicsSettings& settings){ impl_->set_graphics_settings(settings); }
 GraphicsCapabilities LunarRenderer::graphics_capabilities() const {
-    return {impl_->ready,impl_->visibility_path,impl_->cluster_path,impl_->page_support,impl_->advanced,impl_->neural};
+    GraphicsCapabilities caps{impl_->ready,impl_->visibility_path,impl_->cluster_path,impl_->page_support,impl_->advanced,impl_->neural};
+    caps.texture_anisotropy=impl_->max_anisotropy;
+    return caps;
 }
 bool LunarRenderer::active() const { return impl_->in_scene; }
 bool LunarRenderer::volume(const LunarVolume& volume){

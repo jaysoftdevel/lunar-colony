@@ -6,29 +6,19 @@ using namespace eng;
 using namespace interior_detail;
 
 void build_manufactory_inner(Builder& b){
-    b.box(b.mesh.interior,{-3.6f,1.15f,0},{7.4f,0.22f,6.5f},false);
-    // Fabrication gantry and suspended tooling visible inside.
-    b.box(b.mesh.interior,{-3.6f,6.3f,0},{6.8f,0.22f,0.42f},false);
-    b.cylinder_between(b.mesh.interior,{-3.6f,6.2f,0},{-3.6f,4.45f,0},0.16f,8,true,false);
-    b.box(b.mesh.interior,{-3.6f,4.15f,0},{0.8f,0.65f,0.8f},false);
-    for(float x:{-5.8f,-3.5f,-1.2f}){
-        b.box(b.mesh.interior,{x,1.55f,-2.0f},{1.6f,0.7f,1.2f},false);
-        b.cylinder_y(b.mesh.interior,{x,2.65f,1.75f},2.25f,0.35f,10,false);
+    const float floor=b.mesh.walkable_floor_y;
+    b.box(b.mesh.interior,{0,floor-.09f,0},{15.2f,.18f,6.0f},false);
+    for(float x:{-5.25f,-2.35f,1.52f,4.52f}){
+        bench(b,{x,floor,-1.97f},1.38f,1.03f,.72f);
+        b.box(b.mesh.interior,{x,floor+1.28f,-1.97f},{1.17f,1.12f,.87f},false);
+        b.cylinder_y(b.mesh.interior,{x,floor+1.99f,-1.97f},.30f,.37f,10,false);
+        bench(b,{x,floor,1.98f},1.43f,.91f,.70f);
+        for(float dx:{-.34f,.34f})b.box(b.mesh.interior,{x+dx,floor+.89f,1.98f},{.53f,.38f,.63f},false);
+        ceiling_light(b,{x,4.98f,-1.75f},{x,4.98f,1.75f});
     }
-
-
-    // Heavy fabrication bed, additive/CNC cells, material pallets and operator island.
-    b.box(b.mesh.interior,{-3.6f,1.55f,0},{5.8f,0.34f,2.6f},false);
-    for(float x:{-5.6f,-3.6f,-1.6f}){
-        b.box(b.mesh.interior,{x,2.25f,-2.55f},{1.45f,2.0f,1.1f},false);
-        b.cylinder_y(b.mesh.interior,{x,3.55f,-2.55f},0.72f,0.35f,10,false);
-    }
-    for(int row=0;row<2;++row) for(int col=0;col<4;++col)
-        b.box(b.mesh.interior,{-6.1f+1.45f*col,1.45f+0.72f*row,2.65f},{1.1f,0.55f,1.0f},false);
-    console(b,{-0.1f,1.65f,2.65f},1.45f,1.0f);
-    b.cylinder_between(b.mesh.interior,{-3.6f,5.95f,0},{-3.6f,3.35f,0},0.13f,8,true,false);
-    b.box(b.mesh.interior,{-3.6f,3.15f,0},{0.75f,0.55f,1.2f},false);
-    for(float x:{-5.8f,-3.4f,-1.0f}) ceiling_light(b,{x,6.05f,-3.2f},{x,6.05f,3.2f});
+    // The gantry and tool head cross overhead with pedestrian clearance.
+    b.box(b.mesh.interior,{-3.8f,4.71f,0},{4.4f,.25f,.36f},false);
+    b.box(b.mesh.interior,{-3.8f,4.33f,0},{.62f,.58f,.55f},false);
 }
 
 } // namespace game::habitats

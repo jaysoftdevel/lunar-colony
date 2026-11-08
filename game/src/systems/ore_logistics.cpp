@@ -339,11 +339,15 @@ void GameApp::render_ore_survey(Renderer& r) const {
     Vec3 survey{};
     if(!ore_survey_location(survey))return;
     const auto mix=ore::deposit(survey);
-    const Rect panel{ui_width(r)-300,layout::STATUS_BAR_H+12,288,129};
-    ui::panel(r,panel,theme_);
+    const float right=progress_tree_visible()?progress_tree_panel_rect().x-8.f:
+        debug_frame_visible()?debug_frame_rect().x-8.f:ui_width(r)-layout::PLAYFIELD_MARGIN;
+    const float left=selection_kind_==SelectionKind::None?layout::PLAYFIELD_MARGIN+430.f:selection_panel_rect().x+selection_panel_rect().w;
+    const float width=std::min(242.f,std::max(116.f,right-left-8.f));
+    const Rect panel{right-width,layout::STATUS_BAR_H+34.f,width,107.f};
+    layout::hud_panel(r,panel,theme_);
     layout::game_label_fitted(r,{panel.x+10,panel.y+7,panel.w-20,17},"ORE SURVEY / DOMINANT DEPOSITS",.52f,theme_);
     for(std::size_t i=0;i<mix.size();++i){
-        const float y=panel.y+30+20*(float)i;
+        const float y=panel.y+26+16*(float)i;
         r.draw_rect({panel.x+12,y+3,9,9},ore::colors[i]);
         std::ostringstream text;
         text<<ore::names[i]<<"   "<<std::fixed<<std::setprecision(1)<<100*mix[i]<<"%";

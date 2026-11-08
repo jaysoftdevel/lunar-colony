@@ -1177,6 +1177,9 @@ bool GameApp::advance_construction_target(const ConstructionTargetRef& target,fl
         if(state.step_elapsed<kConstructionStepSeconds) return false;
         state.step_elapsed=0.0f;
         ++state.step;
+        if(game_session_active_)
+            activity_log_.record(ui_time_seconds_,LogEvent::Note,construction_target_name(target)+
+                " / construction stage "+std::to_string(state.step)+" finished");
         return true;
     };
     switch(target.kind){

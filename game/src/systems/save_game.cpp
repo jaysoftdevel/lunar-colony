@@ -27,7 +27,7 @@ namespace game {
 namespace {
 namespace fs=std::filesystem;
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
-constexpr std::uint32_t kSaveSchema=46;
+constexpr std::uint32_t kSaveSchema=47;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -797,6 +797,9 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         w.pod(item.sequence);
         w.boolean(item.automatic_priority);
     }
+    // Schema 47 distinguishes planned, in-transit and delivered seed packets.
+    for(const auto& stock:{planning_.mission_seeds,lander_.seeds_aboard,colony_seeds_})
+        for(const auto count:stock)w.pod(count);
 
     w.out.close();
     if(!w.ok()){ fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
@@ -995,7 +998,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     next_blueprint_placement_sequence_=1;
     construction_priority_.clear();
     construction_order_.clear();
-    build_queue_expanded_=false;build_queue_scroll_=0;
+    build_queue_expanded_=false;progress_tree_expanded_=false;build_queue_scroll_=0;
     debug_move_pick_robot_=-1;
     auto advance_sequence=[&](std::uint64_t sequence){
         next_blueprint_placement_sequence_=std::max(next_blueprint_placement_sequence_,sequence+1);
@@ -1022,7 +1025,6 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     r.material_resource_count=source_schema>=11?kMaterialResourceCount:7;
     const std::string source_version=r.string(64);
     const std::string save_name=r.string(128);
-    (void)source_version;
     if(!r.valid || save_name.empty()){ error="Savegame header is damaged."; return false; }
 
     const auto options=read_session_options(r,source_schema);
@@ -1305,7 +1307,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
                (saved_lander.phase>=LanderPhase::UnloadingCargo && saved_robots.size()!=total) ||
                (saved_lander.phase==LanderPhase::Ready && !saved_lander.remaining.empty()))r.valid=false;
             float maximum=kLanderDescentSeconds;
-            if(saved_lander.phase==LanderPhase::Settling)maximum=4;
+            if(saved_lander.phase==LanderPhase::Settling)maximum=kLanderSettleSeconds;
             if(saved_lander.phase==LanderPhase::OpeningRamp)maximum=kLanderRampSeconds;
             if(saved_lander.phase==LanderPhase::DeployingRobots){
                 const int first=(int)saved_robots.size();
@@ -1319,7 +1321,8 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
                     if(saved_lander.elapsed<=maximum) saved_lander.elapsed=0;
                 }
             }
-            if(saved_lander.phase==LanderPhase::UnloadingCargo)maximum=kLanderCraneSeconds;
+            // Older saves used up to ten seconds for the cargo animation.
+            if(saved_lander.phase==LanderPhase::UnloadingCargo)maximum=10.f;
             if(saved_lander.elapsed>maximum || (source_schema<34&&(std::abs(saved_lander.site.x)>saved_playfield*.5f-13.5f || std::abs(saved_lander.site.z)>saved_playfield*.5f-12.0f)))r.valid=false;
         }else if(saved_game_phase==GamePhase::RobotPreparation && saved_robots.empty())r.valid=false;
     }
@@ -1393,6 +1396,10 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     }else if(saved_lander.has_depot()){
         saved_lander.stash_center=saved_lander.site+eng::Vec3{-10.9f,0,0};saved_lander.awaiting_stash=true;
     }
+    // Older saves could be waiting for a stash before descent. Resume flight
+    // and prompt after touchdown, preserving any marker already confirmed.
+    if(saved_lander.phase<LanderPhase::Landed) saved_lander.awaiting_stash=false;
+    else if(saved_lander.phase==LanderPhase::Landed) saved_lander.awaiting_stash=!saved_lander.boxed;
     if(source_schema>=35){
         saved_lander.salvage_requested=r.boolean();
         saved_lander.salvage_worker=r.pod<std::int32_t>();
@@ -1572,6 +1579,28 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         if(!r.valid){error="Savegame build order is damaged.";return false;}
     }
 
+    CropSeeds saved_seeds{};
+    if(source_schema>=47){
+        for(auto* stock:{&saved_planning.mission_seeds,&saved_lander.seeds_aboard,&saved_seeds}){
+            for(auto& count:*stock){
+                count=r.pod<std::uint8_t>();
+                if(count>kMaxSeedPacketsPerCrop)r.valid=false;
+            }
+        }
+        const bool has_seeds_aboard=seed_packet_total(saved_lander.seeds_aboard)>0;
+        const bool can_have_seed_cargo=saved_lander.active() &&
+            (saved_lander.phase<=LanderPhase::Landed || saved_lander.phase==LanderPhase::UnloadingCargo);
+        if(!r.valid || (has_seeds_aboard && (!can_have_seed_cargo || seed_packet_total(saved_seeds)>0))){
+            error="Savegame seed inventory is damaged.";return false;
+        }
+    }else if(saved_game_phase!=GamePhase::Planning){
+        if(saved_lander.active() &&
+           (saved_lander.phase<=LanderPhase::Landed || saved_lander.phase==LanderPhase::UnloadingCargo))
+            saved_lander.seeds_aboard=kStarterCropSeeds;
+        else
+            saved_seeds=kStarterCropSeeds;
+    }
+
     // v0.40.11 and older stored delivered construction material on the BR-02
     // coordinator. Move that authoritative buffer onto the blueprint itself so
     // carriers can continue supplying an unstaffed blueprint and constructors
@@ -1659,7 +1688,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     construction_priority_=std::move(saved_priority);
     construction_order_=std::move(saved_order);
     prune_construction_priorities();
-    build_queue_expanded_=false;build_queue_scroll_=0;
+    build_queue_expanded_=false;progress_tree_expanded_=false;build_queue_scroll_=0;
     debug_move_pick_robot_=-1;
     auto advance_sequence=[&](std::uint64_t sequence){
         next_blueprint_placement_sequence_=std::max(next_blueprint_placement_sequence_,sequence+1);
@@ -1968,12 +1997,14 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     active_game_mode_=saved_game_mode;
     new_game_mode_selection_=saved_game_mode;
     planning_=saved_planning;
+    colony_seeds_=saved_seeds;
     lander_=saved_lander;landing_message_.clear();
     trader_=std::move(saved_trader);trade_message_.clear();
     if(lander_.salvage_requested) landing_message_=lander_.salvage_seconds>=kLanderSalvageSeconds?
         "CLEAR SPACE NEAR THE STASH MARKER":"SALVAGE QUEUED / WAITING FOR A BUILDER";
     if(lander_.active()){starting_robot_count_=lander_.builders;starting_carrier_count_=lander_.carriers;robot_enclosure_legacy_scan_pending_=false;}
     planning_structure_page_=-1;
+    planning_seed_page_=false;
     planning_status_message_.clear();
     build_catalog_.set_category(static_cast<BuildCategory>(options.category));
     build_catalog_.clear_selection();
@@ -2007,7 +2038,32 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         deploy_lunar_base_from_mission();
     else
         update_supply_simulation(0.0f);
-    if(astronaut_test_active())update_astronaut_suits();
+    if(astronaut_test_active()){
+        if(source_version!=version::current){
+            // A saved position can intersect new furniture. Recover only
+            // blocked crew and keep them within their original pressure volume.
+            for(auto& actor:test_astronauts_){
+                bool airlock=false;
+                const auto* room=astronaut_air_at(actor.position,airlock);
+                if(!room || first_person_move_allowed(actor.position,actor.position,CrewTraversal::Plan))continue;
+                const auto clearance=[&]() -> std::optional<eng::Vec3> {
+                    for(int ring=1;ring<=12;++ring)for(int angle=0;angle<16;++angle){
+                        auto p=actor.position+world_math::rotate_y({ring*.25f,0,0},angle*22.5f);
+                        p.y=first_person_floor_height(p);
+                        if(astronaut_air_at(p,airlock)!=room || !first_person_move_allowed(p,p,CrewTraversal::Plan))continue;
+                        const bool occupied=std::any_of(test_astronauts_.begin(),test_astronauts_.end(),[&](const auto& other){
+                            return &other!=&actor && world_math::distance_xz(other.position,p)<kIndoorAstronautSeparation;
+                        });
+                        if(!occupied)return p;
+                    }
+                    return std::nullopt;
+                }();
+                if(clearance)actor.position=*clearance;
+            }
+        }
+        update_astronaut_suits();
+    }
+    reset_activity_log("Loaded save / "+save_name);
     error.clear();
     return true;
 }

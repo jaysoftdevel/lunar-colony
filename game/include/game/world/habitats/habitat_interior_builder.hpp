@@ -4,6 +4,13 @@
 namespace game::habitats::interior_detail {
 using namespace eng;
 
+inline void bench(Builder& b,Vec3 feet,float width,float depth,float height=.78f){
+    b.box(b.mesh.interior,feet+Vec3{0,height-.055f,0},{width,.11f,depth},false);
+    for(float end:{-.37f,.37f})
+        b.box(b.mesh.interior,feet+Vec3{width*end,(height-.11f)*.5f,0},
+              {.10f,height-.11f,depth*.82f},false);
+}
+
 inline void console(Builder& b,Vec3 c,float width=1.2f,float facing_z=-1.0f){
     b.box(b.mesh.interior,c,{width,0.68f,0.46f},false);
     b.box(b.mesh.interior,{c.x,c.y+0.48f,c.z+0.18f*facing_z},{width*0.82f,0.42f,0.10f},false);

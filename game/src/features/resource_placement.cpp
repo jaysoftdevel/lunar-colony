@@ -31,7 +31,11 @@ float degrees_for_minus_z(Vec3 direction){
 }
 }
 
-bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,Vec3 position,float rotation_degrees) const {
+bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,Vec3 position,float rotation_degrees,const char** reason) const {
+    const auto blocked=[reason](const char* detail){
+        if(reason)*reason=detail;
+        return false;
+    };
     const ResourceMesh& candidate=kind==ResourceKind::StorageDome?resource_models_.mesh(kind,storage_size):resource_models_.mesh(kind,size);
     const float half_field=(float)playfield_.size()*0.5f;
     const float ground_x=geometry::structure_ground_extent(candidate.footprint_x);
@@ -41,9 +45,9 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
     const float hz=std::abs(std::sin(a))*ground_x*0.5f+std::abs(std::cos(a))*ground_z*0.5f;
     const float build_limit=half_field-geometry::kPlayfieldRobotPerimeterLane;
     if(position.x-hx<-build_limit || position.x+hx>build_limit ||
-       position.z-hz<-build_limit || position.z+hz>build_limit) return false;
+       position.z-hz<-build_limit || position.z+hz>build_limit) return blocked("The footprint crosses the reserved rover perimeter lane.");
 
-    if(!lander_placement_clear(position,rotation_degrees,ground_x,ground_z) || !trader_placement_clear(position,rotation_degrees,ground_x,ground_z))return false;
+    if(!lander_placement_clear(position,rotation_degrees,ground_x,ground_z) || !trader_placement_clear(position,rotation_degrees,ground_x,ground_z))return blocked("Keep the lander and trader landing areas clear.");
     const auto candidate_box=footprint(position,rotation_degrees,ground_x,ground_z);
     constexpr float clearance=geometry::kStructurePlacementGap;
     for(const auto& placed:placed_habitats_){
@@ -51,24 +55,24 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
         const auto other_box=footprint(placed.position,placed.rotation_degrees,
                                        geometry::structure_ground_extent(other.footprint_x),
                                        geometry::structure_ground_extent(other.footprint_z));
-        if(overlaps(candidate_box,other_box,clearance)) return false;
+        if(overlaps(candidate_box,other_box,clearance)) return blocked("Move farther from the existing structure or blueprint.");
     }
     for(const auto& placed:placed_resources_){
-        if(placed.kind==ResourceKind::RobotWorkshop && overlaps(candidate_box,workshop::approach(placed),clearance)) return false;
+        if(placed.kind==ResourceKind::RobotWorkshop && overlaps(candidate_box,workshop::approach(placed),clearance)) return blocked("Keep the workshop ramp clear.");
         if(placed.kind==ResourceKind::StorageDome) for(int face:storage_loading::faces(placed))
-            if(face>=0 && overlaps(candidate_box,storage_loading::apron(placed,face),clearance)) return false;
+            if(face>=0 && overlaps(candidate_box,storage_loading::apron(placed,face),clearance)) return blocked("Keep the storage loading apron clear.");
         const ResourceMesh& other=resource_models_.mesh(placed);
         const auto other_box=footprint(placed.position,placed.rotation_degrees,
                                        geometry::structure_ground_extent(other.footprint_x),
                                        geometry::structure_ground_extent(other.footprint_z));
-        if(overlaps(candidate_box,other_box,clearance)) return false;
+        if(overlaps(candidate_box,other_box,clearance)) return blocked("Move farther from the existing structure or blueprint.");
     }
     for(const auto& pile:ground_resource_piles_){
         const float diameter=std::max(0.20f,pile.radius*2.0f);
         const auto pile_box=footprint(pile.position,0.0f,diameter,diameter);
-        if(overlaps(candidate_box,pile_box,0.12f)) return false;
+        if(overlaps(candidate_box,pile_box,0.12f)) return blocked("The footprint overlaps stored cargo.");
     }
-    if(!structure_routes_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return false;
+    if(!structure_routes_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return blocked("The footprint crosses an existing corridor, channel or walkway.");
 
     if(kind==ResourceKind::RobotWorkshop){
         PlacedResource item;item.kind=kind;item.size=ResourceSizeTier::Standard;
@@ -76,31 +80,31 @@ bool GameApp::resource_placement_valid(ResourceKind kind,ResourceSizeTier size,S
         const auto apron=workshop::approach(item);
         for(float x:{-apron.half_x,apron.half_x}) for(float z:{-apron.half_z,apron.half_z}){
             const Vec2 q{apron.center.x+apron.axis_x.x*x+apron.axis_z.x*z,apron.center.y+apron.axis_x.y*x+apron.axis_z.y*z};
-            if(std::abs(q.x)>build_limit || std::abs(q.y)>build_limit) return false;
+            if(std::abs(q.x)>build_limit || std::abs(q.y)>build_limit) return blocked("Keep the workshop ramp and rover approach clear.");
         }
         for(const auto& h:placed_habitats_){const auto& m=habitat_models_.mesh(h);
             if(overlaps(apron,footprint(h.position,h.rotation_degrees,
                                          geometry::structure_ground_extent(m.footprint_x),
-                                         geometry::structure_ground_extent(m.footprint_z)),clearance)) return false;}
+                                         geometry::structure_ground_extent(m.footprint_z)),clearance)) return blocked("Keep the workshop ramp and rover approach clear.");}
         for(const auto& r:placed_resources_){const auto& m=resource_models_.mesh(r);
             if(overlaps(apron,footprint(r.position,r.rotation_degrees,
                                          geometry::structure_ground_extent(m.footprint_x),
-                                         geometry::structure_ground_extent(m.footprint_z)),clearance)) return false;
+                                         geometry::structure_ground_extent(m.footprint_z)),clearance)) return blocked("Keep the workshop ramp and rover approach clear.");
             if(r.kind==ResourceKind::StorageDome) for(int face:storage_loading::faces(r))
-                if(face>=0 && overlaps(apron,storage_loading::apron(r,face),clearance)) return false;}
+                if(face>=0 && overlaps(apron,storage_loading::apron(r,face),clearance)) return blocked("Keep the workshop ramp and rover approach clear.");}
         for(const auto& pile:ground_resource_piles_)
-            if(overlaps(apron,footprint(pile.position,0,2*pile.radius,2*pile.radius),1.12f)) return false;
+            if(overlaps(apron,footprint(pile.position,0,2*pile.radius,2*pile.radius),1.12f)) return blocked("Keep the workshop ramp and rover approach clear.");
         for(const auto& c:corridor_network_.connections()) for(std::size_t j=1;j<c.path.size();++j)
-            if(workshop::approach_hits(item,c.path[j-1],c.path[j],geometry::kCorridorHalfWidth+geometry::kRouteClearance)) return false;
+            if(workshop::approach_hits(item,c.path[j-1],c.path[j],geometry::kCorridorHalfWidth+geometry::kRouteClearance)) return blocked("Keep the workshop ramp and rover approach clear.");
         for(const auto& w:walkway_network_.connections()) for(std::size_t j=1;j<w.path.size();++j)
-            if(workshop::approach_hits(item,w.path[j-1],w.path[j],geometry::kWalkwayHalfWidth+0.40f)) return false;
-        if(!workshop_accessible(item)) return false;
+            if(workshop::approach_hits(item,w.path[j-1],w.path[j],geometry::kWalkwayHalfWidth+0.40f)) return blocked("Keep the workshop ramp and rover approach clear.");
+        if(!workshop_accessible(item)) return blocked("Keep the workshop ramp and rover approach clear.");
     }
 
     PlacedResource candidate_item;candidate_item.kind=kind;candidate_item.size=size;candidate_item.storage_size=storage_size;candidate_item.position=position;candidate_item.rotation_degrees=rotation_degrees;
-    if(!gate_layout_clear(nullptr,&candidate_item))return false;
-    if(!astronaut_placement_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return false;
-    if(!placement_preserves_robot_escape(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z)) return false;
+    if(!gate_layout_clear(nullptr,&candidate_item))return blocked("Keep the nearby gate and its approach clear.");
+    if(!astronaut_placement_clear(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z))return blocked("An astronaut is standing inside the footprint.");
+    if(!placement_preserves_robot_escape(position,rotation_degrees,candidate.footprint_x,candidate.footprint_z)) return blocked("Leave the rovers an escape route around the footprint.");
     return true;
 }
 
@@ -171,6 +175,9 @@ void GameApp::render_resource_placement(Renderer& r){
             resource_models_.mesh(ResourceKind::StorageGate,owner.storage_size));
         const bool valid=storage_loading::gate_count(placed_resources_[storage_gate_placement_owner_])<3 && storage_gate_face_clear(owner,selected_face,storage_gate_placement_owner_) &&
                          can_start_construction(gate_plan);
+        set_placement_cost(gate_plan);
+        placement_tip_title_="STORAGE LOADING GATE";
+        if(!valid)placement_tip_detail_="The gate needs an unobstructed loading apron and a free docking face.";
         const Vec3 n=storage_loading::normal(owner,selected_face);
         const Vec3 gate_position=(storage_loading::wall(owner,selected_face)+storage_loading::mouth(owner,selected_face))*0.5f;
         const float gate_rotation=std::atan2(-n.z,n.x)*180.0f/3.14159265358979323846f;
@@ -190,8 +197,12 @@ void GameApp::render_resource_placement(Renderer& r){
 
         if(valid && input_.left_pressed){
             if(add_storage_gate_at(storage_gate_placement_owner_,angle)){
-                storage_gate_placement_active_=false;
-                storage_gate_placement_owner_=kNoRobotIndex;
+                if(!input_.key_shift_down || storage_loading::gate_count(placed_resources_[storage_gate_placement_owner_])>=3){
+                    storage_gate_placement_active_=false;
+                    storage_gate_placement_owner_=kNoRobotIndex;
+                }
+                placement_tip_title_.clear();
+                placement_tip_cost_={};
             }
         }
         return;
@@ -218,8 +229,13 @@ void GameApp::render_resource_placement(Renderer& r){
     const auto& mesh=selected->resource_kind==ResourceKind::StorageDome?
         resource_models_.mesh(selected->resource_kind,storage_size):resource_models_.mesh(selected->resource_kind,resource_size);
     const auto plan=construction_costs::structure(selected->resource_kind,mesh);
-    const bool valid=(attachment || resource_placement_valid(selected->resource_kind,resource_size,storage_size,snapped,rotation)) &&
+    const char* reason=nullptr;
+    const bool valid=(attachment || resource_placement_valid(selected->resource_kind,resource_size,storage_size,snapped,rotation,&reason)) &&
         can_start_construction(plan);
+    set_placement_cost(plan,attachment?&*attachment:nullptr);
+    placement_tip_title_=selected->name;
+    if(attachment)placement_tip_title_+=attachment->corridor?" + CORRIDOR":" + SUPPLY CHANNEL";
+    if(!valid)placement_tip_detail_=reason?reason:"This blueprint cannot be queued here.";
     render_resource_mesh(r,mesh,snapped,rotation,true,valid);
 
     if(selected->resource_kind==ResourceKind::RobotWorkshop){
@@ -248,10 +264,14 @@ void GameApp::render_resource_placement(Renderer& r){
         finalize_placement(placed);
         placed_resources_.push_back(std::move(placed));
         if(attachment)commit_structure_attachment(std::move(*attachment));
-        build_catalog_.clear_selection();
-        placement_rotation_degrees_=0.0f;
-        placement_resource_size_=ResourceSizeTier::Small;
-        placement_storage_size_=StorageDomeSize::Small;
+        if(!input_.key_shift_down){
+            build_catalog_.clear_selection();
+            placement_rotation_degrees_=0.0f;
+            placement_resource_size_=ResourceSizeTier::Small;
+            placement_storage_size_=StorageDomeSize::Small;
+        }
+        placement_tip_title_.clear();
+        placement_tip_cost_={};
         corridor_build_start_.reset();
     }
 }

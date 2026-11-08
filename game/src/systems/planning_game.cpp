@@ -797,6 +797,7 @@ bool GameApp::planning_double_clicked(int group,int item){
 void GameApp::reset_planning_game(){
     planning_=default_planning_game_state();
     planning_structure_page_=-1;
+    planning_seed_page_=false;
     planning_contract_page_=0;
     planning_contract_selected_=0;
     planning_contract_research_page_=0;
@@ -978,7 +979,7 @@ void GameApp::deploy_lunar_base_from_mission(){
     next_blueprint_placement_sequence_=1;
     construction_priority_.clear();
     construction_order_.clear();
-    build_queue_expanded_=false;build_queue_scroll_=0;
+    build_queue_expanded_=false;progress_tree_expanded_=false;build_queue_scroll_=0;
     debug_move_pick_robot_=-1;
     first_person_carried_resource_.reset();
     first_person_hover_ground_resource_=-1;
@@ -994,7 +995,7 @@ void GameApp::deploy_lunar_base_from_mission(){
     storage_gate_open_.clear();
     production_fraction_.fill(0.0);
     life_support_fraction_seconds_=0.0;
-    begin_lunar_landing(shipped,planning_.mission_builders,planning_.mission_carriers);
+    begin_lunar_landing(shipped,planning_.mission_builders,planning_.mission_carriers,planning_.mission_seeds);
     build_catalog_.clear_selection();
     placement_rotation_degrees_=0.0f;
     placement_habitat_size_=HabitatSizeTier::Small;
@@ -1221,6 +1222,17 @@ void GameApp::update_planning_game(float dt){
         }
     }
     // The lunar cargo sponsorship stays active until the actual Launch gate.
+}
+
+void GameApp::log_planning_activities(){
+    using C=ActivityLog::Channel;
+    activity_log_.observe({C::Mission,0,0},static_cast<unsigned>(planning_.mission_step),false,[&]{
+        return std::string("Mission preparation / ")+mission_step_name(planning_.mission_step);
+    });
+    for(std::size_t i=0;i<planning_.contracts.size();++i){
+        if(planning_.contracts[i].status==PlanningContractStatus::Active)
+            activity_log_.observe({C::Contract,i,0},0,false,[&]{return std::string("Contract / ")+kContracts[i].name;});
+    }
 }
 
 void GameApp::render_planning_game(Renderer& r){
@@ -1780,6 +1792,30 @@ void GameApp::render_planning_game(Renderer& r){
             return sy+22.0f;
         };
 
+        const auto draw_seed_manifest=[&](float y,bool editable){
+            constexpr float row_h=31.f,gap=8.f;
+            const float col_w=(work.w-28.f-gap)*.5f;
+            game_label_fitted(r,{work.x+14,y,work.w-28,19},"BIO DOME SEED PACKETS",.45f,theme_);
+            for(std::size_t i=0;i<planning_.mission_seeds.size();++i){
+                const auto plant=static_cast<HydroponicPlant>(i+1);
+                auto& count=planning_.mission_seeds[i];
+                const float x=work.x+14+(i/4)*(col_w+gap);
+                const float row=y+27+(i%4)*row_h;
+                const float controls=editable?66.f:0.f;
+                r.draw_rect({x,row,col_w,row_h-4.f},theme_.panel2);
+                game_label_fitted(r,{x+8,row+6,col_w-controls-16,16},
+                    std::string(hydroponic_profile(plant).name)+"  "+std::to_string(count),.39f,theme_);
+                if(editable){
+                    if(ui::button(r,ui_input_,{x+col_w-64,row+2,27,23},"-",theme_,count>0))--count;
+                    if(ui::button(r,ui_input_,{x+col_w-32,row+2,27,23},"+",theme_,count<kMaxSeedPacketsPerCrop))++count;
+                }
+            }
+            const float footer=y+27+4*row_h;
+            game_label_fitted(r,{work.x+14,footer,work.w-28,17},
+                std::to_string(seed_packet_total(planning_.mission_seeds))+" PACKETS / ONE PER NEWLY PLANTED BAY",.33f,theme_,true);
+            return footer+24.f;
+        };
+
         const auto draw_structure_plan=[&](float y){
             std::vector<const BuildObjectDefinition*> structures;
             for(const auto& item:build_catalog_.items())
@@ -1862,19 +1898,27 @@ void GameApp::render_planning_game(Renderer& r){
             if(planning_.mission_step==MissionPreparationStep::Test){ if(action_button("RUN QUALIFICATION TESTS  (+24 D)",true,y)) complete_planning_mission_step(); }
             else game_label_fitted(r,{work.x+14,y,work.w-28,32},std::string("TEST gate is not active. Current gate: ")+mission_step_name(planning_.mission_step)+".",0.33f,theme_,true);
         }else if(selected_facility==MissionFacility::MissionControl){
-            headline("MISSION CONTROL - FLIGHT PLAN","Plan lunar structures and load the materials needed to build them.");
+            headline("MISSION CONTROL - FLIGHT PLAN","Plan lunar structures, construction materials and seeds for the Bio Dome.");
             const bool editable=planning_.mission_step==MissionPreparationStep::Plan;
             if(editable){
-                if(ui::button(r,ui_input_,{work.x+14,work.y+57,112,24},"PAYLOAD",theme_,planning_structure_page_>=0))
+                if(ui::button(r,ui_input_,{work.x+14,work.y+57,112,24},"PAYLOAD",theme_,planning_seed_page_ || planning_structure_page_>=0)){
                     planning_structure_page_=-1;
-                if(ui::button(r,ui_input_,{work.x+132,work.y+57,112,24},"STRUCTURES",theme_,planning_structure_page_<0))
+                    planning_seed_page_=false;
+                }
+                if(ui::button(r,ui_input_,{work.x+132,work.y+57,112,24},"STRUCTURES",theme_,planning_structure_page_<0)){
                     planning_structure_page_=0;
+                    planning_seed_page_=false;
+                }
+                if(ui::button(r,ui_input_,{work.x+250,work.y+57,112,24},"SEEDS",theme_,!planning_seed_page_)){
+                    planning_structure_page_=-1;
+                    planning_seed_page_=true;
+                }
             }
             float y=work.y+(editable?88.0f:76.0f);
             if(editable&&planning_structure_page_>=0){
                 draw_structure_plan(y);
             }else{
-                y=draw_manifest(y,editable);
+                y=editable && planning_seed_page_?draw_seed_manifest(y,true):draw_manifest(y,editable);
                 if(editable && action_button("FREEZE MISSION PLAN  (+7 D)",cargo_ready&&capacity_ready,y)) complete_planning_mission_step();
                 else if(!editable) game_label_fitted(r,{work.x+14,y,work.w-28,28},std::string("PLAN gate is not active. Current gate: ")+mission_step_name(planning_.mission_step)+".",0.31f,theme_,true);
             }
@@ -1895,8 +1939,10 @@ void GameApp::render_planning_game(Renderer& r){
             else game_label_fitted(r,{work.x+14,y,work.w-28,32},std::string("BUILD gate is not active. Current gate: ")+mission_step_name(planning_.mission_step)+".",0.33f,theme_,true);
         }else if(selected_facility==MissionFacility::CargoIntegration){
             headline("CARGO INTEGRATION","Procure the frozen manifest, inspect every shipment, load the lander and seal the payload for launch processing.");
-            float y=work.y+78.0f;
-            y=draw_manifest(y,false);
+            if(ui::button(r,ui_input_,{work.x+14,work.y+56,112,24},"PAYLOAD",theme_,planning_seed_page_))planning_seed_page_=false;
+            if(ui::button(r,ui_input_,{work.x+132,work.y+56,112,24},"SEEDS",theme_,!planning_seed_page_))planning_seed_page_=true;
+            float y=work.y+84.f;
+            y=planning_seed_page_?draw_seed_manifest(y,false):draw_manifest(y,false);
             if(planning_.mission_step==MissionPreparationStep::Integrate){ if(action_button("INTEGRATE & SEAL CARGO  (+10 D)",cargo_ready&&capacity_ready,y)) complete_planning_mission_step(); }
             else game_label_fitted(r,{work.x+14,y,work.w-28,32},std::string("INTEGRATE gate is not active. Current gate: ")+mission_step_name(planning_.mission_step)+".",0.33f,theme_,true);
         }else if(selected_facility==MissionFacility::Communications){

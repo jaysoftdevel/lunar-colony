@@ -107,6 +107,8 @@ void GameApp::render_settings(Renderer& r){
     if(ui::button(r,ui_input_,{left_x,inner_y+202,column_w,34},"GRAPHICS",theme_)){
         screen_=Screen::GraphicsSettings;
         graphics_tab_=graphics_page_=0;
+        graphics_dropdown_=-1;
+        graphics_display_failed_=false;
     }
 
     r.draw_line({separator_x,p.y+16},{separator_x,p.y+p.h-58},theme_.border,1.0f);

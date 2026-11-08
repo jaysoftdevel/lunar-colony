@@ -33,7 +33,10 @@ constexpr std::pair<const char*,int GraphicsSettings::*> numbers[]{
     {"render_scale",&GraphicsSettings::render_scale},{"ray_scale",&GraphicsSettings::ray_scale},
     {"bloom",&GraphicsSettings::bloom},{"exposure_tenths",&GraphicsSettings::exposure_tenths},
     {"aa_quality",&GraphicsSettings::aa_quality},{"shadow_quality",&GraphicsSettings::shadow_quality},
-    {"bloom_quality",&GraphicsSettings::bloom_quality}
+    {"bloom_quality",&GraphicsSettings::bloom_quality},
+    {"surface_resolution",&GraphicsSettings::surface_resolution},{"texture_filter",&GraphicsSettings::texture_filter},
+    {"shadow_resolution",&GraphicsSettings::shadow_resolution},{"ground_clutter",&GraphicsSettings::ground_clutter},
+    {"clutter_range",&GraphicsSettings::clutter_range},{"particle_density",&GraphicsSettings::particle_density}
 };
 }
 
@@ -69,6 +72,7 @@ Preferences load_preferences(){
             }
         }
         if(value!=0 && value!=1) continue;
+        if(key=="vertical_sync") settings.vertical_sync=value==1;
         if(key=="mesh_layout") preferences.mesh_layout=value==1;
         if(key=="music") preferences.music_enabled=value==1;
 #ifdef _WIN32
@@ -108,6 +112,7 @@ bool save_preferences(const Preferences& preferences){
         const int quality=(settings.low_quality&bit)?1:(settings.medium_quality&bit)?2:3;
         file<<graphics_feature_keys[static_cast<unsigned>(feature)]<<"_quality="<<quality<<'\n';
     }
+    file<<"vertical_sync="<<settings.vertical_sync<<'\n';
     file<<"mesh_layout="<<preferences.mesh_layout<<'\n'
         <<"music="<<preferences.music_enabled<<'\n';
 #ifdef _WIN32

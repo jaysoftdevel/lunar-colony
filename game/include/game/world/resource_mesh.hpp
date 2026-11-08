@@ -148,6 +148,8 @@ inline constexpr float storage_dome_height_m(StorageDomeSize size){
     }
 }
 
+inline constexpr std::uint32_t kVisibleOreBoxesPerType=12;
+
 // Storage uses a conservative cylindrical volume completely inside the curved
 // pressure hull. This keeps even upper pallet layers away from the dome skin.
 inline constexpr float storage_dome_storage_radius_m(StorageDomeSize size){

@@ -77,6 +77,13 @@ bool GameApp::stash_site_valid(Vec3 p) const {
     return true;
 }
 
+bool GameApp::pick_lander_placement_ground(Vec3& hit) const {
+    const float y=static_cast<float>(input_.mouse_y)/ui_scale_;
+    return y>=layout::STATUS_BAR_H && y<static_cast<float>(viewport_height_)/ui_scale_-layout::BUILD_BAR_H &&
+           !mouse_over_playfield_overlay(input_) && !mouse_over_selection_panel(input_) &&
+           camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit);
+}
+
 bool GameApp::confirm_lander_site(Vec3 p){
     if(!lander_.awaiting_site||!lander_site_valid(p)){
         landing_message_="LANDER, RAMP AND ROBOT APRON MUST FIT IN CLEAR GROUND";
@@ -85,13 +92,13 @@ bool GameApp::confirm_lander_site(Vec3 p){
     p.y=0;
     lander_.site=p;
     lander_.awaiting_site=false;
-    lander_.awaiting_stash=true;
-    landing_message_="CLICK A STASH MARKER BESIDE THE LANDER";
+    landing_message_.clear();
     return true;
 }
 
 bool GameApp::confirm_stash_site(Vec3 p){
-    if(!lander_.awaiting_stash||!stash_site_valid(p)){
+    if(!lander_.awaiting_stash || lander_.phase<LanderPhase::Landed) return false;
+    if(!stash_site_valid(p)){
         landing_message_="PLACE THE STASH MARKER ON CLEAR GROUND NEAR THE LANDER";
         return false;
     }
@@ -200,9 +207,10 @@ bool GameApp::add_stash_boxes(const ResourceBundle& cargo,bool credit){
 }
 
 bool GameApp::drop_lander_cargo(){
-    if(lander_.remaining.empty()) return true;
-    if(!lander_.boxed||!add_stash_boxes(lander_.remaining)) return false;
+    if(!lander_.boxed || (!lander_.remaining.empty() && !add_stash_boxes(lander_.remaining))) return false;
+    for(std::size_t i=0;i<colony_seeds_.size();++i)colony_seeds_[i]+=lander_.seeds_aboard[i];
     lander_.remaining={};
+    lander_.seeds_aboard={};
     return true;
 }
 
@@ -284,13 +292,13 @@ void GameApp::render_stash(eng::Renderer& r){
     Vec3 marker=lander_.stash_center;
     bool valid=true;
     if(lander_.awaiting_site||lander_.awaiting_stash){
-        if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),marker)) return;
+        if(!pick_lander_placement_ground(marker)) return;
         if(lander_.awaiting_site){
             rectangle(marker+Vec3{0,0,2.6f},6.1f,8.7f,lander_site_valid(marker)?eng::Color{.2f,.95f,.65f,1}:eng::Color{1,.2f,.15f,1});
             return;
         }
         valid=stash_site_valid(marker);
-    }else if(!lander_.boxed) return;
+    }else if(!lander_.boxed || lander_.phase<LanderPhase::Landed) return;
     const eng::Color color=!valid?eng::Color{1,.2f,.15f,1}:
         lander_.awaiting_stash||selection_kind_==SelectionKind::Stash?eng::Color{.2f,.95f,.65f,1}:eng::Color{.95f,.72f,.26f,1};
     const float h=kStashMarkerRadius;
@@ -304,7 +312,7 @@ void GameApp::render_stash_panel(eng::Renderer& r){
     using namespace layout;
     sync_selection_panel_scroll();
     const auto panel=selection_panel_rect();
-    eng::ui::panel(r,panel,theme_);
+    layout::hud_panel(r,panel,theme_);
     const auto label=[&](float offset,const std::string& text,float scale){
         const float y=panel.y+offset-selection_panel_scroll_;
         if(y>=panel.y+4&&y+14<=panel.y+panel.h-4)
@@ -325,7 +333,8 @@ void GameApp::render_stash_panel(eng::Renderer& r){
         const auto material=(MaterialResource)i;
         label(70+i*19,std::string(material_resource_name(material))+"  "+std::to_string(stock.amount(material))+" KG",.43f);
     }
-    if(!landing_message_.empty()) label(224,landing_message_,.38f);
+    label(224,"SEED PACKETS IN COLONY STOCK  "+std::to_string(seed_packet_total(colony_seeds_)),.43f);
+    if(!landing_message_.empty()) label(245,landing_message_,.38f);
     if(selection_panel_max_scroll()>0)
         r.draw_rect({panel.x+panel.w-5,panel.y+5+(panel.h-30)*selection_panel_scroll_/selection_panel_max_scroll(),3,20},theme_.accent);
 }

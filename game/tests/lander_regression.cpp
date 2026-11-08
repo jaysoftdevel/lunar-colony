@@ -51,7 +51,7 @@ struct LanderRegression {
     static void setup(GameApp& a){a.playfield_size_=128;a.playfield_.rebuild(128);a.on_resize(1600,900);a.screen_=GameApp::Screen::Playfield;a.active_game_phase_=GameApp::GamePhase::RobotPreparation;a.game_session_active_=true;a.status_.reset();a.begin_lunar_landing(cargo(),1,1);}
     static eng::Vec2 screen(GameApp& a,eng::Vec3 p){auto m=a.camera_.view_projection(1600.f/900);float w=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];return {(m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12])/w*800+800,450-(m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13])/w*450};}
     static void click(GameApp& a,eng::Vec3 p){auto s=screen(a,p);eng::InputState in;in.mouse_x=(int)s.x;in.mouse_y=(int)s.y;in.left_pressed=true;a.update(0,in);}
-    static void roundtrip(GameApp& a,const std::string& name){std::string error;require(a.save_game_to_name(name,error),error);auto path=std::filesystem::path(a.save_game_directory())/(name+".gmsave");GameApp b(a.app_);require(b.load_game_from_file(path.string(),error),error);require(b.lander_.awaiting_site==a.lander_.awaiting_site&&b.lander_.awaiting_stash==a.lander_.awaiting_stash&&b.lander_.salvaged==a.lander_.salvaged&&b.lander_.boxed==a.lander_.boxed,"placement/salvage flags lost on load");require(eng::length(b.lander_.stash_center-a.lander_.stash_center)<.001f&&b.ground_resource_piles_.size()==a.ground_resource_piles_.size(),"stash/boxes lost on load");require(b.resources_.amounts().total_amount()==a.resources_.amounts().total_amount(),"inventory changed on resume");std::filesystem::remove(path);}
+    static void roundtrip(GameApp& a,const std::string& name,bool legacy_preflight_stash=false){std::string error;require(a.save_game_to_name(name,error),error);auto path=std::filesystem::path(a.save_game_directory())/(name+".gmsave");GameApp b(a.app_);require(b.load_game_from_file(path.string(),error),error);require(b.lander_.awaiting_site==a.lander_.awaiting_site&&b.lander_.awaiting_stash==(a.lander_.awaiting_stash && !legacy_preflight_stash)&&b.lander_.salvaged==a.lander_.salvaged&&b.lander_.boxed==a.lander_.boxed,"placement/salvage flags lost on load");require(eng::length(b.lander_.stash_center-a.lander_.stash_center)<.001f&&b.ground_resource_piles_.size()==a.ground_resource_piles_.size(),"stash/boxes lost on load");require(b.resources_.amounts().total_amount()==a.resources_.amounts().total_amount(),"inventory changed on resume");require(b.colony_seeds_==a.colony_seeds_&&b.lander_.seeds_aboard==a.lander_.seeds_aboard,"seed custody changed on resume");std::filesystem::remove(path);}
     static void unload_queue(eng::Application& engine){
         using namespace world_math;
         // A full 12-rover cabin is the tightest case. Also sample each legacy
@@ -101,6 +101,7 @@ struct LanderRegression {
                 app.camera_.state().azimuth_degrees==controlled.azimuth_degrees,
                 "approach camera ignored or reset player input");
         app.update_lunar_lander(200);
+        require(app.lander_.awaiting_stash && app.prepare_default_landing(),"fleet stash after touchdown");
         require(app.unload_lunar_lander(),"fleet unload");
         app.update_lunar_lander(kLanderRampSeconds+7);
         require(app.lander_.phase==LanderPhase::DeployingRobots,"fleet queue not active");
@@ -143,14 +144,48 @@ struct LanderRegression {
                      <<saved.lander_.manifest.total_amount()<<" kg cargo, phase "<<(int)saved.lander_.phase<<"\n";
             require(saved.prepare_default_landing(),"attached save could not place compact marker");
             saved.update_lunar_lander(200);
-            if(saved.lander_.phase==LanderPhase::Landed) require(saved.unload_lunar_lander(),"attached save could not place stacks");
+            if(saved.lander_.phase==LanderPhase::Landed){
+                require(saved.prepare_default_landing(),"attached save could not place a post-landing marker");
+                require(saved.unload_lunar_lander(),"attached save could not place stacks");
+            }
             std::cout<<"Attached save: "<<saved.ground_resource_piles_.size()<<" stacks around the 2.5 m marker\n";
         }
         require(a.lander_.awaiting_site,"new deployment did not ask for landing position");a.update_lunar_lander(200);require(a.lander_.elapsed==0&&a.builder_robots_.empty(),"lander descended before mouse selection");roundtrip(a,"site-choice");
-        require(!a.confirm_lander_site({1000,0,0}),"off-map landing accepted");click(a,{0,0,0});require(!a.lander_.awaiting_site&&a.lander_.awaiting_stash,"mouse touchdown selection failed");
-        require(!a.confirm_stash_site(a.lander_.site),"stash overlaps ship");require(a.prepare_default_landing(),"no default clear stash location");const auto location=a.lander_.stash_center;a.lander_.awaiting_stash=true;click(a,location);require(!a.lander_.awaiting_stash,"mouse stash choice failed");
-        a.update_lunar_lander(200);require(a.lander_.phase==LanderPhase::Landed,"powered touchdown failed");require(!a.salvage_lander(),"salvage accepted with robots aboard");
-        require(a.unload_lunar_lander(),"unload failed");require(a.lander_.remaining.empty()&&a.resources_.amounts().total_amount()==cargo().total_amount(),"cargo not dropped immediately");
+        require(!a.confirm_lander_site({1000,0,0}),"off-map landing accepted");
+        click(a,{0,0,0});
+        require(a.lander_.in_flight() && !a.lander_.awaiting_stash && !a.lander_.boxed,
+                "selecting a touchdown site did not begin the approach without a stash");
+        const auto marker=a.lander_.site+eng::Vec3{-12,0,0};
+        require(!a.confirm_stash_site(marker),"stash placement accepted during approach");
+        Capture approach_marker;a.render_stash(approach_marker);
+        require(approach_marker.lines.empty(),"stash marker appeared before landing");
+        roundtrip(a,"approach-without-stash");
+        a.lander_.awaiting_stash=true;
+        roundtrip(a,"legacy-blocked-approach",true);
+        a.lander_.awaiting_stash=false;
+        const float landing_time=(kLanderDescentSeconds+kLanderSettleSeconds)/kLanderApproachPlaybackRate;
+        a.update_lunar_lander(landing_time-.20f);
+        require(a.lander_.phase==LanderPhase::Settling && !a.lander_.awaiting_stash,
+                "accelerated approach skipped settling or prompted for the stash early");
+        roundtrip(a,"accelerated-settling");
+        a.update_lunar_lander(.21f);
+        require(a.lander_.phase==LanderPhase::Landed && a.lander_.awaiting_stash,
+                "touchdown missed the accelerated schedule or did not prompt for the stash");
+        roundtrip(a,"awaiting-stash-after-touchdown");
+        require(!a.confirm_stash_site(a.lander_.site),"stash overlaps ship");
+        require(!a.salvage_lander(),"salvage accepted with robots aboard");
+        require(a.lander_.seeds_aboard==kStarterCropSeeds && seed_packet_total(a.colony_seeds_)==0,
+                "direct Stage 2 lander did not carry three seeds per crop");
+        require(!a.unload_lunar_lander() && seed_packet_total(a.colony_seeds_)==0 &&
+                a.lander_.seeds_aboard==kStarterCropSeeds,"failed unload credited or lost the seed cargo");
+        click(a,marker);
+        require(!a.lander_.awaiting_stash && a.lander_.boxed &&
+                eng::length(a.lander_.stash_center-marker)<.25f && a.ground_resource_piles_.empty(),
+                "post-touchdown mouse click did not confirm the stash before unload");
+        require(a.unload_lunar_lander(),"unload failed");
+        require(a.colony_seeds_==kStarterCropSeeds && seed_packet_total(a.lander_.seeds_aboard)==0 &&
+                !a.unload_lunar_lander() && a.colony_seeds_==kStarterCropSeeds,
+                "starter seeds did not transfer exactly once");require(a.lander_.remaining.empty()&&a.resources_.amounts().total_amount()==cargo().total_amount(),"cargo not dropped immediately");
         std::int64_t physical=0;
         bool stacked=false;
         for(const auto& b:a.ground_resource_piles_){
@@ -167,7 +202,18 @@ struct LanderRegression {
         require(a.selection_kind_==GameApp::SelectionKind::Stash,"stash marker not mouse selectable");
         for(auto phase:{LanderPhase::Approach,LanderPhase::Landed,LanderPhase::OpeningRamp,LanderPhase::DeployingRobots,LanderPhase::Ready}){
             const auto saved=a.lander_;a.lander_.phase=phase;a.lander_.elapsed=phase==LanderPhase::Approach?70:2;
-            Capture c;a.render_lunar_lander(c);require(c.triangles.empty()&&!c.lines.empty(),"lander submits filled surfaces / missing wire mesh");a.lander_=saved;
+            Capture c;a.render_lunar_lander(c);
+            require(!c.triangles.empty() && c.lines.empty(),"classic full-graphics lander did not render its hull");
+            if(phase==LanderPhase::Landed || phase==LanderPhase::Ready){
+                const auto nose=[&](eng::Vec3 p){return std::abs(p.z-a.lander_.site.z-3.59f)<.002f;};
+                const bool hatch=std::any_of(c.triangles.begin(),c.triangles.end(),[&](const auto& t){
+                    return t.color.a==1.f && nose(t.a) && nose(t.b) && nose(t.c);
+                });
+                require(hatch==(phase==LanderPhase::Landed),"bay hatch did not match the rover ramp state");
+                for(const auto& triangle:c.triangles)for(auto v:{triangle.a,triangle.b,triangle.c})
+                    require(std::abs(v.x-a.lander_.site.x)<6.f,"crane geometry still extends from the lander");
+            }
+            a.lander_=saved;
         }
         if(const char* output=std::getenv("LANDER_CAPTURE_DIR")){
             std::filesystem::create_directories(output);Capture c;
@@ -203,7 +249,7 @@ struct LanderRegression {
         require(cutting&&a.lander_.salvage_seconds>=6,"builder did not reach the ship and begin cutting");
         require(a.lander_.active()&&a.resources_.amounts().total_amount()==before,"salvage paid during cutting");
         Capture cut;a.render_lunar_lander(cut);
-        require(cut.triangles.empty()&&!cut.lines.empty()&&cut.lines.size()<intact.lines.size(),"cutting did not remove a lander module");
+        require(!cut.triangles.empty() && cut.triangles.size()<intact.triangles.size(),"cutting did not remove a lander module");
         std::string error;
         require(a.save_game_to_name("salvage-in-progress",error),error);
         const auto pending_save=std::filesystem::path(a.save_game_directory())/"salvage-in-progress.gmsave";
@@ -228,14 +274,14 @@ struct LanderRegression {
         }
         require(a.placed_resources_[0].construction.complete(),"robots could not build using the boxed stash");
         for(float t=0;t<79;t+=.1f){auto f=lunar_lander_flight(t);require(f.offset.y>=0&&f.velocity.y<=.01f&&f.thrust_acceleration<2.5f,"descent profile regressed");}
-        GameApp free(engine);free.playfield_size_=64;free.playfield_.rebuild(64);free.begin_lunar_landing(free.starter_resource_reserve(),6,6);require(free.prepare_default_landing(),"default free-play manifest cannot fit its physical stash");free.update_lunar_lander(200);require(free.unload_lunar_lander(),"full default manifest boxes do not fit");roundtrip(free,"full-cargo-boxes");
+        GameApp free(engine);free.playfield_size_=64;free.playfield_.rebuild(64);free.begin_lunar_landing(free.starter_resource_reserve(),6,6);require(free.prepare_default_landing(),"default free-play landing site");free.update_lunar_lander(200);require(free.prepare_default_landing(),"default free-play manifest cannot fit its physical stash");require(free.unload_lunar_lander(),"full default manifest boxes do not fit");roundtrip(free,"full-cargo-boxes");
         bool paired_stacks=false;
         for(const auto& a:free.ground_resource_piles_) for(const auto& b:free.ground_resource_piles_){
             const auto delta=a.position-b.position;
             paired_stacks|=std::abs(delta.z)<.001f&&std::abs(std::abs(delta.x)-.60f)<.001f;
         }
         require(paired_stacks,"full cargo did not produce closely paired stacks");
-        std::cout<<"Lander PASS: landing/marker picks, cargo stacks, 12-rover unload queue and mid-ramp save/resume, builder travel/cutting, module removal, salvage save/resume and one-time yield, crate-fed construction and full cargo on 64 m field\n";
+        std::cout<<"Lander PASS: post-touchdown stash placement, cargo stacks, 12-rover unload queue and mid-ramp save/resume, builder travel/cutting, module removal, salvage save/resume and one-time yield, crate-fed construction and full cargo on 64 m field\n";
     }
 };
 }

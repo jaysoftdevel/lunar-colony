@@ -12,7 +12,7 @@ void mast(Builder& b,eng::Vec3 p,float h){
 void build_laboratory_outer(Builder& b){
     b.mesh.footprint_x=15.0f; b.mesh.footprint_z=9.5f; b.mesh.height=9.0f;
     b.cylinder_x(b.mesh.shell,{0,3.0f,0},10.8f,2.55f,20,true);
-    for(float x:{-4.2f,-2.1f,0.0f,2.1f,4.2f}) b.torus_x(b.mesh.details,{x,3.0f,0},2.58f,0.08f,20,6);
+    for(float x:{-4.2f,-2.1f,-.76f,.76f,2.1f,4.2f}) b.torus_x(b.mesh.details,{x,3.0f,0},2.58f,0.08f,20,6);
 
     // Large glazed research bay, following the blueprint's long observation windows.
     for(int i=0;i<4;++i){
@@ -39,7 +39,7 @@ void build_laboratory_outer(Builder& b){
     b.cylinder_y(b.mesh.details,{2.75f,7.8f,-2.65f},0.18f,0.9f,18,true);
 
     // External sample tanks / equipment cabinets.
-    for(float z:{-1.7f,0.0f,1.7f}) b.cylinder_y(b.mesh.details,{4.35f,2.5f,z},2.7f,0.42f,12,true);
+    for(float z:{-1.7f,0.0f,1.7f}) b.cylinder_y(b.mesh.details,{5.73f,2.5f,z},2.7f,0.42f,12,true);
     b.box(b.mesh.details,{3.85f,1.5f,-2.55f},{1.5f,1.1f,0.55f});
 
     b.supports(-4.4f,4.5f,2.2f,0.9f);

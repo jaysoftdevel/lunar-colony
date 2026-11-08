@@ -135,8 +135,8 @@ Vec3 point_along_path(const std::vector<Vec3>& path,float fraction,Vec3* tangent
 }
 
 float GameApp::selection_panel_content_height() const {
-    if(selection_kind_==SelectionKind::Lander)return 470.0f;
-    if(selection_kind_==SelectionKind::Stash)return 250;
+    if(selection_kind_==SelectionKind::Lander)return 435.0f;
+    if(selection_kind_==SelectionKind::Stash)return landing_message_.empty()?245.f:267.f;
     float extra=0;
     const float warning_font=eng::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_);
     if(selection_kind_==SelectionKind::Robot) return 416.0f;
@@ -194,7 +194,10 @@ Rect GameApp::selection_panel_rect() const {
             placed_resources_[(std::size_t)selected_resource_].kind==ResourceKind::StorageDome) width=485.0f;
     const float y=STATUS_BAR_H+PLAYFIELD_MARGIN;
     const float logical_h=(float)viewport_height_/std::max(0.01f,ui_scale_);
-    const float available_h=std::max(0.0f,logical_h-BUILD_BAR_H-PLAYFIELD_MARGIN-y);
+    const auto log=activity_log_panel_rect();
+    const float bottom=std::min(logical_h-BUILD_BAR_H-PLAYFIELD_MARGIN,
+        activity_log_visible() && log.h>0.f?log.y-6.f:logical_h);
+    const float available_h=std::max(0.0f,bottom-y);
     return {PLAYFIELD_MARGIN,y,width,std::min(selection_panel_content_height(),available_h)};
 }
 
@@ -261,7 +264,10 @@ Rect GameApp::ground_resource_panel_rect() const {
     constexpr float w=228.0f,h=126.0f;
     if(x+w>logical_w-8.0f) x=(nx*0.5f+0.5f)*logical_w-w-18.0f;
     x=std::clamp(x,8.0f,logical_w-w-8.0f);
-    y=std::clamp(y,STATUS_BAR_H+8.0f,logical_h-BUILD_BAR_H-h-8.0f);
+    const auto log=activity_log_panel_rect();
+    const float bottom=std::min(logical_h-BUILD_BAR_H-8.f,
+        activity_log_visible() && log.h>0.f?log.y-6.f:logical_h);
+    y=std::clamp(y,STATUS_BAR_H+8.0f,std::max(STATUS_BAR_H+8.0f,bottom-h));
     return {x,y,w,h};
 }
 
@@ -961,6 +967,9 @@ void GameApp::remove_structure_routes(bool habitat,std::size_t index){
 }
 
 void GameApp::delete_selected_world_object(){
+    const auto target=selected_construction_target();
+    const auto log_removal=game_session_active_ && construction_target_sequence(target)!=0;
+    const auto removed_name=log_removal?construction_target_name(target):std::string{};
     if(selection_kind_==SelectionKind::Resource && selected_resource_>=0 &&
        (std::size_t)selected_resource_<placed_resources_.size() && placed_resources_[selected_resource_].kind==ResourceKind::StorageDome){
         const auto sequence=placed_resources_[selected_resource_].placement_sequence;
@@ -997,7 +1006,11 @@ void GameApp::delete_selected_world_object(){
         case SelectionKind::Resource:
             if(selected_resource_>=0 && (std::size_t)selected_resource_<placed_resources_.size()){
                 const std::size_t index=(std::size_t)selected_resource_;
-                if(trader_.active() && placed_resources_[index].placement_sequence==trader_.pad_sequence)return;
+                if(trader_.active() && placed_resources_[index].placement_sequence==trader_.pad_sequence){
+                    if(game_session_active_)activity_log_.record(ui_time_seconds_,LogEvent::Incident,
+                        "Removal blocked / the landing pad has an active trader");
+                    return;
+                }
                 auto removed=placed_resources_[index];
                 sync_stored_resource_totals(removed);
                 const auto mesh=resource_models_.mesh(removed);
@@ -1088,6 +1101,8 @@ void GameApp::delete_selected_world_object(){
         case SelectionKind::None:
             return;
     }
+
+    if(log_removal)activity_log_.record(ui_time_seconds_,LogEvent::Note,removed_name+" / removed");
 
     // Any operation that stores world indices must be cancelled after a delete;
     // deletion can compact vectors and therefore invalidate those indices.

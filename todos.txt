@@ -256,11 +256,18 @@ A question: if I pass a screenrecording of how astronauts and robots shall move 
 https://youtu.be/F8YQllAu8Es
 get inspired by UI, movement and graphics theme
 
-*** ToDo:
+if a blueprint structure is selected then also highlight (select) that item in the build order view
+add a logging panel (on the left side of the screen, expandable) that traces all activities start and stop time. Also all complications at any time. add a export button to print all log data into a text file in the savegame folder.
+the debug panel may not disapear even if the build order panel is opened/expanded.
+for every blueprint structure, add a second progress bar. One for the needed resources and one for the build progress.
 
 rework all structures and its furnitures
 - all astronauts (and POV character) may pass between all furniture and machines as like in a real base
+speed up the landing sequence, it takes too long!
+when a blueprint is selected and placed while holding "shift" keep the blueprint selected for another placement of another instance
+move the log panel to a button on the lower left side, between the building menu and the building category selector. It shall push a scrollable panel in the left lower corner. It may not overlap with any other panel.
 
+*** ToDo:
 
 
 

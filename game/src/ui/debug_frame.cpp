@@ -16,13 +16,9 @@ using namespace world_math;
 using namespace world_labels;
 
 void GameApp::render_debug_frame(Renderer& r){
-    const float logical_w=ui_width(r);
-    const float logical_h=ui_height(r);
-    constexpr float frame_w=360.0f;
-    constexpr float frame_h=236.0f;
-    const Rect frame={logical_w-frame_w-PLAYFIELD_MARGIN,logical_h-BUILD_BAR_H-frame_h-PLAYFIELD_MARGIN,frame_w,frame_h};
+    const Rect frame=debug_frame_rect();
 
-    r.draw_rect(frame,{0.025f,0.035f,0.045f,0.92f});
+    r.draw_rect(frame,kHudFill);
     r.draw_line({frame.x,frame.y},{frame.x+frame.w,frame.y},theme_.accent,2.0f);
     r.draw_line({frame.x+frame.w,frame.y},{frame.x+frame.w,frame.y+frame.h},theme_.border,1.0f);
     r.draw_line({frame.x+frame.w,frame.y+frame.h},{frame.x,frame.y+frame.h},theme_.border,1.0f);

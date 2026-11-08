@@ -170,8 +170,15 @@ void GameApp::render_utility_placement(Renderer& r){
                                                      placed_habitats_,habitat_models_,placed_resources_,resource_models_);
     }
 
-    const bool affordable=preview && (can_start_construction(connection_plan(*preview)) && (conveyor?conveyor_route_clear(preview->path):gate_route_clear(preview->path,geometry::kSupplyTrayWidth*.5f+.2f)));
+    const auto plan=preview?connection_plan(*preview):ConstructionResourcePlan{};
+    const bool route_clear=preview && (conveyor?conveyor_route_clear(preview->path):
+        gate_route_clear(preview->path,geometry::kSupplyTrayWidth*.5f+.2f));
+    const bool affordable=route_clear && can_start_construction(plan);
+    placement_tip_title_=selected->name;
     if(preview){
+        set_placement_cost(plan);
+        if(!route_clear)placement_tip_detail_="The route overlaps protected service space or an existing structure.";
+        else if(!affordable)placement_tip_detail_="This blueprint cannot be queued here.";
         const Color shell=affordable?Color{0.68f,0.86f,0.98f,0.95f}:Color{1.00f,0.24f,0.18f,0.86f};
         const Color detail=affordable?Color{0.93f,0.72f,0.28f,0.90f}:Color{1.00f,0.34f,0.24f,0.82f};
         mesh_wireframe::draw_layer(r,preview->mesh.shell,shell,1.45f);
@@ -180,6 +187,8 @@ void GameApp::render_utility_placement(Renderer& r){
         endpoint_marker(r,preview->endpoint_a,theme_.accent);
         endpoint_marker(r,preview->endpoint_b,shell);
     }else{
+        placement_tip_detail_=conveyor?"Select a compatible cargo port with a clear conveyor route.":
+            "Select a service port or move the endpoint to find a clear route.";
         const auto source=conveyor?draw_conveyor_start(*utility_build_start_):std::nullopt;
         if(hover){
             const Vec3 a=source?source->position:utility_build_start_->hit+Vec3{0,0.30f,0};
@@ -202,7 +211,10 @@ void GameApp::render_utility_placement(Renderer& r){
         selected_resource_=-1;
         selection_kind_=SelectionKind::Utility;
         utility_build_start_.reset();
-        build_catalog_.clear_selection();
+        if(input_.key_shift_down)clear_world_selection();
+        else build_catalog_.clear_selection();
+        placement_tip_title_.clear();
+        placement_tip_cost_={};
     }
 }
 

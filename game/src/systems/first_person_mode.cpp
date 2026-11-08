@@ -6,6 +6,7 @@
 #include "game/world/geometry_standards.hpp"
 #include "game/world/storage_loading_gate.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -257,25 +258,50 @@ float projected_triangle_distance_xz(Vec3 p,Vec3 a,Vec3 b,Vec3 c){
                      point_segment_distance_xz_local(p,c,a)});
 }
 
+// Limit a convex triangle/polygon to the part above or below a horizontal plane.
+std::size_t clip_body_plane(const std::array<Vec3,6>& in,std::size_t count,
+                            std::array<Vec3,6>& out,float y,bool above){
+    if(count==0)return 0;
+    std::size_t written=0;
+    Vec3 previous=in[count-1];
+    for(std::size_t i=0;i<count;++i){
+        const Vec3 current=in[i];
+        const bool keep_previous=above?previous.y>=y:previous.y<=y;
+        const bool keep_current=above?current.y>=y:current.y<=y;
+        if(keep_previous!=keep_current)
+            out[written++]=previous+(current-previous)*((y-previous.y)/(current.y-previous.y));
+        if(keep_current)out[written++]=current;
+        previous=current;
+    }
+    return written;
+}
+
 // Interior furniture/equipment is rendered as ordinary triangle meshes, but the
 // old POV collision code only treated the outer pressure shell as solid. Test
-// the astronaut's horizontal capsule against triangles whose vertical span
-// intersects the body. Horizontal deck triangles at/below the authoritative
-// floor are ignored, while tables, beds, tanks, racks, consoles, partitions,
-// machinery and low overhead equipment remain physical obstacles. Degenerate
-// X/Z projections (vertical walls) are handled by edge distance as well.
+// the astronaut's body against geometry at its actual height. Clipping avoids
+// projecting the below-floor part of a sloped hull rib into a clear aisle.
+// Edge distance handles vertical faces that project to a line.
 bool mesh_blocks_first_person_body(const std::vector<Vec3>& triangles,Vec3 local_feet,
                                    float radius,float body_height,float floor_y){
     const float body_bottom=std::max(local_feet.y+0.045f,floor_y+0.045f);
     const float body_top=local_feet.y+body_height-0.035f;
     if(body_top<=body_bottom) return false;
-    constexpr float collision_pad=0.012f;
+    const float reach=radius+0.012f;
     for(std::size_t i=0;i+2<triangles.size();i+=3){
         const Vec3 a=triangles[i],b=triangles[i+1],c=triangles[i+2];
         const float tri_min_y=std::min({a.y,b.y,c.y});
         const float tri_max_y=std::max({a.y,b.y,c.y});
         if(tri_max_y<=body_bottom || tri_min_y>=body_top) continue;
-        if(projected_triangle_distance_xz(local_feet,a,b,c)<=radius+collision_pad) return true;
+        if(std::min({a.x,b.x,c.x})>local_feet.x+reach || std::max({a.x,b.x,c.x})<local_feet.x-reach ||
+           std::min({a.z,b.z,c.z})>local_feet.z+reach || std::max({a.z,b.z,c.z})<local_feet.z-reach)continue;
+        if(projected_triangle_distance_xz(local_feet,a,b,c)>reach)continue;
+        if(tri_min_y>=body_bottom && tri_max_y<=body_top)return true;
+        std::array<Vec3,6> polygon{a,b,c},clipped{};
+        const auto above_floor=clip_body_plane(polygon,3,clipped,body_bottom,true);
+        const auto count=clip_body_plane(clipped,above_floor,polygon,body_top,false);
+        for(std::size_t j=1;j+1<count;++j){
+            if(projected_triangle_distance_xz(local_feet,polygon[0],polygon[j],polygon[j+1])<=reach)return true;
+        }
     }
     return false;
 }
@@ -329,7 +355,9 @@ std::vector<Vec3> make_storage_floor_cells(StorageDomeSize size){
         max_half=std::max(max_half,resource_package_half_width(material,resource_package_capacity_kg(material)));
     }
     constexpr float pitch=0.52f;
-    const float safe_radius=std::max(0.40f,storage_dome_storage_radius_m(size)-max_half-0.04f);
+    const float safe_radius=storage_dome_storage_radius_m(size)-max_half-0.04f;
+    // A square crate has its widest projection at 45 degrees.
+    const float aisle_half=geometry::kDoorClearWidth*0.5f+std::sqrt(2.f)*max_half;
     const int extent=std::max(0,(int)std::floor(safe_radius/pitch));
     std::vector<Vec3> cells;
     cells.reserve((std::size_t)(extent*2+1)*(std::size_t)(extent*2+1));
@@ -338,8 +366,7 @@ std::vector<Vec3> make_storage_floor_cells(StorageDomeSize size){
             const float x=(float)ix*pitch;
             const float z=(float)iz*pitch;
             if(x*x+z*z>safe_radius*safe_radius) continue;
-            // Preserve a real handling aisle from the south docking door.
-            if(z<-0.25f && std::abs(x)<0.65f) continue;
+            if(std::abs(x)<aisle_half || std::abs(z)<aisle_half) continue;
             cells.push_back({x,0.0f,z});
         }
     }
@@ -348,7 +375,6 @@ std::vector<Vec3> make_storage_floor_cells(StorageDomeSize size){
         if(std::abs(a.z-b.z)>0.001f) return a.z>b.z;
         return a.x<b.x;
     });
-    if(cells.empty()) cells.push_back({0.0f,0.0f,0.0f});
     return cells;
 }
 
@@ -1001,17 +1027,22 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to,CrewTraversal traversa
                 if(!doorway){
                     const Vec3 local=rotate_y(current-item.position,-item.rotation_degrees);
                     if(resource_interior_blocks_first_person(mesh,local,radius,first_person_.body_height())) return false;
-                    for(std::size_t box_index=0;box_index<item.stored_boxes.size();++box_index){
-                        Vec3 base{};float half_width=0.0f,height=0.0f;
-                        stored_resource_box_pose(item,mesh,box_index,base,half_width,height);
-                        const float bottom=base.y+0.02f;
-                        const float top=base.y+height+0.02f;
-                        const float body_bottom=current.y+0.045f;
-                        const float body_top=current.y+first_person_.body_height()-0.035f;
-                        if(top<=body_bottom || bottom>=body_top) continue;
-                        const float dx=std::max(0.0f,std::abs(current.x-base.x)-half_width);
-                        const float dz=std::max(0.0f,std::abs(current.z-base.z)-half_width);
-                        if(dx*dx+dz*dz<=radius*radius) return false;
+                    const float lane=geometry::kDoorClearWidth*0.5f-radius;
+                    if(std::abs(local.x)>=lane && std::abs(local.z)>=lane){
+                        std::size_t visible_boxes=item.stored_boxes.size();
+                        for(auto count:item.stored_ore_boxes) visible_boxes+=std::min(count,kVisibleOreBoxesPerType);
+                        for(std::size_t box_index=0;box_index<visible_boxes;++box_index){
+                            Vec3 base{};float half_width=0.0f,height=0.0f;
+                            stored_resource_box_pose(item,mesh,box_index,base,half_width,height);
+                            const float bottom=base.y+0.02f;
+                            const float top=base.y+height+0.02f;
+                            const float body_bottom=current.y+0.045f;
+                            const float body_top=current.y+first_person_.body_height()-0.035f;
+                            if(top<=body_bottom || bottom>=body_top) continue;
+                            const float dx=std::max(0.0f,std::abs(current.x-base.x)-half_width);
+                            const float dz=std::max(0.0f,std::abs(current.z-base.z)-half_width);
+                            if(dx*dx+dz*dz<=radius*radius) return false;
+                        }
                     }
                 }
             }else if(body_overlaps_region(current,radius,[&](Vec3 q){
@@ -1095,7 +1126,7 @@ void GameApp::stored_resource_box_pose(const PlacedResource& structure,const Res
     // accumulated, so boxes physically sit on one another instead of sharing a
     // fixed/overlapping Y offset.
     const auto& cells=storage_floor_cells(structure.storage_size);
-    const std::size_t cell_count=std::max<std::size_t>(1,cells.size());
+    const std::size_t cell_count=cells.size();
     const std::size_t cell=box_index%cell_count;
     const float storage_floor=storage_basement_height(mesh);
     float y=storage_floor;

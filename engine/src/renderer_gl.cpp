@@ -157,7 +157,7 @@ class GLRenderer final: public Renderer {
     bool lunar_attempted_{false};
     bool lunar_frame_{false};
     int campus_haze_level_{};
-    bool benchmarking_{};
+    bool benchmarking_{},vsync_supported_{};
     double benchmark_ms_{};
     std::chrono::steady_clock::time_point benchmark_begin_{};
     Vec3 campus_eye_{};
@@ -172,25 +172,10 @@ class GLRenderer final: public Renderer {
     std::string gpu_version_{};
 
     void configure_swap_interval(){
-        int requested=0;
-        if(const char* env=std::getenv("GAME_VSYNC")){
-            if(std::strcmp(env,"1")==0 || std::strcmp(env,"true")==0 || std::strcmp(env,"on")==0) requested=1;
-            else requested=0;
-        }
-        bool applied=false;
-        if(gl_.glXSwapIntervalEXT){
-            gl_.glXSwapIntervalEXT(d_,w_,requested);
-            applied=true;
-        }else if(gl_.glXSwapIntervalMESA){
-            applied=gl_.glXSwapIntervalMESA((unsigned int)std::max(0,requested))==0;
-        }else if(gl_.glXSwapIntervalSGI){
-            applied=gl_.glXSwapIntervalSGI(std::max(0,requested))==0;
-        }
-        if(applied)
-            std::cout<<"GPU present interval: "<<(requested==0?"unlimited (vsync off)":"vsync")
-                     <<" (override with GAME_VSYNC=0|1)\n";
-        else
-            std::cout<<"GPU present interval control unavailable; driver default is active\n";
+        if(!vsync_supported_)return;
+        const int interval=graphics_.vertical_sync && !benchmarking_?1:0;
+        if(gl_.glXSwapIntervalEXT)gl_.glXSwapIntervalEXT(d_,w_,interval);
+        else if(gl_.glXSwapIntervalMESA(static_cast<unsigned>(interval))!=0)vsync_supported_=false;
     }
 
     static bool software_renderer_name(std::string value){
@@ -291,6 +276,7 @@ public:
         XWindowAttributes wa{}; if(!XGetWindowAttributes(d_,w_,&wa)) return false;
         XVisualInfo templ{}; templ.visualid=XVisualIDFromVisual(wa.visual); int count=0;
         XVisualInfo* vi=XGetVisualInfo(d_,VisualIDMask,&templ,&count); if(!vi||count<1) return false;
+        const int screen=vi->screen;
         ctx_=gl_.glXCreateContext(d_,vi,nullptr,True); XFree(vi); if(!ctx_||!gl_.glXMakeCurrent(d_,w_,ctx_)) return false;
 
         const bool direct=gl_.glXIsDirect(d_,ctx_)!=0;
@@ -318,7 +304,16 @@ public:
         }
         std::cout<<"GPU renderer: "<<gpu_vendor_<<" | "<<gpu_renderer_<<" | OpenGL "<<gpu_version_
                  <<(hardware_accelerated_?" (hardware)":" (DIAGNOSTIC SOFTWARE MODE)")<<"\n";
+        const char* extensions=gl_.glXQueryExtensionsString?gl_.glXQueryExtensionsString(d_,screen):nullptr;
+        const std::string advertised=extensions?" "+std::string(extensions)+" ":std::string{};
+        if(advertised.find(" GLX_EXT_swap_control ")==std::string::npos)gl_.glXSwapIntervalEXT=nullptr;
+        if(advertised.find(" GLX_MESA_swap_control ")==std::string::npos)gl_.glXSwapIntervalMESA=nullptr;
+        vsync_supported_=gl_.glXSwapIntervalEXT || gl_.glXSwapIntervalMESA;
         configure_swap_interval();
+        // SGI can enable sync at startup but cannot switch it off reliably.
+        if(!vsync_supported_ && graphics_.vertical_sync && gl_.glXSwapIntervalSGI &&
+           advertised.find(" GLX_SGI_swap_control ")!=std::string::npos)
+            gl_.glXSwapIntervalSGI(1);
 
         const char* vs="#version 120\nattribute vec3 aPos; uniform mat4 uMVP; void main(){ gl_Position=uMVP*vec4(aPos,1.0); }";
         const char* fs="#version 120\nuniform vec4 uColor; void main(){ gl_FragColor=uColor; }";
@@ -417,15 +412,24 @@ void main(){
     }
     void set_graphics_settings(const GraphicsSettings& settings) override {
         if(settings==graphics_) return;
+        const bool sync_changed=settings.vertical_sync!=graphics_.vertical_sync;
         graphics_=settings;
         graphics_.normalize();
+        if(sync_changed)configure_swap_interval();
         if(lunar_) lunar_->set_graphics_settings(graphics_);
     }
     GraphicsCapabilities graphics_capabilities() override {
-        return ensure_lunar()?lunar_->graphics_capabilities():GraphicsCapabilities{};
+        auto caps=ensure_lunar()?lunar_->graphics_capabilities():GraphicsCapabilities{};
+        caps.vertical_sync=vsync_supported_;
+        return caps;
     }
     bool supports_graphics_benchmark() const override { return gl_.glFinish!=nullptr; }
-    void set_graphics_benchmark(bool enabled) override { benchmarking_=enabled && supports_graphics_benchmark(); }
+    void set_graphics_benchmark(bool enabled) override {
+        enabled=enabled && supports_graphics_benchmark();
+        if(benchmarking_==enabled)return;
+        benchmarking_=enabled;
+        configure_swap_interval();
+    }
     double benchmark_frame_ms() const override { return benchmark_ms_; }
     bool draw_campus_atmosphere(const Mat4& projection,Vec3 eye,float seconds) override {
         if(graphics_.path==GraphicsPath::Classic || !ensure_lunar()) return false;
