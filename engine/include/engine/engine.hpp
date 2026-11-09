@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -156,6 +157,8 @@ public:
             std::atomic<std::size_t> done{0};
             std::size_t count{0};
             Callable* fn{nullptr};
+            std::atomic_flag failed{};
+            std::exception_ptr error{};
         };
         auto job=std::make_shared<Job>();
         job->count=count;
@@ -164,19 +167,26 @@ public:
             for(;;){
                 const std::size_t i=job->next.fetch_add(1,std::memory_order_relaxed);
                 if(i>=job->count) break;
-                (*job->fn)(i);
+                try {
+                    (*job->fn)(i);
+                } catch(...) {
+                    if(!job->failed.test_and_set(std::memory_order_relaxed))
+                        job->error=std::current_exception();
+                }
                 if(job->done.fetch_add(1,std::memory_order_acq_rel)+1==job->count) job->done.notify_all();
             }
         });
-        post_shared(run,helpers);
+        post_shared(run,helpers,true);
         (*run)();
+        discard_shared(run);
         for(std::size_t cur=job->done.load(std::memory_order_acquire);cur<count;cur=job->done.load(std::memory_order_acquire))
             job->done.wait(cur);
+        if(job->error) std::rethrow_exception(job->error);
     }
 
 private:
-    // Queues the same task for `copies` workers with a single lock/allocation.
-    void post_shared(const std::shared_ptr<std::function<void()>>& task,std::size_t copies);
+    void post_shared(const std::shared_ptr<std::function<void()>>& task,std::size_t copies,bool joined=false);
+    void discard_shared(const std::shared_ptr<std::function<void()>>& task);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

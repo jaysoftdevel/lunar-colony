@@ -403,7 +403,22 @@ struct NavigationRegression {
         // Changing static obstacles repairs the persistent graph, without
         // admitting any segment across the newly blocked side.
         boxes.push_back({-40,-3,-40,-25});solve(request,4,state);
-        std::cout<<"Exact-goal narrow approach, full-map detour, map-edge pending reuse and changed-obstacle repair passed\n";
+        request.start={-27,0,-19};request.goal={26,0,21};
+        request.corridor_half_width=26;request.world_half_extent=0;state={};
+        boxes={{-4,6,-12,17}};
+        solve(request,5,state);
+        require(state.known_nodes.size()>=128 && !state.global_search,"route refresh fixture did not sample a large local graph");
+        auto serial=state;
+        boxes.push_back({8,12,7,17});
+        const auto serial_route=solve(request,6,serial);
+        cb.parallel_samples=true;
+        const auto parallel_route=solve(request,6,state);
+        require(state.node_penalty==serial.node_penalty && state.repaired_node_count==serial.repaired_node_count &&
+                state.expanded_node_count==serial.expanded_node_count && parallel_route.size()==serial_route.size(),
+                "parallel route sampling changed persistent search results");
+        for(std::size_t i=0;i<serial_route.size();++i)
+            require(distance(parallel_route[i],serial_route[i])<1e-6f,"parallel route sampling changed the route");
+        std::cout<<"Exact-goal narrow approach, full-map detour, map-edge reuse and deterministic route repair passed\n";
     }
     static void saved_route(const std::string& path){
         eng::Application engine;GameApp app(engine);std::string error;require(app.load_game_from_file(path,error),error);

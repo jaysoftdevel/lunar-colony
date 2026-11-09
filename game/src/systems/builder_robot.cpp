@@ -2853,6 +2853,7 @@ void GameApp::update_builder_robot(float dt){
         // valid passage remains available. Terrain grade adds a small secondary
         // penalty so equally short routes prefer flatter ground.
         auto callbacks=make_static_callbacks(0.0f);
+        callbacks.parallel_samples=true;
         callbacks.traversal_cost=[&](Vec3 p){
             float penalty=0.0f;
             if(!robot_structure_move_allowed_with_margin(robot,p,p,0.95f)){

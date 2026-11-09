@@ -856,3 +856,7 @@ v0.50.13 - Stage 1 usability and direct item activation
 0.52.15 - Lunar surface at every graphics quality
 - Draw an opaque low-cost regolith surface in Classic and when enhanced terrain is unavailable.
 - Keep the underlying build plane flat and reserve grid-only terrain for Debug Meshed mode.
+
+0.52.16 - Multicore workload scheduling
+- Reuse the host-wide CPU pool for navigation cost refresh, large air networks, procedural texture preparation, and ray-tree subtrees.
+- Prioritize work the frame is waiting for and retire unused helper work without changing fleet dispatch or simulation commit order.

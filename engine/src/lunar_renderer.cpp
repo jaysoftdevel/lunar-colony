@@ -302,14 +302,21 @@ std::vector<std::uint8_t> material_maps(){
         const auto at=[&](Int x,Int y)->MaterialTexel&{
             return layer[std::size_t((y+map_size)%map_size)*map_size+(x+map_size)%map_size];
         };
-        for(Int y=0;y<map_size;++y) for(Int x=0;x<map_size;++x) at(x,y)=texel(x,y,kind);
-        for(Int y=0;y<map_size;++y) for(Int x=0;x<map_size;++x){
-            const auto i=(kind*pixels+std::size_t(y)*map_size+x)*4;
-            maps[i]=byte(at(x,y).shade);
-            maps[i+1]=byte(at(x,y).roughness);
-            maps[i+2]=byte(0.5f+(at(x+1,y).height-at(x-1,y).height)*1.55f);
-            maps[i+3]=byte(0.5f+(at(x,y+1).height-at(x,y-1).height)*1.55f);
-        }
+        auto& pool=TaskPool::shared();
+        pool.parallel_for(map_size,[&](std::size_t row){
+            const Int y=static_cast<Int>(row);
+            for(Int x=0;x<map_size;++x) at(x,y)=texel(x,y,kind);
+        });
+        pool.parallel_for(map_size,[&](std::size_t row){
+            const Int y=static_cast<Int>(row);
+            for(Int x=0;x<map_size;++x){
+                const auto i=(kind*pixels+std::size_t(y)*map_size+x)*4;
+                maps[i]=byte(at(x,y).shade);
+                maps[i+1]=byte(at(x,y).roughness);
+                maps[i+2]=byte(0.5f+(at(x+1,y).height-at(x-1,y).height)*1.55f);
+                maps[i+3]=byte(0.5f+(at(x,y+1).height-at(x,y-1).height)*1.55f);
+            }
+        });
     }
     return maps;
 }
@@ -1165,11 +1172,15 @@ struct LunarRenderer::Impl {
         revisions.fill(1);
         const auto plan=ground_pages.plan(ground_origin,revisions,quality_budget(graphics.quality(Feature::VirtualTextures),1,2,4));
         if(!plan.uploads.empty()){
+            std::vector<std::vector<std::uint8_t>> pixels(plan.uploads.size());
+            TaskPool::shared().parallel_for(pixels.size(),[&](std::size_t index){
+                pixels[index]=ground_page(plan.uploads[index].coordinate);
+            });
             bind_texture(0,ground_atlas,texture_array);
-            for(const auto& upload:plan.uploads){
-                const auto pixels=ground_page(upload.coordinate);
+            for(std::size_t index=0;index<pixels.size();++index){
+                const auto& upload=plan.uploads[index];
                 gl.TexSubImage3D(texture_array,0,0,0,upload.layer,material_tile_size,material_tile_size,1,
-                    rgba,byte_type,pixels.data());
+                    rgba,byte_type,pixels[index].data());
             }
             gl.GenerateMipmap(texture_array);
         }

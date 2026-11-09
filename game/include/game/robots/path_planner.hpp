@@ -22,6 +22,9 @@ struct PathPlannerCallbacks {
     // inflation/clearance without turning useful narrow passages into hard
     // walls.
     std::function<float(eng::Vec3)> traversal_cost;
+    // Opt in when floor, clearance and cost callbacks are safe to call
+    // concurrently against the same navigation snapshot.
+    bool parallel_samples{false};
 };
 
 struct PathPlanRequest {

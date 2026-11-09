@@ -31,13 +31,20 @@ Float4 center(const RayTriangle& triangle){
             (triangle.a[2]+triangle.b[2]+triangle.c[2])/3.0f,0.0f};
 }
 
+std::uint32_t node_count(std::uint32_t triangles){
+    std::uint32_t leaves=1;
+    while(triangles/leaves>6) leaves*=2;
+    // At this depth, leaves differ by one triangle. Each oversized leaf
+    // splits once more, so pre-order subtree offsets are known before work.
+    if(triangles/leaves==6) leaves+=triangles%leaves;
+    return 2*leaves-1;
+}
+
 class Builder {
 public:
     explicit Builder(RayTree& tree):tree_(tree){}
 
-    std::uint32_t node(std::uint32_t first,std::uint32_t last){
-        const auto index=static_cast<std::uint32_t>(tree_.nodes.size());
-        tree_.nodes.emplace_back();
+    void node(std::uint32_t index,std::uint32_t first,std::uint32_t last){
         Bounds bounds,centroids;
         for(auto i=first;i<last;++i){
             const auto& triangle=tree_.triangles[i];
@@ -56,12 +63,20 @@ public:
             std::nth_element(begin+first,begin+middle,begin+last,[&](const auto& a,const auto& b){
                 return centroid(a)<centroid(b);
             });
-            const auto left=node(first,middle);
-            const auto right=node(middle,last);
+            const auto left=index+1;
+            const auto right=left+node_count(middle-first);
+            if(count>=4096){
+                TaskPool::shared().parallel_for(2,[&](std::size_t branch){
+                    if(branch==0) node(left,first,middle);
+                    else node(right,middle,last);
+                });
+            }else{
+                node(left,first,middle);
+                node(right,middle,last);
+            }
             link={left,right,0,static_cast<std::uint32_t>(axis)};
         }
         tree_.nodes[index]={bounds.minimum,bounds.maximum,link};
-        return index;
     }
 
 private:
@@ -77,9 +92,10 @@ RayTriangle ray_triangle(Vec3 a,Vec3 b,Vec3 c,Color tint,float material){
 RayTree build_ray_tree(std::vector<RayTriangle> triangles,Vec3 focus,std::uint64_t generation){
     RayTree tree{std::move(triangles),{},focus,generation};
     if(!tree.triangles.empty()){
-        tree.nodes.reserve(tree.triangles.size()/3);
+        const auto count=static_cast<std::uint32_t>(tree.triangles.size());
+        tree.nodes.resize(node_count(count));
         Builder builder(tree);
-        builder.node(0,static_cast<std::uint32_t>(tree.triangles.size()));
+        builder.node(0,0,count);
     }
     return tree;
 }

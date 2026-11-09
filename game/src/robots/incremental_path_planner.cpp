@@ -90,31 +90,26 @@ bool heap_pop(State& s,State::OpenEntry& result){
     return true;
 }
 
-float sample_penalty(State& s,int index,std::uint64_t epoch,
-                     const PathPlannerCallbacks& callbacks,bool* changed=nullptr){
-    if(index<0 || index>=(int)s.node_penalty.size()) return kInf;
-    const std::size_t ui=(std::size_t)index;
-    if(s.node_penalty_epoch[ui]==epoch) return s.node_penalty[ui];
+float evaluate_penalty(const State& s,int index,const PathPlannerCallbacks& callbacks){
+    const Vec3 point=point_for(s,index,callbacks);
+    if(!callbacks.point_clear || !callbacks.point_clear(point)) return kInf;
+    if(!callbacks.traversal_cost) return 0.0f;
+    const float value=callbacks.traversal_cost(point);
+    if(std::isnan(value)) return kInf;
+    return finite_cost(value)?std::max(0.0f,value):value;
+}
 
-    const float old=s.node_penalty[ui];
-    const bool was_known=s.known_node[ui]!=0;
-    const Vec3 p=point_for(s,index,callbacks);
-    float value=kInf;
-    if(callbacks.point_clear && callbacks.point_clear(p)){
-        value=0.0f;
-        if(callbacks.traversal_cost){
-            value=callbacks.traversal_cost(p);
-            if(std::isnan(value)) value=kInf;
-            if(finite_cost(value)) value=std::max(0.0f,value);
-        }
-    }
+float sample_penalty(State& s,int index,std::uint64_t epoch,const PathPlannerCallbacks& callbacks){
+    if(index<0 || index>=(int)s.node_penalty.size()) return kInf;
+    const auto ui=static_cast<std::size_t>(index);
+    if(s.node_penalty_epoch[ui]==epoch) return s.node_penalty[ui];
+    const float value=evaluate_penalty(s,index,callbacks);
     s.node_penalty[ui]=value;
     s.node_penalty_epoch[ui]=epoch;
-    if(!was_known){
+    if(!s.known_node[ui]){
         s.known_node[ui]=1;
         s.known_nodes.push_back(index);
     }
-    if(changed) *changed=was_known && !same_value(old,value);
     return value;
 }
 
@@ -387,22 +382,35 @@ bool state_compatible(const PathPlanRequest& request,const State& s){
 
 void refresh_known_nodes(State& s,std::uint64_t epoch,const PathPlannerCallbacks& callbacks){
     if(s.world_epoch==epoch) return;
-    std::vector<int> changed;
-    changed.reserve(32);
-    // Snapshot the known list: sampling may lazily discover a few neighboring
-    // cells through callbacks later, but this revision pass only needs to
-    // repair state that was part of the previous search graph.
-    const auto known=s.known_nodes;
-    for(int idx:known){
-        bool did_change=false;
-        sample_penalty(s,idx,epoch,callbacks,&did_change);
-        if(did_change) changed.push_back(idx);
-    }
+    // Samples are independent against the frozen navigation world. Repair
+    // the graph in its original visitation order after all samples are ready.
+    const auto& known=s.known_nodes;
+    std::vector<std::uint8_t> changed(known.size());
+    constexpr std::size_t cells_per_job=64;
+    const auto sample_range=[&](std::size_t first,std::size_t last){
+        for(auto i=first;i<last;++i){
+            const auto index=static_cast<std::size_t>(known[i]);
+            if(s.node_penalty_epoch[index]==epoch) continue;
+            const float next=evaluate_penalty(s,known[i],callbacks);
+            changed[i]=!same_value(s.node_penalty[index],next);
+            s.node_penalty[index]=next;
+            s.node_penalty_epoch[index]=epoch;
+        }
+    };
+    if(callbacks.parallel_samples && known.size()>=2*cells_per_job){
+        eng::TaskPool::shared().parallel_for((known.size()+cells_per_job-1)/cells_per_job,[&](std::size_t job){
+            const auto first=job*cells_per_job;
+            sample_range(first,std::min(known.size(),first+cells_per_job));
+        });
+    }else sample_range(0,known.size());
+    std::vector<int> repairs;
+    for(std::size_t i=0;i<known.size();++i)
+        if(changed[i]) repairs.push_back(known[i]);
     s.world_epoch=epoch;
-    if(changed.empty()) return;
+    if(repairs.empty()) return;
     ++s.incremental_repair_count;
-    s.repaired_node_count+=(std::uint32_t)changed.size();
-    for(int idx:changed) update_around(s,idx,epoch,callbacks);
+    s.repaired_node_count+=static_cast<std::uint32_t>(repairs.size());
+    for(int idx:repairs) update_around(s,idx,epoch,callbacks);
 }
 
 bool extract_route(State& s,const PathPlanRequest& request,std::uint64_t epoch,

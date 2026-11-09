@@ -91,8 +91,7 @@ static float tex_noise(int x,int y,int grid,int seed){
     return (h(ix,iy)*(1-fx)+h(ix+1,iy)*fx)*(1-fy)
           +(h(ix,iy+1)*(1-fx)+h(ix+1,iy+1)*fx)*fy;
 }
-static std::vector<std::uint8_t> make_campus_texture(int kind){
-    std::vector<std::uint8_t> pix((std::size_t)kCampusTexSize*kCampusTexSize*3);
+static void make_campus_texture_row(int kind,int y,std::vector<std::uint8_t>& pix){
     static constexpr std::array<std::array<float,3>,kCampusTexCount> colors{{
         {{0.25f,0.40f,0.20f}}, // coastal vegetation
         {{0.76f,0.68f,0.47f}}, // dune sand
@@ -104,7 +103,7 @@ static std::vector<std::uint8_t> make_campus_texture(int kind){
         {{0.17f,0.36f,0.45f}}, // window glass
         {{0.58f,0.60f,0.58f}}, // hardware / coated metal
     }};
-    for(int y=0;y<kCampusTexSize;++y)for(int x=0;x<kCampusTexSize;++x){
+    for(int x=0;x<kCampusTexSize;++x){
         float broad=tex_noise(x,y,4,kind+13);
         float mid=tex_noise(x,y,32,kind+47);
         float fine=tex_noise(x,y,256,kind+91);
@@ -145,7 +144,6 @@ static std::vector<std::uint8_t> make_campus_texture(int kind){
             pix[index+ch]=(std::uint8_t)(v*255.0f+0.5f);
         }
     }
-    return pix;
 }
 
 class GLRenderer final: public Renderer {
@@ -369,8 +367,11 @@ void main(){
         gl_.glPixelStorei(GL_UNPACK_ALIGNMENT,1);
         gl_.glActiveTexture(GL_TEXTURE0);
         gl_.glGenTextures(kCampusTexCount,campus_textures_.data());
+        std::vector<std::uint8_t> pixels((std::size_t)kCampusTexSize*kCampusTexSize*3);
         for(int kind=0;kind<kCampusTexCount;++kind){
-            auto pixels=make_campus_texture(kind);
+            TaskPool::shared().parallel_for(kCampusTexSize,[&](std::size_t row){
+                make_campus_texture_row(kind,static_cast<int>(row),pixels);
+            });
             gl_.glBindTexture(GL_TEXTURE_2D,campus_textures_[(std::size_t)kind]);
             gl_.glTexImage2D(GL_TEXTURE_2D,0,GL_RGB,kCampusTexSize,kCampusTexSize,0,GL_RGB,GL_UNSIGNED_BYTE,pixels.data());
             gl_.glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);

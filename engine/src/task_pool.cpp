@@ -6,6 +6,7 @@
 #include <deque>
 #include <mutex>
 #include <thread>
+#include <system_error>
 #ifdef __linux__
 #include <sched.h>
 #elif defined(_WIN32)
@@ -15,11 +16,19 @@
 #endif
 
 namespace eng {
+namespace {
+thread_local bool background_context=false;
+}
 
 struct TaskPool::Impl {
     std::mutex mutex{};
     std::condition_variable cv{};
-    std::deque<std::shared_ptr<std::function<void()>>> queue{};
+    struct Entry {
+        std::shared_ptr<std::function<void()>> task;
+        std::size_t copies;
+        bool background;
+    };
+    std::deque<Entry> queue{};
     std::vector<std::thread> workers{};
     bool stop{false};
     std::size_t lanes{1};
@@ -55,19 +64,31 @@ struct TaskPool::Impl {
         const std::size_t helpers=lanes>1?lanes-1:0;
         workers.reserve(helpers);
         for(std::size_t i=0;i<helpers;++i){
-            workers.emplace_back([this](){
-                for(;;){
-                    std::shared_ptr<std::function<void()>> task;
-                    {
-                        std::unique_lock lock(mutex);
-                        cv.wait(lock,[&](){ return stop || !queue.empty(); });
-                        if(stop && queue.empty()) return;
-                        task=std::move(queue.front());
-                        queue.pop_front();
-                    }
-                    (*task)();
-                }
-            });
+            try {
+                workers.emplace_back([this](){ worker_loop(); });
+            } catch(const std::system_error&) {
+                // A host thread limit must not abort startup after some workers
+                // have already been launched.
+                break;
+            }
+        }
+        lanes=workers.size()+1;
+    }
+
+    void worker_loop(){
+        for(;;){
+            std::shared_ptr<std::function<void()>> task;
+            {
+                std::unique_lock lock(mutex);
+                cv.wait(lock,[&](){ return stop || !queue.empty(); });
+                if(stop && queue.empty()) return;
+                auto& entry=queue.front();
+                task=entry.task;
+                background_context=entry.background;
+                if(--entry.copies==0) queue.pop_front();
+            }
+            (*task)();
+            background_context=false;
         }
     }
 
@@ -98,17 +119,24 @@ std::future<void> TaskPool::submit(std::function<void()> task){
     return future;
 }
 
-void TaskPool::post_shared(const std::shared_ptr<std::function<void()>>& task,std::size_t copies){
+void TaskPool::post_shared(const std::shared_ptr<std::function<void()>>& task,std::size_t copies,bool joined){
     if(copies==0) return;
-    if(!impl_ || impl_->workers.empty()){
-        (*task)();
-        return;
-    }
     {
         std::lock_guard lock(impl_->mutex);
-        for(std::size_t i=0;i<copies;++i) impl_->queue.push_back(task);
+        // Joined work can hold up the current frame. Background submissions
+        // stay FIFO while new synchronous batches can recruit idle workers.
+        if(joined && !background_context) impl_->queue.push_front({task,copies,false});
+        else impl_->queue.push_back({task,copies,true});
     }
-    for(std::size_t i=0;i<copies;++i) impl_->cv.notify_one();
+    if(copies==impl_->workers.size()) impl_->cv.notify_all();
+    else for(std::size_t i=0;i<copies;++i) impl_->cv.notify_one();
+}
+
+void TaskPool::discard_shared(const std::shared_ptr<std::function<void()>>& task){
+    std::lock_guard lock(impl_->mutex);
+    // Once the caller has exhausted the index range, outstanding invitations
+    // would only wake workers to discover there is nothing left to claim.
+    std::erase_if(impl_->queue,[&](const auto& entry){ return entry.task==task; });
 }
 
 std::size_t cpu_parallel_lanes(){ return TaskPool::shared().parallel_lanes(); }

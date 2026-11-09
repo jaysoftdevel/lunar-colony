@@ -542,19 +542,34 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             const double leaked=s->oxygen_kg*kPressurizedOxygenLeakFractionPerDay*days;
             s->oxygen_kg=std::max(0.0,s->oxygen_kg-leaked);
         }
-        fluxes.clear();
+        fluxes.resize(topology.links.size());
+        const auto measure_fluxes=[&](std::size_t first,std::size_t last){
+            for(auto i=first;i<last;++i){
+                const auto [a,b]=topology.links[i];
+                auto& flux=fluxes[i];
+                flux={};
+                if(a>=nodes.size() || b>=nodes.size() || nodes[a]->volume_m3<=0 || nodes[b]->volume_m3<=0)continue;
+                const double difference=nodes[a]->breathability()/100.0-nodes[b]->breathability()/100.0;
+                const std::size_t from=difference>=0?a:b,to=difference>=0?b:a;
+                const double route=std::max((double)eng::length(positions[a]-positions[b]),(runs[a]+runs[b])*0.5);
+                flux={from,to,std::abs(difference)*12.0*hours/(1.0+route/10.0)};
+            }
+        };
+        constexpr std::size_t links_per_job=128;
+        if(fluxes.size()>=4*links_per_job){
+            eng::TaskPool::shared().parallel_for((fluxes.size()+links_per_job-1)/links_per_job,[&](std::size_t job){
+                const auto first=job*links_per_job;
+                measure_fluxes(first,std::min(fluxes.size(),first+links_per_job));
+            });
+        }else measure_fluxes(0,fluxes.size());
+        // Keep the accumulation in topology order for identical transfers
+        // and donor limits across different worker counts.
         out.assign(node_count,0.0);
         in.assign(node_count,0.0);
-        for(const auto& [a,b]:topology.links){
-            if(a>=nodes.size() || b>=nodes.size() || nodes[a]->volume_m3<=0 || nodes[b]->volume_m3<=0)continue;
-            const double difference=nodes[a]->breathability()/100.0-nodes[b]->breathability()/100.0;
-            const std::size_t from=difference>=0?a:b,to=difference>=0?b:a;
-            const double route=std::max((double)eng::length(positions[a]-positions[b]),(runs[a]+runs[b])*0.5);
-            const double mass=std::abs(difference)*12.0*hours/(1.0+route/10.0);
-            fluxes.push_back({from,to,mass});out[from]+=mass;in[to]+=mass;
-        }
+        for(const auto& f:fluxes) if(f.mass>0){out[f.a]+=f.mass;in[f.b]+=f.mass;}
         delta.assign(node_count,0.0);
         for(const auto& f:fluxes){
+            if(f.mass<=0) continue;
             const double space=nodes[f.b]->volume_m3*kOxygenKgPerM3-nodes[f.b]->oxygen_kg;
             const double factor=std::min({1.0,out[f.a]>0?nodes[f.a]->oxygen_kg/out[f.a]:1.0,in[f.b]>0?space/in[f.b]:1.0});
             const double mass=f.mass*std::max(0.0,factor);delta[f.a]-=mass;delta[f.b]+=mass;
