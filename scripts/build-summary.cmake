@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.20)
+
+function(format_duration out elapsed_ms)
+    math(EXPR seconds "${elapsed_ms} / 1000")
+    math(EXPR remainder "1000 + ${elapsed_ms} % 1000")
+    string(SUBSTRING "${remainder}" 1 3 milliseconds)
+    set(${out} "${seconds}.${milliseconds} s" PARENT_SCOPE)
+endfunction()
+
+format_duration(first_time "${FIRST_MS}")
+format_duration(second_time "${SECOND_MS}")
+format_duration(total_time "${TOTAL_MS}")
+
+# Count the shared bin directory once, including its staged runtime files.
+file(GLOB_RECURSE package_files LIST_DIRECTORIES false "${RUNTIME_DIR}/*")
+set(package_bytes 0)
+foreach(package_file IN LISTS package_files)
+    file(SIZE "${package_file}" file_bytes)
+    math(EXPR package_bytes "${package_bytes} + ${file_bytes}")
+endforeach()
+math(EXPR size_hundredths "(${package_bytes} * 100 + 524288) / 1048576")
+math(EXPR size_mib "${size_hundredths} / 100")
+math(EXPR remainder "100 + ${size_hundredths} % 100")
+string(SUBSTRING "${remainder}" 1 2 size_fraction)
+
+message(STATUS "Build summary")
+message(STATUS "  ${FIRST_CONFIG} build time: ${first_time}")
+message(STATUS "  ${SECOND_CONFIG} build time: ${second_time}")
+message(STATUS "  Overall build time: ${total_time}")
+message(STATUS "  Binary package size: ${size_mib}.${size_fraction} MiB (${package_bytes} bytes)")

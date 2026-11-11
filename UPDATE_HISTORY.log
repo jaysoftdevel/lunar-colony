@@ -869,3 +869,6 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Anchor three expanding jets to the engine bell mouths and rotate them with the lander.
 - Add bright cores, throttle and cutoff fades, and a geometry fallback when plume volumes are unavailable.
 - Clip the exhaust at the surface and disperse dust outward from each jet footprint after touchdown.
+
+0.52.19 - Build summary
+- Report wall-clock build times per configuration, overall time including configuration, and the staged binary package size on Linux and Windows.
