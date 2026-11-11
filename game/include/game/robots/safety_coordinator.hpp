@@ -2,6 +2,7 @@
 
 #include "engine/engine.hpp"
 #include "game/robots/path_planner.hpp"
+#include "game/robots/rover_wheels.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,7 @@ inline constexpr float kPlannerReplanSeconds = 0.10f;
 // 10 ms contract authority below still certifies every actual movement.
 inline constexpr float kPlannerHorizonSeconds = 1.00f;
 inline constexpr float kSafetyNumericMarginM = 0.025f;
+inline constexpr float kRoverLateralAccelerationMps2 = 3.0f;
 inline constexpr float kBlockingWaitTimeoutSeconds = 0.85f;
 inline constexpr float kFaultRecoveryMaxWaitSeconds = 3.0f;
 inline constexpr float kRobotCollisionDetectionRadiusM = 5.0f;
@@ -123,6 +125,7 @@ struct MotionContract {
     MotionControl permitted_command{};
     std::vector<TubePiece> occupancy_tube{};
     std::vector<TubePiece> brake_branches{};
+    std::size_t committed_brake_first{};
     std::vector<TerminalHold> terminal_holds{};
     std::vector<std::int64_t> passage_keys{};
 };
@@ -228,6 +231,7 @@ struct SafetyAgent {
     float braking_mps2{1.0f};
     float turn_rate_degrees_per_second{90.0f};
     SafetyRuntime* runtime{nullptr};
+    RoverWheels* wheels{nullptr};
 };
 
 struct SafetyWorldCallbacks {
@@ -252,6 +256,7 @@ struct SafetyTickStats {
 
 bool moving_discs_overlap(const TubePiece& a,const TubePiece& b,float common_t0,float common_t1);
 bool tubes_overlap(const std::vector<TubePiece>& a,const std::vector<TubePiece>& b);
+void restart_rover_route(SafetyRuntime& runtime);
 
 // Shared authoritative movement tick. All agents are arbitrated against one
 // reservation board and committed simultaneously. Expensive route planning is

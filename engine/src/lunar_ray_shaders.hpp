@@ -32,6 +32,10 @@ uint randomBits(inout uint seed){
     return (word>>22u)^word;
 }
 float rand(inout uint seed){ return float(randomBits(seed)>>8u)*(1.0/16777216.0); }
+uint worldSeed(vec3 point){
+    uvec3 cell=uvec3(ivec3(floor(point*13.0)));
+    return cell.x*73856093u^cell.y*19349663u^cell.z*83492791u;
+}
 
 vec3 reconstruct(vec2 at,float depth,mat4 inverseProjection);
 vec3 unitNormal(vec2 uv){ return normalize(texture(normalMap,uv).xyz*2.0-1.0); }
@@ -111,9 +115,9 @@ void main(){
     vec2 uv=(vec2(pixel)+0.5)/vec2(size);
     float depth=texture(depthMap,uv).r;
     vec4 reservoir=vec4(0.0);
-    if(lightCount>4 && depth<0.99997 && texture(materialMap,uv).g<0.5){
+    if(lightCount>16 && depth<0.99997 && texture(materialMap,uv).g<0.5){
         MaterialSample surface=sampleMaterial(uv,depth);
-        uint seed=uint(pixel.x)+uint(pixel.y)*16259u+uint(frameIndex)*524287u;
+        uint seed=worldSeed(surface.p)+uint(option(OPT_ray_denoise)?frameIndex:0)*524287u;
         for(int candidate=0;candidate<taps(OPT_reservoir_lights,2,4,6);++candidate){
             uint index=randomBits(seed)%uint(lightCount);
             float p=dot(fixtureContribution(surface,index),kLuma);
@@ -245,7 +249,7 @@ void main(){
     if(depth<0.99997 && texture(materialMap,uv).g<0.5){
         MaterialSample surface=sampleMaterial(uv,depth);
         float reach=distance(surface.p.xz,rayFocus.xz);
-        uint seed=uint(pixel.x)*137u+uint(pixel.y)*16561u+uint(frameIndex)*7819u;
+        uint seed=worldSeed(surface.p)+uint(option(OPT_ray_denoise)?frameIndex:0)*7819u;
         float offset=clamp(0.045+0.00045*distance(surface.p,eye),0.045,0.24);
         vec3 origin=surface.p+surface.n*offset;
         bool traced=option(OPT_ray_tracing);
@@ -259,7 +263,7 @@ void main(){
                 RayHit bounce=trace(origin,randomDirection,indirect?giReach:aoReach,false);
                 if(indirect) diffuse.rgb=hitRadiance(bounce,origin,randomDirection)*0.54;
                 if(occlusion && bounce.index>=0)
-                    diffuse.a=mix(0.42,1.0,smoothstep(0.0,aoReach,bounce.t));
+                    diffuse.a=mix(0.62,1.0,smoothstep(0.0,aoReach,bounce.t));
             }
 
             float strength=(1.0-smoothstep(0.20,0.63,surface.roughness))*(0.15+0.85*surface.metal);
@@ -276,10 +280,10 @@ void main(){
 
             if(tracedShadows && daylight>0.001 && dot(surface.n,sun)>0.055){
                 RayHit blocker=trace(origin,sun,float(taps(OPT_ray_shadows,45,90,150)),true);
-                direct.a=blocker.index<0?1.0:0.0;
+                direct.a=blocker.index<0?1.0:smoothstep(140.0,182.0,reach);
             }
         }
-        if(!option(OPT_reservoir_lights)){
+        if(!option(OPT_reservoir_lights) || lightCount<=16){
             for(uint i=0u;i<uint(lightCount);++i){
                 vec3 value=fixtureContribution(surface,i);
                 if(dot(value,kLuma)>0.00004)
@@ -388,7 +392,7 @@ void main(){
     }
     specular=mix(specular,clamp(oldSpec,specular-0.19,specular+0.19),history);
     indirect=mix(indirect,clamp(oldIndirect,indirect-0.21,indirect+0.21),history);
-    direct=mix(direct,clamp(oldDirect,direct-0.26,direct+0.26),history*0.72);
+    direct=mix(direct,clamp(oldDirect,direct-0.26,direct+0.26),history*0.94);
 }
 )GLSL";
 

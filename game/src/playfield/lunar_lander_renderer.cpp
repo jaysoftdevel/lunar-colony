@@ -62,12 +62,13 @@ struct Mesh {
     }
     void draw(eng::Renderer& r,Vec3 offset,float roll=0,float opacity=1,LunarMaterial material=LunarMaterial::Paint)const{
         const LanderRoll rotation(roll);
+        const eng::LunarSurfaceMapping mapping{offset,rotation.apply({1,0,0}),rotation.apply({0,1,0}),{0,0,1}};
         for(const auto& part:parts){
             auto points=part.vertices;
             for(auto& v:points) v=rotation.apply(v)+offset;
             Color color=part.color;
             color.a*=opacity;
-            if(solid) r.draw_lunar_surface(points,material,color);
+            if(solid) r.draw_mapped_lunar_surface(points,material,color,mapping);
             else r.draw_lines_3d(points,{std::max(.35f,color.r),std::max(.45f,color.g),std::max(.5f,color.b),color.a},1);
         }
     }
@@ -323,17 +324,17 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
     }
 
     const float work=lander_.salvage_seconds;
-    const auto draw_module=[&](const Mesh& module,float removal){
+    const auto draw_module=[&](const Mesh& module,float removal,LunarMaterial material=LunarMaterial::Paint){
         const float lift=smooth((work-(removal-1.4f))/1.4f);
-        if(lift<1) module.draw(r,origin+Vec3{0,.48f*lift,0},flight.roll_degrees,1-lift);
+        if(lift<1) module.draw(r,origin+Vec3{0,.48f*lift,0},flight.roll_degrees,1-lift,material);
     };
     draw_module(top,4.5f);
-    draw_module(tanks,9.0f);
+    draw_module(tanks,9.0f,LunarMaterial::Alloy);
     draw_module(frame,13.5f);
     if(solid && work<12.1f) lights.draw(r,origin,flight.roll_degrees,1,LunarMaterial::Emissive);
     // Keep the last recovery frame visible while waiting for a place for its parts.
     const float last_cut=smooth((work-16.0f)/2.0f);
-    gear.draw(r,origin-Vec3{0,.24f*last_cut,0},flight.roll_degrees,1-.72f*last_cut);
+    gear.draw(r,origin-Vec3{0,.24f*last_cut,0},flight.roll_degrees,1-.72f*last_cut,LunarMaterial::Alloy);
     const int particles=graphics_.particle_density==0?0:eng::quality_budget(graphics_.particle_density,12,24,42);
     if(lander_.in_flight())
         render_lander_exhaust(r,origin,flight,lander_.elapsed,0,true,solid,particles);

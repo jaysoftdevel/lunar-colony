@@ -19,7 +19,8 @@ public:
     bool volume(const LunarVolume& volume);
     void invalidate_history();
     bool campus_atmosphere(const Mat4& view_projection,Vec3 eye,float seconds,int width,int height);
-    void triangles(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint);
+    void triangles(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint,
+                   const LunarSurfaceMapping& mapping={});
     void lines(const std::vector<Vec3>& vertices,Color tint,float width);
     void finish();
 

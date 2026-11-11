@@ -2,6 +2,8 @@
 #include "engine/ui_metrics.hpp"
 #include "engine/ui_font.hpp"
 #include "renderer_d3d12_shaders.hpp"
+#include "surface_field_shaders.hpp"
+#include "lunar_light_fader.hpp"
 
 #ifndef _WIN32
 #error renderer_d3d12.cpp is Windows-only
@@ -88,8 +90,9 @@ struct DrawConstants {
     float viewport[2]{};
     float line_width{1.0f};
     float material{};
+    float surface_axes[3][4]{};
 };
-static_assert(sizeof(DrawConstants)==24*sizeof(float));
+static_assert(sizeof(DrawConstants)==36*sizeof(float));
 
 struct SceneConstants {
     struct Fixture {
@@ -353,6 +356,7 @@ class D3D12Renderer final : public Renderer {
     bool variable_rate_shading_{};
     bool coarse_shading_{};
     bool lunar_active_{};
+    lunar::LightFader lunar_lights_;
     float terrain_half_{};
     int terrain_relief_{};
     int lunar_width_{},lunar_height_{},target_scale_{},target_bloom_quality_{};
@@ -706,7 +710,8 @@ class D3D12Renderer final : public Renderer {
         if(FAILED(device_->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT,&format,sizeof(format))) ||
            (static_cast<UINT>(format.Support1)&needed)!=needed) return false;
 
-        const std::string lunar=std::string(d3d12_shaders::draw_constants)+d3d12_shaders::lunar;
+        const std::string lunar=std::string(d3d12_shaders::draw_constants)+surface_shaders::hlsl_types+
+            surface_shaders::fields+d3d12_shaders::lunar;
         auto lunar_vs=compile_shader(lunar.c_str(),"VSLunar","vs_5_1");
         auto lunar_ps=compile_shader(lunar.c_str(),"PSLunar","ps_5_1");
         auto linear_ps=compile_shader(basic.c_str(),"PSLinear","ps_5_1");
@@ -849,7 +854,8 @@ class D3D12Renderer final : public Renderer {
     }
 
     void draw(const void* data,std::size_t vertices,bool lines,Color c,float width,
-              LunarMaterial material=LunarMaterial::Paint,bool coarse=false){
+              LunarMaterial material=LunarMaterial::Paint,bool coarse=false,
+              const LunarSurfaceMapping& mapping={}){
         if(!frame_open_ || vertices==0) return;
         constexpr UINT stride=3u*sizeof(float);
         const auto bytes=vertices*stride;
@@ -873,6 +879,13 @@ class D3D12Renderer final : public Renderer {
         constants.viewport[1]=static_cast<float>(lunar_active_?lunar_height_:height_);
         constants.line_width=std::max(1.0f,width);
         constants.material=static_cast<float>(material);
+        const Vec3 axes[]{mapping.x,mapping.y,mapping.z};
+        for(std::size_t i=0;i<3;++i){
+            constants.surface_axes[i][0]=axes[i].x;
+            constants.surface_axes[i][1]=axes[i].y;
+            constants.surface_axes[i][2]=axes[i].z;
+            constants.surface_axes[i][3]=-dot(mapping.origin,axes[i]);
+        }
         command_list_->SetGraphicsRoot32BitConstants(0,sizeof(constants)/sizeof(UINT),&constants,0);
         command_list_->IASetVertexBuffers(0,1,&vb);
         command_list_->IASetPrimitiveTopology(lines?D3D_PRIMITIVE_TOPOLOGY_LINELIST:D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1082,17 +1095,14 @@ public:
         constants.material_detail=graphics_.quality(GraphicsFeature::MaterialDetail);
         constants.terrain_relief=graphics_.quality(GraphicsFeature::TerrainRelief);
         constants.decals=graphics_.quality(GraphicsFeature::Decals);
-        if(graphics_.enabled(GraphicsFeature::LocalLights)){
-            const auto light_budget=quality_budget(graphics_.quality(GraphicsFeature::LocalLights),8u,24u,64u);
-            const auto count=std::min<std::size_t>(scene.light_count,light_budget);
-            for(std::size_t i=0;i<count;++i){
-                const auto& light=scene.lights[i];
-                if(light.radius<=0.0f || light.power<=0.0f) continue;
-                constants.lights[constants.light_count++]={
-                    {light.position.x,light.position.y,light.position.z,light.radius},
-                    {light.color.r,light.color.g,light.color.b,light.power}
-                };
-            }
+        const int light_quality=graphics_.quality(GraphicsFeature::LocalLights);
+        const auto budget=light_quality?quality_budget(light_quality,8u,24u,64u):0u;
+        for(const auto& light:lunar_lights_.update(scene,budget)){
+            if(light.radius<=0.0f || light.power<=0.0f) continue;
+            constants.lights[constants.light_count++]={
+                {light.position.x,light.position.y,light.position.z,light.radius},
+                {light.color.r,light.color.g,light.color.b,light.power}
+            };
         }
         scene_constants_=upload(&constants,sizeof(constants),D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
         if(!scene_constants_) return false;
@@ -1126,6 +1136,12 @@ public:
     void draw_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint) override {
         if(lunar_active_ && material==LunarMaterial::Marking && !graphics_.enabled(GraphicsFeature::Decals)) return;
         draw(vertices.data(),vertices.size(),false,tint,1.0f,material);
+    }
+
+    void draw_mapped_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint,
+                                  const LunarSurfaceMapping& mapping) override {
+        if(lunar_active_ && material==LunarMaterial::Marking && !graphics_.enabled(GraphicsFeature::Decals)) return;
+        draw(vertices.data(),vertices.size(),false,tint,1.0f,material,false,mapping);
     }
 
     void draw_lines_3d(const std::vector<Vec3>& vertices,Color color,float width=1.0f) override {

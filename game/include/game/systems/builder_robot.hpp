@@ -126,7 +126,7 @@ struct ConstructionTargetRef {
     bool same_as(const ConstructionTargetRef& other) const { return kind==other.kind && index==other.index; }
 };
 
-inline constexpr std::uint8_t kRobotRelocationFailures=5;
+inline constexpr std::uint8_t kRobotReplanFailures=5;
 inline constexpr std::uint64_t kLanderBlockerSequence=UINT64_MAX;
 
 struct RobotOperationRetry {
@@ -135,8 +135,7 @@ struct RobotOperationRetry {
     std::uint64_t task{0};
     std::uint8_t failures{0};
     eng::Vec3 origin{}, goal{};
-    float relocation_cooldown{0};
-    bool relocation_pending() const { return failures>=kRobotRelocationFailures; }
+    bool replan_pending() const { return failures>=kRobotReplanFailures; }
 };
 
 struct BuilderRobotState {
@@ -144,6 +143,7 @@ struct BuilderRobotState {
     RobotRole role{RobotRole::Constructor};
     eng::Vec3 position{};               // wheel contact / local floor position
     float heading_degrees{0.0f};
+    robots::RoverWheels wheels{};
     BuilderRobotMode mode{BuilderRobotMode::Idle};
     ConstructionTargetRef target{};
     bool debug_move_active{false}; // transient, real assignments always preempt

@@ -1663,7 +1663,6 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         finish_pending(walkways,ConstructionTargetKind::Walkway);
     }
 
-    robot_enclosure_legacy_scan_pending_=true;
     playfield_size_=saved_playfield;
     playfield_.rebuild(saved_playfield);
     camera_.restore(camera_state);
@@ -2002,7 +2001,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     trader_=std::move(saved_trader);trade_message_.clear();
     if(lander_.salvage_requested) landing_message_=lander_.salvage_seconds>=kLanderSalvageSeconds?
         "CLEAR SPACE NEAR THE STASH MARKER":"SALVAGE QUEUED / WAITING FOR A BUILDER";
-    if(lander_.active()){starting_robot_count_=lander_.builders;starting_carrier_count_=lander_.carriers;robot_enclosure_legacy_scan_pending_=false;}
+    if(lander_.active()){starting_robot_count_=lander_.builders;starting_carrier_count_=lander_.carriers;}
     planning_structure_page_=-1;
     planning_seed_page_=false;
     planning_status_message_.clear();

@@ -31,8 +31,18 @@ void add_cylinder_x(MeshBits& m,Vec3 c,float length,float radius,int segments=10
         Vec3 q0{c.x+length*0.5f,c.y+std::cos(a0)*radius,c.z+std::sin(a0)*radius};
         Vec3 q1{c.x+length*0.5f,c.y+std::cos(a1)*radius,c.z+std::sin(a1)*radius};
         m.tris.insert(m.tris.end(),{p0,q0,q1,p0,q1,p1});
+        m.tris.insert(m.tris.end(),{{c.x-length*.5f,c.y,c.z},p1,p0,{c.x+length*.5f,c.y,c.z},q0,q1});
         m.edges.insert(m.edges.end(),{p0,p1,q0,q1});
         if(i%2==0) m.edges.insert(m.edges.end(),{p0,q0});
+    }
+}
+
+void append_wheel_vertices(std::vector<Vec3>& result,const std::vector<Vec3>& mesh,Vec3 center,
+                           const robots::WheelPose& pose){
+    const float cosine=std::cos(pose.roll_radians),sine=std::sin(pose.roll_radians);
+    for(const auto p:mesh){
+        const Vec3 rolled{p.x,cosine*p.y-sine*p.z,sine*p.y+cosine*p.z};
+        result.push_back(world_math::rotate_y(rolled,pose.steer_degrees)+center);
     }
 }
 
@@ -208,7 +218,17 @@ void GameApp::render_builder_robot(Renderer& r){
     }
 
     }
-    MeshBits body,carrier_body,wheels,suspension,sensors,carrier_sensors;
+    MeshBits body,carrier_body,tire,hub,suspension,sensors,carrier_sensors;
+    add_cylinder_x(tire,{},.20f,robots::kRoverWheelRadiusM,16);
+    add_cylinder_x(hub,{},.214f,.075f,10);
+    for(float side:{-.105f,.105f}){
+        for(int spoke=0;spoke<3;++spoke){
+            const float angle=2.f*3.14159265359f*spoke/3.f;
+            hub.edges.insert(hub.edges.end(),{
+                {side,.060f*std::cos(angle),.060f*std::sin(angle)},
+                {side,.167f*std::cos(angle),.167f*std::sin(angle)}});
+        }
+    }
     add_box(body,{0,0.58f,0},{0.82f,0.48f,1.34f});
     add_box(body,{0,0.79f,-0.18f},{0.68f,0.22f,0.70f});
     add_box(body,{0,0.60f,0.61f},{0.70f,0.34f,0.22f});
@@ -220,8 +240,6 @@ void GameApp::render_builder_robot(Renderer& r){
     add_box(carrier_body,{ 0.39f,0.83f,0.18f},{0.07f,0.34f,0.86f});
     add_box(carrier_body,{0,0.69f,0.57f},{0.66f,0.08f,0.20f});
     for(float z:{-0.48f,0.0f,0.48f}){
-        add_cylinder_x(wheels,{-0.49f,0.28f,z},0.20f,0.22f,10);
-        add_cylinder_x(wheels,{ 0.49f,0.28f,z},0.20f,0.22f,10);
         add_box(suspension,{-0.35f,0.42f,z},{0.18f,0.10f,0.12f});
         add_box(suspension,{ 0.35f,0.42f,z},{0.18f,0.10f,0.12f});
     }
@@ -327,9 +345,16 @@ void GameApp::render_builder_robot(Renderer& r){
             robot.position=robot.visual_position=pose.position;
             robot.heading_degrees=robot.visual_heading_degrees=pose.heading;
             pitch=pose.pitch;
+            robots::roll_rover_wheels(robot.wheels,pose.distance_travelled,0);
         }
         const float phase=action_fraction(robot);
-        MeshBits cargo,arm,gripper,lamps;
+        MeshBits cargo,arm,gripper,lamps,tires,hubs;
+        for(std::size_t i=0;i<robot.wheels.size();++i){
+            const Vec3 center=robots::kRoverWheelCenters[i];
+            append_wheel_vertices(tires.tris,tire.tris,center,robot.wheels[i]);
+            append_wheel_vertices(hubs.tris,hub.tris,center,robot.wheels[i]);
+            append_wheel_vertices(hubs.edges,hub.edges,center,robot.wheels[i]);
+        }
         const bool cargo_in_bay=robot.cargo.total_amount()>0 &&
             !(robot.action==BuilderRobotAction::PutDown && phase>0.18f);
         if(cargo_in_bay){
@@ -372,7 +397,8 @@ void GameApp::render_builder_robot(Renderer& r){
         for(float x:{-.31f,.31f})add_box(lamps,{x,.54f,.65f},{.14f,.08f,.07f});
         r.draw_lunar_surface(transform(lamps.tris,pos,heading,pitch),eng::LunarMaterial::Emissive,lamp);
         r.draw_triangles_3d(transform(chassis.tris,pos,heading,pitch),carrier?Color{0.34f,0.48f,0.56f,1.0f}:Color{0.58f,0.61f,0.60f,1.0f});
-        r.draw_lunar_surface(transform(wheels.tris,pos,heading,pitch),eng::LunarMaterial::Fabric,{0.08f,0.10f,0.11f,1.0f});
+        r.draw_lunar_surface(transform(tires.tris,pos,heading,pitch),eng::LunarMaterial::Fabric,{0.08f,0.10f,0.11f,1.0f});
+        r.draw_lunar_surface(transform(hubs.tris,pos,heading,pitch),eng::LunarMaterial::Alloy,{0.37f,0.42f,0.43f,1});
         r.draw_triangles_3d(transform(suspension.tris,pos,heading,pitch),{0.35f,0.37f,0.36f,1.0f});
         r.draw_triangles_3d(transform(arm.tris,pos,arm_heading,pitch),carrier?Color{0.28f,0.56f,0.68f,1.0f}:Color{0.72f,0.46f,0.14f,1.0f});
         r.draw_triangles_3d(transform(gripper.tris,pos,arm_heading,pitch),{0.23f,0.25f,0.24f,1.0f});
@@ -387,7 +413,7 @@ void GameApp::render_builder_robot(Renderer& r){
         }
         const Color edge{0.04f,0.06f,0.07f,1.0f};
         r.draw_lines_3d(transform(chassis.edges,pos,heading,pitch),edge,1.15f);
-        r.draw_lines_3d(transform(wheels.edges,pos,heading,pitch),{0.30f,0.34f,0.34f,1.0f},1.0f);
+        r.draw_lines_3d(transform(hubs.edges,pos,heading,pitch),{0.40f,0.45f,0.46f,1.0f},1.0f);
         r.draw_lines_3d(transform(suspension.edges,pos,heading,pitch),edge,1.0f);
         r.draw_lines_3d(transform(arm.edges,pos,arm_heading,pitch),edge,1.10f);
         r.draw_lines_3d(transform(gripper.edges,pos,arm_heading,pitch),edge,0.95f);

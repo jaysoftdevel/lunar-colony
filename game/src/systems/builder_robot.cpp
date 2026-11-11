@@ -544,7 +544,6 @@ ResourceBundle GameApp::starter_resource_reserve() const {
 }
 
 void GameApp::reset_builder_robot_and_starter_stash(const ResourceBundle* shipped_cargo){
-    robot_enclosure_legacy_scan_pending_=true;
     robot_safety_time_seconds_=0.0f;
     production_fraction_.fill(0.0);
     life_support_fraction_seconds_=0.0;
@@ -1382,7 +1381,7 @@ void GameApp::record_robot_operation_result(BuilderRobotState& robot,bool succes
         robot.watchdog_elapsed=0;
         return;
     }
-    if(retry.relocation_pending()) return;
+    if(retry.replan_pending()) return;
     if(!task) task=construction_target_sequence(robot.target);
     if(!retry.failures||retry.action!=robot.action||retry.mode!=robot.mode||retry.task!=task){
         retry={};
@@ -2631,13 +2630,15 @@ void GameApp::update_builder_robot(float dt){
         return std::atan2(dx,dz)*180.0f/PI;
     };
 
-    auto clear_route=[&](BuilderRobotState& robot){
-        if(!robot.safety.yielding_for_traffic){
-        robot.safety.cached_route.clear();
-        robots::reset_incremental_path_state(robot.safety.incremental_path);
-        robot.safety.route_cursor=0;
-        robot.safety.proposals.clear();
-        robot.safety.route_replan_required=true;
+    auto clear_route=[&](BuilderRobotState& robot,bool restart=false){
+        if(restart){
+            robots::restart_rover_route(robot.safety);
+        }else if(!robot.safety.yielding_for_traffic){
+            robot.safety.cached_route.clear();
+            robots::reset_incremental_path_state(robot.safety.incremental_path);
+            robot.safety.route_cursor=0;
+            robot.safety.proposals.clear();
+            robot.safety.route_replan_required=true;
         }
         robot.planned_route.clear();
         robot.planned_route_distances.clear();
@@ -3310,33 +3311,6 @@ void GameApp::update_builder_robot(float dt){
     // resumes. This prevents an idle carrier (or another constructor passing
     // through the blueprint) from being sealed inside by somebody else's step.
     std::vector<bool> safety_repositioning(builder_robots_.size(),false);
-    for(std::size_t i=0;i<builder_robots_.size();++i)
-        safety_repositioning[i]=builder_robots_[i].operation_retry.relocation_pending();
-
-    // Repair old saves that were written after a ring had already become
-    // complete. There is no collision-free path through solid walls at that
-    // point, so perform one deterministic emergency extraction to the nearest
-    // perimeter-connected clear cell. Cargo, assignment and reservations stay
-    // intact; only transient navigation/safety state is reset. Workshops are
-    // legitimate enclosed parking volumes and are excluded from this rule.
-    if(robot_enclosure_legacy_scan_pending_){
-        robot_enclosure_legacy_scan_pending_=false;
-        for(std::size_t ri=0;ri<builder_robots_.size();++ri){
-            auto& robot=builder_robots_[ri];
-            if(robot.workshop_parked) continue;
-            const auto enclosure=assess_exterior_connectivity(ri,nullptr,0);
-            if(enclosure.exterior_connected || !enclosure.escape_valid) continue;
-            robot.position=enclosure.escape;
-            robot.position.y=rover_floor_height(robot.position);
-            clear_route(robot);
-            robot.safety={};
-            robot.current_speed_mps=0.0f;
-            robot.route_replan_cooldown=0.0f;
-            robot.watchdog_elapsed=0.0f;
-            robot.watchdog_position=robot.position;
-            safety_repositioning[ri]=true;
-        }
-    }
 
     for(std::size_t ci=0;ci<builder_robots_.size();++ci){
         auto& constructor=builder_robots_[ci];
@@ -3383,7 +3357,7 @@ void GameApp::update_builder_robot(float dt){
             // the global A* planner here caused 100-250 ms main-thread spikes
             // during corridor mesh commits and made camera/mouse input stutter.
             // The local mover checks the full chassis on every step; if a direct
-            // maneuver is blocked, the alternate/5 s safety recovery below takes
+            // maneuver is blocked, the alternate safety recovery below takes
             // over without repeatedly launching a world search.
             const bool reached=move_construction_service_direct(ri,destination,0.025f,0.72f);
             if(!reached && evac.stage_commit_evacuate_elapsed>2.0f && !evac.stage_commit_alternate_attempted){
@@ -3405,8 +3379,7 @@ void GameApp::update_builder_robot(float dt){
                 evac.stage_commit_alternate_attempted=true;
                 destination=evac.stage_commit_safe_position;
             }
-            // The watchdog can extract a persistently stuck rover after its
-            // fifth failed attempt. The stage remains deferred until clear.
+            // The watchdog can restart navigation. The stage waits for clearance.
             safety_repositioning[ri]=true;
         }
     }
@@ -4671,8 +4644,6 @@ void GameApp::update_builder_robot(float dt){
     // safety coordinator treats that as an unsafe initial state and holds/faults
     // it. New construction stages are prevented from creating this state by the
     // scene-change contract gate above.
-    std::vector<bool> completed_structure_relocated(builder_robots_.size(),false);
-    std::vector<bool> body_escape_repositioning(builder_robots_.size(),false);
 
     // Constructors are construction-only. CR-01 owns all shipping. A BR-02 is
     // dispatched once the NEXT construction stage is physically staged at the
@@ -4703,8 +4674,7 @@ void GameApp::update_builder_robot(float dt){
         // coordinating constructor itself. Previously a pending coordinator
         // could be moved by the pre-pass and then immediately braked by its
         // normal Building branch in the same tick, freezing the stage forever.
-        if(safety_repositioning[robot_index] || body_escape_repositioning[robot_index] ||
-           completed_structure_relocated[robot_index]) continue;
+        if(safety_repositioning[robot_index]) continue;
         // Bootstrap charging temporarily owns locomotion but preserves the
         // construction state; the same target can resume after the pack recovers.
         if(robot.starter_charge_active) continue;
@@ -5104,7 +5074,7 @@ void GameApp::update_builder_robot(float dt){
                     bool delivery_deferred=false;
                     const auto delivered=deliver_reserved_cargo(robot,robot.target,false,&delivery_deferred);
                     record_robot_operation_result(robot,!delivered.empty());
-                    if(delivery_deferred||robot.operation_retry.relocation_pending()){
+                    if(delivery_deferred||robot.operation_retry.replan_pending()){
                         clear_action(robot);
                         continue;
                     }
@@ -5714,7 +5684,7 @@ void GameApp::update_builder_robot(float dt){
                         bool delivery_deferred=false;
                         const auto delivered=deliver_reserved_cargo(carrier,carrier.target,true,&delivery_deferred);
                         record_robot_operation_result(carrier,!delivered.empty());
-                        if(delivery_deferred||carrier.operation_retry.relocation_pending()){
+                        if(delivery_deferred||carrier.operation_retry.replan_pending()){
                             clear_action(carrier);
                             continue;
                         }
@@ -6048,7 +6018,7 @@ void GameApp::update_builder_robot(float dt){
         [&](std::size_t i){navigation_requests[i]={};});
 
     for(std::size_t i=0;i<builder_robots_.size();++i)
-        if(builder_robots_[i].operation_retry.relocation_pending()) navigation_requests[i]={};
+        if(builder_robots_[i].operation_retry.replan_pending()) navigation_requests[i]={};
 
     safety_agents.reserve(builder_robots_.size());
     for(std::size_t i=0;i<builder_robots_.size();++i){
@@ -6090,6 +6060,7 @@ void GameApp::update_builder_robot(float dt){
         agent.braking_mps2=kRobotBrakingMps2;
         agent.turn_rate_degrees_per_second=kRobotTurnRateDegreesPerSecond;
         agent.runtime=&robot.safety;
+        agent.wheels=&robot.wheels;
         safety_agents.push_back(agent);
     }
 
@@ -6189,7 +6160,7 @@ void GameApp::update_builder_robot(float dt){
     for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
         auto& robot=builder_robots_[robot_index];
         auto& retry=robot.operation_retry;
-        if(retry.relocation_pending()) continue;
+        if(retry.replan_pending()) continue;
         if(trader_robot_busy(robot_index)&&!trader_powered()) continue;
         const bool waiting_for_traffic=robot.route_waiting_for_clearance&&
             (robot.safety.block_reason==robots::BlockReason::RobotReservation||
@@ -6249,7 +6220,7 @@ void GameApp::update_builder_robot(float dt){
         robot.watchdog_elapsed+=dt;
         if(robot.watchdog_elapsed<kOperationWatchdogSeconds) continue;
         record_robot_operation_result(robot,false,trader_robot_busy(robot_index)?trader_.pad_sequence:0);
-        if(robot.operation_retry.relocation_pending()) continue;
+        if(robot.operation_retry.replan_pending()) continue;
         if(trader_robot_busy(robot_index)||robot.ore_haul.active()||lander_.salvage_uses_robot(robot_index)||
            safety_repositioning[robot_index]||robot.safety.mode==robots::SafetyMode::Fault){
             clear_route(robot);
@@ -6382,7 +6353,7 @@ void GameApp::update_builder_robot(float dt){
         const float radius=robot_safety_corridor_radius(robot.role);
         robot.blocker_display_seconds=std::max(0.0f,robot.blocker_display_seconds-dt);
         const bool stuck=robot.safety.mode==robots::SafetyMode::Fault||
-                         robot.safety.blocked_elapsed>=1.0f||retry.relocation_pending();
+                         robot.safety.blocked_elapsed>=1.0f||retry.replan_pending();
         if(stuck&&robot.blocker_display_seconds<=1.0f){
             const auto reason=robot.safety.block_reason;
             std::uint64_t blocker=structure_at(robot.position,radius);
@@ -6404,85 +6375,20 @@ void GameApp::update_builder_robot(float dt){
             robot.blocking_structure=blocker;
             robot.blocker_display_seconds=2.0f;
         }
-        if(!retry.relocation_pending()||std::abs(robot.current_speed_mps)>.045f) continue;
-        retry.relocation_cooldown=std::max(0.0f,retry.relocation_cooldown-dt);
-        if(retry.relocation_cooldown>0) continue;
-
-        // Emergency extraction is a discontinuous pose change. Validate the
-        // endpoint against the current scene, fleet and every other rover's
-        // certified motion/braking reservations before changing any state.
-        const auto safe_destination=[&](Vec3 point){
-            if(!std::isfinite(point.x)||!std::isfinite(point.y)||!std::isfinite(point.z)||
-               dist_xz(robot.position,point)<2.0f||!robot_position_clear(index,point)||
-               !robot_structure_move_allowed(robot,point,point)||
-               !fleet_hull_clear(index,point,robot.heading_degrees)) return false;
-            if(robot.target.valid()&&!construction_target_complete(robot.target)&&
-               target_future_envelope_contains(robot.target,construction_target_total_steps(robot.target),point,radius))
-                return false;
-            for(std::size_t other=0;other<builder_robots_.size();++other){
-                if(other==index) continue;
-                if(robots::contract_intersects_region(builder_robots_[other].safety.active_contract,[&](Vec3 p,float reserved_radius){
-                    return dist_xz(point,p)<=radius+reserved_radius+kRobotObstacleMargin;
-                })) return false;
-            }
-            return true;
-        };
-        std::optional<Vec3> destination;
-        float best_score=std::numeric_limits<float>::infinity();
-        Vec3 goal=retry.goal;
-        goal.y=rover_floor_height(goal);
-        if(safe_destination(goal)){
-            destination=goal;
-            best_score=.30f*dist_xz(goal,robot.position);
-        }
-        for(const Vec3 center:{retry.goal,robot.position}){
-            for(float distance:{2.4f,3.8f,5.5f,8.0f,12.0f,18.0f}){
-                for(int sample=0;sample<24;++sample){
-                    const float angle=2.0f*PI*(float)sample/24.0f;
-                    Vec3 point=center+Vec3{std::cos(angle)*distance,0,std::sin(angle)*distance};
-                    point.y=rover_floor_height(point);
-                    const float score=dist_xz(point,retry.goal)+.30f*dist_xz(point,robot.position);
-                    if(score<best_score&&safe_destination(point)){
-                        destination=point;
-                        best_score=score;
-                    }
-                }
-            }
-        }
-        if(!destination){
-            const float edge=(float)playfield_.size()*.5f-radius-.3f;
-            for(float offset=-edge;offset<=edge;offset+=2.0f){
-                for(Vec3 point:{Vec3{-edge,0,offset},Vec3{edge,0,offset},Vec3{offset,0,-edge},Vec3{offset,0,edge}}){
-                    point.y=rover_floor_height(point);
-                    const float score=dist_xz(point,retry.goal)+.30f*dist_xz(point,robot.position);
-                    if(score<best_score&&safe_destination(point)){
-                        destination=point;
-                        best_score=score;
-                    }
-                }
-            }
-        }
-        if(!destination){
-            retry.relocation_cooldown=1.0f;
-            continue;
-        }
-
-        robot.position=robot.visual_position=*destination;
-        battery_start_positions[index]=*destination;
-        robot.visual_heading_degrees=robot.heading_degrees;
-        robot.visual_initialized=true;
-        robot.current_speed_mps=0;
-        robot.safety={};
-        clear_route(robot);
+        if(!retry.replan_pending()) continue;
+        // Rebuild the path from the measured pose and keep the same job,
+        // work station, cargo and reservation. The active movement contract
+        // remains available for controlled braking while the planner restarts.
+        clear_route(robot,true);
         clear_action(robot);
-        clear_interaction_station(robot);
-        robot.workshop_parked=false;
-        robot.workshop_entry_started=false;
-        robot.stage_commit_safe_position_valid=false;
+        robot.route_replan_cooldown=0.0f;
+        robot.route_resolution_elapsed=0.0f;
         robot.recovery_attempts=0;
         robot.watchdog_position=robot.position;
-        record_robot_operation_result(robot,true);
-        robot.service_slot_offset=(std::uint8_t)((robot.service_slot_offset+5u)%24u);
+        retry={};
+        robot.watchdog_elapsed=0.0f;
+        activity_log_.record(ui_time_seconds_,LogEvent::Incident,std::string(robot_role_name(robot.role))+
+                             " #"+std::to_string(index+1)+" / restarting route after five failed attempts");
     }
 
     // Consume real stored electrical energy. One simulation hour equals ten

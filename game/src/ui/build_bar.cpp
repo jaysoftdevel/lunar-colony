@@ -124,6 +124,7 @@ void GameApp::render_build_bar(Renderer& r){
     for(int slot=first;slot<end;++slot){
         if(slot>first)tile_x+=icon_size+gap(slot);
         const int item_index=visible[(std::size_t)slot];
+        const auto& item=items[(std::size_t)item_index];
         const Rect box={tile_x,icon_y,icon_size,icon_size};
         if(slot==first || group(slot)!=group(slot-1)){
             int group_end=slot+1;
@@ -144,7 +145,10 @@ void GameApp::render_build_bar(Renderer& r){
         r.draw_line({box.x+box.w,box.y},{box.x+box.w,box.y+box.h},border,bw);
         r.draw_line({box.x+box.w,box.y+box.h},{box.x,box.y+box.h},border,bw);
         r.draw_line({box.x,box.y+box.h},{box.x,box.y},border,bw);
-        render_build_icon(r,items[(size_t)item_index].icon,{box.x+8,box.y+8,box.w-16,box.h-16},selected?theme_.accent:theme_.text);
+        render_build_icon(r,item.icon,{box.x+6,box.y+4,box.w-12,box.h-19},selected?theme_.accent:theme_.text);
+        const float scale=ui::fit_text(item.caption,ui::font_scale(.40f*GAME_FONT_BOOST,theme_),{box.w-6,10});
+        const float caption_width=ui::text_extent(item.caption,scale).x;
+        r.draw_text({box.x+(box.w-caption_width)*.5f,box.y+37},item.caption,scale,theme_.text);
         if(hover && ui_input_.left_pressed){
             const int before=build_catalog_.selected_index();
             build_catalog_.select(item_index);
@@ -154,7 +158,7 @@ void GameApp::render_build_bar(Renderer& r){
                 placement_resource_size_=ResourceSizeTier::Small;
                 placement_storage_size_=StorageDomeSize::Small;
                 storage_gate_placement_active_=false;
-            storage_gate_placement_owner_=kNoRobotIndex;
+                storage_gate_placement_owner_=kNoRobotIndex;
                 corridor_build_start_.reset();
                 utility_build_start_.reset();
                 walkway_build_start_.reset();

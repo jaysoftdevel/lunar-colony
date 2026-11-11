@@ -54,6 +54,7 @@ struct LanderRoverPose {
     float heading{0};
     float pitch{0};
     bool parked{false};
+    float distance_travelled{};
 };
 eng::Vec3 lunar_lander_robot_berth(int queue_index);
 float lunar_lander_deployment_seconds(const LunarLanderState& lander,int first);

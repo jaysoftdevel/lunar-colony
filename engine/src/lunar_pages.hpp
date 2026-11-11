@@ -24,11 +24,11 @@ using PageRevisions=std::array<std::uint64_t,page_cells>;
 class PageCache {
 public:
     explicit PageCache(int layers);
-    PagePlan plan(PageCoord origin,const PageRevisions& revisions,int upload_limit);
+    PagePlan plan(PageCoord origin,const PageRevisions& revisions,int upload_limit,int fade_step=255);
     void clear();
 
 private:
-    struct Slot { PageCoord coordinate{}; std::uint64_t revision{}; };
+    struct Slot { PageCoord coordinate{}; std::uint64_t revision{}; int opacity{}; };
     std::vector<Slot> slots_;
 };
 

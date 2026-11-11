@@ -18,6 +18,15 @@ namespace eng {
 struct Color { float r{},g{},b{},a{1.0f}; };
 enum class LunarMaterial { Paint, Alloy, Regolith, Solar, Glass, Fabric, Pad, Emissive, Skin, Marking, Hair };
 
+struct LunarSurfaceMapping {
+    Vec3 origin{};
+    Vec3 x{1,0,0},y{0,1,0},z{0,0,1};
+    Vec3 coordinate(Vec3 position) const {
+        const auto relative=position-origin;
+        return {dot(relative,x),dot(relative,y),dot(relative,z)};
+    }
+};
+
 struct LunarLight {
     Vec3 position{};
     Color color{};
@@ -114,6 +123,10 @@ public:
     virtual bool draw_campus_atmosphere(const Mat4&,Vec3,float){ return false; }
     virtual void draw_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial,Color tint){
         draw_triangles_3d(vertices,tint);
+    }
+    virtual void draw_mapped_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint,
+                                          const LunarSurfaceMapping&){
+        draw_lunar_surface(vertices,material,tint);
     }
     virtual void draw_rect(Rect r, Color color)=0;
     virtual void draw_line(Vec2 a, Vec2 b, Color color, float width=1.0f)=0;

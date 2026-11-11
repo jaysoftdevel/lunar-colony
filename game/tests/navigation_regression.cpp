@@ -263,6 +263,72 @@ void collision_radius_case(){
     std::cout<<"5 m circles, free cruise, head-on avoidance and pairwise exit passed\n";
 }
 
+void rover_steering_case(){
+    using namespace game::robots;
+    constexpr float dt=kSafetyDtSeconds;
+    constexpr float radians=3.14159265359f/180.f;
+    SafetyRuntime runtime;
+    RoverWheels wheels;
+    std::vector<SafetyAgent> agents{{0,{0,0,-20},0,0,.99f,6,4.8f,6.4f,250,&runtime,&wheels}};
+    std::vector<NavigationRequest> requests{{true,{0,0,36},.18f,1.f}};
+    SafetyWorldCallbacks world;
+    world.point_clear=[](std::size_t,Vec3){return true;};
+    world.segment_clear=[](std::size_t,Vec3,Vec3){return true;};
+    unsigned routes=0;
+    world.coarse_route=[&](std::size_t,Vec3,Vec3 goal,float,std::vector<Vec3>& path){
+        ++routes;
+        path={goal};
+        return true;
+    };
+    float time=0;
+    bool turning=false,braking=false;
+    const auto step=[&]{
+        const auto before=agents.front();
+        const auto stats=safety_tick(dt,time,1,agents,requests,world);
+        time+=dt;
+        const auto& after=agents.front();
+        const float turn=std::remainder(after.heading_degrees-before.heading_degrees,360.f);
+        const float tangent=(before.heading_degrees+turn*.5f)*radians;
+        const auto moved=after.position-before.position;
+        const float sideways=moved.x*std::cos(tangent)-moved.z*std::sin(tangent);
+        require(!stats.invariant_fault&&runtime.mode!=SafetyMode::Fault,"steering lost its motion contract");
+        require(std::abs(sideways)<.00008f,"chassis moved sideways instead of following its rolling arc");
+        require(std::max(std::abs(before.speed_mps),std::abs(after.speed_mps))*std::abs(turn)*radians/dt
+                <=kRoverLateralAccelerationMps2+.025f,"curve exceeded the lateral grip limit");
+        require(distance(before.position,after.position)<=before.max_speed_mps*dt+.0001f,
+                "steering moved farther than the driving limit");
+        turning|=std::abs(turn)>.15f&&eng::length(moved)>.001f;
+        braking|=stats.brake_fallbacks>0;
+    };
+    for(int i=0;i<250;++i)step();
+    require(agents.front().speed_mps>5.85f,"straight driving did not reach cruise speed");
+    const Vec3 restart_pose=agents.front().position;
+    const float expiry=runtime.active_contract.command_expiry;
+    restart_rover_route(runtime);
+    require(distance(restart_pose,agents.front().position)<.001f && runtime.cached_route.empty() &&
+            runtime.active_contract.valid && runtime.active_contract.command_expiry==expiry,
+            "fresh route displaced the rover or discarded certified braking");
+    requests[0].goal=restart_pose+Vec3{21,0,2};
+    for(int i=0;i<12;++i)step();
+    require(turning && routes>=2 && agents.front().speed_mps<5.6f,"fast rover failed to slow into the turn");
+    requests[0].active=false;
+    for(int i=0;i<100;++i)step();
+    require(braking && std::abs(agents.front().speed_mps)<.01f,"rover failed to stop through certified braking");
+    requests[0].active=true;
+    for(int i=0;i<2600&&distance(agents.front().position,requests[0].goal)>.23f;++i)step();
+    require(distance(agents.front().position,requests[0].goal)<.24f,"rover did not complete the revised route");
+
+    RoverWheels pivot{};
+    roll_rover_wheels(pivot,0,.18f);
+    require(pivot[2].roll_radians*pivot[3].roll_radians<0 &&
+            std::abs(pivot[0].steer_degrees)>30 && std::abs(pivot[4].steer_degrees)>30,
+            "pivot did not steer the outer wheels or roll the sides in opposite directions");
+    require(std::any_of(wheels.begin(),wheels.end(),[](const WheelPose& wheel){
+        return std::abs(wheel.roll_radians)>.02f;
+    }),"certified motion did not advance the wheel poses");
+    std::cout<<"Rover steering: forward rolling arcs, grip-limited turns, straight certified braking and wheel motion passed\n";
+}
+
 void fault_recovery_case(const std::string& name,std::size_t count,bool unsafe_origin=false,bool idle=false,bool pending=false){
     std::vector<SafetyRuntime> runtime(count);
     std::vector<SafetyAgent> agents(count);
@@ -384,11 +450,10 @@ struct NavigationRegression {
         for(const auto& h:app.placed_habitats_)std::cout<<"air h kind="<<(int)h.kind<<" air="<<h.supply.breathability()<<" power="<<h.supply.power_fraction<<" component water="<<h.supply.network_water_to_fill_litres<<"\n";
     }
 
-    static void operation_relocation(){
+    static void operation_replan(){
         eng::Application engine;
         GameApp stuck(engine);
         stuck.playfield_.rebuild(64);
-        stuck.robot_enclosure_legacy_scan_pending_=false;
         PlacedResource blocker;
         blocker.kind=ResourceKind::PowerStorage;
         blocker.construction.step=kConstructionSteps;
@@ -406,7 +471,7 @@ struct NavigationRegression {
         for(int frame=0;frame<16*90&&trapped.operation_retry.failures<4;++frame)
             stuck.update_builder_robot(1.f/90);
         require(trapped.operation_retry.failures==4&&distance(trapped.position,{})<.01f,
-                "rover relocated before four blocked retries or failed to count them");
+                "rover moved in blocked geometry or failed to count four retries");
         require(trapped.blocking_structure==41&&trapped.blocker_display_seconds>0,
                 "blocked rover did not identify the actual battery footprint");
         struct BlockerCapture:Recorder {
@@ -418,10 +483,11 @@ struct NavigationRegression {
         } capture;
         stuck.render_robot_blockers(capture);
         require(capture.red&&!capture.unrelated,"wrong structure received the red outline");
-        for(int frame=0;frame<5*90&&distance(trapped.position,{})<.01f;++frame)
+        for(int frame=0;frame<5*90&&trapped.operation_retry.failures!=0;++frame)
             stuck.update_builder_robot(1.f/90);
-        require(distance(trapped.position,{})>=2&&trapped.operation_retry.failures==0&&trapped.cargo.iron==200,
-                "fifth blocked attempt did not extract the rover with its cargo intact");
+        require(distance(trapped.position,{})<.01f && trapped.operation_retry.failures==0 &&
+                trapped.safety.route_replan_required && trapped.safety.cached_route.empty() && trapped.cargo.iron==200,
+                "fifth blocked attempt did not restart the path from the rover's held pose");
 
         GameApp delivery(engine);
         delivery.playfield_.rebuild(64);
@@ -463,13 +529,19 @@ struct NavigationRegression {
                 " obstruction="+std::to_string(distance(delivery.builder_robots_[1].position,obstruction.position)));
         require(distance(carrier.position,dock)<.3f&&carrier.cargo.iron==200,
                 "four failed drops moved the rover or changed cargo");
-        for(int frame=0;frame<10*90&&distance(carrier.position,dock)<.3f;++frame)
+        for(int frame=0;frame<10*90&&carrier.operation_retry.failures!=0;++frame)
             tick_blocked_drop();
-        require(distance(carrier.position,dock)>=2&&carrier.operation_retry.failures==0&&
+        require(distance(carrier.position,dock)<.3f && carrier.operation_retry.failures==0 &&
+                carrier.safety.route_replan_required && carrier.target.same_as(target) &&
                 carrier.cargo.iron==200&&carrier.logistics_reservation.iron==200&&
                 delivery.placed_resources_[0].site_buffer.empty(),
-                "fifth failed drop did not preserve cargo and reservation on relocation");
-        std::cout<<"Operation recovery: red blocker outline, four retries, fifth-failure extraction and exact cargo custody passed\n";
+                "fifth failed drop moved the rover or lost the original job, cargo or reservation");
+        delivery.builder_robots_.pop_back();
+        for(int frame=0;frame<15*90&&delivery.placed_resources_[0].site_buffer.iron==0;++frame)
+            delivery.update_builder_robot(1.f/90);
+        require(delivery.placed_resources_[0].site_buffer.iron==200 && carrier.cargo.empty(),
+                "replanned delivery did not resume once the drop cleared");
+        std::cout<<"Operation recovery: red blocker outline, fifth-failure replan in place, and delivery resumption passed\n";
     }
 
     static void global_routes(){
@@ -621,17 +693,15 @@ struct NavigationRegression {
         eng::Application engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
         require(!app.builder_robots_.empty(),"enclosure fixture needs a robot");
-        const Vec3 before=app.builder_robots_[0].position;
-        app.update_pressure_doors(1.0f/60.0f);
-        app.update_construction(1.0f/60.0f);
-        const Vec3 after=app.builder_robots_[0].position;
-        require(distance(before,after)>1.0f,"legacy enclosed robot was not emergency-extracted");
         for(int frame=0;frame<60*20;++frame){
-            app.update_pressure_doors(1.0f/60.0f);app.update_construction(1.0f/60.0f);
-            for(const auto& robot:app.builder_robots_)require(robot.safety.mode!=SafetyMode::Fault,"enclosure recovery entered safety fault");
+            const Vec3 before=app.builder_robots_[0].position;
+            app.update_pressure_doors(1.0f/60.0f);
+            app.update_construction(1.0f/60.0f);
+            const auto& rover=app.builder_robots_[0];
+            require(distance(before,rover.position)<=rover.move_speed_mps/60.0f+.02f,
+                    "legacy enclosure moved a rover beyond its driving range");
         }
-        require(distance(before,app.builder_robots_[0].position)>1.0f,"recovered robot returned to sealed pocket");
-        std::cout<<"Legacy enclosed robot extracted from "<<before.x<<","<<before.z<<" to "<<after.x<<","<<after.z<<" and remained safe\n";
+        std::cout<<"Legacy enclosed rover retained its saved pose and driving limits\n";
     }
 
     static void airlock_supply_save(const std::string& path){
@@ -3101,10 +3171,11 @@ struct NavigationRegression {
 int main(int argc,char** argv){
     try{
         if(argc>1 && std::string(argv[1])=="collision-radius") collision_radius_case();
+        else if(argc>1 && std::string(argv[1])=="rover-steering") rover_steering_case();
         else if(argc>1 && std::string(argv[1])=="global-routes") game::NavigationRegression::global_routes();
         else if(argc>2 && std::string(argv[1])=="saved-route") game::NavigationRegression::saved_route(argv[2]);
         else if(argc>2 && std::string(argv[1])=="profile") game::NavigationRegression::profile(argv[2]);
-        else if(argc>1 && std::string(argv[1])=="operation-relocation") game::NavigationRegression::operation_relocation();
+        else if(argc>1 && std::string(argv[1])=="operation-replan") game::NavigationRegression::operation_replan();
         else if(argc>1 && std::string(argv[1])=="fault-recovery"){
             fault_recovery_case("single fault",1);
             fault_recovery_case("simultaneous fleet faults",12);

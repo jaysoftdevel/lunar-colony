@@ -41,10 +41,6 @@ Vec3 forward_from_heading(float degrees){
     const float a=degrees*PI/180.0f;
     return {std::sin(a),0.0f,std::cos(a)};
 }
-float turn_towards(float current,float target,float max_delta){
-    return wrap_degrees(current+std::clamp(wrap_degrees(target-current),-max_delta,max_delta));
-}
-
 float planner_phase_offset_seconds(std::size_t robot_id){
     // Spread proposal refreshes across time so many robots do not replan in
     // the same frame. This lowers frame-time spikes without changing contract
@@ -173,6 +169,21 @@ struct RolloutState {
     float speed{0.0f};
 };
 
+float arc_chord_scale(float yaw_radians){
+    const float half=yaw_radians*.5f;
+    // All authorized steps are <= 10 ms; use the stable small-angle sinc.
+    return 1.0f-half*half/6.0f+half*half*half*half/120.0f;
+}
+
+float motion_tube_radius(const SafetyAgent& agent,Vec3 end,float dt){
+    const float radius=agent.radius_m+kSafetyNumericMarginM;
+    if(dist_xz(agent.position,end)<1e-6f) return radius;
+    // Bound the curve and speed-ramp error of the time-linear swept chord.
+    const float acceleration=kRoverLateralAccelerationMps2+
+        std::max(agent.acceleration_mps2,agent.braking_mps2);
+    return radius+acceleration*dt*dt*.125f;
+}
+
 // A moving path corridor, rather than a heading held for the entire preview.
 // Projection makes progress independent of whether the chassis hits a tiny
 // waypoint disc exactly. Visibility checks preserve the obstacle-clear route.
@@ -226,17 +237,29 @@ RolloutState step_control(const SafetyAgent& agent,RolloutState state,const Moti
         const float error=std::abs(wrap_degrees(heading-state.heading));
         const float room=std::max(0.0f,steer.remaining-agent.runtime->stop_radius*0.8f);
         const float stop_cap=std::sqrt(2.0f*agent.braking_mps2*room)*0.8f;
-        const float alignment=error>75.0f?0.0f:std::max(0.10f,std::pow(std::cos(error*PI/180.0f),2.0f));
+        const float alignment=error>72.0f?0.0f:std::max(0.08f,std::pow(std::cos(error*PI/180.0f),2.0f));
         requested_speed=std::min(requested_speed*alignment,stop_cap);
         if(steer.remaining<=agent.runtime->stop_radius) requested_speed=0.0f;
     }
-    const float turn=std::max(0.0f,agent.turn_rate_degrees_per_second)*dt;
-    state.heading=turn_towards(state.heading,heading,turn);
-    const float target=std::clamp(requested_speed,-agent.max_speed_mps,agent.max_speed_mps);
-    const float rate=(std::abs(target)<std::abs(state.speed) || state.speed*target<0.0f)?agent.braking_mps2:agent.acceleration_mps2;
-    state.speed=approach(state.speed,target,std::max(0.0f,rate)*dt);
-    const Vec3 forward=forward_from_heading(state.heading);
-    state.position=state.position+forward*(state.speed*dt);
+    const float error=wrap_degrees(heading-state.heading);
+    const float commanded_yaw=std::clamp(error/.14f,-agent.turn_rate_degrees_per_second,
+                                        agent.turn_rate_degrees_per_second)*PI/180.0f;
+    const float corner_speed=kRoverLateralAccelerationMps2/std::max(std::abs(commanded_yaw),.001f);
+    const float speed_limit=std::min(agent.max_speed_mps,corner_speed);
+    float target=std::clamp(requested_speed,-speed_limit,speed_limit);
+    if(state.speed*target<0.0f) target=0.0f;
+    const float rate=std::abs(target)<std::abs(state.speed)?agent.braking_mps2:agent.acceleration_mps2;
+    const float next_speed=approach(state.speed,target,rate*dt);
+    const float ramp_time=std::min(dt,std::abs(next_speed-state.speed)/rate);
+    const float distance=.5f*(state.speed+next_speed)*ramp_time+next_speed*(dt-ramp_time);
+    const float peak_speed=std::max(std::abs(state.speed),std::abs(next_speed));
+    const float grip_yaw=kRoverLateralAccelerationMps2/std::max(.04f,peak_speed);
+    const float yaw=std::clamp(commanded_yaw,-grip_yaw,grip_yaw)*dt;
+    const float turn_degrees=yaw*180.0f/PI;
+    // Integrate forward travel along the turn, with no sideways velocity.
+    state.position+=forward_from_heading(state.heading+.5f*turn_degrees)*(distance*arc_chord_scale(yaw));
+    state.heading=wrap_degrees(state.heading+turn_degrees);
+    state.speed=next_speed;
     if(world.floor_height) state.position.y=world.floor_height(state.position);
     return state;
 }
@@ -888,7 +911,7 @@ MotionContract build_contract(const SafetyAgent& a,const MotionControl& control,
 
     RolloutState start{a.position,a.heading_degrees,a.speed_mps};
     RolloutState normal=step_control(a,start,control,lease,world);
-    c.occupancy_tube.push_back({now,now+lease,start.position,normal.position,radius});
+    c.occupancy_tube.push_back({now,now+lease,start.position,normal.position,motion_tube_radius(a,normal.position,lease)});
 
     // Conservative timeout/emergency branch: allow the command to run for the
     // complete lease, then brake at the guaranteed minimum deceleration without
@@ -925,6 +948,7 @@ MotionContract build_contract(const SafetyAgent& a,const MotionControl& control,
         c.terminal_holds.push_back({t,p,brake_radius});
     };
     append_brake(start,now);
+    c.committed_brake_first=c.brake_branches.size();
     append_brake(normal,now+lease);
 
     // Reserve all spatial cells touched by normal motion, braking branches and
@@ -1097,71 +1121,38 @@ bool state_inside_active_contract(const SafetyAgent& a,float now){
     return false;
 }
 
-bool follow_certified_brake_branch(const SafetyAgent& a,float now,float tick,Vec3& out_position,float& out_speed){
-    const auto& c=a.runtime->active_contract;
-    if(!c.valid) return false;
+bool follow_certified_brake_branch(const SafetyAgent& a,float now,float tick,const SafetyWorldCallbacks& world,
+                                   Vec3& out_position,float& out_speed){
+    const auto& contract=a.runtime->active_contract;
+    if(!contract.valid) return false;
 
-    const float target_time=now+tick;
-    std::size_t best_index=std::numeric_limits<std::size_t>::max();
-    float best_distance=std::numeric_limits<float>::max();
-    for(std::size_t i=0;i<c.brake_branches.size();++i){
-        const auto& piece=c.brake_branches[i];
-        if(piece.t0>now+1.0e-5f || piece.t1+1.0e-5f<now) continue;
-        const Vec3 at_now=interpolate(piece,std::clamp(now,piece.t0,piece.t1));
-        const float d=dist_xz(a.position,at_now);
-        if(d<best_distance){ best_distance=d; best_index=i; }
-    }
+    // Roll straight along the measured heading. A reservation is an envelope,
+    // never a position to interpolate or snap to.
+    const float braking_time=std::min(tick,std::abs(a.speed_mps)/a.braking_mps2);
+    const float next_speed=approach(a.speed_mps,0.0f,a.braking_mps2*braking_time);
+    const float distance=.5f*(a.speed_mps+next_speed)*braking_time;
+    Vec3 end=a.position+forward_from_heading(a.heading_degrees)*distance;
+    if(world.floor_height) end.y=world.floor_height(end);
 
-    if(best_index!=std::numeric_limits<std::size_t>::max() &&
-       best_distance<=c.brake_branches[best_index].radius){
-        // Follow the already-certified branch across as many adjacent 10 ms
-        // pieces as this simulation substep requires. The old implementation
-        // required one single piece to span the whole substep, which fails at
-        // a piece boundary and incorrectly turns an ordinary brake into a
-        // CONTRACT VIOLATION.
-        std::size_t i=best_index;
-        Vec3 last=c.brake_branches[i].end;
-        float end_time=c.brake_branches[i].t1;
-        if(target_time<=end_time+1.0e-5f){
-            out_position=interpolate(c.brake_branches[i],std::min(target_time,end_time));
-            out_speed=approach(a.speed_mps,0.0f,a.braking_mps2*tick);
-            return true;
+    const float chassis=a.radius_m+kSafetyNumericMarginM;
+    const auto covered=[&](Vec3 position,float time){
+        // Use only the branch that starts at the pose committed by the last
+        // command. The immediate-brake branch is for collision arbitration.
+        for(std::size_t i=contract.committed_brake_first;i<contract.brake_branches.size();++i){
+            const auto& piece=contract.brake_branches[i];
+            if(time<piece.t0-1e-5f || time>piece.t1+1e-5f) continue;
+            const auto expected=interpolate(piece,std::clamp(time,piece.t0,piece.t1));
+            if(dist_xz(position,expected)<=std::max(0.0f,piece.radius-chassis)+.002f) return true;
         }
-        while(i+1<c.brake_branches.size()){
-            const auto& current=c.brake_branches[i];
-            const auto& next=c.brake_branches[i+1];
-            const bool contiguous_time=std::abs(next.t0-current.t1)<=2.0e-5f;
-            const bool contiguous_space=dist_xz(next.start,current.end)<=std::max(current.radius,next.radius);
-            if(!contiguous_time || !contiguous_space) break;
-            ++i;
-            last=next.end;
-            end_time=next.t1;
-            if(target_time<=end_time+1.0e-5f){
-                out_position=interpolate(next,std::min(target_time,end_time));
-                out_speed=approach(a.speed_mps,0.0f,a.braking_mps2*tick);
-                return true;
-            }
-        }
-        for(const auto& hold:c.terminal_holds){
-            if(target_time+1.0e-5f>=hold.start_time &&
-               dist_xz(last,hold.position)<=hold.radius){
-                out_position=hold.position;
-                out_speed=0.0f;
-                return true;
-            }
-        }
-    }
-
-    if(std::abs(a.speed_mps)<0.003f){
-        for(const auto& hold:c.terminal_holds){
-            if(now+1.0e-5f>=hold.start_time && dist_xz(a.position,hold.position)<=hold.radius){
-                out_position=a.position;
-                out_speed=0.0f;
-                return true;
-            }
-        }
-    }
-    return false;
+        if(contract.terminal_holds.empty()) return false;
+        const auto& hold=contract.terminal_holds.back();
+        return time+1e-5f>=hold.start_time &&
+            dist_xz(position,hold.position)<=std::max(0.0f,hold.radius-chassis)+.002f;
+    };
+    if(!covered(a.position,now)||!covered(end,now+tick)) return false;
+    out_position=end;
+    out_speed=next_speed;
+    return true;
 }
 
 Vec3 find_pullout(const SafetyAgent& a,const SafetyWorldCallbacks& world,const std::vector<SafetyAgent>& agents,std::size_t blocker){
@@ -2132,7 +2123,7 @@ SafetyTickStats safety_tick(float dt,
                     // branch already certified by its active contract.
                     Vec3 p=a.position;
                     float next_speed=a.speed_mps;
-                    const bool certified=follow_certified_brake_branch(a,now,tick,p,next_speed);
+                    const bool certified=follow_certified_brake_branch(a,now,tick,world,p,next_speed);
                     commands[a.id]={p,a.heading_degrees,next_speed,false,true};
                     if(!certified){
                         enter_fault(a,BlockReason::ContractViolation,2,now);
@@ -2163,7 +2154,8 @@ SafetyTickStats safety_tick(float dt,
         std::vector<TubePiece> actual(agents.size());
         std::vector<bool> local_fault(agents.size(),false);
         for(std::size_t i=0;i<agents.size();++i){
-            actual[i]={now,now+tick,agents[i].position,commands[i].position,agents[i].radius_m+kSafetyNumericMarginM};
+            actual[i]={now,now+tick,agents[i].position,commands[i].position,
+                       motion_tube_radius(agents[i],commands[i].position,tick)};
             if(!world.segment_clear(i,agents[i].position,commands[i].position)) local_fault[i]=true;
         }
         for(std::size_t i=0;i<agents.size();++i){
@@ -2182,7 +2174,10 @@ SafetyTickStats safety_tick(float dt,
         for(std::size_t pass=0;pass<agents.size();++pass){
             bool changed=false;
             for(std::size_t i=0;i<agents.size();++i){
-                if(local_fault[i]) actual[i].end=agents[i].position;
+                if(local_fault[i]){
+                    actual[i].end=agents[i].position;
+                    actual[i].radius=agents[i].radius_m+kSafetyNumericMarginM;
+                }
             }
             for(std::size_t i=0;i<agents.size();++i) for(std::size_t j=i+1;j<agents.size();++j){
                 if(local_fault[i] && local_fault[j]) continue;
@@ -2222,6 +2217,13 @@ SafetyTickStats safety_tick(float dt,
         }
 
         for(std::size_t i=0;i<agents.size();++i){
+            if(auto* wheels=agents[i].wheels){
+                const float turn=wrap_degrees(commands[i].heading-agents[i].heading_degrees);
+                const float yaw=turn*PI/180.0f;
+                const Vec3 tangent=forward_from_heading(agents[i].heading_degrees+.5f*turn);
+                const float distance=dot_xz(commands[i].position-agents[i].position,tangent)/arc_chord_scale(yaw);
+                roll_rover_wheels(*wheels,distance,yaw);
+            }
             agents[i].position=commands[i].position;
             agents[i].heading_degrees=commands[i].heading;
             agents[i].speed_mps=commands[i].speed;
@@ -2248,6 +2250,23 @@ SafetyTickStats safety_tick(float dt,
     }
 
     return stats;
+}
+
+void restart_rover_route(SafetyRuntime& runtime){
+    runtime.temporary_goal_valid=false;
+    runtime.stationary_detour_active=false;
+    runtime.traffic_detour_partner=kNoSafetyRobot;
+    runtime.yielding_for_traffic=false;
+    runtime.motion_intent=runtime.goal_valid?MotionIntent::Navigate:MotionIntent::Wait;
+    runtime.planner_elapsed=kPlannerReplanSeconds;
+    runtime.avoidance_elapsed=kPlannerReplanSeconds;
+    runtime.steering_side=0.0f;
+    runtime.blocked_elapsed=0.0f;
+    runtime.route_progress_elapsed=0.0f;
+    runtime.best_route_remaining=std::numeric_limits<float>::infinity();
+    // Keep the current braking/hold contract until the navigator can
+    // replace it with a certified command on the freshly calculated route.
+    invalidate_route(runtime);
 }
 
 bool contract_intersects_region(const MotionContract& contract,

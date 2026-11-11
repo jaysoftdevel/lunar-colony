@@ -56,6 +56,7 @@ enum class BuildObjectKind {
 struct BuildObjectDefinition {
     std::string id;
     std::string name;
+    const char* caption;
     std::string type;
     const char* group;
     BuildIcon icon;

@@ -8,15 +8,18 @@ layout(location=1) in vec4 tint;
 layout(location=2) in float material;
 layout(location=3) in vec3 terrainNormal;
 layout(location=4) in float rock;
+layout(location=5) in vec3 surfaceCoordinate;
 uniform mat4 viewProjection;
 uniform bool terrain;
 out vec3 world;
+out vec3 coordinate;
 out vec3 worldNormal;
 flat out float stone;
 flat out vec4 color;
 flat out int kind;
 void main(){
     world=position;
+    coordinate=terrain?position:surfaceCoordinate;
     worldNormal=terrain?terrainNormal:vec3(0.0);
     stone=terrain?rock:0.0;
     color=terrain?vec4(1.0):tint;
@@ -180,6 +183,7 @@ void main(){
 
 inline constexpr const char* geometry_inputs=R"GLSL(#version 330 core
 in vec3 world;
+in vec3 coordinate;
 in vec3 worldNormal;
 flat in float stone;
 flat in vec4 color;
@@ -210,11 +214,12 @@ uniform sampler2D shadowTable;
 uniform vec2 shadowOrigin;
 uniform vec3 shadowX,shadowY,shadowSun;
 uniform bool useShadowPages;
+uniform float shadowPageBlend;
 uniform bool useShadowMaps;
 uniform int shadowQuality;
 uniform int lightCount;
-uniform vec4 localPositionRadius[8];
-uniform vec4 localColorPower[8];
+uniform vec4 localPositionRadius[16];
+uniform vec4 localColorPower[16];
 
 )GLSL";
 
@@ -223,36 +228,53 @@ uniform bool useGroundPages;
 uniform sampler2DArray groundPageMap;
 uniform sampler2D groundTable;
 uniform vec2 groundOrigin;
-vec4 groundDetail(vec2 world){
+vec4 groundDetail(vec2 world,vec2 worldDx,vec2 worldDy){
     if(!useGroundPages) return vec4(0.5,0.86,0.5,0.5);
     vec2 page=world/32.0;
     ivec2 at=ivec2(floor(page)-groundOrigin);
     if(any(lessThan(at,ivec2(0))) || any(greaterThanEqual(at,ivec2(5)))) return vec4(0.5,0.86,0.5,0.5);
-    int layer=int(texelFetch(groundTable,at,0).r*255.0+0.5)-1;
+    vec2 entry=texelFetch(groundTable,at,0).rg;
+    int layer=int(entry.r*255.0+0.5)-1;
     if(layer<0) return vec4(0.5,0.86,0.5,0.5);
     vec2 uv=(fract(page)*96.0+2.0)/100.0;
     float lodScale=quality(OPT_virtual_textures)==1?1.92:quality(OPT_virtual_textures)==2?1.32:0.96;
-    vec2 dx=dFdx(page)*lodScale,dy=dFdy(page)*lodScale;
+    vec2 dx=worldDx*(lodScale*0.03),dy=worldDy*(lodScale*0.03);
     vec4 fine=textureGrad(groundPageMap,vec3(uv,float(layer)),dx,dy);
-    float distanceFade=1.0-smoothstep(0.3,1.7,length(fwidth(world)));
-    return mix(vec4(0.5,0.86,0.5,0.5),fine,distanceFade);
+    float distanceFade=1.0-smoothstep(0.3,1.7,max(length(worldDx),length(worldDy)));
+    return mix(vec4(0.5,0.86,0.5,0.5),fine,distanceFade*entry.g);
 }
-float hash(vec2 p){
-    vec3 q=fract(vec3(p.xyx)*vec3(0.1031,0.1030,0.0973));
-    q+=dot(q,q.yzx+33.33);
-    return fract((q.x+q.y)*q.z);
+vec4 individualTile(vec2 uv,vec2 dx,vec2 dy,vec2 cell,float material){
+    vec2 seed=cell+material*vec2(17.7,31.9);
+    float key=surfaceHash(seed);
+    vec2 phase=vec2(surfaceHash(seed+vec2(39,21)),surfaceHash(seed-vec2(13,57)));
+    vec2 signUV=vec2(key<0.5?-1.0:1.0,phase.y<0.5?-1.0:1.0);
+    float layer=material*4.0+floor(key*3.9999);
+    vec4 tile=textureGrad(surfaceMaps,vec3((uv-cell)*signUV+phase,layer),dx*signUV,dy*signUV);
+    tile.r*=0.90+0.20*phase.x;
+    tile.ba=0.5+(tile.ba-0.5)*signUV;
+    return tile;
+}
+vec4 tileField(vec2 uv,vec2 dx,vec2 dy,float material){
+    // The same seeded tile contributes on both sides of a lattice edge.
+    // Pass the continuous gradients explicitly so phase changes never affect mip selection.
+    vec2 cell=floor(uv),w=smoothstep(vec2(0.0),vec2(1.0),fract(uv));
+    vec4 a=individualTile(uv,dx,dy,cell,material);
+    vec4 b=individualTile(uv,dx,dy,cell+vec2(1,0),material);
+    vec4 c=individualTile(uv,dx,dy,cell+vec2(0,1),material);
+    vec4 d=individualTile(uv,dx,dy,cell+vec2(1,1),material);
+    return mix(mix(a,b,w.x),mix(c,d,w.x),w.y);
 }
 // xy stores the height gradient and z the dust accumulated in the depression.
-vec3 impact(vec2 p,float spacing,float seed){
+vec3 impact(vec2 p,float spacing,float seed,float footprint){
     vec2 cell=floor(p/spacing);
-    vec2 center=0.5+0.30*(vec2(hash(cell+seed),hash(cell-seed))-0.5);
+    vec2 center=0.5+0.25*(vec2(surfaceHash(cell+seed),surfaceHash(cell-seed))-0.5);
     vec2 v=fract(p/spacing)-center;
-    float yaw=6.2831853*hash(cell+seed*3.29);
+    float yaw=6.2831853*surfaceHash(cell+seed*3.29);
     mat2 basis=mat2(cos(yaw),sin(yaw),-sin(yaw),cos(yaw));
-    vec2 shape=vec2(1.0,mix(1.0,1.46,hash(cell+seed*0.24)));
+    vec2 shape=vec2(1.0,mix(1.0,1.46,surfaceHash(cell+seed*0.24)));
     vec2 stretched=basis*v*shape;
-    float radius=mix(0.125,0.29,hash(cell+2.73*seed));
-    float strength=smoothstep(0.16,0.60,hash(cell+0.71*seed));
+    float radius=mix(0.077,0.243,surfaceHash(cell+2.73*seed));
+    float strength=smoothstep(0.28,0.78,surfaceHash(cell+0.71*seed));
     float r=length(stretched)/radius;
     float bowl=1.0-smoothstep(0.10,1.0,r);
     float wall=exp(-38.0*(r-1.02)*(r-1.02));
@@ -260,7 +282,7 @@ vec3 impact(vec2 p,float spacing,float seed){
     float t=clamp((r-0.10)/0.90,0.0,1.0);
     float slope=0.045*6.0*t*(1.0-t)/0.90
                -0.012*76.0*(r-1.02)*wall-0.005*22.0*(r-1.17)*shelf;
-    float detailWeight=1.0-smoothstep(radius*spacing*0.10,radius*spacing*0.45,length(fwidth(p)));
+    float detailWeight=1.0-smoothstep(radius*spacing*0.10,radius*spacing*0.45,footprint);
     vec2 gradient=transpose(basis)*(stretched*shape/max(length(stretched),0.001));
     return vec3(gradient*slope/radius,0.28*bowl-0.12*wall)*strength*detailWeight;
 }
@@ -275,8 +297,10 @@ struct Surface {
     float emission;
     float special;
 };
-Surface sampleSurface(vec3 world,vec3 face,float stone,vec4 color,int kind){
+Surface sampleSurface(vec3 world,vec3 tex,vec3 face,vec3 worldDx,vec3 worldDy,vec3 texDx,vec3 texDy,
+                      float stone,vec4 color,int kind){
     vec3 tint=pow(max(color.rgb,vec3(0.0)),vec3(2.2));
+    float footprint=max(length(worldDx),length(worldDy));
     int materialQuality=quality(OPT_material_detail);
     if(kind==7) return Surface(tint,vec3(0,1,0),1.0,0.0,1.0,0.0,1.0,0.0);
     if((kind==10 && !option(OPT_hair)) || (kind==5 && !option(OPT_cloth)) ||
@@ -284,68 +308,71 @@ Surface sampleSurface(vec3 world,vec3 face,float stone,vec4 color,int kind){
     if(kind==10){
         if(quality(OPT_hair)==1) return Surface(tint,face,0.47,0.0,1.0,0.0,0.0,0.0);
         if(quality(OPT_hair)==2) return Surface(tint,face,0.47,0.0,1.0,0.0,0.0,0.25);
-        float strand=world.x*522.0+world.z*638.0+0.8*sin(world.y*53.0);
-        float thread=0.5+0.5*cos(strand);
-        float visible=1.0-smoothstep(0.7,2.8,fwidth(strand));
-        return Surface(tint*(0.89+0.24*thread*visible),face,0.47,0.0,1.0,0.0,0.0,0.25);
+        float thread=filteredNoise(vec2(tex.x*126.0+tex.z*141.0,tex.y*15.0),footprint*180.0);
+        return Surface(tint*(0.89+0.22*thread),face,0.49,0.0,1.0,0.0,0.0,0.25);
     }
     if(kind==9){
         int detail=quality(OPT_decals);
-        float wear=detail>1?texture(surfaceMaps,vec3(world.xz*1.83,2.0)).r:0.0;
+        float wear=detail>1?filteredNoise(turnSurface(world.xz)*3.5+21.0,footprint*3.5):0.0;
         vec3 worn=mix(tint,vec3(0.16,0.149,0.131),0.53*(float(detail)/3.0)*smoothstep(0.54,0.85,wear));
         return Surface(worn,vec3(0,1,0),0.88,0.0,1.0,0.0,0.0,0.0);
     }
     vec3 n=face;
     vec3 albedo=tint;
     float roughness=0.65, metal=0.0, materialAO=1.0;
-    if(kind==2 && materialQuality==0){
-        vec4 streamed=groundDetail(world.xz);
-        vec2 slope=(streamed.ba-0.5)*0.28;
-        n=normalize(face+vec3(-slope.x,0.0,-slope.y));
-        albedo=vec3(0.18,0.166,0.151)*mix(1.0,0.60,stone)*(0.75+0.50*streamed.r);
-        roughness=streamed.g;
-    }else if(kind==2){
-        vec4 grain=texture(surfaceMaps,vec3(world.xz*0.32,2.0));
-        vec4 grit=materialQuality>=3?texture(surfaceMaps,vec3(mat2(0.8,0.6,-0.6,0.8)*world.xz*1.65,2.0)):vec4(0.5);
-        float strata=materialQuality>=2?texture(surfaceMaps,vec3(world.xz*0.009,2.0)).r:0.5;
-        float dust=materialQuality>=3?texture(surfaceMaps,vec3((world.xz+vec2(17.0,6.0))*0.039,2.0)).r:0.5;
+    if(kind==2){
+        vec3 field=regolithField(world.xz,footprint);
+        vec4 grain=materialQuality>0?tileField(world.xz*0.32,worldDx.xz*0.32,worldDy.xz*0.32,2.0):vec4(0.5);
+        float grit=materialQuality>=2?regolithGrain(world.xz,footprint):0.5;
         int relief=quality(OPT_terrain_relief);
-        vec3 dents=relief>0?impact(world.xz,25.0,14.17):vec3(0.0);
-        if(relief>=3) dents+=0.72*impact(world.xz+8.2,7.5,31.81);
+        vec3 dents=relief>0?impact(world.xz,31.0,14.17,footprint):vec3(0.0);
+        if(relief>=3){
+            vec3 small=impact(turnSurface(world.xz)+8.2,8.5,31.81,footprint);
+            dents+=0.62*vec3(0.83*small.x+0.56*small.y,-0.56*small.x+0.83*small.y,small.z);
+        }
         dents*=1.0-stone;
-        vec4 streamed=groundDetail(world.xz);
-        vec2 slope=dents.xy+(grain.ba-0.5)*0.30+(grit.ba-0.5)*0.16+(streamed.ba-0.5)*0.28;
+        vec4 streamed=groundDetail(world.xz,worldDx.xz,worldDy.xz);
+        vec2 slope=dents.xy+(grain.ba-0.5)*0.18+(streamed.ba-0.5)*0.13;
         n=normalize(face+vec3(-slope.x,0.0,-slope.y));
-        albedo=vec3(0.18,0.166,0.151)*(0.44+strata*0.81+dust*0.39)
-             *(0.60+grain.r*0.57+grit.r*0.27)*(1.0-dents.z*0.86);
-        albedo=mix(albedo,albedo*vec3(0.72,0.69,0.67)*(0.60+0.45*grain.r),stone);
-        albedo*=0.75+0.50*streamed.r;
-        roughness=streamed.g;
+        vec3 soil=mix(vec3(0.115,0.106,0.099),vec3(0.227,0.211,0.190),0.64*field.x+0.36*field.y);
+        albedo=soil*(0.66+0.22*field.z+0.20*grit+0.35*grain.r)*(1.0-dents.z*0.74);
+        albedo=mix(albedo,albedo*vec3(0.65,0.63,0.61)*(0.74+0.37*grain.r),stone);
+        albedo*=0.92+0.16*streamed.r;
+        roughness=clamp(0.82+0.12*field.y+(streamed.g-0.86)*0.22,0.80,0.96);
         materialAO=clamp(1.0-dents.z*0.68,0.65,1.0);
     }else if(materialQuality>0){
         if(kind==5) materialQuality=min(materialQuality,quality(OPT_cloth));
         float scale=kind==3?0.59:kind==5?3.2:kind==6?0.22:0.42;
-        vec3 p=world*scale;
-        vec3 weights=pow(abs(face),vec3(4.0));
+        vec3 p=tex*scale,dx=texDx*scale,dy=texDy*scale;
+        vec3 localFace=cross(texDx,texDy);
+        localFace=dot(localFace,localFace)>1e-18?normalize(localFace):face;
+        vec3 weights=pow(abs(localFace),vec3(4.0));
         weights/=max(0.0001,weights.x+weights.y+weights.z);
         float layer=kind==8?5.0:float(kind);
         vec4 map;
         if(materialQuality==1){
-            vec2 uv=weights.y>max(weights.x,weights.z)?p.xz:weights.x>weights.z?p.zy:p.xy;
-            map=texture(surfaceMaps,vec3(uv,layer));
+            if(weights.y>max(weights.x,weights.z)) map=tileField(p.xz,dx.xz,dy.xz,layer);
+            else if(weights.x>weights.z) map=tileField(p.zy,dx.zy,dy.zy,layer);
+            else map=tileField(p.xy,dx.xy,dy.xy,layer);
         }else{
-            vec4 tx=texture(surfaceMaps,vec3(p.zy,layer));
-            vec4 ty=texture(surfaceMaps,vec3(p.xz,layer));
-            vec4 tz=texture(surfaceMaps,vec3(p.xy,layer));
+            vec4 tx=weights.x>0.002?tileField(p.zy,dx.zy,dy.zy,layer):vec4(0.5);
+            vec4 ty=weights.y>0.002?tileField(p.xz,dx.xz,dy.xz,layer):vec4(0.5);
+            vec4 tz=weights.z>0.002?tileField(p.xy,dx.xy,dy.xy,layer):vec4(0.5);
             map=tx*weights.x+ty*weights.y+tz*weights.z;
             if(materialQuality>=3){
                 vec3 slope=vec3(0,tx.a-0.5,tx.b-0.5)*weights.x
                           +vec3(ty.b-0.5,0,ty.a-0.5)*weights.y
                           +vec3(tz.b-0.5,tz.a-0.5,0)*weights.z;
-                n=normalize(face-(slope-face*dot(slope,face))*(kind==8?0.022:kind==3?0.09:0.22));
+                vec3 cotangentX=cross(worldDy,face),cotangentY=cross(face,worldDx);
+                float area=dot(worldDx,cotangentX);
+                if(abs(area)>1e-10){
+                    vec3 gradient=(dot(slope,texDx)*cotangentX+dot(slope,texDy)*cotangentY)/area;
+                    n=normalize(face-gradient*(kind==8?0.012:kind==3?0.042:0.12));
+                }
             }
         }
-        albedo*=0.53+0.85*map.r;
+        float age=coatingField(tex.xz+tex.y*vec2(0.42,0.73),footprint,float(kind)*41.0);
+        albedo*=(0.73+0.48*map.r)*(0.87+0.24*age);
         roughness=clamp(map.g,0.18,0.97);
         if(kind==8){
             albedo=tint*(0.91+0.15*map.r);
@@ -353,8 +380,13 @@ Surface sampleSurface(vec3 world,vec3 face,float stone,vec4 color,int kind){
         }
     }
     metal=kind==1?0.61:kind==3?0.31:0.0;
+    if(kind==1 || kind==3 || kind==4){
+        // Keep microscopic highlights inside a resolvable screen footprint.
+        float minRoughness=kind==4?0.24:0.34;
+        roughness=max(roughness,minRoughness+0.10*smoothstep(0.025,0.22,footprint));
+    }
     if(quality(OPT_decals)>1 && (kind==0 || kind==6)){
-        float dust=texture(surfaceMaps,vec3(world.xz*0.086,2.0)).r;
+        float dust=regolithField(world.xz,footprint).y;
         float deposit=(1.0-smoothstep(0.15,1.15,world.y))*smoothstep(0.42,0.75,dust)
                      *(quality(OPT_decals)==2?0.55:1.0);
         albedo=mix(albedo,vec3(0.19,0.173,0.155),0.30*deposit);
@@ -371,7 +403,7 @@ Surface getSurface(){
     bool authored=dot(worldNormal,worldNormal)>0.01;
     vec3 n=authored?normalize(worldNormal):normalize(cross(dFdx(world),dFdy(world)));
     if(!authored && dot(n,eye-world)<0.0) n=-n;
-    return sampleSurface(world,n,stone,color,kind);
+    return sampleSurface(world,coordinate,n,dFdx(world),dFdy(world),dFdx(coordinate),dFdy(coordinate),stone,color,kind);
 }
 )GLSL";
 
@@ -381,34 +413,32 @@ vec3 environment(vec3 d){
     return mix(vec3(0.085,0.071,0.061),vec3(0.018,0.025,0.047),smoothstep(-0.45,0.55,d.y))
         *(0.4+0.6*daylight);
 }
-float filteredShadow(vec3 uv,int layer){
-    vec2 texel=1.0/vec2(textureSize(shadowMap,0).xy);
-    float lit=0.0;
+float filteredShadow(sampler2DArrayShadow map,vec3 uv,int layer,float filterRadius,float bias){
+    vec2 texel=filterRadius/vec2(textureSize(map,0).xy);
+    float lit=0.0,total=0.0;
     for(int y=-1;y<=1;++y) for(int x=-1;x<=1;++x){
         if(shadowQuality<3 && abs(x)+abs(y)>=shadowQuality) continue;
-        lit+=texture(shadowMap,vec4(uv.xy+vec2(x,y)*texel,float(layer),uv.z-0.00013));
+        float weight=float((2-abs(x))*(2-abs(y)));
+        lit+=weight*texture(map,vec4(uv.xy+vec2(x,y)*texel,float(layer),uv.z-bias));
+        total+=weight;
     }
-    return lit/float(shadowQuality==1?1:shadowQuality==2?5:9);
+    return lit/max(total,1.0);
 }
 
 vec2 pageVisibility(vec3 n,vec3 p){
-    if(!useShadowPages) return vec2(1,0);
+    if(!useShadowPages || shadowPageBlend<0.001) return vec2(1,0);
     p+=n*0.057;
     vec2 cell=vec2(dot(p,shadowX),dot(p,shadowY))/19.0;
     ivec2 tile=ivec2(floor(cell)-shadowOrigin);
     if(any(lessThan(tile,ivec2(0))) || any(greaterThanEqual(tile,ivec2(5)))) return vec2(1,0);
-    int layer=int(texelFetch(shadowTable,tile,0).r*255.0+0.5)-1;
+    vec2 entry=texelFetch(shadowTable,tile,0).rg;
+    int layer=int(entry.r*255.0+0.5)-1;
     if(layer<0) return vec2(1,0);
     vec2 uv=fract(cell);
-    float z=(2047.0-dot(p,shadowSun))/4095.0-0.000025;
-    vec2 delta=1.0/vec2(textureSize(shadowPageMap,0).xy);
-    float lit=0.0;
-    for(int y=-1;y<=1;++y) for(int x=-1;x<=1;++x){
-        if(shadowQuality<3 && abs(x)+abs(y)>=shadowQuality) continue;
-        lit+=texture(shadowPageMap,vec4(uv+vec2(x,y)*delta,float(layer),z));
-    }
+    float z=(2047.0-dot(p,shadowSun))/4095.0;
     float edge=min(min(uv.x,uv.y),min(1.0-uv.x,1.0-uv.y));
-    return vec2(lit/float(shadowQuality==1?1:shadowQuality==2?5:9),smoothstep(0.008,0.049,edge));
+    float weight=shadowPageBlend*entry.g*smoothstep(0.012,0.085,edge);
+    return vec2(filteredShadow(shadowPageMap,vec3(uv,z),layer,1.85,0.000025),weight);
 }
 float visibility(vec3 n,vec3 p){
     if(!useShadowMaps || daylight<0.001) return 1.0;
@@ -422,7 +452,7 @@ float visibility(vec3 n,vec3 p){
         float edge=max(abs(uv.x-0.5),abs(uv.y-0.5));
         if(edge>=0.493 || uv.z<0.0 || uv.z>1.0) continue;
         float blend=1.0-smoothstep(0.417,0.493,edge);
-        value+=weight*blend*filteredShadow(uv,layer);
+        value+=weight*blend*filteredShadow(shadowMap,uv,layer,1.55,0.00013);
         weight*=1.0-blend;
         if(weight<0.001) return value;
     }
@@ -444,9 +474,9 @@ vec3 brdf(vec3 albedo,float roughness,float metal,vec3 n,vec3 v,vec3 l,vec3 radi
     return (diffuse+distribution*g*fresnel/max(4.0*nv*nl,0.001))*radiance*nl;
 }
 
-vec3 shade(vec3 p,vec3 n,vec3 albedo,float rough,float metal,float ao,float glass,float special,float rayShadow,bool fixtureList){
+vec3 shade(vec3 p,vec3 n,vec3 albedo,float rough,float metal,float ao,float glass,float special,float rayShadow,float fixtureWeight){
     vec3 view=normalize(eye-p);
-    float shadow=min(visibility(n,p),rayShadow);
+    float shadow=min(visibility(n,p),mix(1.0,rayShadow,0.67));
     vec3 direct=brdf(albedo,rough,metal,n,view,sun,sunColor()*daylight*5.9)*shadow;
     vec3 bounce=mix(vec3(0.075,0.064,0.052),vec3(0.12,0.15,0.21),n.y*0.5+0.5);
     vec3 earthlight=vec3(0.10,0.15,0.24)*(1.0-daylight)*(0.42+0.58*max(n.y,0.0));
@@ -469,7 +499,7 @@ vec3 shade(vec3 p,vec3 n,vec3 albedo,float rough,float metal,float ao,float glas
         float back=pow(clamp(0.32+0.68*dot(n,sun),0.0,1.0),2.0);
         diffuse+=albedo*vec3(0.22,0.095,0.056)*back*daylight*shadow;
     }
-    for(int i=0;i<(fixtureList?lightCount:0);++i){
+    for(int i=0;i<(fixtureWeight>0.001?lightCount:0);++i){
         vec3 delta=localPositionRadius[i].xyz-p;
         float distance2=dot(delta,delta);
         float radius=localPositionRadius[i].w;
@@ -477,7 +507,7 @@ vec3 shade(vec3 p,vec3 n,vec3 albedo,float rough,float metal,float ao,float glas
         vec3 l=delta*inversesqrt(max(distance2,0.0001));
         float falloff=1.0-distance2/(radius*radius);
         vec3 intensity=localColorPower[i].rgb*localColorPower[i].w*(falloff*falloff/max(0.7,distance2));
-        direct+=brdf(albedo,rough,metal,n,view,l,intensity);
+        direct+=brdf(albedo,rough,metal,n,view,l,intensity)*fixtureWeight;
     }
     return diffuse+direct+reflected;
 }
@@ -504,6 +534,7 @@ inline constexpr const char* gbuffer_fragment=R"GLSL(void main(){
 
 inline constexpr const char* deferred_fragment=R"GLSL(
 uniform bool useRays;
+uniform float rayBlend;
 uniform sampler2D rayIndirect;
 uniform sampler2D rayDirect;
 vec4 screenIndirect(vec3 p,vec3 n,bool contactAO,bool diffuseGI){
@@ -549,17 +580,18 @@ void main(){
     vec3 p=reconstruct(uv,depth,inverseViewProjection);
     bool trace=option(OPT_ray_tracing);
     bool rayGI=trace && option(OPT_ray_indirect);
-    bool screenGI=!rayGI && option(OPT_screen_indirect);
+    bool screenGI=(!rayGI || rayBlend<0.999) && option(OPT_screen_indirect);
     bool screenAO=option(OPT_screen_occlusion);
     vec4 screenBounce=(screenGI || screenAO)?screenIndirect(p,n,screenAO,screenGI):vec4(0,0,0,1);
     float ao=base.a*screenBounce.a;
     vec4 indirect=useRays?texture(rayIndirect,uv):vec4(0,0,0,1);
-    if(!rayGI) indirect.rgb=screenBounce.rgb;
+    indirect.rgb=rayGI?mix(screenBounce.rgb,indirect.rgb,rayBlend):screenBounce.rgb;
     vec4 direct=useRays?texture(rayDirect,uv):vec4(0,0,0,1);
     bool computeFixtures=option(OPT_reservoir_lights) || (trace && option(OPT_ray_shadows));
-    vec3 lit=shade(p,n,base.rgb,nr.w,properties.r,ao*indirect.a,properties.b,properties.a,
-        direct.a,!computeFixtures);
-    lit+=direct.rgb+base.rgb*indirect.rgb*(1.0-properties.r)*ao*0.47;
+    float fixtureMix=computeFixtures?rayBlend:0.0;
+    vec3 lit=shade(p,n,base.rgb,nr.w,properties.r,ao*mix(1.0,indirect.a,rayBlend),properties.b,properties.a,
+        mix(1.0,direct.a,rayBlend),1.0-fixtureMix);
+    lit+=direct.rgb*fixtureMix+base.rgb*indirect.rgb*(1.0-properties.r)*ao*0.47;
     pixel=vec4(lit,1.0);
 }
 )GLSL";
@@ -571,7 +603,7 @@ layout(location=1) out float opticalDepth;
 inline constexpr const char* transparency_fragment=R"GLSL(uniform bool weightedTransparency;
 void main(){
     Surface m=getSurface();
-    vec3 lit=m.emission>0.0?m.albedo*5.0:shade(world,m.n,m.albedo,m.rough,m.metal,m.ao,m.glass,m.special,1.0,true);
+    vec3 lit=m.emission>0.0?m.albedo*5.0:shade(world,m.n,m.albedo,m.rough,m.metal,m.ao,m.glass,m.special,1.0,1.0);
     float a=clamp(color.a,0.0,0.995);
     if(!weightedTransparency){
         accum=vec4(lit,a);

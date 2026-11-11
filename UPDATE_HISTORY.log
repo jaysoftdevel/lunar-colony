@@ -872,3 +872,13 @@ v0.50.13 - Stage 1 usability and direct item activation
 
 0.52.19 - Build summary
 - Report wall-clock build times per configuration, overall time including configuration, and the staged binary package size on Linux and Windows.
+
+0.52.20 - Surface materials and stable lighting
+- Generate independently seeded material variants and blend neighboring tiles. Give regolith continuous mineral, dust, grain and impact detail.
+- Keep the lander and trader materials attached to the meshes and replace repeating campus textures with filtered surface fields.
+- Stabilize cascaded shadows, fade in cached detail and crossfade local lights as the active list changes.
+
+0.52.21 - Rover steering and build catalog icons
+- Integrate rolling curves with a lateral grip limit, brake along the measured heading, and steer and roll the rendered wheels from certified motion.
+- Restart navigation from the current pose after five failed attempts. Preserve the active job, cargo, and reservations.
+- Redraw the build catalog icons and label each tool with a short caption.

@@ -9,7 +9,7 @@ PageCache::PageCache(int layers):slots_(static_cast<std::size_t>(layers)){}
 
 void PageCache::clear(){ std::fill(slots_.begin(),slots_.end(),Slot{}); }
 
-PagePlan PageCache::plan(PageCoord origin,const PageRevisions& revisions,int upload_limit){
+PagePlan PageCache::plan(PageCoord origin,const PageRevisions& revisions,int upload_limit,int fade_step){
     std::array<int,page_cells> indices{};
     std::iota(indices.begin(),indices.end(),0);
     const auto cost=[](int i){
@@ -38,10 +38,12 @@ PagePlan PageCache::plan(PageCoord origin,const PageRevisions& revisions,int upl
                 slot=std::find_if(slots_.begin(),slots_.end(),[&](const Slot& s){ return !s.revision || !needed(s.coordinate); });
             }
             if(slot==slots_.end()) continue;
-            *slot={*coord,revision};
+            *slot={*coord,revision,0};
             out.uploads.push_back({*coord,static_cast<int>(slot-slots_.begin())});
         }
+        slot->opacity=std::min(255,slot->opacity+fade_step);
         out.table[index*4]=static_cast<std::uint8_t>(slot-slots_.begin()+1);
+        out.table[index*4+1]=static_cast<std::uint8_t>(slot->opacity);
     }
     return out;
 }

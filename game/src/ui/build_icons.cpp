@@ -1,330 +1,204 @@
 #include "game/game_app.hpp"
-#include "game/ui/layout.hpp"
-#include "game/util/world_math.hpp"
-#include "game/world/world_labels.hpp"
-#include "game/version.hpp"
-#include <algorithm>
+#include "engine/ui_metrics.hpp"
 #include <cmath>
-#include <iomanip>
-#include <limits>
-#include <sstream>
+#include <initializer_list>
 
 namespace game {
-using namespace eng;
-using namespace layout;
-using namespace world_math;
-using namespace world_labels;
+using eng::Color;
+using eng::Rect;
+using eng::Renderer;
+using eng::Vec2;
 
-void GameApp::render_build_icon(Renderer& renderer,BuildIcon icon,Rect q,Color c) const {
-    const eng::ui::IconCanvas r(renderer,q,{50,50});
-    const float x=0,y=0,w=50,h=50;
-    const float cx=x+w*0.5f;
-    const float cy=y+h*0.5f;
+void GameApp::render_build_icon(Renderer& renderer,BuildIcon icon,Rect bounds,Color ink) const {
+    const eng::ui::IconCanvas canvas(renderer,bounds,{24,24});
+    const Color fill{ink.r,ink.g,ink.b,ink.a*.15f};
+    const auto stroke=[&](std::initializer_list<Vec2> points,float width=1.65f){
+        auto point=points.begin();
+        for(auto next=point+1;next<points.end();++point,++next)
+            canvas.draw_line(*point,*next,ink,width);
+    };
+    const auto box=[&](Rect q){
+        canvas.draw_rect(q,fill);
+        const float right=q.x+q.w,bottom=q.y+q.h;
+        stroke({{q.x,q.y},{right,q.y},{right,bottom},{q.x,bottom},{q.x,q.y}});
+    };
+    const auto oval=[&](float x,float y,float rx,float ry,float width=1.55f){
+        constexpr float tau=6.28318530718f;
+        Vec2 last{x+rx,y};
+        for(int i=1;i<=16;++i){
+            const float angle=tau*i/16.f;
+            const Vec2 next{x+rx*std::cos(angle),y+ry*std::sin(angle)};
+            canvas.draw_line(last,next,ink,width);
+            last=next;
+        }
+    };
+    const auto roof=[&]{
+        stroke({{2,20},{2,11},{5,7},{12,3},{19,7},{22,11},{22,20},{2,20}});
+    };
+    const auto drop=[&](float x,float y,float s=1.0f){
+        stroke({{x,y-4*s},{x-3*s,y},{x-3*s,y+2*s},{x-1.5f*s,y+3.5f*s},
+                {x+1.5f*s,y+3.5f*s},{x+3*s,y+2*s},{x+3*s,y},{x,y-4*s}});
+    };
+    const auto tank=[&]{
+        stroke({{5,7},{6,4},{9,3},{15,3},{18,4},{19,7},{19,18},
+                {17,21},{7,21},{5,18},{5,7}});
+        stroke({{10,3},{10,1.5f},{14,1.5f},{14,3}});
+    };
+    const auto gas=[&](bool hydrogen,float x,float y){
+        if(hydrogen){
+            stroke({{x-2,y-3},{x-2,y+3}},1.4f);
+            stroke({{x+2,y-3},{x+2,y+3}},1.4f);
+            stroke({{x-2,y},{x+2,y}},1.4f);
+        }else oval(x,y,2.25f,3.f,1.4f);
+        stroke({{x+4,y+1},{x+5,y},{x+7,y},{x+7,y+1.3f},{x+4,y+4},{x+7.5f,y+4}},1.25f);
+    };
+    const auto bolt=[&](float x,float y){
+        stroke({{x+1.5f,y-5},{x-2.5f,y+.5f},{x+.5f,y+.5f},{x-1.0f,y+5},{x+3.5f,y-1},{x+.5f,y-1}});
+    };
+    const auto drill=[&]{
+        stroke({{3,19},{3,5},{15,5},{15,9}});
+        box({6,3,7,5});
+        stroke({{9.5f,8},{9.5f,19},{7.5f,16},{11.5f,14},{7.5f,12},{11.5f,10}});
+        stroke({{1.5f,21},{14,21}},1.8f);
+    };
     switch(icon){
         case BuildIcon::CategoryHabitats:
-            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);
-            r.draw_line({x+7,y+h-9},{x+12,y+17},c,2.0f);
-            r.draw_line({x+12,y+17},{cx,y+7},c,2.0f);
-            r.draw_line({cx,y+7},{x+w-12,y+17},c,2.0f);
-            r.draw_line({x+w-12,y+17},{x+w-7,y+h-9},c,2.0f);
-            r.draw_rect({cx-4,cy+5,8,10},{c.r,c.g,c.b,0.16f});
+            roof(); box({9,13,6,7}); stroke({{6,10},{9,10}},1.4f); stroke({{15,10},{18,10}},1.4f);
             break;
         case BuildIcon::CategoryResources:
-            r.draw_line({cx,y+5},{cx,y+h-5},c,2.2f);
-            r.draw_line({x+6,cy},{x+w-6,cy},c,2.2f);
-            r.draw_rect({cx-7,cy-7,14,14},{c.r,c.g,c.b,0.10f});
-            r.draw_line({x+9,y+10},{x+w-9,y+h-10},c,1.6f);
-            r.draw_line({x+w-9,y+10},{x+9,y+h-10},c,1.6f);
+            bolt(5.3f,12);
+            stroke({{11,8},{16.5f,5},{22,8},{22,16},{16.5f,19},{11,16},{11,8},{16.5f,11},{22,8}});
+            stroke({{16.5f,11},{16.5f,19}});
             break;
         case BuildIcon::CategoryFacilities:
-            r.draw_rect({cx-12,cy-10,24,20},{c.r,c.g,c.b,0.08f});
-            r.draw_line({cx-12,cy+10},{cx+12,cy+10},c,2.0f);
-            r.draw_line({cx-12,cy-10},{cx+12,cy-10},c,2.0f);
-            r.draw_line({cx-12,cy-10},{cx-12,cy+10},c,2.0f);
-            r.draw_line({cx+12,cy-10},{cx+12,cy+10},c,2.0f);
-            r.draw_line({cx-5,cy-15},{cx-5,cy-10},c,2.0f);
-            r.draw_line({cx+5,cy-15},{cx+5,cy-10},c,2.0f);
-            r.draw_line({cx-7,cy},{cx+7,cy},c,1.8f);
-            r.draw_line({cx,cy-7},{cx,cy+7},c,1.8f);
+        case BuildIcon::Factory:
+            stroke({{3,21},{3,12},{9,8},{9,12},{15,8},{15,12},{18,12},{18,3},
+                    {21,3},{21,21},{3,21}});
+            stroke({{6,17},{8,17}}); stroke({{11,17},{13,17}}); stroke({{16,17},{18,17}});
             break;
         case BuildIcon::AirLock:
-            r.draw_rect({x+8,y+12,w-16,h-20},{c.r,c.g,c.b,0.10f});
-            r.draw_line({x+8,y+12},{x+w-8,y+12},c,2.0f);
-            r.draw_line({x+8,y+h-8},{x+w-8,y+h-8},c,2.0f);
-            r.draw_line({x+8,y+12},{x+8,y+h-8},c,2.0f);
-            r.draw_line({x+w-8,y+12},{x+w-8,y+h-8},c,2.0f);
-            r.draw_rect({cx-7,cy-7,14,14},{c.r,c.g,c.b,0.16f});
-            r.draw_line({cx-8,cy},{cx+8,cy},c,2.0f);
-            r.draw_line({cx,cy-8},{cx,cy+8},c,2.0f);
+            box({3,3,18,18}); box({8,7,8,14});
+            stroke({{12,7},{12,21}}); stroke({{5.5f,11},{5.5f,13}},2.2f);
+            stroke({{18.5f,11},{18.5f,13}},2.2f);
             break;
         case BuildIcon::OxygenDome:
-            r.draw_line({x+5,y+h-9},{x+w-5,y+h-9},c,2.0f);
-            r.draw_line({x+7,y+h-10},{x+11,y+17},c,2.0f);
-            r.draw_line({x+11,y+17},{cx,y+6},c,2.0f);
-            r.draw_line({cx,y+6},{x+w-11,y+17},c,2.0f);
-            r.draw_line({x+w-11,y+17},{x+w-7,y+h-10},c,2.0f);
-            r.draw_rect({x+5,y+h-22,8,12},{c.r,c.g,c.b,0.18f});
-            r.draw_rect({x+15,y+h-25,6,15},{c.r,c.g,c.b,0.18f});
-            r.draw_line({cx,y+6},{cx,y+h-9},c,1.0f);
+            oval(11.5f,12,9,9);
+            gas(false,9.4f,11.5f);
+            stroke({{18.5f,5.5f},{21.5f,5.5f},{21.5f,2.5f}},1.4f);
             break;
         case BuildIcon::CantineDome:
-            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);
-            r.draw_line({x+6,y+h-9},{x+12,y+16},c,2.0f);
-            r.draw_line({x+12,y+16},{cx,y+5},c,2.0f);
-            r.draw_line({cx,y+5},{x+w-12,y+16},c,2.0f);
-            r.draw_line({x+w-12,y+16},{x+w-6,y+h-9},c,2.0f);
-            r.draw_line({x+13,y+18},{x+w-13,y+18},c,1.0f);
-            r.draw_line({x+9,y+27},{x+w-9,y+27},c,1.0f);
-            r.draw_line({cx-9,cy+7},{cx+9,cy+7},c,2.0f);
+            stroke({{5,3},{5,8},{7.5f,10},{10,8},{10,3}});
+            stroke({{7.5f,3},{7.5f,21}});
+            oval(17,7,3,4.5f); stroke({{17,11.5f},{17,21}},1.8f);
             break;
         case BuildIcon::BioDome:
-            r.draw_line({x+4,y+h-8},{x+w-4,y+h-8},c,2.0f);
-            r.draw_line({x+6,y+h-9},{x+10,y+15},c,2.0f);
-            r.draw_line({x+10,y+15},{cx,y+6},c,2.0f);
-            r.draw_line({cx,y+6},{x+w-10,y+15},c,2.0f);
-            r.draw_line({x+w-10,y+15},{x+w-6,y+h-9},c,2.0f);
-            for(int i=0;i<3;++i){
-                const float px=x+14.0f+i*10.0f;
-                r.draw_line({px,y+h-9},{px,y+20},c,1.5f);
-                r.draw_line({px,y+26},{px-5,y+22},c,1.5f);
-                r.draw_line({px,y+30},{px+5,y+26},c,1.5f);
-            }
+            stroke({{12,21},{12,12},{14,8},{20,4}});
+            stroke({{12,15},{7,15},{3,11},{3,6},{8,7},{12,11}});
+            stroke({{12,13},{17,13},{21,9},{21,3},{16,4},{12,8}});
+            stroke({{7,21},{17,21}});
             break;
         case BuildIcon::CrewQuarters:
-            r.draw_rect({x+5,y+14,w-10,h-23},{c.r,c.g,c.b,0.10f});
-            r.draw_line({x+5,y+14},{x+w-5,y+14},c,2.0f);
-            r.draw_line({x+5,y+h-9},{x+w-5,y+h-9},c,2.0f);
-            r.draw_line({x+5,y+14},{x+5,y+h-9},c,2.0f);
-            r.draw_line({x+w-5,y+14},{x+w-5,y+h-9},c,2.0f);
-            for(int i=0;i<3;++i){
-                const float px=x+12.0f+i*11.0f;
-                r.draw_rect({px,cy-4,7,7},{c.r,c.g,c.b,0.20f});
-            }
-            r.draw_line({x+13,y+12},{x+13,y+h-7},c,1.0f);
-            r.draw_line({x+w-13,y+12},{x+w-13,y+h-7},c,1.0f);
+            stroke({{3,6},{3,20},{3,17},{21,17},{21,20}});
+            box({3,11,18,6}); box({4,8,6,3});
+            stroke({{10,11},{10,17}});
             break;
         case BuildIcon::ProcessingFacility:
-            r.draw_rect({x+5,y+16,w-10,h-24},{c.r,c.g,c.b,0.08f});
-            for(int i=0;i<3;++i){
-                const float px=x+8.0f+i*10.0f;
-                r.draw_rect({px,y+20,7,13},{c.r,c.g,c.b,0.13f});
-                r.draw_line({px+3.5f,y+20},{px+3.5f,y+10},c,1.4f);
-            }
-            r.draw_line({x+7,y+h-9},{x+w-7,y+h-9},c,2.0f);
-            r.draw_line({x+9,y+h-13},{x+w-9,y+18},c,1.4f);
-            break;
-        case BuildIcon::Factory:
-            r.draw_rect({x+5,y+13,w-10,h-21},{c.r,c.g,c.b,0.08f});
-            r.draw_rect({x+9,y+18,w-18,h-29},{c.r,c.g,c.b,0.04f});
-            for(int i=0;i<2;++i){
-                const float px=x+15.0f+i*14.0f;
-                r.draw_line({px,y+h-12},{px,cy},c,1.8f);
-                r.draw_line({px,cy},{px+6,y+20},c,1.8f);
-                r.draw_line({px+6,y+20},{px+9,y+26},c,1.6f);
-            }
-            r.draw_line({x+5,y+13},{x+w-5,y+13},c,2.0f);
+            box({3,7,18,14}); stroke({{6,7},{8,3},{16,3},{18,7}});
+            stroke({{7,17},{9,12},{15,12},{17,17},{7,17}});
+            stroke({{10,15},{14,15}},1.35f);
             break;
         case BuildIcon::Manufactory:
-            r.draw_rect({x+4,y+12,w-8,h-20},{c.r,c.g,c.b,0.08f});
-            r.draw_line({x+7,y+15},{x+7,y+h-8},c,2.0f);
-            r.draw_line({x+w-7,y+15},{x+w-7,y+h-8},c,2.0f);
-            r.draw_line({x+7,y+15},{x+w-7,y+15},c,2.0f);
-            r.draw_line({x+10,y+8},{x+w-12,y+8},c,1.6f);
-            r.draw_line({x+w-12,y+8},{x+w-5,y+18},c,1.6f);
-            r.draw_rect({cx-5,cy-2,10,8},{c.r,c.g,c.b,0.16f});
+            stroke({{4,21},{20,21},{20,18},{4,18},{4,21}});
+            stroke({{7,18},{7,11},{13,5},{19,10}},2.25f);
+            oval(7,11,1.3f,1.3f); oval(13,5,1.5f,1.5f);
+            stroke({{17,11},{18,14},{21,14},{22,11}});
             break;
         case BuildIcon::SickBay:
-            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);
-            r.draw_line({x+7,y+h-9},{x+12,y+17},c,2.0f);
-            r.draw_line({x+12,y+17},{cx,y+8},c,2.0f);
-            r.draw_line({cx,y+8},{x+w-12,y+17},c,2.0f);
-            r.draw_line({x+w-12,y+17},{x+w-7,y+h-9},c,2.0f);
-            r.draw_line({cx,cy-7},{cx,cy+9},c,2.6f);
-            r.draw_line({cx-8,cy+1},{cx+8,cy+1},c,2.6f);
+            box({3,6,18,15}); stroke({{8,6},{8,3},{16,3},{16,6}});
+            canvas.draw_rect({10.8f,9,2.4f,9},ink);
+            canvas.draw_rect({7.5f,12.3f,9,2.4f},ink);
             break;
         case BuildIcon::Laboratory:
-            r.draw_rect({x+5,y+15,w-10,h-23},{c.r,c.g,c.b,0.07f});
-            r.draw_line({x+9,y+20},{x+w-9,y+20},c,1.5f);
-            r.draw_line({x+9,y+28},{x+w-9,y+28},c,1.5f);
-            r.draw_line({cx,y+8},{cx,y+15},c,2.0f);
-            r.draw_line({cx+8,y+6},{cx+8,y+16},c,1.5f);
-            r.draw_line({cx+13,y+11},{x+w-4,y+7},c,1.5f);
+            stroke({{8,3},{16,3}});
+            stroke({{10,3},{10,9},{4.5f,18},{5,21},{19,21},{19.5f,18},{14,9},{14,3}});
+            stroke({{7,15},{17,15}},1.45f); oval(13,17.5f,1.1f,1.1f,1.1f);
             break;
         case BuildIcon::Corridor:
-            r.draw_line({x+6,cy+8},{x+14,cy+8},c,2.0f);
-            r.draw_line({x+14,cy+8},{x+20,cy-5},c,2.0f);
-            r.draw_line({x+20,cy-5},{x+w-7,cy-5},c,2.0f);
-            r.draw_line({x+6,cy+14},{x+14,cy+14},c,2.0f);
-            r.draw_line({x+14,cy+14},{x+22,cy+1},c,2.0f);
-            r.draw_line({x+22,cy+1},{x+w-7,cy+1},c,2.0f);
-            r.draw_line({x+6,cy+8},{x+6,cy+14},c,2.0f);
-            r.draw_line({x+w-7,cy-5},{x+w-7,cy+1},c,2.0f);
+            stroke({{3,19},{3,10},{5,7},{9,7},{11,10},{11,19},{3,19}});
+            stroke({{5,7},{15,4},{19,4},{21,7},{21,16},{11,19}});
+            stroke({{9,7},{19,4}}); stroke({{11,10},{21,7}});
             break;
         case BuildIcon::SolarPanel:
-            r.draw_line({x+5,y+12},{x+w-5,y+19},c,2.0f);
-            r.draw_line({x+5,y+22},{x+w-5,y+29},c,2.0f);
-            r.draw_line({x+5,y+12},{x+5,y+22},c,1.5f);
-            r.draw_line({x+w-5,y+19},{x+w-5,y+29},c,1.5f);
-            r.draw_line({cx,cy+3},{cx,y+h-7},c,2.0f);
-            r.draw_line({cx,cy+7},{x+10,y+h-7},c,1.5f);
-            r.draw_line({cx,cy+7},{x+w-10,y+h-7},c,1.5f);
+            stroke({{3,9},{16,9},{20,17},{2,17},{3,9}});
+            stroke({{9,9},{9,17}},1.3f); stroke({{14,9},{15.5f,17}},1.3f);
+            stroke({{2.5f,13},{18,13}},1.3f);
+            stroke({{11,17},{11,21},{7,21},{16,21}});
+            oval(19,5,2.1f,2.1f,1.25f);
+            stroke({{19,1},{19,2}},1.1f); stroke({{22,5},{23,5}},1.1f);
             break;
         case BuildIcon::WaterDriller:
-            r.draw_line({cx-8,y+6},{cx-8,y+h-8},c,2.0f);
-            r.draw_line({cx+8,y+6},{cx+8,y+h-8},c,2.0f);
-            r.draw_line({cx-8,y+6},{cx+8,y+6},c,2.0f);
-            r.draw_line({cx, y+10},{cx,y+h-8},c,2.0f);
-            for(int i=0;i<4;++i){
-                const float yy=y+20.0f+i*5.0f;
-                r.draw_line({cx-5,yy},{cx+5,yy+3},c,1.2f);
-            }
-            r.draw_line({x+7,y+h-8},{x+w-7,y+h-8},c,2.0f);
+            drill(); drop(19,15);
             break;
         case BuildIcon::PowerStorage:
-            for(int i=0;i<3;++i){
-                const float px=x+6.0f+i*11.0f;
-                r.draw_rect({px,y+10,8,h-19},{c.r,c.g,c.b,0.10f});
-                r.draw_line({px,y+10},{px+8,y+10},c,1.5f);
-                r.draw_line({px,y+h-9},{px+8,y+h-9},c,1.5f);
-                r.draw_line({px,y+10},{px,y+h-9},c,1.5f);
-                r.draw_line({px+8,y+10},{px+8,y+h-9},c,1.5f);
-            }
-            r.draw_line({x+4,y+h-6},{x+w-4,y+h-6},c,2.0f);
+            box({3,6,16,12});
+            canvas.draw_rect({19,9,2.5f,6},ink);
+            bolt(10.5f,12);
             break;
         case BuildIcon::WaterStorage:
-            for(int i=0;i<2;++i){
-                const float px=x+12.0f+i*15.0f;
-                r.draw_line({px-5,y+15},{px-5,y+h-9},c,1.5f);
-                r.draw_line({px+5,y+15},{px+5,y+h-9},c,1.5f);
-                r.draw_line({px-5,y+15},{px,y+9},c,1.5f);
-                r.draw_line({px,y+9},{px+5,y+15},c,1.5f);
-                r.draw_line({px-5,y+h-9},{px+5,y+h-9},c,1.5f);
-            }
-            r.draw_line({x+5,y+h-6},{x+w-5,y+h-6},c,2.0f);
-            break;
-        case BuildIcon::ConveyorBelt:
-            r.draw_rect({x+12,y+5,12,10},{c.r,c.g,c.b,.45f});
-            r.draw_line({x+3,y+16},{x+w-3,y+16},c,2);
-            r.draw_line({x+3,y+26},{x+w-3,y+26},c,2);
-            for(int i=0;i<5;++i)
-                r.draw_line({x+4+i*7.0f,y+16},{x+4+i*7.0f,y+26},c,1.4f);
+            tank(); drop(12,11.5f);
+            stroke({{7,17},{17,17}},1.4f);
             break;
         case BuildIcon::OreDriller:
-            r.draw_line({cx-9,y+5},{cx-9,y+h-8},c,2.0f);
-            r.draw_line({cx+4,y+5},{cx+4,y+h-8},c,2.0f);
-            r.draw_line({cx-9,y+5},{cx+4,y+5},c,2.0f);
-            r.draw_line({cx-2,y+10},{cx-2,y+h-7},c,2.2f);
-            for(int i=0;i<5;++i){
-                const float yy=y+18.0f+i*5.0f;
-                r.draw_line({cx-7,yy},{cx+3,yy+3},c,1.2f);
-            }
-            r.draw_rect({x+w-13,y+22,9,12},{c.r,c.g,c.b,0.12f});
-            r.draw_line({x+5,y+h-7},{x+w-5,y+h-7},c,2.0f);
+            drill(); stroke({{19,12},{22.5f,15},{20,20},{16,20},{15.5f,16},{19,12}});
+            stroke({{19,12},{19,17},{16,20}},1.2f);
             break;
         case BuildIcon::WaterPurifier:
-            for(int i=0;i<3;++i){
-                const float px=x+9.0f+i*10.0f;
-                r.draw_line({px-3,y+15},{px-3,y+h-10},c,1.5f);
-                r.draw_line({px+3,y+15},{px+3,y+h-10},c,1.5f);
-                r.draw_line({px-3,y+15},{px,y+10},c,1.5f);
-                r.draw_line({px,y+10},{px+3,y+15},c,1.5f);
-            }
-            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);
-            r.draw_line({x+7,cy+4},{x+w-7,cy+4},c,1.6f);
+            drop(5,7,.8f); stroke({{10,6},{21,6},{17,12},{17,19},{14,21},{14,12},{10,6}});
+            stroke({{12,9},{19,9}},1.4f);
             break;
         case BuildIcon::Antenna:
-            r.draw_line({cx,y+h-7},{cx,y+11},c,2.2f);
-            r.draw_line({cx,y+16},{cx+10,y+8},c,1.8f);
-            r.draw_line({cx+10,y+8},{cx+16,y+14},c,1.8f);
-            r.draw_line({cx+16,y+14},{cx+9,y+20},c,1.8f);
-            r.draw_line({cx+9,y+20},{cx,y+16},c,1.8f);
-            r.draw_line({cx-8,y+h-7},{cx,y+h-16},c,1.8f);
-            r.draw_line({cx+8,y+h-7},{cx,y+h-16},c,1.8f);
+            stroke({{3,7},{4,12},{8,16},{13,17},{19,15},{3,7}});
+            stroke({{11,12},{17,6}}); oval(17,6,1.25f,1.25f);
+            stroke({{11,17},{10,21},{6,21},{16,21}});
+            stroke({{18.5f,2},{21,3.5f},{22.5f,6}},1.4f);
             break;
         case BuildIcon::LandingPad:
-            r.draw_rect({x+5,y+10,w-10,h-18},{c.r,c.g,c.b,0.06f});
-            r.draw_line({x+5,y+10},{x+w-5,y+10},c,1.8f);
-            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,1.8f);
-            r.draw_line({x+5,y+10},{x+5,y+h-8},c,1.8f);
-            r.draw_line({x+w-5,y+10},{x+w-5,y+h-8},c,1.8f);
-            r.draw_line({cx-8,cy-8},{cx-8,cy+8},c,2.2f);
-            r.draw_line({cx+8,cy-8},{cx+8,cy+8},c,2.2f);
-            r.draw_line({cx-8,cy},{cx+8,cy},c,2.2f);
-            break;
-        case BuildIcon::RobotWorkshop:
-            r.draw_rect({cx-19,cy-15,38,30},{c.r,c.g,c.b,0.16f});
-            r.draw_line({cx-19,cy+15},{cx-19,cy-12},c,2);
-            r.draw_line({cx+19,cy+15},{cx+19,cy-12},c,2);
-            r.draw_line({cx-19,cy-12},{cx,cy-22},c,2);
-            r.draw_line({cx,cy-22},{cx+19,cy-12},c,2);
-            for(float x:{cx-13,cx+7}) for(float y:{cy-8,cy+5}) r.draw_rect({x,y,7,8},c);
-            r.draw_line({cx-5,cy+15},{cx-9,cy+24},c,2);
-            r.draw_line({cx+5,cy+15},{cx+9,cy+24},c,2);
-            break;
-        case BuildIcon::OxygenTank:
-            for(float xx:{x+16,x+34}){
-                r.draw_rect({xx-6,y+12,12,25},{c.r,c.g,c.b,.14f});
-                r.draw_line({xx-6,y+12},{xx-6,y+37},c,2);
-                r.draw_line({xx+6,y+12},{xx+6,y+37},c,2);
-                r.draw_line({xx-6,y+12},{xx+6,y+12},c,2);
-                r.draw_line({xx,y+5},{xx,y+12},c,2);
-            }
-            r.draw_line({x+6,y+38},{x+44,y+38},c,2);
-            break;
-        case BuildIcon::HydrogenTank:
-            r.draw_rect({x+4,y+37,42,5},{c.r,c.g,c.b,0.14f});
-            r.draw_rect({x+11,y+11,28,25},{c.r,c.g,c.b,0.08f});
-            r.draw_line({x+11,y+11},{x+39,y+11},c,2.0f);
-            r.draw_line({x+11,y+36},{x+39,y+36},c,2.0f);
-            r.draw_line({x+11,y+11},{x+11,y+36},c,2.0f);
-            r.draw_line({x+39,y+11},{x+39,y+36},c,2.0f);
-            r.draw_line({x+19,y+12},{x+19,y+36},c,1.3f);
-            r.draw_line({x+31,y+12},{x+31,y+36},c,1.3f);
-            r.draw_line({x+25,y+4},{x+25,y+11},c,1.7f);
-            break;
-        case BuildIcon::HydrogenGenerator:
-            r.draw_rect({x+6,y+13,19,26},{c.r,c.g,c.b,0.10f});
-            r.draw_rect({x+27,y+17,16,22},{c.r,c.g,c.b,0.08f});
-            for(int i=0;i<4;++i){
-                const float yy=y+18.0f+i*5.0f;
-                r.draw_line({x+9,yy},{x+22,yy},c,1.3f);
-            }
-            r.draw_line({x+25,cy},{x+31,cy},c,2.0f);
-            r.draw_line({x+31,cy},{x+35,cy-6},c,2.0f);
-            r.draw_line({x+31,cy},{x+35,cy+6},c,2.0f);
-            r.draw_line({x+7,y+h-7},{x+w-7,y+h-7},c,2.0f);
+            oval(12,12,10,9.5f);
+            stroke({{8.5f,7},{8.5f,17}},2.1f); stroke({{15.5f,7},{15.5f,17}},2.1f);
+            stroke({{8.5f,12},{15.5f,12}},2.1f);
             break;
         case BuildIcon::StorageDome:
-            // Low geodesic storage dome with a central cargo door.
-            r.draw_line({x+5,y+h-8},{x+w-5,y+h-8},c,2.0f);
-            r.draw_line({x+6,y+h-9},{x+11,y+17},c,2.0f);
-            r.draw_line({x+11,y+17},{cx,y+6},c,2.0f);
-            r.draw_line({cx,y+6},{x+w-11,y+17},c,2.0f);
-            r.draw_line({x+w-11,y+17},{x+w-6,y+h-9},c,2.0f);
-            r.draw_line({cx,y+6},{cx,y+h-9},c,1.0f);
-            r.draw_line({x+11,y+17},{x+w-11,y+17},c,1.0f);
-            r.draw_rect({cx-7,y+h-20,14,12},{c.r,c.g,c.b,0.16f});
+            box({3,6,18,14}); stroke({{3,6},{7,3},{17,3},{21,6}});
+            stroke({{3,12},{21,12}}); stroke({{12,6},{12,12}});
+            stroke({{8,12},{8,20}}); stroke({{16,12},{16,20}});
             break;
         case BuildIcon::SupplyChannel:
-            // Three electrical conductors plus one utility pipe inside the same carrier.
-            r.draw_line({x+5,cy-8},{x+w-5,cy-8},c,1.8f);
-            r.draw_line({x+5,cy-3},{x+w-5,cy-3},c,1.8f);
-            r.draw_line({x+5,cy+2},{x+w-5,cy+2},c,1.8f);
-            r.draw_line({x+5,cy+9},{x+w-5,cy+9},c,3.0f);
-            r.draw_line({x+9,cy+4},{x+9,cy+14},c,1.7f);
-            r.draw_line({x+w-9,cy+4},{x+w-9,cy+14},c,1.7f);
-            r.draw_rect({x+4,cy-13,6,20},{c.r,c.g,c.b,0.10f});
-            r.draw_rect({x+w-10,cy-13,6,20},{c.r,c.g,c.b,0.10f});
+            stroke({{3,8},{12,8},{16,12},{21,12}},1.8f);
+            stroke({{3,12},{10,12},{14,16},{21,16}},1.8f);
+            stroke({{3,6},{3,14}},2.3f); stroke({{21,10},{21,18}},2.3f);
             break;
         case BuildIcon::Walkway:
-            // Flat open deck / grating, intentionally without side railings.
-            r.draw_line({x+5,cy-5},{x+w-5,cy-5},c,2.2f);
-            r.draw_line({x+5,cy+7},{x+w-5,cy+7},c,2.2f);
-            for(int i=0;i<5;++i){
-                const float px=x+7.0f+i*((w-14.0f)/4.0f);
-                r.draw_line({px,cy-5},{px,cy+7},c,1.2f);
-            }
-            r.draw_line({x+8,cy+12},{x+w-8,cy+12},c,1.8f);
+            stroke({{3,20},{3,13},{8,7},{21,7},{16,13},{3,13}});
+            stroke({{16,13},{16,20}}); stroke({{21,7},{21,15}});
+            for(float x:{6.5f,10.f,13.5f}) stroke({{x,13},{x+4.8f,7.5f}},1.1f);
+            break;
+        case BuildIcon::RobotWorkshop:
+            roof();
+            stroke({{6,15},{7.5f,12},{16.5f,12},{18,15},{18,17},{6,17},{6,15}});
+            oval(8,17.5f,1.45f,1.45f,1.2f); oval(16,17.5f,1.45f,1.45f,1.2f);
+            break;
+        case BuildIcon::HydrogenGenerator:
+            box({2,5,20,14}); gas(true,6.8f,11.5f); bolt(17.4f,12);
+            break;
+        case BuildIcon::HydrogenTank:
+        case BuildIcon::OxygenTank:
+            tank(); gas(icon==BuildIcon::HydrogenTank,10.2f,11.7f);
+            break;
+        case BuildIcon::ConveyorBelt:
+            stroke({{5,12},{19,12},{22,14},{22,17},{19,19},{5,19},{2,17},{2,14},{5,12}});
+            for(float x:{6.f,12.f,18.f}) oval(x,15.5f,1.2f,1.2f,1.3f);
+            stroke({{8,12},{8,6},{15,6},{15,12}});
+            stroke({{15,4},{21,4},{19,2},{21,4},{19,6}},1.4f);
             break;
     }
 }

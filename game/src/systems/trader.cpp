@@ -270,7 +270,7 @@ void GameApp::update_trade_hauling(float dt,const std::function<bool(std::size_t
     // accept export work; carriers are offered each lot before builders.
     if(trader_powered())for(int role=1;role>=0;--role)for(std::size_t ri=0;ri<builder_robots_.size();++ri){
         auto& r=builder_robots_[ri];
-        if((int)r.role!=role||lander_.salvage_uses_robot(ri)||r.operation_retry.relocation_pending()||trader_robot_busy(ri)||r.ore_haul.active()||r.mode!=BuilderRobotMode::Idle||r.target.valid()||!r.cargo.empty()||r.action!=BuilderRobotAction::None||r.debug_move_active||r.drop_exit_pending||r.starter_charge_active||r.battery_charge_kwh<r.battery_capacity_kwh*.2f)continue;
+        if((int)r.role!=role||lander_.salvage_uses_robot(ri)||r.operation_retry.replan_pending()||trader_robot_busy(ri)||r.ore_haul.active()||r.mode!=BuilderRobotMode::Idle||r.target.valid()||!r.cargo.empty()||r.action!=BuilderRobotAction::None||r.debug_move_active||r.drop_exit_pending||r.starter_charge_active||r.battery_charge_kwh<r.battery_capacity_kwh*.2f)continue;
         std::size_t pick=kNoRobotIndex;float best=std::numeric_limits<float>::max();
         for(std::size_t i=0;i<trader_.lots.size();++i){if(trader_.lots[i].remaining<=0 || trader_.lots[i].conveyor_sequence)continue;bool leased=false;for(const auto& h:trader_.hauls)if(h.lot==i&&h.phase==0)leased=true;if(leased)continue;const float d=distance(r.position,trader_.lots[i].position);if(d<best){pick=i;best=d;}}
         if(pick!=kNoRobotIndex){TradeHaul h;h.robot=(std::uint8_t)ri;h.lot=(std::uint32_t)pick;trader_.hauls.push_back(h);r.mode=BuilderRobotMode::Fetching;r.workshop_returning=false;r.workshop_parked=false;}

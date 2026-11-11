@@ -101,7 +101,7 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
     for(std::size_t ri=0;ri<builder_robots_.size();++ri){
         auto& rover=builder_robots_[ri];
         auto& haul=rover.ore_haul;
-        if(rover.role!=RobotRole::Carrier || rover.operation_retry.relocation_pending() || trader_robot_busy(ri))continue;
+        if(rover.role!=RobotRole::Carrier || rover.operation_retry.replan_pending() || trader_robot_busy(ri))continue;
         const auto finish=[&]{
             stop(ri);
             haul={};

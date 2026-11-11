@@ -3,6 +3,7 @@
 #include "engine/ui_font.hpp"
 #include "engine/geometry_stream.hpp"
 #include "lunar_renderer.hpp"
+#include "surface_field_shaders.hpp"
 #include <algorithm>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -22,7 +23,7 @@
 namespace eng {
 using GLenum=unsigned int; using GLboolean=unsigned char; using GLbitfield=unsigned int; using GLvoid=void; using GLbyte=signed char; using GLshort=short; using GLint=int; using GLsizei=int; using GLubyte=unsigned char; using GLushort=unsigned short; using GLuint=unsigned int; using GLfloat=float; using GLdouble=double; using GLchar=char; using GLsizeiptr=long;
 using GLXContext=void*; using GLXDrawable=unsigned long;
-constexpr GLenum GL_COLOR_BUFFER_BIT=0x00004000, GL_DEPTH_BUFFER_BIT=0x00000100, GL_DEPTH_TEST=0x0B71, GL_BLEND=0x0BE2, GL_SRC_ALPHA=0x0302, GL_ONE_MINUS_SRC_ALPHA=0x0303, GL_LINES=0x0001, GL_TRIANGLES=0x0004, GL_ARRAY_BUFFER=0x8892, GL_DYNAMIC_DRAW=0x88E8, GL_FLOAT=0x1406, GL_FALSE=0, GL_VERTEX_SHADER=0x8B31, GL_FRAGMENT_SHADER=0x8B30, GL_COMPILE_STATUS=0x8B81, GL_LINK_STATUS=0x8B82, GL_VENDOR=0x1F00, GL_RENDERER=0x1F01, GL_VERSION=0x1F02, GL_TEXTURE_2D=0x0DE1, GL_TEXTURE0=0x84C0, GL_RGB=0x1907, GL_UNSIGNED_BYTE=0x1401, GL_LINEAR=0x2601, GL_LINEAR_MIPMAP_LINEAR=0x2703, GL_REPEAT=0x2901, GL_TEXTURE_MIN_FILTER=0x2801, GL_TEXTURE_MAG_FILTER=0x2800, GL_TEXTURE_WRAP_S=0x2802, GL_TEXTURE_WRAP_T=0x2803, GL_UNPACK_ALIGNMENT=0x0CF5;
+constexpr GLenum GL_COLOR_BUFFER_BIT=0x00004000, GL_DEPTH_BUFFER_BIT=0x00000100, GL_DEPTH_TEST=0x0B71, GL_BLEND=0x0BE2, GL_SRC_ALPHA=0x0302, GL_ONE_MINUS_SRC_ALPHA=0x0303, GL_LINES=0x0001, GL_TRIANGLES=0x0004, GL_ARRAY_BUFFER=0x8892, GL_DYNAMIC_DRAW=0x88E8, GL_FLOAT=0x1406, GL_FALSE=0, GL_VERTEX_SHADER=0x8B31, GL_FRAGMENT_SHADER=0x8B30, GL_COMPILE_STATUS=0x8B81, GL_LINK_STATUS=0x8B82, GL_VENDOR=0x1F00, GL_RENDERER=0x1F01, GL_VERSION=0x1F02;
 
 struct GLApi {
     void* lib=nullptr;
@@ -43,13 +44,6 @@ struct GLApi {
     void (*glGenBuffers)(GLsizei,GLuint*)=nullptr; void (*glBindBuffer)(GLenum,GLuint)=nullptr; void (*glBufferData)(GLenum,GLsizeiptr,const void*,GLenum)=nullptr; void (*glBufferSubData)(GLenum,GLsizeiptr,GLsizeiptr,const void*)=nullptr; void (*glEnableVertexAttribArray)(GLuint)=nullptr; void (*glVertexAttribPointer)(GLuint,GLint,GLenum,GLboolean,GLsizei,const void*)=nullptr; void (*glDisableVertexAttribArray)(GLuint)=nullptr; void (*glDrawArrays)(GLenum,GLint,GLsizei)=nullptr;
     GLint (*glGetUniformLocation)(GLuint,const GLchar*)=nullptr; void (*glUniform1f)(GLint,GLfloat)=nullptr; void (*glUniformMatrix4fv)(GLint,GLsizei,GLboolean,const GLfloat*)=nullptr; void (*glUniform4f)(GLint,GLfloat,GLfloat,GLfloat,GLfloat)=nullptr;
     void (*glUniform1i)(GLint,GLint)=nullptr;
-    void (*glGenTextures)(GLsizei,GLuint*)=nullptr;
-    void (*glBindTexture)(GLenum,GLuint)=nullptr;
-    void (*glTexImage2D)(GLenum,GLint,GLint,GLsizei,GLsizei,GLint,GLenum,GLenum,const void*)=nullptr;
-    void (*glTexParameteri)(GLenum,GLenum,GLint)=nullptr;
-    void (*glActiveTexture)(GLenum)=nullptr;
-    void (*glPixelStorei)(GLenum,GLint)=nullptr;
-    void (*glGenerateMipmap)(GLenum)=nullptr; // optional; fall back to bilinear without mipmaps
     void (*glFinish)()=nullptr;
 
 
@@ -63,91 +57,17 @@ struct GLApi {
         load(glXSwapIntervalSGI,"glXSwapIntervalSGI");
         bool ok=true;
 #define L(x) ok=load(x,#x)&&ok
-        L(glGetString);L(glClearColor);L(glClear);L(glViewport);L(glEnable);L(glDisable);L(glBlendFunc);L(glLineWidth);L(glDepthMask);L(glBindAttribLocation);L(glCreateShader);L(glShaderSource);L(glCompileShader);L(glGetShaderiv);L(glGetShaderInfoLog);L(glCreateProgram);L(glAttachShader);L(glLinkProgram);L(glGetProgramiv);L(glGetProgramInfoLog);L(glUseProgram);L(glGenBuffers);L(glBindBuffer);L(glBufferData);L(glBufferSubData);L(glEnableVertexAttribArray);L(glVertexAttribPointer);L(glDisableVertexAttribArray);L(glDrawArrays);L(glGetUniformLocation);L(glUniform1f);L(glUniformMatrix4fv);L(glUniform4f);L(glUniform1i);L(glGenTextures);L(glBindTexture);L(glTexImage2D);L(glTexParameteri);L(glActiveTexture);L(glPixelStorei);
-        load(glGenerateMipmap,"glGenerateMipmap");
+        L(glGetString);L(glClearColor);L(glClear);L(glViewport);L(glEnable);L(glDisable);L(glBlendFunc);L(glLineWidth);L(glDepthMask);L(glBindAttribLocation);L(glCreateShader);L(glShaderSource);L(glCompileShader);L(glGetShaderiv);L(glGetShaderInfoLog);L(glCreateProgram);L(glAttachShader);L(glLinkProgram);L(glGetProgramiv);L(glGetProgramInfoLog);L(glUseProgram);L(glGenBuffers);L(glBindBuffer);L(glBufferData);L(glBufferSubData);L(glEnableVertexAttribArray);L(glVertexAttribPointer);L(glDisableVertexAttribArray);L(glDrawArrays);L(glGetUniformLocation);L(glUniform1f);L(glUniformMatrix4fv);L(glUniform4f);L(glUniform1i);
         load(glFinish,"glFinish");
 #undef L
         return ok&&glXCreateContext&&glXMakeCurrent&&glXIsDirect&&glXSwapBuffers;
     }
 };
 
-// Deterministic 1024x1024 tileable albedo textures. High-detail assets are
-// generated at GPU initialization, so no image library or external download
-// is needed and every installed build gets identical materials. The mip chain
-// prevents the high-frequency texture shimmer formerly seen during orbit.
-constexpr int kCampusTexSize=1024;
-constexpr int kCampusTexCount=9;
-static std::uint32_t tex_hash(int x,int y,int seed){
-    std::uint32_t h=(std::uint32_t)x*0x9e3779b1u ^ (std::uint32_t)y*0x85ebca77u ^ (std::uint32_t)seed*0xc2b2ae3du;
-    h^=h>>16;h*=0x7feb352du;h^=h>>15;h*=0x846ca68bu;h^=h>>16;
-    return h;
-}
-static float tex_noise(int x,int y,int grid,int seed){
-    const int ix=x*grid/kCampusTexSize, iy=y*grid/kCampusTexSize;
-    float fx=(x*grid%kCampusTexSize)/(float)kCampusTexSize;
-    float fy=(y*grid%kCampusTexSize)/(float)kCampusTexSize;
-    fx=fx*fx*(3.0f-2.0f*fx);fy=fy*fy*(3.0f-2.0f*fy);
-    auto h=[&](int a,int b){return (tex_hash((a+grid)%grid,(b+grid)%grid,seed)&65535u)/65535.0f;};
-    return (h(ix,iy)*(1-fx)+h(ix+1,iy)*fx)*(1-fy)
-          +(h(ix,iy+1)*(1-fx)+h(ix+1,iy+1)*fx)*fy;
-}
-static void make_campus_texture_row(int kind,int y,std::vector<std::uint8_t>& pix){
-    static constexpr std::array<std::array<float,3>,kCampusTexCount> colors{{
-        {{0.25f,0.40f,0.20f}}, // coastal vegetation
-        {{0.76f,0.68f,0.47f}}, // dune sand
-        {{0.27f,0.29f,0.30f}}, // tarmac
-        {{0.57f,0.59f,0.58f}}, // weathered concrete
-        {{0.11f,0.38f,0.48f}}, // deep coastal water
-        {{0.42f,0.48f,0.53f}}, // corrugated roof
-        {{0.58f,0.64f,0.68f}}, // industrial facade
-        {{0.17f,0.36f,0.45f}}, // window glass
-        {{0.58f,0.60f,0.58f}}, // hardware / coated metal
-    }};
-    for(int x=0;x<kCampusTexSize;++x){
-        float broad=tex_noise(x,y,4,kind+13);
-        float mid=tex_noise(x,y,32,kind+47);
-        float fine=tex_noise(x,y,256,kind+91);
-        float point=(tex_hash(x,y,kind+123)&65535u)/65535.0f;
-        float shade=(broad-0.5f)*0.34f+(mid-0.5f)*0.23f+(fine-0.5f)*0.17f+(point-0.5f)*0.10f;
-        std::array<float,3> rgb=colors[(std::size_t)kind];
-        if(kind==0){ // short grass and sparse sandy/earth patches
-            if(broad<0.17f){rgb={{0.28f,0.38f,0.22f}};shade*=0.65f;}
-            else if(point>0.965f) shade+=0.19f; // small bright stems
-        }else if(kind==1){
-            shade+=0.035f*std::sin((float)y*0.12f+6.0f*broad);
-            if(point>0.992f)shade+=0.12f;
-        }else if(kind==2){
-            if(point>0.975f)shade+=0.20f; // embedded aggregate
-            if(point<0.014f)shade-=0.22f;
-        }else if(kind==3){
-            const float seam=(x%256<3 || y%256<3)?-0.20f:0.0f;
-            shade+=seam+(point>0.989f?0.09f:0.0f);
-        }else if(kind==4){
-            shade=0.08f*std::sin((float)y*0.056f+mid*5.0f)+0.045f*std::sin((float)x*0.086f+broad*5.0f);
-            if(point>0.998f)shade+=0.10f;
-        }else if(kind==5){
-            shade+=(x%55<6?0.20f:-0.03f); // steel roof ribs
-            if(y%485<3)shade-=0.12f;
-        }else if(kind==6){
-            if(x%171<3 || y%240<3)shade-=0.16f; // cladding seams
-            if(point>0.996f)shade-=0.12f;
-        }else if(kind==7){
-            if(x%256<7 || y%256<7)shade-=0.18f; // mullions
-            if((x+y/3)%291<24)shade+=0.09f; // diffuse sky reflections
-        }else if(kind==8){
-            if((x%152)<2)shade-=0.13f; // machined seams
-            if(broad<0.17f){rgb={{0.52f,0.41f,0.32f}};} // weathering
-        }
-        const std::size_t index=((std::size_t)y*kCampusTexSize+x)*3;
-        for(int ch=0;ch<3;++ch){
-            float v=std::clamp(rgb[ch]*(1.0f+shade),0.0f,1.0f);
-            pix[index+ch]=(std::uint8_t)(v*255.0f+0.5f);
-        }
-    }
-}
+constexpr int kCampusMaterialCount=9;
 
 class GLRenderer final: public Renderer {
-    GLApi gl_; Display* d_{}; Window w_{}; GLXContext ctx_{}; int width_{},height_{}; GLuint prog_{},material_prog_{},vbo_{}; GLint u_mvp_{},u_color_{},material_mvp_{},material_color_{},material_kind_{},material_tex_{},material_tiling_{}; std::array<GLuint,kCampusTexCount> campus_textures_{}; Mat4 mvp_=Mat4::identity();
+    GLApi gl_; Display* d_{}; Window w_{}; GLXContext ctx_{}; int width_{},height_{}; GLuint prog_{},material_prog_{},vbo_{}; GLint u_mvp_{},u_color_{},material_mvp_{},material_color_{},material_kind_{}; Mat4 mvp_=Mat4::identity();
     GLsizeiptr vbo_capacity_bytes_{0};
     GeometryStream stream_;
     GraphicsSettings graphics_=graphics_settings_from_environment();
@@ -203,10 +123,8 @@ class GLRenderer final: public Renderer {
         if(material_commands_.empty())return;
         gl_.glUseProgram(material_prog_);
         gl_.glUniformMatrix4fv(material_mvp_,1,GL_FALSE,mvp_.m.data());
-        gl_.glUniform1i(material_tex_,0);
         gl_.glUniform1i(campus_haze_,campus_haze_level_);
         gl_.glUniform4f(campus_eye_uniform_,campus_eye_.x,campus_eye_.y,campus_eye_.z,0);
-        gl_.glActiveTexture(GL_TEXTURE0);
         gl_.glBindBuffer(GL_ARRAY_BUFFER,vbo_);
         const auto bytes=(GLsizeiptr)(material_vertices_.size()*sizeof(float));
         if(bytes>vbo_capacity_bytes_){vbo_capacity_bytes_=4096;while(vbo_capacity_bytes_<bytes)vbo_capacity_bytes_*=2;}
@@ -218,10 +136,7 @@ class GLRenderer final: public Renderer {
         int last_kind=-1;
         for(const auto& cmd:material_commands_){
             if(last_kind!=cmd.kind){
-                gl_.glBindTexture(GL_TEXTURE_2D,campus_textures_[(std::size_t)cmd.kind]);
                 gl_.glUniform1f(material_kind_,(float)cmd.kind);
-                static constexpr float tiling[]={0.028f,0.065f,0.40f,0.28f,0.085f,0.33f,0.28f,0.30f,0.45f};
-                gl_.glUniform1f(material_tiling_,tiling[cmd.kind]);
                 last_kind=cmd.kind;
             }
             const auto& c=cmd.tint;
@@ -231,7 +146,6 @@ class GLRenderer final: public Renderer {
         }
         gl_.glDepthMask((GLboolean)1);
         gl_.glDisableVertexAttribArray(1);
-        gl_.glBindTexture(GL_TEXTURE_2D,0);
         gl_.glUseProgram(prog_);
         material_vertices_.clear();material_commands_.clear();
     }
@@ -316,25 +230,30 @@ public:
         const char* vs="#version 120\nattribute vec3 aPos; uniform mat4 uMVP; void main(){ gl_Position=uMVP*vec4(aPos,1.0); }";
         const char* fs="#version 120\nuniform vec4 uColor; void main(){ gl_FragColor=uColor; }";
         GLuint sv=shader(GL_VERTEX_SHADER,vs), sf=shader(GL_FRAGMENT_SHADER,fs); prog_=gl_.glCreateProgram(); gl_.glAttachShader(prog_,sv); gl_.glAttachShader(prog_,sf); gl_.glBindAttribLocation(prog_,0,"aPos"); gl_.glLinkProgram(prog_); GLint ok=0; gl_.glGetProgramiv(prog_,GL_LINK_STATUS,&ok); if(!ok){ char log[2048]{}; GLsizei n=0; gl_.glGetProgramInfoLog(prog_,2047,&n,log); std::cerr<<"Program link error: "<<log<<"\n"; return false; }
-        // Lit, tileable 1k GPU albedo textures replace the earlier single
-        // world-space-noise shader. Per-face normals provide stable sun shading.
+        // Campus materials share the filtered, world-anchored surface fields.
         const char* mvs=R"GLSL(#version 120
 attribute vec3 aPos;attribute vec3 aNormal;
 uniform mat4 uMVP;varying vec3 vWorld;varying vec3 vNormal;
 void main(){vWorld=aPos;vNormal=aNormal;gl_Position=uMVP*vec4(aPos,1.0);}
 )GLSL";
-        const char* mfs=R"GLSL(#version 120
-uniform vec4 uColor;uniform float uMaterial;uniform float uTiling;
-uniform sampler2D uTexture;uniform int uHaze;uniform vec4 uEye;
+        const std::string mfs=std::string(R"GLSL(#version 120
+uniform vec4 uColor;uniform float uMaterial;
+uniform int uHaze;uniform vec4 uEye;
 varying vec3 vWorld;varying vec3 vNormal;
+)GLSL")+surface_shaders::fields+R"GLSL(
 void main(){
     vec3 n=normalize(vNormal);
     if(n.y< -0.92)n.y=1.0; // two-sided terrain geometry
     vec2 uv=(abs(n.y)>0.66)?vWorld.xz:((abs(n.x)>abs(n.z))?vWorld.zy:vWorld.xy);
-    uv*=uTiling;
-    vec3 tex=texture2D(uTexture,uv).rgb;
-    // A restrained albedo blend keeps mission-state highlight colors visible.
-    vec3 base=mix(uColor.rgb,tex,uMaterial>5.5&&uMaterial<7.5?0.50:0.68);
+    float footprint=max(length(dFdx(vWorld)),length(dFdy(vWorld)));
+    float macro=filteredNoise(turnSurface(uv)*0.13+uMaterial*13.7,footprint*0.13);
+    float tone=coatingField(uv,uMaterial<2.0?footprint*0.5:footprint,uMaterial*31.3);
+    if(uMaterial<2.0) tone=mix(tone,macro,0.68);
+    if(uMaterial>3.5 && uMaterial<4.5){
+        vec2 ripples=turnSurface(uv)*vec2(0.24,1.2);
+        tone=mix(macro,filteredNoise(ripples,footprint*1.2),0.5);
+    }
+    vec3 base=uColor.rgb*(0.79+0.29*tone+0.13*macro);
     vec3 sun=normalize(vec3(-0.42,0.82,-0.39));
     float light=0.57+0.43*max(dot(n,sun),0.0);
     if(uMaterial>6.5&&uMaterial<7.5){
@@ -350,7 +269,7 @@ void main(){
     gl_FragColor=vec4(lit,uColor.a);
 }
 )GLSL";
-        GLuint mv=shader(GL_VERTEX_SHADER,mvs),mf=shader(GL_FRAGMENT_SHADER,mfs);
+        GLuint mv=shader(GL_VERTEX_SHADER,mvs),mf=shader(GL_FRAGMENT_SHADER,mfs.c_str());
         material_prog_=gl_.glCreateProgram();gl_.glAttachShader(material_prog_,mv);gl_.glAttachShader(material_prog_,mf);
         gl_.glBindAttribLocation(material_prog_,0,"aPos");
         gl_.glBindAttribLocation(material_prog_,1,"aNormal");
@@ -360,29 +279,8 @@ void main(){
         material_mvp_=gl_.glGetUniformLocation(material_prog_,"uMVP");
         material_color_=gl_.glGetUniformLocation(material_prog_,"uColor");
         material_kind_=gl_.glGetUniformLocation(material_prog_,"uMaterial");
-        material_tex_=gl_.glGetUniformLocation(material_prog_,"uTexture");
-        material_tiling_=gl_.glGetUniformLocation(material_prog_,"uTiling");
         campus_haze_=gl_.glGetUniformLocation(material_prog_,"uHaze");
         campus_eye_uniform_=gl_.glGetUniformLocation(material_prog_,"uEye");
-        gl_.glPixelStorei(GL_UNPACK_ALIGNMENT,1);
-        gl_.glActiveTexture(GL_TEXTURE0);
-        gl_.glGenTextures(kCampusTexCount,campus_textures_.data());
-        std::vector<std::uint8_t> pixels((std::size_t)kCampusTexSize*kCampusTexSize*3);
-        for(int kind=0;kind<kCampusTexCount;++kind){
-            TaskPool::shared().parallel_for(kCampusTexSize,[&](std::size_t row){
-                make_campus_texture_row(kind,static_cast<int>(row),pixels);
-            });
-            gl_.glBindTexture(GL_TEXTURE_2D,campus_textures_[(std::size_t)kind]);
-            gl_.glTexImage2D(GL_TEXTURE_2D,0,GL_RGB,kCampusTexSize,kCampusTexSize,0,GL_RGB,GL_UNSIGNED_BYTE,pixels.data());
-            gl_.glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);
-            gl_.glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT);
-            gl_.glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-            gl_.glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,gl_.glGenerateMipmap?GL_LINEAR_MIPMAP_LINEAR:GL_LINEAR);
-            if(gl_.glGenerateMipmap)gl_.glGenerateMipmap(GL_TEXTURE_2D);
-        }
-        gl_.glBindTexture(GL_TEXTURE_2D,0);
-        std::cout<<"Campus materials: "<<kCampusTexCount<<" tileable 1024px textures"
-                 <<(gl_.glGenerateMipmap?" (mipmapped)":" (bilinear fallback)")<<"\n";
         u_mvp_=gl_.glGetUniformLocation(prog_,"uMVP"); u_color_=gl_.glGetUniformLocation(prog_,"uColor"); gl_.glGenBuffers(1,&vbo_); resize(width,height); return true;
     }
     void resize(int w,int h) override { if(lunar_) lunar_->finish(); flush_geometry();flush_materials(); width_=w;height_=h; if(h<1)h=1; gl_.glViewport(0,0,w,h); }
@@ -455,6 +353,11 @@ void main(){
         if(lunar_scene_active()) lunar_->triangles(v,material,c);
         else draw_triangles_3d(v,c);
     }
+    void draw_mapped_lunar_surface(const std::vector<Vec3>& v,LunarMaterial material,Color c,
+                                  const LunarSurfaceMapping& mapping) override {
+        if(lunar_scene_active()) lunar_->triangles(v,material,c,mapping);
+        else draw_triangles_3d(v,c);
+    }
     void draw_lines_3d(const std::vector<Vec3>& v,Color c,float width) override {
         if(v.empty()) return;
         if(lunar_scene_active()) lunar_->lines(v,c,width);
@@ -472,7 +375,7 @@ void main(){
         }
         if(v.empty())return;
         flush_geometry();
-        const int material=std::clamp(kind,0,kCampusTexCount-1);
+        const int material=std::clamp(kind,0,kCampusMaterialCount-1);
         const auto first=(GLint)(material_vertices_.size()/6);
         material_vertices_.reserve(material_vertices_.size()+v.size()*6);
         for(std::size_t i=0;i+2<v.size();i+=3){

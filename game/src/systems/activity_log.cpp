@@ -138,8 +138,6 @@ void GameApp::update_activity_log(){
         }
         if(robot.route_waiting_for_clearance)
             observe(C::RoverTraffic,id,0,true,[&]{return label()+" / waiting for route clearance";});
-        if(robot.operation_retry.relocation_pending())
-            observe(C::RoverProblem,id,0,true,[&]{return label()+" / relocating a blocked operation";},1);
         if(robot.battery_charge_kwh<robot.battery_capacity_kwh*.1f)
             observe(C::RoverBattery,id,robot.battery_charge_kwh<=0.f,true,[&]{return label()+
                 (robot.battery_charge_kwh<=0.f?" / battery depleted":" / battery below 10%");});

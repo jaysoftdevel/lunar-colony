@@ -126,12 +126,12 @@ LanderRoverPose lunar_lander_robot_pose(const LunarLanderState& lander,int ordin
     const RoverUnloadRoute route(lander,ordinal,first);
     const float along=route.distance[2]+(lander.elapsed-route.ramp_entry_time)*kRoverUnloadSpeed;
     if(along<=0) return {lander.site+route.points.front(),0,0,false};
-    if(along>=route.distance.back()) return {lander.site+route.points.back(),180,0,true};
+    if(along>=route.distance.back()) return {lander.site+route.points.back(),180,0,true,route.distance.back()};
     // Blend the heading through bends while staying on the reserved lane.
     const auto tangent=route.sample(along+.20f)-route.sample(std::max(0.0f,along-.20f));
     const float heading=std::atan2(tangent.x,tangent.z)*180.0f/3.14159265f;
     const float pitch=std::atan2(-tangent.y,std::hypot(tangent.x,tangent.z))*180.0f/3.14159265f;
-    return {lander.site+route.sample(along),heading,pitch,false};
+    return {lander.site+route.sample(along),heading,pitch,false,along};
 }
 
 bool lunar_lander_deployment_clear(const LunarLanderState& lander,eng::Vec3 position,float rotation,
@@ -204,7 +204,7 @@ void GameApp::begin_lunar_landing(const ResourceBundle& manifest,int builders,in
     starting_robot_count_=lander_.builders;starting_carrier_count_=lander_.carriers;
     resources_.reset();ground_resource_piles_.clear();builder_robots_.clear();
     starter_stash_center_={};
-    robot_safety_time_seconds_=0;robot_enclosure_legacy_scan_pending_=false;nav_wall_cache_.reset();
+    robot_safety_time_seconds_=0;nav_wall_cache_.reset();
     selection_kind_=SelectionKind::Lander;
     camera_.reset(playfield_.size());
     landing_message_="CLICK A CLEAR LANDING SITE";
@@ -260,10 +260,15 @@ void GameApp::update_lunar_lander(float dt){
         else if(phase==LanderPhase::OpeningRamp)lander_.phase=LanderPhase::DeployingRobots;
         else if(phase==LanderPhase::DeployingRobots){
             const int total=lander_.builders+lander_.carriers;
-            for(int i=(int)builder_robots_.size();i<total;++i) builder_robots_.push_back(lander_robot(i));
+            const int first=static_cast<int>(builder_robots_.size());
+            for(int i=first;i<total;++i){
+                auto rover=lander_robot(i);
+                robots::roll_rover_wheels(rover.wheels,RoverUnloadRoute(lander_,i,first).distance.back(),0);
+                builder_robots_.push_back(std::move(rover));
+            }
             lander_.phase=LanderPhase::Ready;
         }
-        if(lander_.phase==LanderPhase::Ready){robot_enclosure_legacy_scan_pending_=false;return;}
+        if(lander_.phase==LanderPhase::Ready)return;
         if(remaining<=0)return;
     }
 }

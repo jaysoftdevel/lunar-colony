@@ -6,6 +6,8 @@
 #include "lunar_visibility_shaders.hpp"
 #include "lunar_volume_shaders.hpp"
 #include "lunar_pages.hpp"
+#include "lunar_light_fader.hpp"
+#include "surface_field_shaders.hpp"
 #include "lunar_neural_shaders.hpp"
 #include "lunar_learned_filter.hpp"
 #include "lunar_learned_upscale.hpp"
@@ -55,6 +57,7 @@ constexpr Int material_page_layers=25,shadow_page_layers=14,page_shadow_size=320
 constexpr Int material_page_texels=96,material_border=2,material_tile_size=material_page_texels+material_border*2;
 constexpr float material_page_meters=32.0f,shadow_page_meters=19.0f;
 constexpr Int material_count=static_cast<Int>(LunarMaterial::Emissive);
+constexpr Int material_variants=4;
 constexpr Int line_material=static_cast<Int>(LunarMaterial::Hair)+1;
 using Feature=GraphicsFeature;
 constexpr auto glsl330="#version 330 core\n";
@@ -148,7 +151,7 @@ enum Uniform {
     RayFocus, RayNodeCount, FrameIndex, ReservoirMap, RaySpecular, RayIndirect, RayDirect,
     PreviousSpecular, PreviousIndirect, PreviousDirect, UseRays, VisibilityMap, ClusterCount, VolumeCount, VolumeOrigin, VolumeAxis, VolumeColor, VolumeParams,
     UseVolumes, VolumeMap, OverlayMap, Sharpen, GroundPageMap, GroundTable, GroundOrigin, UseGroundPages,
-    ShadowPageMap, ShadowTable, ShadowOrigin, ShadowX, ShadowY, ShadowSun, UseShadowPages,
+    ShadowPageMap, ShadowTable, ShadowOrigin, ShadowX, ShadowY, ShadowSun, UseShadowPages, ShadowPageBlend, RayBlend,
     NeuralFocus, UseNeural, LearnedUpscale, InputPixelSize, GraphicsFlags,GraphicsLow,GraphicsMedium,ShadowQuality,AAQuality, UseShadowMaps,
     UseReflection, WeightedTransparency, BloomStrength, Exposure, UniformCount
 };
@@ -162,7 +165,7 @@ constexpr std::array<const char*,UniformCount> uniform_names{
     "previousSpecular","previousIndirect","previousDirect","useRays","visibilityMap","clusterCount","volumeCount","volumeOriginLength[0]","volumeAxisRadius[0]",
     "volumeColorDensity[0]","volumeParameters[0]","useVolumes","volumeMap","overlayMap","sharpen",
     "groundPageMap","groundTable","groundOrigin","useGroundPages","shadowPageMap","shadowTable",
-    "shadowOrigin","shadowX","shadowY","shadowSun","useShadowPages","neuralFocus","useNeural","learnedUpscale","inputPixelSize","graphicsFlags","graphicsLow","graphicsMedium","shadowQuality","aaQuality","useShadowMaps",
+    "shadowOrigin","shadowX","shadowY","shadowSun","useShadowPages","shadowPageBlend","rayBlend","neuralFocus","useNeural","learnedUpscale","inputPixelSize","graphicsFlags","graphicsLow","graphicsMedium","shadowQuality","aaQuality","useShadowMaps",
     "useReflection","weightedTransparency","bloomStrength","exposure"
 };
 
@@ -183,8 +186,9 @@ struct Vertex {
     Vec3 position;
     Color tint;
     float material;
+    Vec3 coordinate;
 };
-static_assert(sizeof(Vertex)==8*sizeof(float));
+static_assert(sizeof(Vertex)==11*sizeof(float));
 
 struct Draw {
     Int first{},count{};
@@ -222,18 +226,15 @@ float noise(float x,float y,Int seed,Int period=0,Int period_y=0){
 
 struct MaterialTexel { float shade,roughness,height; };
 
-MaterialTexel texel(Int x,Int y,Int material){
+MaterialTexel texel(Int x,Int y,Int material,Int variant){
     const float u=float(x)/map_size,v=float(y)/map_size;
-    const float broad=noise(u*4,v*4,11+material,4);
-    const float cloud=noise(u*16,v*16,19+material,16);
-    const float fine=noise(u*96,v*96,53+material,96);
-    const float grit=random(x,y,37+material);
+    const Int seed=material+variant*431;
+    const float broad=noise(u*4,v*4,11+seed,4);
+    const float cloud=noise(u*16,v*16,19+seed,16);
+    const float fine=noise(u*96,v*96,53+seed,96);
+    const float grit=random(x,y,37+seed);
     float shade=0.57f+(broad-0.5f)*0.16f+(cloud-0.5f)*0.17f+(fine-0.5f)*0.08f;
     float height=(fine-0.5f)*0.11f,roughness=0.51f+0.12f*cloud;
-    const auto joint=[](float p,float count,float width){
-        const float f=p*count-std::floor(p*count);
-        return 1.0f-smooth(0,width,std::min(f,1.0f-f));
-    };
     switch(static_cast<LunarMaterial>(material)){
         case LunarMaterial::Regolith: {
             const float pebbles=smooth(0.70f,0.94f,fine);
@@ -243,29 +244,26 @@ MaterialTexel texel(Int x,Int y,Int material){
             break;
         }
         case LunarMaterial::Solar: {
-            const float frames=std::max(joint(u,8,0.12f),joint(v,6,0.10f));
-            const float busbars=joint(u,24,0.048f);
-            const float traces=joint(v,64,0.10f);
-            shade=0.31f+0.25f*cloud+0.35f*busbars+0.19f*traces+0.42f*frames;
-            height=0.05f*frames+0.02f*busbars;
-            roughness=0.22f+0.11f*cloud+0.19f*frames;
+            shade=0.48f+0.16f*cloud+0.10f*broad;
+            height=0.025f*fine;
+            roughness=0.26f+0.15f*cloud;
             break;
         }
         case LunarMaterial::Paint:
         case LunarMaterial::Pad: {
             const bool pad=material==static_cast<Int>(LunarMaterial::Pad);
-            const float panels=std::max(joint(u,2,0.026f),joint(v,pad?2:3,0.030f));
-            const float edge=std::max(joint(u+0.015f,2,0.024f),joint(v+0.013f,pad?2:3,0.022f));
-            const float boltX=std::abs(u*4-std::floor(u*4)-0.095f);
-            const float boltY=std::abs(v*4-std::floor(v*4)-0.10f);
-            const float rivet=(1.0f-smooth(0.022f,0.037f,std::sqrt(boltX*boltX+boltY*boltY)));
-            shade+=(edge*0.10f+0.21f*rivet-panels*0.29f)+(grit-0.5f)*(pad?0.15f:0.032f);
-            height+=rivet*0.24f-panels*0.27f;
-            roughness+=pad?0.24f:0.0f;
+            const float mottling=noise(u*7,v*11,113+seed,7,11);
+            const float worn=smooth(0.56f,0.82f,mottling)*smooth(0.50f,0.91f,fine);
+            const float scratches=noise(u*24,v*144,131+seed,24,144);
+            const float scuff=smooth(0.67f,0.93f,scratches)*smooth(0.49f,0.79f,cloud);
+            shade+=0.15f*(mottling-0.5f)-worn*(pad?0.24f:0.18f)+0.12f*scuff+
+                (grit-0.5f)*(pad?0.12f:0.025f);
+            height-=worn*0.055f+scuff*0.023f;
+            roughness+=pad?0.24f:0.09f*worn;
             break;
         }
         case LunarMaterial::Alloy: {
-            const float brushing=noise(u*16,v*192,93,16,192);
+            const float brushing=noise(u*16,v*192,93+seed,16,192);
             const float scratches=smooth(0.74f,0.91f,brushing);
             shade+=0.25f*(brushing-0.5f)+0.16f*scratches;
             height+=0.09f*brushing-0.17f*scratches;
@@ -278,7 +276,7 @@ MaterialTexel texel(Int x,Int y,Int material){
             roughness=0.18f+0.14f*cloud;
             break;
         case LunarMaterial::Fabric: {
-            const float weave=0.5f+0.5f*std::cos(201.0619f*u)*std::cos(201.0619f*v);
+            const float weave=0.5f+0.5f*std::cos(201.0619f*u+0.42f*cloud)*std::cos(201.0619f*v+0.42f*broad);
             shade=0.51f+0.15f*cloud+(weave-0.5f)*0.13f;
             height+=0.15f*weave;
             roughness=0.77f+0.11f*cloud;
@@ -295,22 +293,22 @@ MaterialTexel texel(Int x,Int y,Int material){
 
 std::vector<std::uint8_t> material_maps(){
     constexpr std::size_t pixels=std::size_t(map_size)*map_size;
-    std::vector<std::uint8_t> maps(pixels*material_count*4);
+    std::vector<std::uint8_t> maps(pixels*material_count*material_variants*4);
     std::vector<MaterialTexel> layer(pixels);
     const auto byte=[](float x){ return std::uint8_t(std::clamp(x,0.0f,1.0f)*255.0f+0.5f); };
-    for(Int kind=0;kind<material_count;++kind){
+    for(Int index=0;index<material_count*material_variants;++index){
         const auto at=[&](Int x,Int y)->MaterialTexel&{
             return layer[std::size_t((y+map_size)%map_size)*map_size+(x+map_size)%map_size];
         };
         auto& pool=TaskPool::shared();
         pool.parallel_for(map_size,[&](std::size_t row){
             const Int y=static_cast<Int>(row);
-            for(Int x=0;x<map_size;++x) at(x,y)=texel(x,y,kind);
+            for(Int x=0;x<map_size;++x) at(x,y)=texel(x,y,index/material_variants,index%material_variants);
         });
         pool.parallel_for(map_size,[&](std::size_t row){
             const Int y=static_cast<Int>(row);
             for(Int x=0;x<map_size;++x){
-                const auto i=(kind*pixels+std::size_t(y)*map_size+x)*4;
+                const auto i=(index*pixels+std::size_t(y)*map_size+x)*4;
                 maps[i]=byte(at(x,y).shade);
                 maps[i+1]=byte(at(x,y).roughness);
                 maps[i+2]=byte(0.5f+(at(x+1,y).height-at(x-1,y).height)*1.55f);
@@ -324,10 +322,10 @@ std::vector<std::uint8_t> material_maps(){
 std::vector<std::uint8_t> ground_page(lunar::PageCoord tile){
     std::vector<std::uint8_t> out(material_tile_size*material_tile_size*4);
     const auto density=[](float x,float z){
-        const float ground=noise(x*0.35f,z*0.35f,691);
-        const float mineral=noise(x*1.60f,z*1.60f,697);
-        const float sand=noise(x*4.2f,z*4.2f,701);
-        return std::clamp(ground*0.57f+mineral*0.26f+sand*0.17f,0.0f,1.0f);
+        const float drift=noise(x*0.13f,z*0.13f,691);
+        const float mineral=noise((x+drift*2.2f)*0.56f,(z-drift)*0.56f,697);
+        const float grains=noise((0.81f*x-0.59f*z)*1.30f,(0.59f*x+0.81f*z)*1.30f,701);
+        return std::clamp(drift*0.33f+mineral*0.48f+grains*0.19f,0.0f,1.0f);
     };
     const auto byte=[](float x){ return static_cast<std::uint8_t>(std::clamp(x,0.0f,1.0f)*255.0f+0.5f); };
     constexpr float texel=material_page_meters/material_page_texels;
@@ -538,6 +536,8 @@ struct LunarRenderer::Impl {
     std::vector<lunar::RayTriangle> landscape_rays;
     std::array<lunar::Float4,64> fixture_positions{};
     std::size_t fixture_count{};
+    lunar::LightFader raster_lights,ray_lights;
+    std::span<const LunarLight> raster_fixtures,ray_fixtures;
     Vec3 ray_focus{};
     std::uint64_t ray_generation{1};
     std::future<lunar::RayTree> ray_job;
@@ -546,6 +546,7 @@ struct LunarRenderer::Impl {
     lunar::PageCache ground_pages{material_page_layers},shadow_pages{shadow_page_layers};
     lunar::PageCoord ground_origin{},shadow_origin{};
     Vec3 page_sun{},page_x{},page_y{};
+    float shadow_page_blend{},ray_blend{},frame_seconds{};
     bool page_support{},shadow_pages_active{};
     bool loaded{},ready{},in_scene{},targets_ready{},history_valid{},earth_sky_failed{},skin_in_scene{};
     Int width{},height{},output_width{},output_height{},history_width{},history_height{},terrain_vertices{},stone_start{};
@@ -907,7 +908,7 @@ struct LunarRenderer::Impl {
         const char* options=graphics_shader_options();
         visibility_path=link(primitive_ids,visibility_vertex,{visibility_fragment})
             && link(material_resolve,screen_vertex,{visibility_inputs,options,gbuffer_outputs,
-                surface_common,reconstruct_common,visibility_resolve});
+                surface_shaders::fields,surface_common,reconstruct_common,visibility_resolve});
         cluster_path=visibility_path && compute.multi_draw && link_compute(cull_clusters,{glsl430,options,cluster_culling});
         if(cluster_path){
             gl.GenVertexArrays(1,&cluster_vao);
@@ -942,12 +943,12 @@ struct LunarRenderer::Impl {
         if(!loaded) return false;
         using namespace lunar_shaders;
         const char* options=graphics_shader_options();
-        if(!link(geometry,mesh_vertex,{geometry_inputs,options,gbuffer_outputs,surface_common,geometry_sample,gbuffer_fragment}) ||
+        if(!link(geometry,mesh_vertex,{geometry_inputs,options,gbuffer_outputs,surface_shaders::fields,surface_common,geometry_sample,gbuffer_fragment}) ||
            !link(shadow,depth_vertex,{depth_fragment}) || !link(sky,screen_vertex,{sky_fragment}) ||
            !link(lighting,screen_vertex,{scene_inputs,options,lighting_uniforms,lighting_common,reconstruct_common,deferred_fragment}) ||
            !link(reflection,screen_vertex,{scene_inputs,options,reflection_inputs,reconstruct_common,reflection_fragment}) ||
            !link(transparency,mesh_vertex,{geometry_inputs,options,lighting_uniforms,transparency_outputs,
-                                          surface_common,geometry_sample,lighting_common,transparency_fragment}) ||
+                                          surface_shaders::fields,surface_common,geometry_sample,lighting_common,transparency_fragment}) ||
            !link(temporal,screen_vertex,{temporal_inputs,options,reconstruct_common,temporal_fragment}) ||
            !link(line,mesh_vertex,{line_fragment}) || !link(bloom,screen_vertex,{bloom_fragment}) ||
            !link(composite,screen_vertex,{glsl330,options,composite_fragment}) || !link(fxaa,screen_vertex,{fxaa_fragment,learned_upscale}) ||
@@ -957,7 +958,7 @@ struct LunarRenderer::Impl {
         gl.GenTextures(1,&surface_maps);
         bind_texture(0,surface_maps,texture_array);
         const auto maps=material_maps();
-        gl.TexImage3D(texture_array,0,rgba8,map_size,map_size,material_count,0,rgba,byte_type,maps.data());
+        gl.TexImage3D(texture_array,0,rgba8,map_size,map_size,material_count*material_variants,0,rgba,byte_type,maps.data());
         gl.TexParameteri(texture_array,wrap_s,repeat);
         gl.TexParameteri(texture_array,wrap_t,repeat);
         gl.TexParameteri(texture_array,min_filter,trilinear);
@@ -981,6 +982,8 @@ struct LunarRenderer::Impl {
         gl.VertexAttribPointer(0,3,float_type,0,sizeof(Vertex),nullptr);
         gl.VertexAttribPointer(1,4,float_type,0,sizeof(Vertex),reinterpret_cast<const void*>(offsetof(Vertex,tint)));
         gl.VertexAttribPointer(2,1,float_type,0,sizeof(Vertex),reinterpret_cast<const void*>(offsetof(Vertex,material)));
+        gl.EnableVertexAttribArray(5);
+        gl.VertexAttribPointer(5,3,float_type,0,sizeof(Vertex),reinterpret_cast<const void*>(offsetof(Vertex,coordinate)));
         gl.BindVertexArray(terrain_vao);
         gl.BindBuffer(array_buffer,terrain_buffer);
         gl.EnableVertexAttribArray(0);
@@ -1065,15 +1068,20 @@ struct LunarRenderer::Impl {
         }
         if(length(scene.eye-next.eye)>22.0f || dot(forward(scene.view_projection),forward(next.view_projection))<0.85f)
             reset_history(false);
+        frame_seconds=std::clamp(next.seconds-scene.seconds,1.0f/240,0.1f);
         scene=next;
         scene.sun_direction=normalize(scene.sun_direction);
         scene.daylight=std::clamp(scene.daylight,0.0f,1.0f);
         if(graphics.shadows!=GraphicsShadows::Off && scene.daylight>0.001f){
-            const float distance=length(scene.eye-scene.focus);
-            const float reach[]{std::clamp(distance*.32f,22.0f,58.0f),std::clamp(distance*.70f,58.0f,148.0f),
-                                std::clamp(distance*1.50f,140.0f,390.0f)};
+            constexpr float reach[]{36.0f,106.0f,360.0f};
             for(Int i=0;i<cascade_count;++i) cascades[i]=light_projection(scene,reach[i],shadow_size);
         }else cascades.fill(Mat4::identity());
+        const int light_quality=graphics.quality(Feature::LocalLights);
+        const auto raster_budget=light_quality?quality_budget(light_quality,2u,4u,8u):0u;
+        const auto ray_budget=graphics.enabled(Feature::ReservoirLights)?
+            quality_budget(light_quality,8u,24u,64u):raster_budget;
+        raster_fixtures=raster_lights.update(scene,raster_budget,16);
+        ray_fixtures=ray_lights.update(scene,ray_targets && light_quality?ray_budget:0u);
 
         view_projection=scene.view_projection;
         if(temporal_aa()){
@@ -1092,12 +1100,13 @@ struct LunarRenderer::Impl {
         return true;
     }
 
-    void append(const std::vector<Vec3>& points,Int material,Color tint,bool is_line,float width_px){
+    void append(const std::vector<Vec3>& points,Int material,Color tint,bool is_line,float width_px,
+                const LunarSurfaceMapping& mapping={}){
         const std::size_t arity=is_line?2u:3u;
         const std::size_t count=points.size()/arity*arity;
         if(!count || tint.a<=0.0f) return;
         const Int first=static_cast<Int>(vertices.size());
-        for(std::size_t i=0;i<count;++i) vertices.push_back({points[i],tint,float(material)});
+        for(std::size_t i=0;i<count;++i) vertices.push_back({points[i],tint,float(material),mapping.coordinate(points[i])});
         const bool transparent=tint.a<0.999f;
         if(!is_line && !transparent && material==static_cast<Int>(LunarMaterial::Skin)) skin_in_scene=true;
         const bool casts=!is_line && !transparent && material!=static_cast<Int>(LunarMaterial::Emissive) &&
@@ -1170,7 +1179,8 @@ struct LunarRenderer::Impl {
         ground_origin=page_origin(scene.focus.x,scene.focus.z,material_page_meters);
         lunar::PageRevisions revisions;
         revisions.fill(1);
-        const auto plan=ground_pages.plan(ground_origin,revisions,quality_budget(graphics.quality(Feature::VirtualTextures),1,2,4));
+        const auto plan=ground_pages.plan(ground_origin,revisions,quality_budget(graphics.quality(Feature::VirtualTextures),1,2,4),
+                                          std::max(1,int(frame_seconds*1600.0f)));
         if(!plan.uploads.empty()){
             std::vector<std::vector<std::uint8_t>> pixels(plan.uploads.size());
             TaskPool::shared().parallel_for(pixels.size(),[&](std::size_t index){
@@ -1234,8 +1244,11 @@ struct LunarRenderer::Impl {
         if(!shadow_pages_active) return;
         constexpr float angular_step=0.0087266463f;
         const auto snap=[](float angle){ return std::round(angle/angular_step)*angular_step; };
-        const float az=snap(std::atan2(scene.sun_direction.z,scene.sun_direction.x));
-        const float el=snap(std::asin(std::clamp(scene.sun_direction.y,-1.0f,1.0f)));
+        const float azimuth=std::atan2(scene.sun_direction.z,scene.sun_direction.x);
+        const float elevation=std::asin(std::clamp(scene.sun_direction.y,-1.0f,1.0f));
+        const float az=snap(azimuth),el=snap(elevation);
+        const float angular_error=std::max(std::abs(azimuth-az),std::abs(elevation-el));
+        shadow_page_blend=0.72f*(1.0f-smooth(angular_step*0.16f,angular_step*0.49f,angular_error));
         const Vec3 direction{std::cos(el)*std::cos(az),std::sin(el),std::cos(el)*std::sin(az)};
         if(dot(direction-page_sun,direction-page_sun)>0.000001f){
             page_sun=direction;
@@ -1245,7 +1258,8 @@ struct LunarRenderer::Impl {
         page_x=normalize(cross(page_sun*-1.0f,up));
         page_y=normalize(cross(page_x,page_sun*-1.0f));
         shadow_origin=page_origin(dot(scene.focus,page_x),dot(scene.focus,page_y),shadow_page_meters);
-        const auto plan=shadow_pages.plan(shadow_origin,shadow_revisions(),quality_budget(graphics.shadow_quality,1,2,4));
+        const auto plan=shadow_pages.plan(shadow_origin,shadow_revisions(),quality_budget(graphics.shadow_quality,1,2,4),
+                                          std::max(1,int(frame_seconds*1500.0f)));
         upload_page_table(shadow_table,plan);
         if(plan.uploads.empty()) return;
         const Mat4 view=look_at(page_sun*2048.0f,Vec3{},up);
@@ -1277,16 +1291,16 @@ struct LunarRenderer::Impl {
         sample(program,ShadowPageMap,11,shadow_pages_active?shadow_atlas:0,texture_array);
         sample(program,ShadowTable,12,shadow_pages_active?shadow_table:0);
         gl.Uniform1i(program[UseShadowPages],shadow_pages_active);
+        gl.Uniform1f(program[ShadowPageBlend],shadow_page_blend);
         gl.Uniform1i(program[UseShadowMaps],graphics.shadows!=GraphicsShadows::Off);
         gl.Uniform2f(program[ShadowOrigin],float(shadow_origin.x),float(shadow_origin.y));
         vector(program,ShadowX,page_x);
         vector(program,ShadowY,page_y);
         vector(program,ShadowSun,page_sun);
-        std::array<float,32> position{},colors{};
-        const auto light_budget=quality_budget(graphics.quality(Feature::LocalLights),2u,4u,8u);
-        const auto count=graphics.enabled(Feature::LocalLights)?std::min<std::size_t>(scene.light_count,light_budget):0;
+        std::array<float,64> position{},colors{};
+        const auto count=raster_fixtures.size();
         for(std::size_t i=0;i<count;++i){
-            const auto& light=scene.lights[i];
+            const auto& light=raster_fixtures[i];
             const auto j=i*4;
             position[j]=light.position.x;
             position[j+1]=light.position.y;
@@ -1410,6 +1424,7 @@ struct LunarRenderer::Impl {
         sample(material_resolve,DepthMap,3,gbuffer.depth);
         sample(material_resolve,SurfaceMaps,5,surface_maps,texture_array);
         ground_page_state(material_resolve);
+        screen_size(material_resolve);
         matrix(material_resolve,InverseViewProjection,inverse);
         vector(material_resolve,Eye,scene.eye);
         compute.bind_buffer(storage_buffer,3,clustered?cluster_vertices:terrain_buffer);
@@ -1439,6 +1454,9 @@ struct LunarRenderer::Impl {
     void reset_history(bool scene_reset){
         history_valid=ray_history=reservoir_history=false;
         if(scene_reset){
+            raster_lights.reset();
+            ray_lights.reset();
+            ray_blend=0.0f;
             ++ray_generation;
             ray_tree_ready=false;
             neural_initialized=false;
@@ -1498,13 +1516,13 @@ struct LunarRenderer::Impl {
         next_ray_build=now+milliseconds(92);
     }
 
-    void upload_fixtures(std::size_t limit){
+    void upload_fixtures(bool active){
         struct Fixture { lunar::Float4 position,color; };
         std::array<Fixture,64> lights{};
-        const auto count=std::min({scene.light_count,lights.size(),limit});
+        const auto count=active?ray_fixtures.size():0;
         bool same=count==fixture_count;
         for(std::size_t i=0;i<count;++i){
-            const auto& light=scene.lights[i];
+            const auto& light=ray_fixtures[i];
             lights[i]={{light.position.x,light.position.y,light.position.z,light.radius},
                        {light.color.r,light.color.g,light.color.b,light.power*std::lerp(1.0f,0.62f,scene.daylight)}};
             same=same && lights[i].position==fixture_positions[i];
@@ -1565,21 +1583,20 @@ struct LunarRenderer::Impl {
         if(trace_requested) update_ray_tree();
         const bool tracing=trace_requested && ray_tree_ready;
         const bool local_lights=graphics.enabled(Feature::LocalLights);
-        const bool resample=local_lights && graphics.enabled(Feature::ReservoirLights) && scene.light_count>4;
+        const bool resample=local_lights && graphics.enabled(Feature::ReservoirLights) && !ray_fixtures.empty();
         if(!tracing && !resample) return false;
         if(tracing) frame_features|=graphics_bit(Feature::RayTracing);
         if(resample) frame_features|=graphics_bit(Feature::ReservoirLights);
         const bool trace_fixtures=local_lights && tracing && graphics.enabled(Feature::RayShadows);
         ++ray_frame;
-        const int light_quality=graphics.quality(Feature::LocalLights);
-        upload_fixtures(resample?quality_budget(light_quality,8u,24u,64u):
-                        trace_fixtures?quality_budget(light_quality,2u,4u,8u):0u);
+        upload_fixtures(resample || trace_fixtures);
         compute.bind_buffer(storage_buffer,0,ray_buffers[0]);
         compute.bind_buffer(storage_buffer,1,ray_buffers[1]);
         // The compute shaders sample the geometry textures. Their source
         // framebuffer must not be active when a later draw writes the results.
         gl.BindFramebuffer(framebuffer,0);
-        if(resample){
+        const bool use_reservoirs=resample && fixture_count>16;
+        if(use_reservoirs){
             const UInt previous=reservoirs[reservoir_index].color;
             reservoir_index^=1;
             ray_inputs_for(reservoir_program);
@@ -1588,7 +1605,7 @@ struct LunarRenderer::Impl {
             compute.bind_image(0,reservoirs[reservoir_index].color,0,0,0,write_only,rgba32f);
             dispatch_rays();
         }
-        reservoir_history=resample;
+        reservoir_history=use_reservoirs;
         ray_inputs_for(ray_program);
         sample(ray_program,ReservoirMap,4,reservoirs[reservoir_index].color);
         compute.bind_image(0,ray_raw.color,0,0,0,write_only,rgba16f);
@@ -1648,6 +1665,7 @@ struct LunarRenderer::Impl {
         screen(lighting);
         gbuffer_state(lighting);
         lighting_state(lighting);
+        gl.Uniform1f(lighting[RayBlend],ray_blend);
         shader_options(lighting,frame_features);
         gl.Uniform1i(lighting[UseRays],computed!=nullptr);
         sample(lighting,RayIndirect,5,computed?computed->aux[0]:0);
@@ -1863,9 +1881,13 @@ struct LunarRenderer::Impl {
         // building. Only advertise effects with valid output this frame.
         frame_features=graphics.features&~(graphics_bit(Feature::RayTracing)|graphics_bit(Feature::ReservoirLights));
         const Target* computed=nullptr;
-        if(render_rays())
+        if(render_rays()){
             computed=graphics.enabled(Feature::RayDenoise)?&ray_filtered[ray_index]:&ray_raw;
-        else ray_history=reservoir_history=false;
+            ray_blend=std::min(1.0f,ray_blend+frame_seconds*6.0f);
+        }else{
+            ray_history=reservoir_history=false;
+            ray_blend=0.0f;
+        }
         render_lighting(computed);
         UInt reflection_texture{};
         if(computed && (frame_features&graphics_bit(Feature::RayTracing)) && graphics.enabled(Feature::RayReflections))
@@ -1921,9 +1943,10 @@ void LunarRenderer::invalidate_history(){ impl_->reset_history(true); }
 bool LunarRenderer::campus_atmosphere(const Mat4& projection,Vec3 eye,float seconds,int width,int height){
     return impl_->campus_atmosphere(projection,eye,seconds,width,height);
 }
-void LunarRenderer::triangles(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint){
+void LunarRenderer::triangles(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint,
+                              const LunarSurfaceMapping& mapping){
     if(material==LunarMaterial::Marking && !impl_->graphics.enabled(Feature::Decals)) return;
-    impl_->append(vertices,static_cast<Int>(material),tint,false,1.0f);
+    impl_->append(vertices,static_cast<Int>(material),tint,false,1.0f,mapping);
 }
 void LunarRenderer::lines(const std::vector<Vec3>& vertices,Color tint,float width){
     impl_->append(vertices,line_material,tint,true,width);

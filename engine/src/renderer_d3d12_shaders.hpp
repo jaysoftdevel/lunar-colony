@@ -10,6 +10,7 @@ cbuffer DrawConstants : register(b0)
     float2 gViewport;
     float gLineWidth;
     float gMaterial;
+    float4 gSurfaceAxes[3];
 };
 
 float4 clip_position(float3 position)
@@ -55,6 +56,7 @@ struct SurfaceVertex
 {
     float4 position : SV_POSITION;
     float3 world : TEXCOORD0;
+    float3 coordinate : TEXCOORD1;
 };
 
 SurfaceVertex VSLunar(float3 position : POSITION)
@@ -62,6 +64,8 @@ SurfaceVertex VSLunar(float3 position : POSITION)
     SurfaceVertex o;
     o.position = clip_position(position);
     o.world = position;
+    float4 p=float4(position,1.0);
+    o.coordinate=float3(dot(p,gSurfaceAxes[0]),dot(p,gSurfaceAxes[1]),dot(p,gSurfaceAxes[2]));
     return o;
 }
 
@@ -70,59 +74,41 @@ float3 safe_normalize(float3 v)
     return v * rsqrt(max(dot(v, v), 1e-10));
 }
 
-float hash_cell(float2 cell)
-{
-    float3 p = frac(cell.xyx * 0.1031);
-    p += dot(p, p.yzx + 33.33);
-    return frac((p.x + p.y) * p.z);
-}
-
-float value_noise(float2 p)
-{
-    float2 cell = floor(p);
-    float2 f = frac(p);
-    float2 w = f * f * (3.0 - 2.0 * f);
-    return lerp(lerp(hash_cell(cell), hash_cell(cell + float2(1, 0)), w.x),
-                lerp(hash_cell(cell + float2(0, 1)), hash_cell(cell + 1.0), w.x), w.y);
-}
-
-void crater(float2 p, float spacing, out float2 slope, out float ejecta)
+void crater(float2 p, float spacing, float footprint, out float2 slope, out float ejecta)
 {
     float2 cell = floor(p / spacing);
-    float2 center = 0.5 + 0.32 * (float2(hash_cell(cell), hash_cell(cell + 47.0)) - 0.5);
-    float radius = lerp(0.12, 0.23, hash_cell(cell + 8.0));
+    float2 center = 0.5 + 0.25 * (float2(surfaceHash(cell), surfaceHash(cell + 47.0)) - 0.5);
+    float radius = lerp(0.077, 0.24, surfaceHash(cell + 8.0));
     float2 delta = frac(p / spacing) - center;
     float r = length(delta) / radius;
-    float wall = smoothstep(0.22, 0.92, r) * (1.0 - smoothstep(0.95, 1.16, r));
-    float rim = smoothstep(0.85, 1.02, r) * (1.0 - smoothstep(1.03, 1.34, r));
+    float weight=smoothstep(0.30,0.80,surfaceHash(cell+61.2))*
+        (1.0-smoothstep(radius*spacing*0.10,radius*spacing*0.45,footprint));
+    float wall = smoothstep(0.22, 0.92, r) * (1.0 - smoothstep(0.95, 1.16, r)) * weight;
+    float rim = smoothstep(0.85, 1.02, r) * (1.0 - smoothstep(1.03, 1.34, r)) * weight;
     slope = delta * ((0.55 * wall - 0.35 * rim) / max(length(delta), 1e-4));
-    ejecta = 1.0 + 0.18 * rim - 0.17 * (1.0 - smoothstep(0.55, 0.91, r));
+    ejecta = 1.0 + 0.12 * rim - 0.17 * (1.0 - smoothstep(0.35, 1.0, r))*weight;
 }
 
-void shade_regolith(float3 world, inout float3 n, inout float3 albedo, inout float roughness)
+void shade_regolith(float3 world,float footprint,inout float3 n,inout float3 albedo,inout float roughness)
 {
     if (gTerrainRelief != 0u) {
         float2 slope;
         float ejecta;
-        crater(world.xz, 60.0, slope, ejecta);
+        crater(world.xz, 31.0, footprint, slope, ejecta);
         if (gTerrainRelief >= 3u) {
             float2 smallSlope;
             float smallEjecta;
-            crater(world.xz, 17.0, smallSlope, smallEjecta);
-            slope += 0.55 * smallSlope;
+            crater(turnSurface(world.xz)+8.2, 8.5, footprint, smallSlope, smallEjecta);
+            slope += 0.55*float2(0.83*smallSlope.x+0.56*smallSlope.y,-0.56*smallSlope.x+0.83*smallSlope.y);
             ejecta *= smallEjecta;
         }
         n = safe_normalize(n - float3(slope.x, 0.0, slope.y));
         albedo *= ejecta;
     }
-    if (gMaterialDetail != 0u) {
-        float patch = value_noise(world.xz * 0.10);
-        float grain = gMaterialDetail >= 2u ? value_noise(world.xz * 5.6) : 0.5;
-        float pixelSize = max(length(ddx(world.xz)), length(ddy(world.xz)));
-        grain = lerp(grain, 0.5, smoothstep(0.07, 0.28, pixelSize));
-        albedo *= 0.72 + 0.43 * patch + 0.16 * grain;
-        roughness = 0.84 + 0.10 * patch;
-    }
+    float3 soil=regolithField(world.xz,footprint);
+    float grain=gMaterialDetail>0u?regolithGrain(world.xz,footprint):0.5;
+    albedo*=0.69+0.32*soil.x+0.22*soil.y+0.14*soil.z+0.20*grain;
+    roughness=0.83+0.11*soil.y;
 }
 
 float3 direct_light(float3 albedo, float roughness, float metalness, float3 n, float3 v, float3 l)
@@ -153,33 +139,31 @@ float4 PSLunar(SurfaceVertex input) : SV_TARGET
     if (kind == Emissive) return float4(albedo * 6.0, gColor.a);
 
     float3 world = input.world;
+    float3 coord=input.coordinate;
+    float footprint=max(length(ddx(world)),length(ddy(world)));
     float3 v = safe_normalize(gEye.xyz - world);
     float3 n = safe_normalize(cross(ddx(world), ddy(world)));
     if (kind == Regolith ? n.y < 0.0 : dot(n, v) < 0.0) n = -n;
 
     float roughness = 0.62, metalness = 0.02;
-    if (kind == Alloy) { roughness = 0.33; metalness = 0.78; }
-    if (kind == Solar) { roughness = 0.28; metalness = 0.48; }
-    if (kind == Glass) { roughness = 0.17; metalness = 0.04; }
+    if (kind == Alloy) { roughness = 0.42; metalness = 0.68; }
+    if (kind == Solar) { roughness = 0.38; metalness = 0.42; }
+    if (kind == Glass) { roughness = 0.24; metalness = 0.04; }
     if (kind == Fabric || kind == Pad) roughness = 0.86;
     if (kind == Skin || kind == Hair) roughness = 0.48;
     if (kind == Regolith) {
         roughness = 0.9;
-        shade_regolith(world, n, albedo, roughness);
-    } else if (gMaterialDetail != 0u && kind != Glass && kind != Marking && kind != Skin) {
-        float2 uv = abs(n.y) > 0.6 ? world.xz : abs(n.x) > 0.6 ? world.zy : world.xy;
-        float grain = value_noise(uv * (gMaterialDetail == 1u ? 2.0 : kind == Fabric ? 19.0 : 8.0));
-        float footprint = max(length(ddx(world)), length(ddy(world)));
-        float detail = 1.0 - smoothstep(0.012, 0.16, footprint);
-        albedo *= lerp(1.0, 0.88 + 0.23 * grain, detail);
-        if (gMaterialDetail >= 2u && kind == Solar && abs(n.y) > 0.28) {
-            float2 cell = abs(frac(uv * 4.0) - 0.5);
-            float seam = smoothstep(0.42, 0.5, max(cell.x, cell.y));
-            albedo = lerp(albedo, albedo * 0.32, detail * seam);
-        }
+        shade_regolith(world,footprint,n,albedo,roughness);
+    } else if (gMaterialDetail != 0u && kind != Marking) {
+        float scale=kind==Fabric?3.2:kind==Alloy?1.4:1.0;
+        float grain=coatingField((coord.xz+coord.y*float2(0.42,0.73))*scale,
+                                 footprint*scale,float(kind)*41.0);
+        float wear=gMaterialDetail>=2u?smoothstep(0.52,0.74,grain):0.0;
+        albedo*=kind==Skin || kind==Glass?0.94+0.12*grain:0.82+0.34*grain-0.12*wear;
+        roughness=lerp(roughness,0.76,wear*0.23);
     }
     if (gDecals >= 2u && (kind == Paint || kind == Pad)) {
-        float dust = value_noise(world.xz * 0.88) * (1.0 - smoothstep(0.1, 1.8, world.y));
+        float dust = regolithField(world.xz,footprint).y * (1.0 - smoothstep(0.1, 1.8, world.y));
         dust *= gDecals == 2u ? 0.55 : 1.0;
         albedo = lerp(albedo, float3(0.21, 0.18, 0.16), 0.32 * dust);
         roughness = lerp(roughness, 0.88, dust);

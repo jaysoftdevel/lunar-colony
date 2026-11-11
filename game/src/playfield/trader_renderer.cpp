@@ -10,9 +10,11 @@ using eng::Vec3;using eng::Color;using resources::Builder;
 std::vector<Vec3> pose(const std::vector<Vec3>& src,Vec3 position,float rotation,float scale=1){std::vector<Vec3> out;out.reserve(src.size());for(auto p:src)out.push_back(world_math::rotate_y(p*scale,rotation)+position);return out;}
 void draw(eng::Renderer& r,const Builder& b,Vec3 p,float yaw=0,float s=1,Color color={.42f,.58f,.65f,1},bool wire=false){
     if(r.lunar_scene_active()){
-        r.draw_lunar_surface(pose(b.mesh.foundation,p,yaw,s),eng::LunarMaterial::Alloy,{.44f,.49f,.52f,1});
-        r.draw_lunar_surface(pose(b.mesh.body,p,yaw,s),eng::LunarMaterial::Paint,color);
-        r.draw_lunar_surface(pose(b.mesh.details,p,yaw,s),eng::LunarMaterial::Alloy,{.79f,.58f,.27f,1});
+        const eng::LunarSurfaceMapping mapping{p,world_math::rotate_y({1,0,0},yaw),{0,1,0},
+            world_math::rotate_y({0,0,1},yaw)};
+        r.draw_mapped_lunar_surface(pose(b.mesh.foundation,p,yaw,s),eng::LunarMaterial::Alloy,{.44f,.49f,.52f,1},mapping);
+        r.draw_mapped_lunar_surface(pose(b.mesh.body,p,yaw,s),eng::LunarMaterial::Paint,color,mapping);
+        r.draw_mapped_lunar_surface(pose(b.mesh.details,p,yaw,s),eng::LunarMaterial::Alloy,{.79f,.58f,.27f,1},mapping);
         return;
     }
     if(wire){r.draw_lines_3d(pose(b.mesh.edges,p,yaw,s),color,1);return;}

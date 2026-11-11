@@ -411,10 +411,10 @@ void GameApp::render_selection_panel(Renderer& r){
             team<<"TEAM  SITE COORDINATOR";
         else team<<"TEAM  INDEPENDENT";
 
-        if(robot.operation_retry.relocation_pending())
-            recovery<<"5 FAILED ATTEMPTS / WAITING FOR SAFE RELOCATION";
+        if(robot.operation_retry.replan_pending())
+            recovery<<"5 FAILED ATTEMPTS / RESTARTING PATH SEARCH";
         else if(robot.operation_retry.failures>0)
-            recovery<<"FAILED ATTEMPTS "<<(int)robot.operation_retry.failures<<" / "<<(int)kRobotRelocationFailures;
+            recovery<<"FAILED ATTEMPTS "<<(int)robot.operation_retry.failures<<" / "<<(int)kRobotReplanFailures;
         else if(robot.safety.mode==robots::SafetyMode::Fault){
             const float remaining=robot.safety.fault_recovery_deadline<0?robots::kFaultRecoveryMaxWaitSeconds:
                 std::clamp(robot.safety.fault_recovery_deadline-robot_safety_time_seconds_,0.0f,robots::kFaultRecoveryMaxWaitSeconds);

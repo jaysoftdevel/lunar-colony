@@ -290,7 +290,6 @@ private:
     // the selected structure changes or the selection is cleared.
     int hydroponics_dropdown_habitat_{-1};
     int hydroponics_dropdown_bay_{-1};
-    bool robot_enclosure_legacy_scan_pending_{true};
     std::uint64_t selection_panel_scroll_key_{0};
     int corridor_link_source_=-1;
     std::optional<CorridorBuildAnchor> corridor_build_start_{};
