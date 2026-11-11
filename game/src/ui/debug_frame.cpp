@@ -34,8 +34,8 @@ void GameApp::render_debug_frame(Renderer& r){
     camera_a<<"TILT "<<(int)camera_.elevation_degrees()<<"  ROT "<<(int)camera_.azimuth_degrees();
     camera_b<<"ZOOM "<<(int)camera_.distance()<<"  CENTER "
             <<std::fixed<<std::setprecision(1)<<camera_.target().x<<" / "<<camera_.target().z;
-    cpu<<"CPU LANES "<<eng::cpu_parallel_lanes()<<"  WORKERS "
-       <<eng::TaskPool::shared().background_workers()<<" + MAIN";
+    const auto workers=eng::TaskPool::shared().cpu_info();
+    cpu<<"CPU LANES "<<workers.lanes<<"/"<<workers.available<<"  AFFINITY "<<workers.assigned_workers;
     std::string gpu=r.gpu_renderer();
     if(gpu.size()>42) gpu=gpu.substr(0,39)+"...";
 

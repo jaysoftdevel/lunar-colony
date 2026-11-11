@@ -1,19 +1,15 @@
 #include "engine/engine.hpp"
+#include "cpu_affinity.hpp"
 
 #include <algorithm>
 #include <condition_variable>
 #include <cstdlib>
 #include <deque>
 #include <mutex>
+#include <new>
+#include <string_view>
 #include <thread>
 #include <system_error>
-#ifdef __linux__
-#include <sched.h>
-#elif defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#endif
 
 namespace eng {
 namespace {
@@ -31,48 +27,43 @@ struct TaskPool::Impl {
     std::deque<Entry> queue{};
     std::vector<std::thread> workers{};
     bool stop{false};
+    cpu::Affinity affinity=cpu::discover();
+    std::size_t available=affinity.processors.empty()?
+        std::max(1u,std::thread::hardware_concurrency()):affinity.processors.size();
     std::size_t lanes{1};
+    bool affinity_enabled=true;
+    std::atomic<std::size_t> initialized{},assigned{};
 
     Impl(){
-        unsigned hw=std::thread::hardware_concurrency();
-        if(hw==0) hw=2;
-#ifdef __linux__
-        cpu_set_t allowed{};
-        if(sched_getaffinity(0,sizeof(allowed),&allowed)==0){
-            const int affinity_cpus=CPU_COUNT(&allowed);
-            if(affinity_cpus>0) hw=(unsigned)affinity_cpus;
-        }
-#elif defined(_WIN32)
-        // Windows 11 can expose multiple processor groups on very large hosts.
-        // Count all active logical processors instead of assuming one 64-CPU
-        // group. The Windows scheduler can distribute these unpinned workers.
-        const DWORD active=GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
-        if(active>0) hw=(unsigned)active;
-#endif
-        // Use every logical CPU that the host/launcher makes available to this
-        // process. One lane is the game thread itself; every remaining lane is
-        // backed by one persistent helper. The old ~50% cap kept the runtime
-        // artificially CPU-bound on dense multi-rover saves even though the
-        // expensive navigation jobs are independent and already synchronized
-        // before authoritative world mutation.
-        lanes=std::max<std::size_t>(1,(std::size_t)hw);
+        lanes=available;
         if(const char* env=std::getenv("GAME_CPU_LANES")){
             char* end=nullptr;
             const long requested=std::strtol(env,&end,10);
-            if(end!=env && requested>0) lanes=std::clamp<std::size_t>((std::size_t)requested,1,(std::size_t)hw);
+            if(end!=env && requested>0) lanes=std::min(available,static_cast<std::size_t>(requested));
         }
-        const std::size_t helpers=lanes>1?lanes-1:0;
-        workers.reserve(helpers);
-        for(std::size_t i=0;i<helpers;++i){
+        if(const char* env=std::getenv("GAME_CPU_PIN")) affinity_enabled=std::string_view(env)!="0";
+        workers.reserve(lanes-1);
+        // Leave the application thread and driver-created threads free to
+        // use their original masks. A worker selects its own CPU on entry.
+        for(std::size_t index=1;index<lanes;++index){
             try {
-                workers.emplace_back([this](){ worker_loop(); });
+                workers.emplace_back([this,index](){
+                    if(affinity_enabled && cpu::select_current_thread(affinity,index))
+                        assigned.fetch_add(1,std::memory_order_relaxed);
+                    initialized.fetch_add(1,std::memory_order_acq_rel);
+                    initialized.notify_one();
+                    worker_loop();
+                });
             } catch(const std::system_error&) {
-                // A host thread limit must not abort startup after some workers
-                // have already been launched.
+                break;
+            } catch(const std::bad_alloc&) {
                 break;
             }
         }
         lanes=workers.size()+1;
+        for(auto ready=initialized.load(std::memory_order_acquire);ready<workers.size();
+            ready=initialized.load(std::memory_order_acquire))
+            initialized.wait(ready);
     }
 
     void worker_loop(){
@@ -107,16 +98,16 @@ TaskPool::~TaskPool()=default;
 TaskPool& TaskPool::shared(){ static TaskPool pool; return pool; }
 std::size_t TaskPool::parallel_lanes() const { return impl_?impl_->lanes:1; }
 std::size_t TaskPool::background_workers() const { return impl_?impl_->workers.size():0; }
+CpuWorkerInfo TaskPool::cpu_info() const {
+    return {impl_->available,impl_->lanes,impl_->assigned.load(std::memory_order_relaxed),impl_->affinity_enabled};
+}
 
-std::future<void> TaskPool::submit(std::function<void()> task){
-    auto packaged=std::make_shared<std::packaged_task<void()>>(std::move(task));
-    auto future=packaged->get_future();
-    if(!impl_ || impl_->workers.empty()){
-        (*packaged)();
-        return future;
+void TaskPool::enqueue(std::function<void()> task){
+    if(background_workers()==0){
+        task();
+        return;
     }
-    post_shared(std::make_shared<std::function<void()>>([packaged](){ (*packaged)(); }),1);
-    return future;
+    post_shared(std::make_shared<std::function<void()>>(std::move(task)),1);
 }
 
 void TaskPool::post_shared(const std::shared_ptr<std::function<void()>>& task,std::size_t copies,bool joined){
@@ -140,5 +131,14 @@ void TaskPool::discard_shared(const std::shared_ptr<std::function<void()>>& task
 }
 
 std::size_t cpu_parallel_lanes(){ return TaskPool::shared().parallel_lanes(); }
+
+std::string cpu_worker_summary(){
+    const auto info=TaskPool::shared().cpu_info();
+    auto text=std::string("CPU lanes ")+std::to_string(info.lanes)+"/"+std::to_string(info.available)+
+        " available ("+std::to_string(info.lanes-1)+" workers + application thread";
+    if(info.affinity_enabled) text+=", "+std::to_string(info.assigned_workers)+" workers assigned to CPU sets";
+    else text+=", worker placement off";
+    return text+")";
+}
 
 } // namespace eng

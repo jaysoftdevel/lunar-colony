@@ -50,4 +50,22 @@ float coatingField(vec2 p,float footprint,float seed){
 }
 )SHADER";
 
+inline constexpr char basic_material[]=R"SHADER(
+float basicSurfaceTone(vec3 world,vec3 normal,float material,bool terrain,float footprint){
+    vec3 axis=abs(normal);
+    vec2 uv=axis.y>=max(axis.x,axis.z)?world.xz:(axis.x>axis.z?world.zy:world.xy);
+    vec2 p=turnSurface(uv);
+    if(terrain){
+        float rock=filteredNoise(p*0.091,footprint*0.091);
+        float dust=filteredNoise(p*0.81+vec2(18.0,37.0),footprint*0.81);
+        return 0.76+0.38*rock+0.12*dust;
+    }
+    float grain=filteredNoise(p*0.77+vec2(material*7.1,material*3.7),footprint*0.77);
+    return 0.87+0.24*grain;
+}
+float basicSurfaceLight(vec3 normal){
+    return 0.68+0.32*abs(dot(normal,vec3(-0.42,0.82,-0.39)));
+}
+)SHADER";
+
 } // namespace eng::surface_shaders

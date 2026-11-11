@@ -643,25 +643,22 @@ struct UiRegression {
             bool accept_enhanced{},saw_grid{};
             int scene_attempts{},surface_batches{};
             double surface_area{};
-            float darkest{},brightest{};
+            float surface_tint{};
             void begin_frame(Color clear) override {
                 Recorder::begin_frame(clear);
                 saw_grid=false;
                 scene_attempts=surface_batches=0;
                 surface_area=0;
-                darkest=1;
-                brightest=0;
+                surface_tint=0;
             }
             bool begin_lunar_scene(const LunarScene&) override {
                 ++scene_attempts;
                 return accept_enhanced;
             }
-            void draw_triangles_3d(const std::vector<Vec3>& points,Color color) override {
-                if(points.empty() || color.a!=1.f ||
-                   std::any_of(points.begin(),points.end(),[](Vec3 p){return p.y!=0.f;})) return;
+            void draw_lunar_surface(const std::vector<Vec3>& points,LunarMaterial material,Color color) override {
+                if(material!=LunarMaterial::Regolith || points.empty())return;
                 ++surface_batches;
-                darkest=std::min(darkest,color.r);
-                brightest=std::max(brightest,color.r);
+                surface_tint=color.r;
                 for(std::size_t i=0;i+2<points.size();i+=3){
                     const auto b=points[i+1]-points[i],c=points[i+2]-points[i];
                     const auto area=static_cast<double>(b.z)*c.x-static_cast<double>(b.x)*c.z;
@@ -689,9 +686,9 @@ struct UiRegression {
         for(int side:{32,1024}){
             app.playfield_.rebuild(side);
             app.render(r);
-            require(std::abs(r.surface_area-side*side)<.5 && r.surface_batches>2 && r.surface_batches<=9 &&
-                    r.darkest>.10f && r.brightest-r.darkest>.04f && !r.saw_grid && r.scene_attempts==0,
-                    "Classic graphics did not draw the complete shaded playfield");
+            require(std::abs(r.surface_area-side*side)<.5 && r.surface_batches==1 &&
+                    r.surface_tint>.10f && !r.saw_grid && r.scene_attempts==0,
+                    "Classic graphics did not draw the full playfield with the regolith material");
         }
         app.graphics_.path=GraphicsPath::Auto;
         app.render(r);
@@ -715,8 +712,86 @@ struct UiRegression {
         std::cout<<"Classic, enhanced fallback, first-person and Debug Meshed terrain checks passed\n";
     }
 
+    static void hull_views(){
+        using namespace eng;
+        struct HullRecorder : Recorder {
+            std::vector<Vec3> vertices;
+            void draw_lunar_surface(const std::vector<Vec3>& points,LunarMaterial,Color) override {
+                vertices.insert(vertices.end(),points.begin(),points.end());
+            }
+            void draw_lines_3d(const std::vector<Vec3>& points,Color,float) override {
+                vertices.insert(vertices.end(),points.begin(),points.end());
+            }
+            bool drew_at(float y) const {
+                return std::any_of(vertices.begin(),vertices.end(),[&](Vec3 point){return point.y==y;});
+            }
+        };
+        const auto layer=[](float y){return std::vector<Vec3>{{0,y,0},{0,y,1},{1,y,0}};};
+        Application engine;
+        GameApp app(engine);
+        app.graphics_.path=GraphicsPath::Classic;
+        require(app.habitat_view_mode_==GameApp::HabitatViewMode::FullHull,"new game did not start with Full Hull");
+        HabitatMesh habitat;
+        habitat.foundation=layer(1);
+        habitat.interior=layer(2);
+        habitat.shell=layer(3);
+        habitat.glazing=layer(4);
+        habitat.edges={{0,5,0},{1,5,0}};
+        ResourceMesh resource;
+        resource.foundation=habitat.foundation;
+        resource.details=habitat.interior;
+        resource.body=habitat.shell;
+        resource.edges=habitat.edges;
+        CorridorConnection corridor;
+        corridor.path={{0,1,0},{1,1,0}};
+        corridor.mesh={habitat.shell,habitat.interior,habitat.edges};
+        corridor.construction.finish();
+        app.corridor_network_.restore_connections({corridor});
+        app.selection_kind_=GameApp::SelectionKind::Corridor;
+        app.selected_corridor_=0;
+        HullRecorder r;
+        const auto draw_room=[&](float step){
+            r.vertices.clear();
+            app.render_habitat_mesh(r,habitat,{},0,false,true,true,step);
+        };
+        draw_room(kConstructionSteps);
+        require(r.drew_at(1) && r.drew_at(2) && r.drew_at(3) && r.drew_at(4) && r.drew_at(5),
+                "Classic Full Hull lost filled exterior or interior geometry");
+        r.set_2d(1);
+        app.render_view_selector(r,0,1280);
+        const auto none=r.button("NONE");
+        require(r.button("FULL HULL").w>0,"Full Hull button missing");
+        app.ui_input_.mouse_x=static_cast<int>(none.x+none.w*.5f);
+        app.ui_input_.mouse_y=static_cast<int>(none.y+none.h*.5f);
+        app.ui_input_.left_pressed=true;
+        app.render_view_selector(r,0,1280);
+        require(app.habitat_view_mode_==GameApp::HabitatViewMode::None,"None button did not hide the hull");
+
+        for(const auto layout:{GameApp::WorldLayoutMode::FullGraphics,GameApp::WorldLayoutMode::Mesh}){
+            app.world_layout_mode_=layout;
+            for(const float step:{4.f,static_cast<float>(kConstructionSteps)}){
+                draw_room(step);
+                require(r.drew_at(1) && r.drew_at(2) && !r.drew_at(3) && !r.drew_at(4) && !r.drew_at(5),
+                        "None drew part of the habitat shell or lost the interior");
+            }
+            for(const auto kind:{ResourceKind::StorageDome,ResourceKind::StorageGate,ResourceKind::RobotWorkshop,ResourceKind::OreDriller}){
+                r.vertices.clear();
+                app.render_resource_mesh(r,resource,{},0,false,true,true,kConstructionSteps,nullptr,kind);
+                const bool driller=kind==ResourceKind::OreDriller;
+                require(r.drew_at(1) && r.drew_at(2) && r.drew_at(3)==driller && r.drew_at(5)==driller,
+                        "None hid exterior equipment or drew a resource hull");
+            }
+            r.vertices.clear();
+            app.render_corridors(r);
+            require(r.drew_at(1) && r.drew_at(2) && !r.drew_at(3) && !r.drew_at(5),
+                    "None drew the corridor shell or lost its deck and selection marker");
+        }
+        std::cout<<"Full Hull default, None selector and hull draw layers passed\n";
+    }
+
     static void graphics_quality(){
         playfield_surface();
+        hull_views();
         using namespace eng;
         struct BenchmarkRecorder : Recorder {
             bool benchmarking{};
@@ -786,7 +861,12 @@ struct UiRegression {
         choose("TERRAIN RELIEF","LOW");
         require(app.graphics_.quality(F::TerrainRelief)==1 && app.graphics_.quality(F::MaterialDetail)==2,
                 "terrain and material quality settings interfered");
+        click("TEXTURES");
+        choose("MATERIAL DETAIL","BASIC");
+        require(app.graphics_.quality(F::MaterialDetail)==0,"Basic material detail did not select the lowest setting");
+        choose("MATERIAL DETAIL","MEDIUM");
 #ifndef _WIN32
+        click("ENVIRONMENT");
         choose("GROUND CLUTTER","OFF");
         require(app.graphics_.ground_clutter==0 && app.graphics_.quality(F::TerrainRelief)==1,
                 "ground clutter changed terrain relief");
@@ -1186,6 +1266,7 @@ struct UiRegression {
         };
         try{
             paths.push_back(save(first,64));
+            original.habitat_view_mode_=GameApp::HabitatViewMode::None;
             paths.push_back(save(second,128));
             require(paths[0]!=paths[1],"distinct save names overwrote the same file");
             require(save(second,192)==paths[1],"same-name replacement created a duplicate save");
@@ -1211,7 +1292,9 @@ struct UiRegression {
                     restarted.save_game_name_==(build::debug_features?debug:second) &&
                     restarted.playfield_.size()==(build::debug_features?256:192),
                     "Continue did not load the newest compatible save");
-            require(restarted.load_game_from_file(paths[0].string(),error) && restarted.playfield_.size()==64,
+            require(restarted.habitat_view_mode_==GameApp::HabitatViewMode::None,"save did not restore the hidden hull view");
+            require(restarted.load_game_from_file(paths[0].string(),error) && restarted.playfield_.size()==64 &&
+                    restarted.habitat_view_mode_==GameApp::HabitatViewMode::FullHull,
                     "saving a colliding name changed the earlier colony");
         }catch(...){
             for(const auto& path:paths) fs::remove(path);
@@ -1528,43 +1611,16 @@ struct UiRegression {
             require(mid_loaded.planning_.contracts[0].status==PlanningContractStatus::Completed &&
                     !mid_loaded.planning_contract_available(0),
                     "legacy previously delivered contract was not migrated to permanent Completed");
-            // Emulate a real v0.50.14 save: same binary layout except 12
-            // contracts, the old lunar customer at legacy ID 11 and schema 29.
-            // This checks that expanding the catalog does not lose a sponsor.
-            {
-                std::ifstream source(mid_save,std::ios::binary);
-                std::vector<char> bytes{std::istreambuf_iterator<char>(source),std::istreambuf_iterator<char>()};
-                // Strip the schema-32 deployment trailer before synthesizing schema 29.
-                constexpr std::size_t lander_trailer=2+1+sizeof(float)+3*sizeof(float)+2*kMaterialResourceCount*sizeof(std::int64_t)+2;
-                require(bytes.size()>=lander_trailer,"schema-32 save missing deployment trailer");
-                constexpr std::size_t empty_trade_trailer=1+sizeof(float)+sizeof(std::uint64_t)+3*sizeof(float)+2*kTradeGoodCount*sizeof(std::int64_t)+2*sizeof(std::int64_t)+1+3*sizeof(std::uint32_t);
-                require(bytes.size()>=lander_trailer+empty_trade_trailer+16,"schema-33 fixture missing trade trailer");
-                constexpr std::size_t empty_build_order_trailer=sizeof(std::uint64_t);
-                bytes.resize(bytes.size()-(lander_trailer+empty_trade_trailer+16+10+stages.ground_resource_piles_.size()+stages.planning_.mission_habitats.size()+stages.planning_.mission_structures.size()+7+empty_build_order_trailer+3*kCropKindCount));
-                constexpr std::size_t record_bytes=sizeof(std::uint8_t)+sizeof(double)+sizeof(std::uint16_t);
-                constexpr std::size_t trailing=2+kMaterialResourceCount*sizeof(std::int64_t)+1+sizeof(std::int64_t)+3;
-                require(bytes.size()>trailing+kPlanningContractCount*record_bytes+12,
-                        "schema-30 save too short for schema-29 contract migration test");
-                const auto contracts_end=bytes.size()-trailing;
-                const auto contracts_begin=contracts_end-kPlanningContractCount*record_bytes;
-                std::vector<char> old;
-                old.insert(old.end(),bytes.begin(),bytes.begin()+contracts_begin+11*record_bytes);
-                old.insert(old.end(),bytes.begin()+contracts_end-record_bytes,bytes.begin()+contracts_end);
-                old.insert(old.end(),bytes.begin()+contracts_end,bytes.end());
-                const std::uint32_t old_schema=29;
-                std::memcpy(old.data()+8,&old_schema,sizeof(old_schema));
-                const auto legacy_save=mid_save.parent_path()/"stage1-legacy-contracts.gmsave";
-                {std::ofstream out(legacy_save,std::ios::binary);out.write(old.data(),(std::streamsize)old.size());}
-                GameApp migrated(engine);std::string legacy_error;
-                require(migrated.load_game_from_file(legacy_save.string(),legacy_error),
-                        "schema-29 contract migration failed: "+legacy_error);
-                require(migrated.planning_.contracts[0].status==PlanningContractStatus::Completed &&
-                        migrated.planning_.contracts[kPlanningContractCount-1].status==PlanningContractStatus::Active &&
-                        migrated.planning_.contracts[11].status==PlanningContractStatus::Available &&
-                        migrated.planning_.mission_seeds==kStarterCropSeeds,
-                        "old lunar contract not remapped to last slot or old customer status not kept");
-                std::error_code ec;std::filesystem::remove(legacy_save,ec);
-            }
+            // The old catalog's lunar sponsorship was at legacy ID 11.
+            GameApp migrated(engine);
+            std::string legacy_error;
+            require(migrated.load_game_from_file(GAME_LEGACY_PLANNING_FIXTURE,legacy_error),
+                    "schema-29 contract migration failed: "+legacy_error);
+            require(migrated.planning_.contracts[0].status==PlanningContractStatus::Completed &&
+                    migrated.planning_.contracts[kPlanningContractCount-1].status==PlanningContractStatus::Active &&
+                    migrated.planning_.contracts[11].status==PlanningContractStatus::Available &&
+                    migrated.planning_.mission_seeds==kStarterCropSeeds,
+                    "old lunar contract not remapped to last slot or old customer status not kept");
             std::error_code mid_remove_error;std::filesystem::remove(mid_save,mid_remove_error);
             stages.planning_.contracts.back().status=PlanningContractStatus::Available;
             stages.planning_.contracts[0].status=PlanningContractStatus::Completed;
@@ -1819,10 +1875,19 @@ struct UiRegression {
 #endif
             click_menu("TEMPLATE MODE");
             if(template_exists){
+                GameApp blueprint_start(engine);
+                blueprint_start.new_game_phase_selection_=GameApp::GamePhase::RobotPreparation;
+                blueprint_start.debug_start_template_enabled_=true;
+                blueprint_start.start_new_game();
+                require(blueprint_start.screen_==GameApp::Screen::Playfield &&
+                        blueprint_start.placed_resources_.size()==11 && blueprint_start.utility_network_.connections().size()==11,
+                        "Stage 2 did not load the saved blueprint layout");
+                for(const auto& link:blueprint_start.utility_network_.connections())
+                    require(link.construction.step==0 && !link.mesh.shell.empty(),"template utility did not rebuild as a blueprint");
+
                 require(sandbox.screen_==GameApp::Screen::Playfield &&
                         sandbox.stage3_mode_==GameApp::Stage3Mode::Template &&
-                        !sandbox.placed_habitats_.empty() && !sandbox.placed_resources_.empty() &&
-                        !sandbox.corridor_network_.connections().empty() && !sandbox.utility_network_.connections().empty() &&
+                        sandbox.placed_resources_.size()==11 && sandbox.utility_network_.connections().size()==11 &&
                         !sandbox.builder_robots_.empty() && !sandbox.lander_.active(),
                         "Stage 3 template did not restore the prebuilt lunar base");
                 const auto all_built=[](const auto& items){

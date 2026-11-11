@@ -3,7 +3,8 @@ add_compile_definitions(GAME_DEBUG_FEATURES=$<IF:$<CONFIG:Debug>,1,0>)
 
 include(cmake/GameClusters.cmake)
 
-set(DEBUG_BLUEPRINT_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/debug-templates/0-40-32-debug-start.gmsave")
+set(DEBUG_BLUEPRINT_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/debug-templates/0-54-0-debug-start.gmsave")
+set(NAVIGATION_CONSTRUCTION_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/debug-templates/0-40-32-debug-start.gmsave")
 if(EXISTS "${DEBUG_BLUEPRINT_FIXTURE}")
     set(staged_debug_template "$<$<CONFIG:Debug>:${DEBUG_BLUEPRINT_FIXTURE}>")
 endif()
@@ -31,6 +32,8 @@ if(GAME_BUILD_NAVIGATION_TESTS)
     endforeach()
     add_executable(ui_regression tests/ui_regression.cpp)
     target_include_directories(ui_regression PRIVATE include)
+    target_compile_definitions(ui_regression PRIVATE
+        GAME_LEGACY_PLANNING_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/schema29-stage1-contracts.gmsave")
     target_link_libraries(ui_regression PRIVATE game_engine Threads::Threads rvo2)
     foreach(cluster IN LISTS GAME_CLUSTER_TARGETS)
         target_sources(ui_regression PRIVATE $<TARGET_OBJECTS:${cluster}>)
@@ -52,6 +55,10 @@ if(GAME_BUILD_NAVIGATION_TESTS)
     add_test(NAME navigation_collision_radius COMMAND navigation_regression collision-radius)
     add_test(NAME navigation_rover_steering COMMAND navigation_regression rover-steering)
     add_test(NAME navigation_operation_replan COMMAND navigation_regression operation-replan)
+    add_test(NAME navigation_lander_depot_routes COMMAND navigation_regression carrier-depot
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/schema48-lander-depot.gmsave")
+    set_tests_properties(navigation_lander_depot_routes PROPERTIES TIMEOUT 90)
+    add_test(NAME navigation_stage_package_clearance COMMAND navigation_regression stage-packages)
     function(add_debug_regression name)
         add_test(NAME "${name}" ${ARGN} CONFIGURATIONS Debug)
     endfunction()
@@ -89,10 +96,10 @@ if(GAME_BUILD_NAVIGATION_TESTS)
     add_debug_regression(colony_power_switches COMMAND navigation_regression power-switches)
     add_debug_regression(navigation_utilities COMMAND navigation_regression utilities)
     # Optional regression fixture. Building the game and tests requires only sources.
-    if(EXISTS "${DEBUG_BLUEPRINT_FIXTURE}")
-        add_debug_regression(navigation_fault_construction COMMAND navigation_regression fault-construction "${DEBUG_BLUEPRINT_FIXTURE}")
-        add_debug_regression(navigation_construction COMMAND navigation_regression construction "${DEBUG_BLUEPRINT_FIXTURE}")
-        add_debug_regression(navigation_late_corridor COMMAND navigation_regression late "${DEBUG_BLUEPRINT_FIXTURE}")
+    if(EXISTS "${NAVIGATION_CONSTRUCTION_FIXTURE}")
+        add_debug_regression(navigation_fault_construction COMMAND navigation_regression fault-construction "${NAVIGATION_CONSTRUCTION_FIXTURE}")
+        add_debug_regression(navigation_construction COMMAND navigation_regression construction "${NAVIGATION_CONSTRUCTION_FIXTURE}")
+        add_debug_regression(navigation_late_corridor COMMAND navigation_regression late "${NAVIGATION_CONSTRUCTION_FIXTURE}")
         set_tests_properties(navigation_fault_construction navigation_construction PROPERTIES TIMEOUT 300)
     endif()
 endif()
@@ -100,8 +107,7 @@ endif()
 set(GAME_BIN_DIR "${CMAKE_BINARY_DIR}/bin" CACHE PATH "Directory containing both game executables")
 set_target_properties(game PROPERTIES
     OUTPUT_NAME_DEBUG "game-debug"
-    # The generator expression keeps multi-config generators from adding a
-    # configuration subdirectory, so both variants share the save directory.
+    # Keep both variants and their staged runtime files in the same bin directory.
     RUNTIME_OUTPUT_DIRECTORY "$<1:${GAME_BIN_DIR}>")
 
 if(WIN32)
@@ -124,6 +130,7 @@ add_custom_target(stage_game_runtime
         "-DOPENAL_LIBRARY=${GAME_OPENAL_RUNTIME}"
         "-DOPENAL_DESTINATION=${openal_destination}"
         "-DOPENAL_NOTICE=${openal_notice}"
+        "-DUI_FONT_NOTICE=${PROJECT_SOURCE_DIR}/third_party/ui_font/OFL.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRuntime.cmake"
     VERBATIM
 )
@@ -176,4 +183,11 @@ if(GAME_BUILD_NAVIGATION_TESTS)
     endforeach()
     add_test(NAME lunar_trader_logistics COMMAND trader_regression CONFIGURATIONS Debug)
     set_tests_properties(lunar_trader_logistics PROPERTIES TIMEOUT 180)
+endif()
+
+if(GAME_BUILD_NAVIGATION_TESTS)
+    get_property(game_tests DIRECTORY PROPERTY TESTS)
+    foreach(test IN LISTS game_tests)
+        set_tests_properties("${test}" PROPERTIES ENVIRONMENT "GAME_SAVE_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-saves/${test}")
+    endforeach()
 endif()

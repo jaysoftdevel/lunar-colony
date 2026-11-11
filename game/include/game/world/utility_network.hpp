@@ -77,6 +77,8 @@ struct UtilityServiceSnapshot {
     // Live graph in habitat/resource/channel/corridor order, including junctions.
     std::vector<std::pair<std::size_t,std::size_t>> links{};
     std::vector<std::size_t> node_components{};
+    std::vector<double> run_lengths{};
+    std::vector<double> air_link_lengths{}; // same order as links
 };
 
 struct UtilityConnection {
@@ -106,7 +108,10 @@ public:
     void set_playfield_half_extent(float half_extent){ playfield_half_extent_=std::max(8.0f,half_extent); }
     const std::vector<UtilityConnection>& connections() const { return connections_; }
     std::vector<UtilityConnection>& mutable_connections() { return connections_; }
-    void restore_connections(std::vector<UtilityConnection> connections){ connections_=std::move(connections); }
+    void restore_connections(std::vector<UtilityConnection> connections,bool rebuild_geometry=false){
+        connections_=std::move(connections);
+        if(rebuild_geometry) rebuild_supply_junctions();
+    }
 
     bool anchor_compatible(UtilityKind kind,const UtilityBuildAnchor& anchor,
                            const std::vector<PlacedHabitat>& habitats,
@@ -155,6 +160,7 @@ private:
     struct ServiceStructureInput {
         bool complete{},powered{};
         ResourceKind kind{};
+        std::array<float,3> position{};
         bool operator==(const ServiceStructureInput&) const = default;
     };
     struct ServiceLinkInput {
@@ -167,7 +173,7 @@ private:
         std::size_t habitat_count{},utility_count{};
         std::vector<ServiceStructureInput> structures;
         std::vector<ServiceLinkInput> links;
-        std::vector<std::array<float,2>> centerlines;
+        std::vector<std::array<float,3>> centerlines;
         bool operator==(const ServiceInputs&) const = default;
     };
 

@@ -30,12 +30,32 @@ void GraphicsSettings::normalize(){
     medium_quality&=scalable_graphics_mask&~low_quality;
 }
 
+GraphicsSettings balanced_graphics_settings(){
+    using F=GraphicsFeature;
+    GraphicsSettings settings;
+    settings.render_scale=85;
+    settings.ray_scale=40;
+    settings.bloom=75;
+    settings.aa_quality=settings.shadow_quality=settings.bloom_quality=2;
+    settings.surface_resolution=settings.shadow_resolution=settings.ground_clutter=settings.particle_density=2;
+    settings.clutter_range=75;
+    settings.shadows=GraphicsShadows::Cascades;
+    for(const auto feature:scalable_graphics_features) settings.set_quality(feature,2);
+    settings.set_quality(F::ScreenOcclusion,1);
+    for(const auto feature:{F::VisibilityBuffer,F::GpuTerrain,F::StreamedGeometry,F::VirtualTextures,
+                            F::RayTracing,F::RayShadows,F::RayReflections,F::RayOcclusion,F::RayIndirect,
+                            F::ReservoirLights,F::RayDenoise,F::NeuralRadiance,F::LearnedDenoise,
+                            F::LearnedUpscale,F::ScreenIndirect,F::ScreenReflections})
+        settings.set(feature,false);
+    return settings;
+}
+
 GraphicsSettings graphics_settings_from_environment(){
     const auto is=[](const char* key,std::string_view value){
         const char* setting=std::getenv(key);
         return setting && setting==value;
     };
-    GraphicsSettings settings;
+    auto settings=balanced_graphics_settings();
     if(const char* value=std::getenv("GAME_VSYNC")){
         std::string sync(value);
         std::transform(sync.begin(),sync.end(),sync.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});

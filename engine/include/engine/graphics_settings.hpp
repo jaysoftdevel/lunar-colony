@@ -119,5 +119,6 @@ constexpr int surface_resolution_pixels(int level){ return quality_budget(level,
 constexpr int cascade_resolution_pixels(int level){ return quality_budget(level,768,1024,1536); }
 constexpr int texture_anisotropy(int filter){ return filter<2?1:1<<(filter-1); }
 
+GraphicsSettings balanced_graphics_settings();
 GraphicsSettings graphics_settings_from_environment();
 } // namespace eng

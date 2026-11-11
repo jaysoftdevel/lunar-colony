@@ -8,8 +8,8 @@ namespace game {
 namespace {
 using eng::Vec3;using eng::Color;using resources::Builder;
 std::vector<Vec3> pose(const std::vector<Vec3>& src,Vec3 position,float rotation,float scale=1){std::vector<Vec3> out;out.reserve(src.size());for(auto p:src)out.push_back(world_math::rotate_y(p*scale,rotation)+position);return out;}
-void draw(eng::Renderer& r,const Builder& b,Vec3 p,float yaw=0,float s=1,Color color={.42f,.58f,.65f,1},bool wire=false){
-    if(r.lunar_scene_active()){
+void draw(eng::Renderer& r,const Builder& b,Vec3 p,bool solid,float yaw=0,float s=1,Color color={.42f,.58f,.65f,1},bool wire=false){
+    if(solid){
         const eng::LunarSurfaceMapping mapping{p,world_math::rotate_y({1,0,0},yaw),{0,1,0},
             world_math::rotate_y({0,0,1},yaw)};
         r.draw_mapped_lunar_surface(pose(b.mesh.foundation,p,yaw,s),eng::LunarMaterial::Alloy,{.44f,.49f,.52f,1},mapping);
@@ -37,6 +37,7 @@ void package(Builder& b,TradeGood good,Vec3 p,float scale=1){
 }
 }
 void GameApp::render_trader(eng::Renderer& r){
+    const bool solid=!mesh_layout_active();
     // Reserved source crates and rover-deck cargo are views of the authoritative
     // lot/haul records, not extra resource objects that can be picked up twice.
     auto pickup=trader_.dock;
@@ -53,7 +54,7 @@ void GameApp::render_trader(eng::Renderer& r){
                 const auto position=belt->cargo_position(l.conveyor_distance_m);
                 Builder crate;
                 package(crate,l.good,{});
-                draw(r,crate,position,0,1,package_color(l.good));
+                draw(r,crate,position,solid,0,1,package_color(l.good));
                 if(world_math::distance_xz(position,belt->endpoint_b.position)<2.f)pickup=belt->endpoint_b.position;
                 continue;
             }
@@ -61,10 +62,10 @@ void GameApp::render_trader(eng::Renderer& r){
             // aggregate package once, avoiding overlapping duplicate meshes.
             bool drawn=false;for(std::size_t j=0;j<i;++j)if(trader_.lots[j].remaining>0&&!trader_.lots[j].conveyor_sequence&&eng::length(trader_.lots[j].position-l.position)<.1f)drawn=true;
             if(drawn)continue;
-            Builder crate;package(crate,l.good,{});draw(r,crate,l.position,0,1,package_color(l.good));
+            Builder crate;package(crate,l.good,{});draw(r,crate,l.position,solid,0,1,package_color(l.good));
         }
         for(const auto& h:trader_.hauls)if(h.cargo>0&&h.robot<builder_robots_.size()){
-            const auto& robot=builder_robots_[h.robot];Builder cargo;package(cargo,trader_.lots[h.lot].good,{0,.82f,.12f});draw(r,cargo,robot.visual_initialized?robot.visual_position:robot.position,robot.heading_degrees);
+            const auto& robot=builder_robots_[h.robot];Builder cargo;package(cargo,trader_.lots[h.lot].good,{0,.82f,.12f});draw(r,cargo,robot.visual_initialized?robot.visual_position:robot.position,solid,robot.heading_degrees);
         }
     }
     if(!trader_.active())return;
@@ -96,12 +97,12 @@ void GameApp::render_trader(eng::Renderer& r){
     const auto loaded=std::accumulate(trader_.loaded.begin(),trader_.loaded.end(),std::int64_t{0});
     const int crates=loaded>0?std::clamp((int)((loaded+999)/1000),1,12):0;
     for(int i=0;i<crates;++i)ship.box(ship.mesh.details,{-2.25f+(float)(i%2)*1.5f,1.9f+.62f*(float)(i/6),-1.7f+(float)((i/2)%3)*1.5f},{1.22f,.56f,1.16f});
-    draw(r,ship,origin,pad.rotation_degrees,size,{.77f,.79f,.78f,1},true);
+    draw(r,ship,origin,solid,pad.rotation_degrees,size,{.77f,.79f,.78f,1},true);
     if(height<.1f){
         Builder crane;const Vec3 pivot=pad.position+Vec3{0,4.7f*size,0},head=pickup+Vec3{0,3.4f,0};
         crane.cylinder_between(crane.mesh.details,pivot,head,.10f,8);
         crane.cylinder_between(crane.mesh.foundation,head,pickup+Vec3{0,1.1f,0},.025f,6);
-        draw(r,crane,{},0,1,{.72f,.75f,.78f,1},true);
+        draw(r,crane,{},solid,0,1,{.72f,.75f,.78f,1},true);
         const auto q=trader_.dock;const float half=1.2f;
         r.draw_lines_3d({{q.x-half,.035f,q.z-half},{q.x+half,.035f,q.z-half},{q.x+half,.035f,q.z-half},{q.x+half,.035f,q.z+half},{q.x+half,.035f,q.z+half},{q.x-half,.035f,q.z+half},{q.x-half,.035f,q.z+half},{q.x-half,.035f,q.z-half}},{.25f,.85f,.72f,1},2);
     }else{

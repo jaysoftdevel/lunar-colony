@@ -454,7 +454,7 @@ int Application::run(const AppConfig& config,std::unique_ptr<GameDelegate> game)
         std::cerr<<"OpenGL hardware renderer initialization failed. A direct GPU-backed GLX context is required.\n";
         return 3;
     }
-    std::cout<<"CPU simulation lanes: "<<cpu_parallel_lanes()<<" (all visible logical CPUs; GAME_CPU_LANES may cap)\n";
+    std::cout<<cpu_worker_summary()<<'\n';
     int frame_limit_fps=0;
     if(const char* env=std::getenv("GAME_FRAME_LIMIT_FPS")){
         char* end=nullptr;

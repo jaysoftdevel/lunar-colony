@@ -43,6 +43,7 @@ constexpr std::pair<const char*,int GraphicsSettings::*> numbers[]{
 Preferences load_preferences(){
     Preferences preferences{eng::graphics_settings_from_environment()};
     auto& settings=preferences.graphics;
+    std::uint32_t explicit_quality{};
     std::ifstream file(config_path());
     for(std::string line;std::getline(file,line);){
         if(!line.empty() && line.back()=='\r') line.pop_back();
@@ -65,6 +66,7 @@ Preferences load_preferences(){
             if(it!=graphics_feature_keys.end()){
                 const auto feature=static_cast<GraphicsFeature>(it-graphics_feature_keys.begin());
                 if(scalable_graphics_feature(feature)){
+                    explicit_quality|=graphics_bit(feature);
                     const bool enabled=settings.enabled(feature);
                     settings.set_quality(feature,value);
                     settings.set(feature,enabled);
@@ -79,8 +81,12 @@ Preferences load_preferences(){
         if(key=="terrain_vrs") settings.terrain_vrs=value==1;
 #endif
         const auto it=std::find(graphics_feature_keys.begin(),graphics_feature_keys.end(),key);
-        if(it!=graphics_feature_keys.end())
-            settings.set(static_cast<GraphicsFeature>(it-graphics_feature_keys.begin()),value==1);
+        if(it!=graphics_feature_keys.end()){
+            const auto feature=static_cast<GraphicsFeature>(it-graphics_feature_keys.begin());
+            if(value==1 && scalable_graphics_feature(feature) && !(explicit_quality&graphics_bit(feature)))
+                settings.set_quality(feature,3);
+            else settings.set(feature,value==1);
+        }
     }
     settings.normalize();
     return preferences;

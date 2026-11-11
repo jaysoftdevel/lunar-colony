@@ -136,7 +136,7 @@ HabitatMesh base_mesh(HabitatKind kind){
 } // namespace
 
 HabitatModelLibrary::HabitatModelLibrary(){
-    for(std::size_t i=0;i<(std::size_t)HabitatKind::Count;++i){
+    eng::TaskPool::shared().parallel_for(meshes_.size(),[&](std::size_t i){
         const HabitatKind kind=(HabitatKind)i;
         HabitatMesh standard=base_mesh(kind);
         // Crew entrances are no longer authored into a structure template.
@@ -177,7 +177,7 @@ HabitatModelLibrary::HabitatModelLibrary(){
             }
             standardize_crew_interfaces(variant,kind==HabitatKind::AirLock);
         }
-    }
+    });
 }
 
 const HabitatMesh& HabitatModelLibrary::mesh(HabitatKind kind,HabitatSizeTier size) const {

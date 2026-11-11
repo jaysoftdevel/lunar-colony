@@ -32,7 +32,8 @@ void GameApp::update_ore_logistics(float dt){
     auto& connections=utility_network_.mutable_connections();
     for(std::size_t index=0;index<connections.size();++index){
         auto& belt=connections[index];
-        if(belt.kind!=UtilityKind::ConveyorBelt || !belt.construction.complete())continue;
+        // Finish delivering cargo already in transit in older saves.
+        if(belt.kind!=UtilityKind::ConveyorBelt || belt.ore_cargo==ore::no_cargo || !belt.construction.complete())continue;
         const auto route=conveyor_route(belt.endpoint_a,belt.endpoint_b,placed_habitats_,placed_resources_);
         if(route!=ConveyorRoute::OreProcessor && route!=ConveyorRoute::OreStorage)continue;
         auto& drill=placed_resources_[belt.endpoint_a.index];
@@ -40,18 +41,6 @@ void GameApp::update_ore_logistics(float dt){
         const auto* plant=route==ConveyorRoute::OreProcessor?&placed_habitats_[belt.endpoint_b.index]:nullptr;
         if(!drill.construction.complete() || drill.supply.power_fraction<=0 ||
            (dome && !dome->construction.complete()) || (plant && !plant->construction.complete()))continue;
-        if(belt.ore_cargo==ore::no_cargo){
-            for(std::size_t offset=0;offset<ore::materials.size();++offset){
-                const auto kind=(belt.ore_next+offset)%ore::materials.size();
-                if(drill.mined_ore_kg[kind]<ore::box_kg)continue;
-                drill.mined_ore_kg[kind]-=ore::box_kg;
-                belt.ore_cargo=static_cast<std::uint8_t>(kind);
-                belt.ore_next=static_cast<std::uint8_t>((kind+1)%ore::materials.size());
-                belt.ore_distance_m=0;
-                break;
-            }
-        }
-        if(belt.ore_cargo==ore::no_cargo)continue;
         const float length=utility_network_.connection_length(index);
         belt.ore_distance_m=std::min(length,belt.ore_distance_m+ore::belt_speed_mps*dt);
         if(belt.ore_distance_m<length)continue;
@@ -73,11 +62,6 @@ void GameApp::update_ore_logistics(float dt){
 
 void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,Vec3)>& clear,
     const std::function<void(std::size_t,Vec3)>& move,const std::function<void(std::size_t)>& stop){
-    const auto has_conveyor=[&](std::size_t drill){
-        return std::any_of(utility_network_.connections().begin(),utility_network_.connections().end(),[&](const auto& link){
-            return link.kind==UtilityKind::ConveyorBelt && link.construction.complete() && link.endpoint_a.index==drill;
-        });
-    };
     const auto plant_ready=[](const PlacedHabitat& plant){
         return (plant.kind==HabitatKind::ProcessingFacility || plant.kind==HabitatKind::Factory) &&
             plant.construction.complete() && plant.supply.power_fraction>0 && plant.supply.breathability()>=95;
@@ -134,10 +118,9 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
                rover.starter_charge_active || rover.battery_charge_kwh<rover.battery_capacity_kwh*.2f)continue;
 
             float nearest=std::numeric_limits<float>::max();
-            for(std::size_t i=0;i<placed_resources_.size();++i){
-                const auto& drill=placed_resources_[i];
+            for(const auto& drill:placed_resources_){
                 if(drill.kind!=ResourceKind::OreDriller || !drill.construction.complete() ||
-                   !drill.placement_sequence || has_conveyor(i))continue;
+                   !drill.placement_sequence)continue;
                 const auto stock=std::max_element(drill.mined_ore_kg.begin(),drill.mined_ore_kg.end());
                 if(*stock<ore::box_kg)continue;
                 bool leased=false;
@@ -177,7 +160,7 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
             rover.action=BuilderRobotAction::None;
             continue;
         }
-        if(!haul.loaded && (!haul.destination || drill==kNoRobotIndex || has_conveyor(drill) ||
+        if(!haul.loaded && (!haul.destination || drill==kNoRobotIndex ||
            placed_resources_[drill].mined_ore_kg[haul.kind]<ore::box_kg)){finish();continue;}
 
         rover.mode=haul.loaded?BuilderRobotMode::Delivering:BuilderRobotMode::Fetching;

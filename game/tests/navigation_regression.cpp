@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <numeric>
 #include <stdexcept>
 
 using eng::Vec3;
@@ -665,6 +666,93 @@ struct NavigationRegression {
                  <<" worst tick ms="<<worst_ms<<"\n";
     }
 
+    static void carrier_depot_replay(const std::string& path){
+        eng::Application engine;
+        GameApp app(engine);
+        std::string error;
+        require(app.load_game_from_file(path,error),error);
+        require(app.builder_robots_.size()==2 && app.builder_robots_[1].role==RobotRole::Carrier &&
+                app.placed_resources_.size()>=4,"unexpected depot regression layout");
+        const auto& carrier=app.builder_robots_[1];
+        const auto delivery=carrier.target;
+        const auto start=carrier.position;
+        require(carrier.cargo.total_amount()==40 && delivery.valid(),"saved delivery is missing its 40 kg load");
+        app.screen_=GameApp::Screen::Playfield;
+        eng::InputState input;
+        input.key_number_pressed=3;
+        constexpr float dt=1.0f/60.0f;
+        constexpr float sim_dt=4.0f*dt;
+        app.update_simulation(dt,input);
+        require(carrier.safety.mode==SafetyMode::Moving && carrier.safety.route_failure_count==0 &&
+                !carrier.safety.cached_route.empty(),"carrier could not route out of its saved cargo aisle on the first frame");
+        input.key_number_pressed=0;
+        float delivered_at=0.0f;
+        float finished_at=0.0f;
+        for(int frame=1;frame<900*15;++frame){
+            const auto previous=carrier.position;
+            app.update_simulation(dt,input);
+            require(distance(previous,carrier.position)<=carrier.move_speed_mps*sim_dt+0.01f,
+                    "carrier recovery moved the rover outside its driving range");
+            for(const auto& robot:app.builder_robots_)
+                require(robot.safety.mode!=SafetyMode::Fault,"depot replay entered a safety fault");
+            require(distance(carrier.position,app.builder_robots_[0].position)>1.88f,"depot replay had a fleet overlap");
+            const float seconds=(frame+1)*sim_dt;
+            if(!delivered_at && carrier.cargo.empty() && carrier.target.same_as(delivery) &&
+               distance(start,carrier.position)>15.0f) delivered_at=seconds;
+            if(app.placed_resources_[2].construction.complete() && app.placed_resources_[3].construction.complete()){
+                finished_at=seconds;
+                break;
+            }
+        }
+        require(delivered_at>0.0f && delivered_at<30.0f,"saved carrier did not unload its initial cargo");
+        require(finished_at>0.0f,"construction stalled while the carrier was using the cargo depot");
+        std::cout<<"Saved carrier delivered at "<<delivered_at<<" s and both subsequent structures completed at "
+                 <<finished_at<<" s with certified motion\n";
+    }
+
+    static void construction_package_clearance(){
+        eng::Application engine;
+        GameApp app(engine);
+        app.playfield_.rebuild(128);
+        app.starting_robot_count_=app.starting_carrier_count_=1;
+        app.reset_builder_robot_and_starter_stash();
+        app.ground_resource_piles_.clear();
+        UtilityConnection pipe;
+        pipe.placement_sequence=1;
+        pipe.endpoint_a.kind=pipe.endpoint_b.kind=UtilityEndpointKind::Open;
+        pipe.endpoint_a.position={-12,0,0};
+        pipe.endpoint_b.position={12,0,0};
+        pipe.path={pipe.endpoint_a.position,pipe.endpoint_b.position};
+        pipe.resource_plan.total_steps=kSupplyConstructionSteps;
+        pipe.resource_plan.steps[0].iron=pipe.resource_plan.steps[1].iron=20;
+        pipe.site_buffer.iron=40;
+        app.utility_network_.restore_connections({pipe},true);
+        const ConstructionTargetRef target{ConstructionTargetKind::Utility,0};
+        auto& builder=app.builder_robots_[0];
+        builder.position={-6,0,4};
+        builder.mode=BuilderRobotMode::Building;
+        builder.target=target;
+        builder.support_robot_index=0;
+        builder.stage_materials_picked=true;
+        builder.stage_commit_pending=true;
+        auto& carrier=app.builder_robots_[1];
+        const auto package=app.construction_drop_package_position(target,0,1);
+        carrier.position=package;
+
+        constexpr float dt=1.0f/60.0f;
+        app.update_construction(dt);
+        require(app.construction_target_step(target)==0,"pipe advanced with a rover in the next material stack");
+        for(int frame=0;frame<60*25 && app.construction_target_step(target)==0;++frame){
+            const auto before=carrier.position;
+            app.update_construction(dt);
+            require(carrier.safety.mode!=SafetyMode::Fault,"material stack repositioning triggered a safety fault");
+            require(distance(before,carrier.position)<=carrier.move_speed_mps*dt+0.01f,"material clearance relocated the carrier");
+        }
+        require(app.construction_target_step(target)>0 && distance(package,carrier.position)>1.20f,
+                "carrier did not clear the next material stack before construction resumed");
+        std::cout<<"Construction reserved the next material stack and drove the carrier clear before advancing\n";
+    }
+
     static void pending_enclosure_save(const std::string& path){
         eng::Application engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
@@ -1173,11 +1261,10 @@ struct NavigationRegression {
                 const UtilityBuildAnchor intake{UtilityEndpointKind::Habitat,0,app.placed_habitats_[0].position};
                 require(app.utility_network_.build_connection(UtilityKind::ConveyorBelt,source,intake,
                     app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_),
-                    "could not create the conveyor exclusion fixture");
+                    "could not create the driller belt fixture");
                 app.utility_network_.mutable_connections().front().construction.finish();
                 app.update_builder_robot(1.f/90.f);
-                require(!app.builder_robots_[0].ore_haul.active(),"carrier took over a driller with a built conveyor");
-                app.utility_network_.remove_connection(0);
+                require(app.builder_robots_[0].ore_haul.active(),"built conveyor prevented carrier pickup");
             }
 
             bool picked_up=false;
@@ -1263,13 +1350,29 @@ struct NavigationRegression {
                 "conveyor prevented an independent power channel between its endpoints");
         auto& belt=network.mutable_connections().front();
         app.update_ore_logistics(240);
-        require(app.resources_.amounts().empty() && belt.ore_cargo<ore::no_cargo &&
-                belt.ore_distance_m>0,"raw ore was credited or no cargo was sent");
-        const auto cargo=belt.ore_cargo;
-        const auto distance=belt.ore_distance_m;
-        const auto stock=app.placed_resources_[0].mined_ore_kg;
-        require(std::count_if(stock.begin(),stock.end(),[](double kg){return ore::boxes(kg)>0;})>=2,
+        require(app.resources_.amounts().empty() && belt.ore_cargo==ore::no_cargo &&
+                belt.ore_distance_m==0,"driller sent ore to a conveyor");
+        auto& mined=app.placed_resources_[0].mined_ore_kg;
+        const auto stock_total=[&]{return std::accumulate(mined.begin(),mined.end(),0.0);};
+        require(std::abs(stock_total()-60)<1e-9,"standard driller did not produce 60 kg per day");
+        const auto standard=mined;
+        mined={};
+        app.placed_resources_[0].size=ResourceSizeTier::Small;
+        app.update_ore_logistics(240);
+        require(std::abs(stock_total()-30)<1e-9 && belt.ore_cargo==ore::no_cargo,
+                "small driller production or ore routing changed");
+        mined=standard;
+        app.placed_resources_[0].size=drill.size;
+        require(std::count_if(mined.begin(),mined.end(),[](double kg){return ore::boxes(kg)>0;})>=2,
                 "powered driller did not produce distinct ore boxes");
+
+        // Older saves can have a box on the belt while the receiver is offline.
+        const auto cargo=static_cast<std::uint8_t>(std::max_element(mined.begin(),mined.end())-mined.begin());
+        mined[cargo]-=ore::box_kg;
+        belt.ore_cargo=cargo;
+        belt.ore_distance_m=network.connection_length(0);
+        const auto distance=belt.ore_distance_m;
+        const auto stock=mined;
 
         std::string error;
         require(app.save_game_to_name("conveyor-regression",error),error);
@@ -1287,15 +1390,16 @@ struct NavigationRegression {
                 belt.ore_cargo==ore::no_cargo && app.ground_resource_piles_.size()==1,
                 "powered receiver did not process the arriving crate exactly once");
         app.update_ore_logistics(1);
-        require(belt.ore_cargo<ore::no_cargo && belt.ore_distance_m<network.connection_length(0),
-                "second ore crate did not travel on the belt");
-        const auto next=belt.ore_cargo;
-        const double before=app.placed_resources_[0].mined_ore_kg[next];
+        require(belt.ore_cargo==ore::no_cargo && app.ground_resource_piles_.size()==1,
+                "driller reloaded the belt after the old crate arrived");
+        mined[cargo]-=ore::box_kg;
+        belt.ore_cargo=cargo;
+        const double before=mined[cargo];
         app.remove_utility_route(0);
         require(network.connections().size()==1 && network.connections()[0].kind==UtilityKind::SupplyChannel &&
-                app.placed_resources_[0].mined_ore_kg[next]==before+ore::box_kg,
+                mined[cargo]==before+ore::box_kg,
                 "removing a conveyor lost its in-flight crate");
-        std::cout<<"Ore deposits, directed conveyors, utility isolation, crate delivery, deletion and save/load passed\n";
+        std::cout<<"Ore production, rover-only pickup, legacy conveyor delivery, deletion and save/load passed\n";
     }
 
     static void structure_routes(){
@@ -2476,6 +2580,18 @@ struct NavigationRegression {
             require(!supplied(),"same-size endpoint change retained an old attachment");
             links[1].endpoint_a.index=1;
             require(supplied(),"restored endpoint failed to rejoin the network");
+
+            const auto snapshot=[&]() -> const UtilityServiceSnapshot& {
+                return network.evaluate_services(corridors,{},resources);
+            };
+            const auto original=snapshot().air_link_lengths;
+            links[1].path.back().y=12.f;
+            require(snapshot().run_lengths[3]>8.0 && snapshot().air_link_lengths!=original && supplied(),
+                    "vertical route edit reused stale air distances");
+            links[1].path.back().y=0.f;
+            require(snapshot().air_link_lengths==original,"restored route did not restore air distances");
+            resources[1].position.y=30.f;
+            require(snapshot().air_link_lengths!=original,"structure height change reused stale air distances");
         }
 
         // Pass uploads must retain draw order, style and nonoverlapping ranges.
@@ -3214,10 +3330,12 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="gates") game::NavigationRegression::gates();
         else if(argc>1 && std::string(argv[1])=="interior-aisles") game::NavigationRegression::interior_aisles();
         else if(argc>1 && std::string(argv[1])=="geometry") game::NavigationRegression::geometry();
+        else if(argc>1 && std::string(argv[1])=="stage-packages") game::NavigationRegression::construction_package_clearance();
         else if(argc>2 && std::string(argv[1])=="fault-construction") game::NavigationRegression::construction(argv[2],true,true);
         else if(argc>2 && std::string(argv[1])=="construction") game::NavigationRegression::construction(argv[2]);
         else if(argc>2 && std::string(argv[1])=="clearance-save") game::NavigationRegression::clearance_save(argv[2]);
         else if(argc>2 && std::string(argv[1])=="stuck-carrier-save") game::NavigationRegression::stuck_carrier_save(argv[2]);
+        else if(argc>2 && std::string(argv[1])=="carrier-depot") game::NavigationRegression::carrier_depot_replay(argv[2]);
         else if(argc>2 && std::string(argv[1])=="airlock-supply-save") game::NavigationRegression::airlock_supply_save(argv[2]);
         else if(argc>2 && std::string(argv[1])=="enclosure-save") game::NavigationRegression::enclosure_save(argv[2]);
         else if(argc>2 && std::string(argv[1])=="pending-enclosure-save") game::NavigationRegression::pending_enclosure_save(argv[2]);

@@ -38,6 +38,8 @@ engine/include/engine/ui_font.hpp
 engine/include/engine/ui_metrics.hpp
 engine/src/application.cpp
 engine/src/audio_openal.cpp
+engine/src/cpu_affinity.cpp
+engine/src/cpu_affinity.hpp
 engine/src/graphics_settings.cpp
 engine/src/lunar_bvh.cpp
 engine/src/lunar_bvh.hpp
@@ -65,6 +67,7 @@ game/CMakeLists.txt
 game/cmake/GameClusters.cmake
 game/cmake/StageRuntime.cmake
 game/debug-templates/0-40-32-debug-start.gmsave
+game/debug-templates/0-54-0-debug-start.gmsave
 game/include/game/build_mode.hpp
 game/include/game/config/graphics_benchmark.hpp
 game/include/game/config/preferences.hpp
@@ -232,8 +235,10 @@ game/src/world/resources/water_purifier.cpp
 game/src/world/resources/water_storage.cpp
 game/src/world/utility_network.cpp
 game/src/world/walkway_network.cpp
+game/tests/fixtures/schema29-stage1-contracts.gmsave
 game/tests/fixtures/schema33-aggregate-depot.gmsave
 game/tests/fixtures/schema35-mid-ramp.gmsave
+game/tests/fixtures/schema48-lander-depot.gmsave
 game/tests/lander_regression.cpp
 game/tests/navigation_regression.cpp
 game/tests/trader_regression.cpp

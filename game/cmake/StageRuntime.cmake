@@ -27,3 +27,7 @@ if(OPENAL_LIBRARY AND EXISTS "${OPENAL_LIBRARY}")
         stage_file("${OPENAL_NOTICE}" "licenses/OpenAL-Soft.txt")
     endif()
 endif()
+
+if(UI_FONT_NOTICE)
+    stage_file("${UI_FONT_NOTICE}" "licenses/HUD-Font.txt")
+endif()

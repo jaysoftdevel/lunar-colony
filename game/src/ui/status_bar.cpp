@@ -96,15 +96,12 @@ void draw_resource_icon(Renderer& renderer,MaterialResource resource,Rect box,Co
 }
 
 std::string amount_text(std::int64_t value){
+    const auto magnitude=value<0?std::uint64_t(-(value+1))+1:std::uint64_t(value);
+    if(magnitude<10000) return std::to_string(value);
     std::ostringstream out;
-    const std::int64_t magnitude=value<0?-value:value;
     if(magnitude>=1000000){
         out<<std::fixed<<std::setprecision(magnitude>=10000000?0:1)<<(double)value/1000000.0<<"M";
-    }else if(magnitude>=10000){
-        out<<std::fixed<<std::setprecision(magnitude>=100000?0:1)<<(double)value/1000.0<<"K";
-    }else{
-        out<<value;
-    }
+    }else out<<std::fixed<<std::setprecision(magnitude>=100000?0:1)<<(double)value/1000.0<<"K";
     return out.str();
 }
 
@@ -122,7 +119,7 @@ void GameApp::render_status_bar(Renderer& r){
             battery_net_kw_,supply_power_load_kw_,supply_power_delivered_kw_,water_net_litres_per_day_,supply_water_load_litres_per_day_};
     }
     const auto& rates=status_rate_display_;
-    r.draw_rect({0,0,logical_w,STATUS_BAR_H},kHudFill);
+    r.draw_gradient_rect({0,0,logical_w,STATUS_BAR_H},{.037f,.060f,.079f,.95f},{.023f,.040f,.054f,.81f});
     r.draw_line({0,STATUS_BAR_H-1},{logical_w,STATUS_BAR_H-1},theme_.border,1.0f);
 
     const int total_minutes=(int)std::floor(status_.hour()*60.0f);
@@ -196,14 +193,14 @@ void GameApp::render_status_bar(Renderer& r){
     if(active_game_phase_==GamePhase::RobotPreparation){
         game_label_fitted(r,{9,5,day_w-16,17},day.str(),0.60f,theme_);
         game_label_fitted(r,{9,25,day_w-16,13},"CASH EUR "+std::to_string(planning_.funds_eur),0.40f,theme_,true);
-    }else game_label_fitted(r,{9,9,day_w-16,18},day.str(),0.66f,theme_);
-    game_label_fitted(r,{day_w+7,5,power_w-14,14},power.str(),0.58f,theme_);
-    game_label_fitted(r,{day_w+power_w+7,9,air_w-14,18},air.str(),0.58f,theme_);
-    game_label_fitted(r,{water_x+7,5,water_w-14,14},water.str(),0.58f,theme_);
-    game_label_fitted(r,{storage_x+7,9,storage_w-14,18},storage.str(),0.58f,theme_);
-    game_label_fitted(r,{crew_x+7,9,crew_w-14,18},crew.str(),0.58f,theme_);
+    }else game_label_fitted(r,{9,9,day_w-16,18},day.str(),0.70f,theme_);
+    game_label_fitted(r,{day_w+7,5,power_w-14,14},power.str(),0.67f,theme_);
+    game_label_fitted(r,{day_w+power_w+7,9,air_w-14,18},air.str(),0.67f,theme_);
+    game_label_fitted(r,{water_x+7,5,water_w-14,14},water.str(),0.67f,theme_);
+    game_label_fitted(r,{storage_x+7,9,storage_w-14,18},storage.str(),0.67f,theme_);
+    game_label_fitted(r,{crew_x+7,9,crew_w-14,18},crew.str(),0.67f,theme_);
     const auto bar=[&](float x,float width,double fraction,Color color){
-        r.draw_rect({x+7,33,width-14,6},{0.08f,0.13f,0.17f,1});
+        r.draw_rect({x+7,33,width-14,6},{0.14f,0.20f,0.24f,1});
         r.draw_rect({x+7,33,(width-14)*(float)std::clamp(fraction,0.0,1.0),6},color);
     };
     bar(day_w,power_w,charge,charge<0.20?Color{1,0.38f,0.30f,1}:Color{1,0.78f,0.22f,1});
@@ -228,32 +225,43 @@ void GameApp::render_status_bar(Renderer& r){
 
     const float mouse_x=(float)ui_input_.mouse_x;
     const float mouse_y=(float)ui_input_.mouse_y;
-    int hovered=-1;
+    std::string resource_tip;
     Rect hovered_rect{};
     r.draw_line({0,row_h},{logical_w,row_h},theme_.border,1);
     constexpr const char* names[]={"IRON","COPPER","SILICON","PLASTIC","WATER","FOOD","MEDICAL","ALUMINUM","OXYGEN","HYDROGEN"};
-    std::array<std::string,resource_count> tips{};
+    constexpr Color icons[]{
+        {.67f,.76f,.82f,1},{.90f,.61f,.40f,1},{.49f,.76f,.94f,1},{.86f,.81f,.59f,1},
+        {.40f,.68f,.96f,1},{.64f,.84f,.49f,1},{.93f,.57f,.60f,1},{.82f,.87f,.91f,1},
+        {.52f,.88f,.91f,1},{.71f,.67f,.95f,1}
+    };
     for(std::size_t i=0;i<resource_count;++i){
         const float x=resource_start+(float)i*resource_w;
         const Rect cell{x,row_h,resource_w,STATUS_BAR_H-row_h};
+        const bool hover=contains(cell,mouse_x,mouse_y);
+        if(hover){
+            hovered_rect=cell;
+            r.draw_rect(cell,{.12f,.22f,.26f,.75f});
+        }
         if(i>0)r.draw_line({x,row_h+5},{x,STATUS_BAR_H-5},theme_.border,1);
         const Rect icon{x+5,row_h+3,16,24};
         std::string amount;
         if(i<kMaterialResourceCount){
             const auto material=(MaterialResource)i;
-            draw_resource_icon(r,material,icon,resources_.amount(material)<0?Color{1,.38f,.30f,1}:theme_.accent);
-            amount=amount_text(resources_.amount(material))+" KG";
-            tips[i]=std::string(material_resource_name(material))+" / "+std::to_string(resources_.amount(material))+" KG AVAILABLE CARGO";
+            const auto stock=resources_.amount(material);
+            draw_resource_icon(r,material,icon,stock<0?Color{1,.38f,.30f,1}:icons[i]);
+            amount=amount_text(stock)+" KG";
+            if(hover) resource_tip=std::string(material_resource_name(material))+" / "+std::to_string(stock)+" KG AVAILABLE CARGO";
         }else{
             const double stock=i==kMaterialResourceCount?oxygen_stock:hydrogen;
             std::ostringstream exact;exact<<std::fixed<<std::setprecision(1)<<stock;
             amount=stock<10000?exact.str()+" KG":amount_text((std::int64_t)stock)+" KG";
-            tips[i]=std::string(names[i])+" / "+exact.str()+" KG STORED / "+(i==kMaterialResourceCount?"TANKS + BOTTLED EXPORT STOCK; EXCLUDES CABIN AIR":"TANKS + GENERATORS; ALLOCATED VEHICLE FUEL EXCLUDED");
-            r.draw_line({x+9,row_h+8},{x+21,row_h+8},theme_.accent,1.4f);
-            r.draw_line({x+9,row_h+8},{x+9,row_h+23},theme_.accent,1.4f);
-            r.draw_line({x+21,row_h+8},{x+21,row_h+23},theme_.accent,1.4f);
-            r.draw_line({x+9,row_h+23},{x+21,row_h+23},theme_.accent,1.4f);
-            r.draw_line({x+15,row_h+4},{x+15,row_h+8},theme_.accent,1.4f);
+            if(hover) resource_tip=std::string(names[i])+" / "+exact.str()+" KG STORED / "+
+                (i==kMaterialResourceCount?"TANKS + BOTTLED EXPORT STOCK; EXCLUDES CABIN AIR":"TANKS + GENERATORS; ALLOCATED VEHICLE FUEL EXCLUDED");
+            r.draw_line({x+9,row_h+8},{x+21,row_h+8},icons[i],1.4f);
+            r.draw_line({x+9,row_h+8},{x+9,row_h+23},icons[i],1.4f);
+            r.draw_line({x+21,row_h+8},{x+21,row_h+23},icons[i],1.4f);
+            r.draw_line({x+9,row_h+23},{x+21,row_h+23},icons[i],1.4f);
+            r.draw_line({x+15,row_h+4},{x+15,row_h+8},icons[i],1.4f);
         }
         const float name_width=game_text_width(names[i],.42f,theme_);
         const float amount_width=game_text_width(amount,.49f,theme_);
@@ -264,7 +272,6 @@ void GameApp::render_status_bar(Renderer& r){
             game_label_fitted(r,{x+23,row_h+2,resource_w-28,11},names[i],.40f,theme_,true);
             game_label_fitted(r,{x+23,row_h+14,resource_w-28,13},amount,.47f,theme_);
         }
-        if(contains(cell,mouse_x,mouse_y)){hovered=(int)i;hovered_rect=cell;}
     }
 
     std::string status_tip;
@@ -284,12 +291,12 @@ void GameApp::render_status_bar(Renderer& r){
             std::to_string(storage_capacity)+" KG USED":"NO COMPLETED STORAGE DOMES";
         hovered_rect=storage_cell;
     }
-    if(hovered>=0 || !status_tip.empty()){
-        const std::string name=status_tip.empty()?tips[(std::size_t)hovered]:status_tip;
+    if(!resource_tip.empty() || !status_tip.empty()){
+        const auto& name=status_tip.empty()?resource_tip:status_tip;
         const float tooltip_w=std::min(logical_w-8,std::max(72.0f,game_text_width(name,0.62f,theme_)+20.0f));
         const float tx=std::clamp(hovered_rect.x+(hovered_rect.w-tooltip_w)*0.5f,4.0f,logical_w-tooltip_w-4.0f);
         const Rect tooltip{tx,STATUS_BAR_H+4.0f,tooltip_w,28.0f};
-        r.draw_rect(tooltip,kHudFill);
+        r.draw_rect(tooltip,theme_.panel);
         r.draw_line({tooltip.x,tooltip.y},{tooltip.x+tooltip.w,tooltip.y},theme_.accent,1.5f);
         game_label_fitted(r,{tooltip.x+10,tooltip.y+5,tooltip.w-20,18},name,0.62f,theme_);
     }

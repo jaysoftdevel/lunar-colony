@@ -60,8 +60,8 @@ void GameApp::render_playfield(Renderer& r){
     }
     const bool show_build_guides=meshed || build_catalog_.selected() || storage_gate_placement_active_;
     if(!meshed && !lunar){
-        if(lander_.in_flight()) r.draw_triangles_3d({{-900,-0.035f,-900},{900,-0.035f,-900},{900,-0.035f,900},
-            {-900,-0.035f,-900},{900,-0.035f,900},{-900,-0.035f,900}},{0.055f,0.075f,0.088f,1});
+        if(lander_.in_flight()) r.draw_lunar_surface({{-900,-0.035f,-900},{900,-0.035f,-900},{900,-0.035f,900},
+            {-900,-0.035f,-900},{900,-0.035f,900},{-900,-0.035f,900}},LunarMaterial::Regolith,{0.055f,0.075f,0.088f,1});
         playfield_.draw_surface(r,sun.irradiance_fraction);
     }
     if(show_build_guides)
@@ -145,7 +145,7 @@ void GameApp::render_playfield(Renderer& r){
             (active_build->utility_kind==UtilityKind::ConveyorBelt?
                 (utility_build_start_?
                     (placed_resources_[utility_build_start_->index].kind==ResourceKind::StorageDome?
-                        "LMB SELECT LANDING PAD / ESC CANCEL":"LMB SELECT PROCESSOR, FACTORY OR STORAGE DOME / ESC CANCEL"):
+                        "LMB SELECT LANDING PAD / ESC CANCEL":"LMB SELECT PROCESSOR, FACTORY OR STORAGE DOME / ROVERS COLLECT DRILLER ORE / ESC CANCEL"):
                     "LMB SELECT ORE DRILLER OR STORAGE DOME / ESC CANCEL"):
                 (utility_build_start_?"MOVE TARGET TO ADJUST PORT / LMB CONNECT / ESC CANCEL":"LMB SELECT SUPPLY SOURCE / ESC CANCEL")):
         (active_build && active_build->kind==BuildObjectKind::Walkway?

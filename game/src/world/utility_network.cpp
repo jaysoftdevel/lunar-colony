@@ -394,16 +394,29 @@ void join_crossing_paths(const std::vector<Connection>& connections,Active activ
         }
         bounds.push_back(route);
     }
-    for(std::size_t i=0;i<bounds.size();++i){
+    const auto find_crossings=[&](std::size_t i,const auto& accept){
         const auto& a=bounds[i];
         for(std::size_t j=i+1;j<bounds.size();++j){
             const auto& b=bounds[j];
             constexpr float margin=2.0f*intersection_epsilon;
             if(a.max_x+margin<b.min_x || b.max_x+margin<a.min_x ||
                a.max_z+margin<b.min_z || b.max_z+margin<a.min_z) continue;
-            if(paths_intersect_xz(connections[a.index].path,connections[b.index].path)) join(a.index,b.index);
+            if(paths_intersect_xz(connections[a.index].path,connections[b.index].path)) accept(a.index,b.index);
         }
+    };
+    if(bounds.size()<32 || eng::TaskPool::shared().background_workers()==0){
+        for(std::size_t i=0;i<bounds.size();++i) find_crossings(i,join);
+        return;
     }
+    // Preserve the original union and airflow-link ordering after the
+    // independent intersection tests complete.
+    std::vector<std::vector<std::size_t>> crossings(bounds.size());
+    eng::TaskPool::shared().parallel_for_ranges(bounds.size(),2,[&](std::size_t first,std::size_t last){
+        for(std::size_t i=first;i<last;++i)
+            find_crossings(i,[&](std::size_t,std::size_t other){ crossings[i].push_back(other); });
+    });
+    for(std::size_t i=0;i<bounds.size();++i)
+        for(const auto other:crossings[i]) join(bounds[i].index,other);
 }
 
 float segment_distance_xz(Vec3 a,Vec3 b,Vec3 c,Vec3 d){
@@ -1179,9 +1192,11 @@ const UtilityServiceSnapshot& UtilityNetwork::evaluate_services(
     inputs.structures.clear();
     inputs.structures.reserve(habitats.size()+resources.size());
     for(const auto& habitat:habitats)
-        inputs.structures.push_back({habitat.construction.complete(),habitat.power_enabled});
+        inputs.structures.push_back({habitat.construction.complete(),habitat.power_enabled,{},
+                                     {habitat.position.x,habitat.position.y,habitat.position.z}});
     for(const auto& resource:resources)
-        inputs.structures.push_back({resource.construction.complete(),resource.power_enabled,resource.kind});
+        inputs.structures.push_back({resource.construction.complete(),resource.power_enabled,resource.kind,
+                                     {resource.position.x,resource.position.y,resource.position.z}});
 
     inputs.links.clear();
     inputs.links.reserve(connections_.size()+corridors.connections().size());
@@ -1193,7 +1208,7 @@ const UtilityServiceSnapshot& UtilityNetwork::evaluate_services(
         }
         inputs.links.push_back({true,static_cast<int>(link.endpoint_a.kind),static_cast<int>(link.endpoint_b.kind),
                                 link.endpoint_a.index,link.endpoint_b.index,link.path.size()});
-        for(const auto& p:link.path) inputs.centerlines.push_back({p.x,p.z});
+        for(const auto& p:link.path) inputs.centerlines.push_back({p.x,p.y,p.z});
     };
     for(const auto& link:connections_)
         capture_link(link,link.kind==UtilityKind::SupplyChannel && link.construction.complete());
@@ -1226,6 +1241,17 @@ UtilityServiceSnapshot UtilityNetwork::build_service_snapshot(
     const std::size_t total=c_base+c_count;
     if(total==0) return snapshot;
 
+    std::vector<eng::Vec3> positions(total);
+    snapshot.run_lengths.resize(total);
+    for(std::size_t i=0;i<h_count;++i) positions[h_base+i]=habitats[i].position;
+    for(std::size_t i=0;i<r_count;++i) positions[r_base+i]=resources[i].position;
+    const auto measure_run=[&](std::size_t node,const auto& path){
+        if(path.empty()) return;
+        positions[node]=path[path.size()/2];
+        for(std::size_t i=1;i<path.size();++i)
+            snapshot.run_lengths[node]+=eng::length(path[i]-path[i-1]);
+    };
+
     UtilityDisjointSets sets(total);
     const auto join=[&](std::size_t a,std::size_t b){ sets.unite(a,b); snapshot.links.emplace_back(a,b); };
     std::vector<bool> active_edge(total,false);
@@ -1256,6 +1282,7 @@ UtilityServiceSnapshot UtilityNetwork::build_service_snapshot(
     for(std::size_t i=0;i<u_count;++i){
         const auto& link=connections_[i];
         if(link.kind!=UtilityKind::SupplyChannel || !link.construction.complete()) continue;
+        measure_run(u_node(i),link.path);
         active_edge[u_node(i)]=true;
         attach_utility_endpoint(i,link.endpoint_a);
         attach_utility_endpoint(i,link.endpoint_b);
@@ -1283,6 +1310,7 @@ UtilityServiceSnapshot UtilityNetwork::build_service_snapshot(
     for(std::size_t i=0;i<c_count;++i){
         const auto& corridor=corridors.connections()[i];
         if(!corridor.construction.complete()) continue;
+        measure_run(c_node(i),corridor.path);
         active_edge[c_node(i)]=true;
         attach_corridor_endpoint(i,corridor.endpoint_a);
         attach_corridor_endpoint(i,corridor.endpoint_b);
@@ -1332,6 +1360,11 @@ UtilityServiceSnapshot UtilityNetwork::build_service_snapshot(
     for(std::size_t i=0;i<r_count;++i) snapshot.resources[i]=state_for(r_node(i),resources[i].power_enabled);
     snapshot.node_components.resize(total);
     for(std::size_t i=0;i<total;++i) snapshot.node_components[i]=sets.find(i);
+    snapshot.air_link_lengths.reserve(snapshot.links.size());
+    for(const auto& [a,b]:snapshot.links){
+        const double distance=eng::length(positions[a]-positions[b]);
+        snapshot.air_link_lengths.push_back(std::max(distance,(snapshot.run_lengths[a]+snapshot.run_lengths[b])*0.5));
+    }
     return snapshot;
 }
 

@@ -2,6 +2,7 @@
 #include "lunar_shaders.hpp"
 #include "lunar_ray_shaders.hpp"
 #include "lunar_bvh.hpp"
+#include "lunar_bounds.hpp"
 #include "lunar_geometry.hpp"
 #include "lunar_visibility_shaders.hpp"
 #include "lunar_volume_shaders.hpp"
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <chrono>
 #include <iostream>
@@ -47,12 +49,13 @@ constexpr Enum compare_mode=0x884C, compare_func=0x884D, compare_ref=0x884E;
 constexpr Enum less=0x0201, less_equal=0x0203;
 constexpr Enum framebuffer=0x8D40, color_attachment=0x8CE0, depth_attachment=0x8D00, complete=0x8CD5;
 constexpr Enum color_bit=0x4000, depth_bit=0x0100, depth_test=0x0B71, blend=0x0BE2;
+constexpr Enum scissor_test=0x0C11;
 constexpr Enum offset_fill=0x8037, src_alpha=0x0302, inv_src_alpha=0x0303, one=1;
 constexpr Enum triangles_mode=4, lines_mode=1, line_width_range=0x846E;
 constexpr Enum mip_bilinear=0x2701,base_level=0x813C;
 constexpr Enum extensions_enum=0x1F03,extension_count_enum=0x821D;
 constexpr Enum anisotropy_enum=0x84FE,max_anisotropy_enum=0x84FF;
-constexpr Int cascade_count=3,map_size=surface_resolution_pixels(3);
+constexpr Int cascade_count=3;
 constexpr Int material_page_layers=25,shadow_page_layers=14,page_shadow_size=320;
 constexpr Int material_page_texels=96,material_border=2,material_tile_size=material_page_texels+material_border*2;
 constexpr float material_page_meters=32.0f,shadow_page_meters=19.0f;
@@ -107,7 +110,7 @@ int taps(uint bit,int low,int medium,int high){
     X(void,FramebufferTextureLayer,(Enum,Enum,UInt,Int,Int)) X(void,DrawBuffers,(Int,const Enum*)) \
     X(void,DrawBuffer,(Enum)) X(void,ReadBuffer,(Enum)) \
     X(void,ClearBufferuiv,(Enum,Int,const UInt*)) X(void,ProvokingVertex,(Enum)) \
-    X(void,Viewport,(Int,Int,Int,Int)) X(void,Enable,(Enum)) X(void,Disable,(Enum)) \
+    X(void,Viewport,(Int,Int,Int,Int)) X(void,Scissor,(Int,Int,Int,Int)) X(void,Enable,(Enum)) X(void,Disable,(Enum)) \
     X(void,BlendFunc,(Enum,Enum)) X(void,BlendFuncSeparate,(Enum,Enum,Enum,Enum)) X(void,DepthMask,(Boolean)) X(void,DepthFunc,(Enum)) X(void,PolygonOffset,(float,float)) \
     X(void,ClearColor,(float,float,float,float)) X(void,Clear,(Enum)) X(void,LineWidth,(float)) X(void,DrawArrays,(Enum,Int,Int))
 
@@ -192,9 +195,18 @@ static_assert(sizeof(Vertex)==11*sizeof(float));
 
 struct Draw {
     Int first{},count{};
+    lunar::Bounds bounds;
+    std::uint64_t shadow_stamp{};
     float width{1.0f};
     bool casts_shadow{};
     float depth{};
+};
+
+struct MeshStyle {
+    Color tint;
+    Int material;
+    LunarSurfaceMapping mapping;
+    bool mapped;
 };
 
 float smooth(float a,float b,float x){
@@ -226,8 +238,8 @@ float noise(float x,float y,Int seed,Int period=0,Int period_y=0){
 
 struct MaterialTexel { float shade,roughness,height; };
 
-MaterialTexel texel(Int x,Int y,Int material,Int variant){
-    const float u=float(x)/map_size,v=float(y)/map_size;
+MaterialTexel texel(Int x,Int y,Int size,Int material,Int variant){
+    const float u=float(x)/size,v=float(y)/size;
     const Int seed=material+variant*431;
     const float broad=noise(u*4,v*4,11+seed,4);
     const float cloud=noise(u*16,v*16,19+seed,16);
@@ -291,31 +303,26 @@ MaterialTexel texel(Int x,Int y,Int material,Int variant){
     return {shade,roughness,height};
 }
 
-std::vector<std::uint8_t> material_maps(){
-    constexpr std::size_t pixels=std::size_t(map_size)*map_size;
+std::vector<std::uint8_t> material_maps(Int size){
+    const std::size_t pixels=std::size_t(size)*size;
+    const float slope_scale=1.55f*size/surface_resolution_pixels(3);
     std::vector<std::uint8_t> maps(pixels*material_count*material_variants*4);
-    std::vector<MaterialTexel> layer(pixels);
     const auto byte=[](float x){ return std::uint8_t(std::clamp(x,0.0f,1.0f)*255.0f+0.5f); };
-    for(Int index=0;index<material_count*material_variants;++index){
+    TaskPool::shared().parallel_for(material_count*material_variants,[&](std::size_t index){
+        std::vector<MaterialTexel> layer(pixels);
         const auto at=[&](Int x,Int y)->MaterialTexel&{
-            return layer[std::size_t((y+map_size)%map_size)*map_size+(x+map_size)%map_size];
+            return layer[std::size_t((y+size)%size)*size+(x+size)%size];
         };
-        auto& pool=TaskPool::shared();
-        pool.parallel_for(map_size,[&](std::size_t row){
-            const Int y=static_cast<Int>(row);
-            for(Int x=0;x<map_size;++x) at(x,y)=texel(x,y,index/material_variants,index%material_variants);
-        });
-        pool.parallel_for(map_size,[&](std::size_t row){
-            const Int y=static_cast<Int>(row);
-            for(Int x=0;x<map_size;++x){
-                const auto i=(index*pixels+std::size_t(y)*map_size+x)*4;
-                maps[i]=byte(at(x,y).shade);
-                maps[i+1]=byte(at(x,y).roughness);
-                maps[i+2]=byte(0.5f+(at(x+1,y).height-at(x-1,y).height)*1.55f);
-                maps[i+3]=byte(0.5f+(at(x,y+1).height-at(x,y-1).height)*1.55f);
-            }
-        });
-    }
+        for(Int y=0;y<size;++y) for(Int x=0;x<size;++x)
+            at(x,y)=texel(x,y,size,index/material_variants,index%material_variants);
+        for(Int y=0;y<size;++y) for(Int x=0;x<size;++x){
+            const auto i=(index*pixels+std::size_t(y)*size+x)*4;
+            maps[i]=byte(at(x,y).shade);
+            maps[i+1]=byte(at(x,y).roughness);
+            maps[i+2]=byte(0.5f+(at(x+1,y).height-at(x-1,y).height)*slope_scale);
+            maps[i+3]=byte(0.5f+(at(x,y+1).height-at(x,y-1).height)*slope_scale);
+        }
+    });
     return maps;
 }
 
@@ -378,14 +385,14 @@ TerrainVertex terrain_vertex(float x,float z,float half){
     return {{x,terrain_height(x,z,half),z},normalize({-dx,2.0f*step,-dz}),0};
 }
 
-void add_boulders(std::vector<TerrainVertex>& vertices,float half,int quality,float range){
-    constexpr float spacing=7.2f;
-    const Int cells=static_cast<Int>(std::ceil((half+range)/spacing));
-    for(Int z=-cells;z<=cells;++z) for(Int x=-cells;x<=cells;++x){
+constexpr float boulder_spacing=7.2f;
+
+void add_boulder_row(std::vector<TerrainVertex>& vertices,float half,int quality,float range,Int z,Int cells){
+    for(Int x=-cells;x<=cells;++x){
         const float chance=random(x,z,312);
         if(chance<quality_budget(quality,0.93f,0.85f,0.78f)) continue;
-        const float px=(x+0.14f+0.70f*random(x,z,314))*spacing;
-        const float pz=(z+0.14f+0.70f*random(x,z,327))*spacing;
+        const float px=(x+0.14f+0.70f*random(x,z,314))*boulder_spacing;
+        const float pz=(z+0.14f+0.70f*random(x,z,327))*boulder_spacing;
         const float edge=std::max(std::abs(px),std::abs(pz))-half;
         if(edge<3.4f || edge>range) continue;
         const float radius=0.28f+std::pow(random(x,z,345),3.0f)*2.0f;
@@ -416,6 +423,24 @@ void add_boulders(std::vector<TerrainVertex>& vertices,float half,int quality,fl
     }
 }
 
+void add_boulders(std::vector<TerrainVertex>& vertices,float half,int quality,float range){
+    const Int cells=static_cast<Int>(std::ceil((half+range)/boulder_spacing));
+    auto& pool=TaskPool::shared();
+    if(!pool.background_workers()){
+        for(Int z=-cells;z<=cells;++z) add_boulder_row(vertices,half,quality,range,z,cells);
+        return;
+    }
+    std::vector<std::vector<TerrainVertex>> rows(2*cells+1);
+    pool.parallel_for_ranges(rows.size(),1,[&](std::size_t first,std::size_t last){
+        for(std::size_t row=first;row<last;++row)
+            add_boulder_row(rows[row],half,quality,range,static_cast<Int>(row)-cells,cells);
+    });
+    auto total=vertices.size();
+    for(const auto& row:rows) total+=row.size();
+    vertices.reserve(total);
+    for(const auto& row:rows) vertices.insert(vertices.end(),row.begin(),row.end());
+}
+
 std::vector<TerrainVertex> terrain_mesh(float half,int quality,int clutter,int range){
     // The inner quad stays on the build/pick plane. The flat mode extends
     // the plane to the same horizon as the normal terrain.
@@ -430,26 +455,37 @@ std::vector<TerrainVertex> terrain_mesh(float half,int quality,int clutter,int r
         0,4,8,12,16,21,26,32,38,45,53,62,72,83,95,108,122,137,153,
         171,191,213,237,263,293,325,361,401,445,494,550,614,686,770,872,1002,1190,1700
     };
-    std::array<std::array<TerrainVertex,97>,2> row{};
-    vertices.reserve(vertices.size()+(distances.size()-1)*4*segments*6);
-    for(Int side=0;side<4;++side){
-        for(std::size_t i=0;i<distances.size();++i){
-            auto& current=row[i%2];
-            const auto& previous=row[(i+1)%2];
-            const float radius=half+distances[i];
+    const std::size_t stride=segments+1;
+    std::vector<TerrainVertex> samples(4*distances.size()*stride);
+    auto& pool=TaskPool::shared();
+    pool.parallel_for_ranges(4*distances.size(),1,[&](std::size_t first,std::size_t last){
+        for(std::size_t row=first;row<last;++row){
+            const auto side=row/distances.size();
+            const float radius=half+distances[row%distances.size()];
+            auto* current=samples.data()+row*stride;
             for(Int step=0;step<=segments;++step){
                 const float p=radius*(2.0f*float(step)/segments-1.0f);
                 const float x=side==0?p:side==1?radius:side==2?-p:-radius;
                 const float z=side==0?-radius:side==1?p:side==2?radius:-p;
                 current[step]=terrain_vertex(x,z,half);
             }
-            if(i==0) continue;
+        }
+    });
+    constexpr std::size_t strips=distances.size()-1;
+    const auto floor_size=vertices.size();
+    vertices.resize(floor_size+4*strips*segments*6);
+    pool.parallel_for_ranges(4*strips,1,[&](std::size_t first,std::size_t last){
+        for(std::size_t strip=first;strip<last;++strip){
+            const auto* previous=samples.data()+(strip+strip/strips)*stride;
+            const auto* current=previous+stride;
+            auto* triangle=vertices.data()+floor_size+strip*segments*6;
             for(Int step=0;step<segments;++step){
-                vertices.insert(vertices.end(),{previous[step],current[step+1],current[step],
-                    previous[step],previous[step+1],current[step+1]});
+                const std::array quad{previous[step],current[step+1],current[step],
+                                      previous[step],previous[step+1],current[step+1]};
+                triangle=std::copy(quad.begin(),quad.end(),triangle);
             }
         }
-    }
+    });
     if(clutter>0)add_boulders(vertices,half,clutter,170.0f*range/100.0f);
     return vertices;
 }
@@ -560,16 +596,19 @@ struct LunarRenderer::Impl {
     float terrain_extent{},max_line_width{1.0f};
     LunarScene scene;
     Mat4 view_projection,inverse,previous_projection,previous_inverse;
+    lunar::ClipVolume camera_clip{Mat4::identity()};
     std::array<Mat4,cascade_count> cascades;
-    Program geometry,shadow,sky,earth_sky,lighting,reflection,transparency,temporal,line,bloom,composite,fxaa;
+    Program geometry,shadow,earth_sky,lighting,reflection,transparency,temporal,line,bloom,composite,fxaa;
     UInt mesh_vao{},terrain_vao{},screen_vao{},mesh_buffer{},terrain_buffer{},surface_maps{};
     UInt shadow_fbo{},shadow_layers{};
-    Int shadow_size{},max_anisotropy{1};
+    Int shadow_size{},max_anisotropy{1},surface_level{};
     Size buffer_capacity{};
     Target gbuffer,hdr,reflections,oit,bloom_a,bloom_b,ldr;
     std::array<Target,2> history{};
-    std::vector<Vertex> vertices;
-    std::vector<Draw> opaque,translucent,lines;
+    std::vector<Vertex> vertices,transparent_vertices,line_vertices;
+    std::vector<Vec3> opaque_positions;
+    std::vector<MeshStyle> opaque_styles;
+    std::vector<Draw> opaque,translucent,lines,terrain_draws;
 
     ~Impl(){
         if(!loaded) return;
@@ -582,7 +621,7 @@ struct LunarRenderer::Impl {
         gl.DeleteTextures(6,textures);
         gl.DeleteBuffers(6,buffers);
         gl.DeleteVertexArrays(4,arrays);
-        for(const Program* program:{&geometry,&shadow,&sky,&earth_sky,&lighting,&reflection,&transparency,
+        for(const Program* program:{&geometry,&shadow,&earth_sky,&lighting,&reflection,&transparency,
                                     &temporal,&line,&bloom,&composite,&fxaa,&reservoir_program,&ray_program,&ray_filter,
                                     &primitive_ids,&material_resolve,&cull_clusters,&volume_program,&neural_train_program})
             if(program->id) gl.DeleteProgram(program->id);
@@ -784,11 +823,13 @@ struct LunarRenderer::Impl {
             && (!features.bloom || (make_target(bloom_a,bw,bh,{{rgba16f,true}}) && make_target(bloom_b,bw,bh,{{rgba16f,true}})))
             && (!features.volumes || make_target(volume_target,std::max(1,width/2),std::max(1,height/2),{{rgba16f,true}}))
             && make_target(overlay,width,height,{{rgba8,true}})
-            && make_target(ldr,history_width,history_height,{{rgba8,true}});
+            && (graphics.aa==GraphicsAA::Off || make_target(ldr,history_width,history_height,{{rgba8,true}}));
         if(targets_ready){
-            gl.BindFramebuffer(framebuffer,oit.fbo);
-            attach_depth(gbuffer.depth);
-            targets_ready=gl.CheckFramebufferStatus(framebuffer)==complete;
+            for(const auto& target:{oit,overlay}){
+                gl.BindFramebuffer(framebuffer,target.fbo);
+                attach_depth(gbuffer.depth);
+                targets_ready=targets_ready && gl.CheckFramebufferStatus(framebuffer)==complete;
+            }
         }
         visibility_targets=false;
         if(targets_ready && features.visibility){
@@ -796,6 +837,12 @@ struct LunarRenderer::Impl {
             if(visibility_targets){
                 attach_depth(gbuffer.depth);
                 visibility_targets=gl.CheckFramebufferStatus(framebuffer)==complete;
+                if(visibility_targets){
+                    // The visibility resolve samples depth while writing only
+                    // G-buffer color. Keep depth attached to the ID target.
+                    gl.BindFramebuffer(framebuffer,gbuffer.fbo);
+                    attach_depth(0);
+                }
             }
         }
         if(targets_ready) resize_rays(features);
@@ -862,7 +909,18 @@ struct LunarRenderer::Impl {
 
     void configure_surface_sampling(){
         bind_texture(0,surface_maps,texture_array);
-        gl.TexParameteri(texture_array,base_level,3-graphics.surface_resolution);
+        if(graphics.surface_resolution>surface_level){
+            surface_level=graphics.surface_resolution;
+            const Int size=surface_resolution_pixels(surface_level);
+            const auto maps=material_maps(size);
+            gl.TexParameteri(texture_array,base_level,0);
+            gl.TexImage3D(texture_array,0,rgba8,size,size,material_count*material_variants,0,rgba,byte_type,maps.data());
+            gl.TexParameteri(texture_array,wrap_s,repeat);
+            gl.TexParameteri(texture_array,wrap_t,repeat);
+            gl.TexParameteri(texture_array,mag_filter,linear);
+            gl.GenerateMipmap(texture_array);
+        }
+        gl.TexParameteri(texture_array,base_level,surface_level-graphics.surface_resolution);
         gl.TexParameteri(texture_array,min_filter,graphics.texture_filter==0?mip_bilinear:trilinear);
         if(max_anisotropy>1)
             gl.TexParameteri(texture_array,anisotropy_enum,std::min(max_anisotropy,texture_anisotropy(graphics.texture_filter)));
@@ -908,7 +966,7 @@ struct LunarRenderer::Impl {
         const char* options=graphics_shader_options();
         visibility_path=link(primitive_ids,visibility_vertex,{visibility_fragment})
             && link(material_resolve,screen_vertex,{visibility_inputs,options,gbuffer_outputs,
-                surface_shaders::fields,surface_common,reconstruct_common,visibility_resolve});
+                surface_shaders::fields,surface_shaders::basic_material,surface_common,reconstruct_common,visibility_resolve});
         cluster_path=visibility_path && compute.multi_draw && link_compute(cull_clusters,{glsl430,options,cluster_culling});
         if(cluster_path){
             gl.GenVertexArrays(1,&cluster_vao);
@@ -943,12 +1001,15 @@ struct LunarRenderer::Impl {
         if(!loaded) return false;
         using namespace lunar_shaders;
         const char* options=graphics_shader_options();
-        if(!link(geometry,mesh_vertex,{geometry_inputs,options,gbuffer_outputs,surface_shaders::fields,surface_common,geometry_sample,gbuffer_fragment}) ||
-           !link(shadow,depth_vertex,{depth_fragment}) || !link(sky,screen_vertex,{sky_fragment}) ||
-           !link(lighting,screen_vertex,{scene_inputs,options,lighting_uniforms,lighting_common,reconstruct_common,deferred_fragment}) ||
+        if(!link(geometry,mesh_vertex,{geometry_inputs,options,gbuffer_outputs,surface_shaders::fields,
+                                      surface_shaders::basic_material,surface_common,geometry_sample,gbuffer_fragment}) ||
+           !link(shadow,depth_vertex,{depth_fragment}) ||
+           !link(lighting,screen_vertex,{scene_inputs,options,lighting_uniforms,lighting_common,reconstruct_common,
+                                        sky_functions,deferred_fragment}) ||
            !link(reflection,screen_vertex,{scene_inputs,options,reflection_inputs,reconstruct_common,reflection_fragment}) ||
            !link(transparency,mesh_vertex,{geometry_inputs,options,lighting_uniforms,transparency_outputs,
-                                          surface_shaders::fields,surface_common,geometry_sample,lighting_common,transparency_fragment}) ||
+                                          surface_shaders::fields,surface_shaders::basic_material,surface_common,
+                                          geometry_sample,lighting_common,transparency_fragment}) ||
            !link(temporal,screen_vertex,{temporal_inputs,options,reconstruct_common,temporal_fragment}) ||
            !link(line,mesh_vertex,{line_fragment}) || !link(bloom,screen_vertex,{bloom_fragment}) ||
            !link(composite,screen_vertex,{glsl330,options,composite_fragment}) || !link(fxaa,screen_vertex,{fxaa_fragment,learned_upscale}) ||
@@ -956,14 +1017,6 @@ struct LunarRenderer::Impl {
            !initialize_shadow()) return false;
 
         gl.GenTextures(1,&surface_maps);
-        bind_texture(0,surface_maps,texture_array);
-        const auto maps=material_maps();
-        gl.TexImage3D(texture_array,0,rgba8,map_size,map_size,material_count*material_variants,0,rgba,byte_type,maps.data());
-        gl.TexParameteri(texture_array,wrap_s,repeat);
-        gl.TexParameteri(texture_array,wrap_t,repeat);
-        gl.TexParameteri(texture_array,min_filter,trilinear);
-        gl.TexParameteri(texture_array,mag_filter,linear);
-        gl.GenerateMipmap(texture_array);
         initialize_texture_filtering(resolve);
         configure_surface_sampling();
 
@@ -1009,13 +1062,16 @@ struct LunarRenderer::Impl {
     bool use_clusters() const {
         return cluster_path && graphics.enabled(Feature::GpuTerrain) && graphics.enabled(Feature::TerrainRelief);
     }
+    bool trace_scene(const GraphicsSettings& settings) const {
+        return settings.path==GraphicsPath::Auto && advanced && trace_enabled(settings);
+    }
     bool weighted_transparency() const { return graphics.transparency==GraphicsTransparency::Weighted; }
 
     void set_graphics_settings(GraphicsSettings next){
         next.normalize();
         if(next==graphics) return;
         finish();
-        const bool resolution_changed=(next.aa==GraphicsAA::Temporal)!=temporal_aa() ||
+        const bool resolution_changed=next.aa!=graphics.aa ||
             next.render_scale!=graphics.render_scale || next.ray_scale!=graphics.ray_scale ||
             next.bloom_quality!=graphics.bloom_quality;
         if(next.path!=graphics.path || resolution_changed || screen_features(next)!=screen_features(graphics))
@@ -1025,7 +1081,8 @@ struct LunarRenderer::Impl {
             targets_ready=false;
         }
         if(next.quality(Feature::TerrainRelief)!=graphics.quality(Feature::TerrainRelief) ||
-           next.ground_clutter!=graphics.ground_clutter || next.clutter_range!=graphics.clutter_range)
+           next.ground_clutter!=graphics.ground_clutter || next.clutter_range!=graphics.clutter_range ||
+           trace_scene(next)!=trace_scene(graphics))
             terrain_extent=0.0f;
         if(!graphics.enabled(Feature::NeuralRadiance) && next.enabled(Feature::NeuralRadiance))
             neural_initialized=false;
@@ -1043,27 +1100,33 @@ struct LunarRenderer::Impl {
         if(!ready || graphics.path==GraphicsPath::Classic || w<1 || h<1 || next.half_extent<=0.0f) return false;
         if(output_width!=w || output_height!=h) resize(w,h);
         if(!targets_ready) return false;
-        if(terrain_extent!=next.half_extent){
+        const bool clustered=visibility_targets && use_clusters();
+        if(terrain_extent!=next.half_extent || (clustered && terrain_pages.clusters.empty())){
             const auto landscape=terrain_mesh(next.half_extent,graphics.quality(Feature::TerrainRelief),
                                               graphics.ground_clutter,graphics.clutter_range);
             terrain_vertices=static_cast<Int>(landscape.size());
             const auto rocks=std::find_if(landscape.begin(),landscape.end(),[](const TerrainVertex& v){ return v.stone>0.0f; });
             stone_start=static_cast<Int>(rocks-landscape.begin());
+            prepare_terrain_draws(landscape);
             gl.BindBuffer(array_buffer,terrain_buffer);
             gl.BufferData(array_buffer,Size(landscape.size()*sizeof(TerrainVertex)),landscape.data(),static_draw);
             gl.BindBuffer(array_buffer,0);
-            if(cluster_path) initialize_terrain_pages(landscape);
+            if(clustered) initialize_terrain_pages(landscape);
+            else terrain_pages={};
             terrain_extent=next.half_extent;
             reset_history(true);
             landscape_rays.clear();
-            if(advanced){
-                landscape_rays.reserve((landscape.size()-6)/3);
-                for(std::size_t i=6;i+2<landscape.size();i+=3){
-                    const bool rock=landscape[i].stone>0.0f;
-                    const Color tint=rock?Color{0.36f,0.33f,0.31f,1}:Color{0.49f,0.46f,0.43f,1};
-                    landscape_rays.push_back(lunar::ray_triangle(landscape[i].position,landscape[i+1].position,
-                        landscape[i+2].position,tint,static_cast<float>(LunarMaterial::Regolith)));
-                }
+            if(trace_scene(graphics)){
+                landscape_rays.resize((landscape.size()-6)/3);
+                TaskPool::shared().parallel_for_ranges(landscape_rays.size(),1024,[&](std::size_t first,std::size_t last){
+                    for(std::size_t triangle=first;triangle<last;++triangle){
+                        const std::size_t i=6+triangle*3;
+                        const bool rock=landscape[i].stone>0.0f;
+                        const Color tint=rock?Color{0.36f,0.33f,0.31f,1}:Color{0.49f,0.46f,0.43f,1};
+                        landscape_rays[triangle]=lunar::ray_triangle(landscape[i].position,landscape[i+1].position,
+                            landscape[i+2].position,tint,static_cast<float>(LunarMaterial::Regolith));
+                    }
+                });
             }
         }
         if(length(scene.eye-next.eye)>22.0f || dot(forward(scene.view_projection),forward(next.view_projection))<0.85f)
@@ -1096,47 +1159,142 @@ struct LunarRenderer::Impl {
             }
         }
         if(!invert(view_projection,inverse)) return false;
+        camera_clip=lunar::ClipVolume(view_projection);
         in_scene=true;
         return true;
     }
 
-    void append(const std::vector<Vec3>& points,Int material,Color tint,bool is_line,float width_px,
-                const LunarSurfaceMapping& mapping={}){
-        const std::size_t arity=is_line?2u:3u;
-        const std::size_t count=points.size()/arity*arity;
+    void append_triangles(const std::vector<Vec3>& points,Int material,Color tint,const LunarSurfaceMapping* mapping){
+        const std::size_t count=points.size()/3*3;
         if(!count || tint.a<=0.0f) return;
-        const Int first=static_cast<Int>(vertices.size());
-        for(std::size_t i=0;i<count;++i) vertices.push_back({points[i],tint,float(material),mapping.coordinate(points[i])});
-        const bool transparent=tint.a<0.999f;
-        if(!is_line && !transparent && material==static_cast<Int>(LunarMaterial::Skin)) skin_in_scene=true;
-        const bool casts=!is_line && !transparent && material!=static_cast<Int>(LunarMaterial::Emissive) &&
-            material!=static_cast<Int>(LunarMaterial::Marking);
-        auto& draws=is_line?lines:transparent?translucent:opaque;
-        const bool sort=!is_line && transparent && !weighted_transparency();
-        if(!sort && !draws.empty()){
-            auto& last=draws.back();
-            if(last.first+last.count==first && last.width==width_px && last.casts_shadow==casts){
-                last.count+=static_cast<Int>(count);
-                return;
+        if(!(tint.a<0.999f)){
+            if(material==static_cast<Int>(LunarMaterial::Skin)) skin_in_scene=true;
+            const auto first=opaque_positions.size();
+            opaque_positions.insert(opaque_positions.end(),points.begin(),points.begin()+count);
+            const MeshStyle style{tint,material,mapping?*mapping:LunarSurfaceMapping{},mapping!=nullptr};
+            constexpr std::size_t vertices_per_draw=4095;
+            for(std::size_t offset=0;offset<count;offset+=vertices_per_draw){
+                Draw draw;
+                draw.first=static_cast<Int>(first+offset);
+                draw.count=static_cast<Int>(std::min(vertices_per_draw,count-offset));
+                draw.casts_shadow=material!=static_cast<Int>(LunarMaterial::Emissive) &&
+                                  material!=static_cast<Int>(LunarMaterial::Marking);
+                opaque.push_back(draw);
+                opaque_styles.push_back(style);
             }
+            return;
         }
-        float depth{};
-        if(sort){
-            const Vec3 axis=forward(scene.view_projection);
-            for(std::size_t i=0;i<count;++i) depth+=dot(axis,points[i]-scene.eye);
-            depth/=static_cast<float>(count);
+
+        const bool sort=!weighted_transparency();
+        Draw draw;
+        draw.first=static_cast<Int>(transparent_vertices.size());
+        draw.count=static_cast<Int>(count);
+        draw.bounds={points.front(),points.front()};
+        Vec3 position_sum{};
+        for(std::size_t i=0;i<count;++i){
+            const Vec3 p=points[i];
+            draw.bounds.include(p);
+            if(sort) position_sum+=p;
+            transparent_vertices.push_back({p,tint,float(material),mapping?mapping->coordinate(p):p});
         }
-        draws.push_back({first,static_cast<Int>(count),width_px,casts,depth});
+        if(!camera_clip.intersects(draw.bounds)){
+            transparent_vertices.resize(draw.first);
+            return;
+        }
+        if(sort)
+            draw.depth=dot(forward(scene.view_projection),position_sum*(1.0f/count)-scene.eye);
+        translucent.push_back(draw);
+    }
+
+    void prepare_opaque_vertices(){
+        // Reuse initialized storage across frames. Each job writes its own
+        // vertex and bounds ranges before the application thread uploads them.
+        if(vertices.size()<opaque_positions.size()) vertices.resize(opaque_positions.size());
+        const bool stamp_pages=page_support && auto_path() &&
+            graphics.shadows==GraphicsShadows::Paged && scene.daylight>0.001f;
+        const auto pack=[&](std::size_t first,std::size_t last){
+            for(std::size_t d=first;d<last;++d){
+                auto& draw=opaque[d];
+                const auto& style=opaque_styles[d];
+                draw.bounds={opaque_positions[draw.first],opaque_positions[draw.first]};
+                const bool stamp=stamp_pages && draw.casts_shadow;
+                std::uint64_t hash_value=1469598103934665603ull;
+                for(Int i=draw.first;i<draw.first+draw.count;++i){
+                    const Vec3 p=opaque_positions[i];
+                    draw.bounds.include(p);
+                    if(stamp){
+                        for(float coordinate:{p.x,p.y,p.z})
+                            hash_value=(hash_value^std::bit_cast<std::uint32_t>(coordinate))*1099511628211ull;
+                    }
+                    vertices[i]={p,style.tint,float(style.material),style.mapped?style.mapping.coordinate(p):p};
+                }
+                if(stamp) draw.shadow_stamp=hash_value|1ull;
+            }
+        };
+        if(opaque_positions.size()>=12000) TaskPool::shared().parallel_for_ranges(opaque.size(),1,pack);
+        else pack(0,opaque.size());
+    }
+
+    void append_lines(const std::vector<Vec3>& points,Color tint,float width_px){
+        const auto count=points.size()/2*2;
+        if(!count || tint.a<=0.0f) return;
+        Draw draw;
+        draw.first=static_cast<Int>(line_vertices.size());
+        draw.count=static_cast<Int>(count);
+        draw.width=width_px;
+        for(std::size_t i=0;i<count;++i) line_vertices.push_back({points[i],tint,float(line_material),points[i]});
+        if(!lines.empty() && lines.back().first+lines.back().count==draw.first && lines.back().width==width_px)
+            lines.back().count+=draw.count;
+        else lines.push_back(draw);
+    }
+
+    void prepare_terrain_draws(const std::vector<TerrainVertex>& landscape){
+        terrain_draws.clear();
+        const auto append_ranges=[&](Int begin,Int end,Int batch_size,bool casts){
+            for(Int first=begin;first<end;first+=batch_size){
+                Draw draw;
+                draw.first=first;
+                draw.count=std::min(batch_size,end-first);
+                draw.casts_shadow=casts;
+                draw.bounds={landscape[first].position,landscape[first].position};
+                for(Int i=first+1;i<first+draw.count;++i) draw.bounds.include(landscape[i].position);
+                terrain_draws.push_back(draw);
+            }
+        };
+        // Keep the build plane separate from the surrounding ring strips.
+        append_ranges(0,std::min(6,stone_start),6,false);
+        append_ranges(6,stone_start,6*48,false);
+        append_ranges(stone_start,terrain_vertices,54*8,true);
+    }
+
+    void draw_batches(const std::vector<Draw>& draws,const lunar::ClipVolume& clip,bool shadow_only=false){
+        Int first{},count{};
+        for(const auto& draw:draws){
+            if((shadow_only && !draw.casts_shadow) || !clip.intersects(draw.bounds)) continue;
+            if(count && first+count!=draw.first){
+                gl.DrawArrays(triangles_mode,first,count);
+                count=0;
+            }
+            if(!count) first=draw.first;
+            count+=draw.count;
+        }
+        if(count) gl.DrawArrays(triangles_mode,first,count);
     }
 
     void upload(){
-        if(vertices.empty()) return;
-        gl.BindBuffer(array_buffer,mesh_buffer);
-        const Size bytes=Size(vertices.size()*sizeof(Vertex));
+        const auto solid=std::span<const Vertex>(vertices.data(),opaque_positions.size());
+        const Size bytes=Size((solid.size()+transparent_vertices.size()+line_vertices.size())*sizeof(Vertex));
+        if(!bytes) return;
         buffer_capacity=std::max<Size>(buffer_capacity,8192);
         while(buffer_capacity<bytes) buffer_capacity*=2;
+        gl.BindBuffer(array_buffer,mesh_buffer);
         gl.BufferData(array_buffer,buffer_capacity,nullptr,stream_draw);
-        gl.BufferSubData(array_buffer,0,bytes,vertices.data());
+        Size offset=0;
+        for(const auto stream:{solid,std::span<const Vertex>(transparent_vertices),std::span<const Vertex>(line_vertices)}){
+            const Size size=Size(stream.size_bytes());
+            if(size) gl.BufferSubData(array_buffer,offset,size,stream.data());
+            offset+=size;
+        }
     }
 
     void matrix(const Program& program,Uniform u,const Mat4& m){ gl.UniformMatrix4fv(program[u],1,0,m.m.data()); }
@@ -1161,10 +1319,11 @@ struct LunarRenderer::Impl {
             gl.FramebufferTextureLayer(framebuffer,depth_attachment,shadow_layers,0,i);
             gl.Clear(depth_bit);
             matrix(shadow,LightProjection,cascades[i]);
+            const lunar::ClipVolume clip(cascades[i]);
             gl.BindVertexArray(mesh_vao);
-            for(const auto& draw:opaque) if(draw.casts_shadow) gl.DrawArrays(triangles_mode,draw.first,draw.count);
+            draw_batches(opaque,clip,true);
             gl.BindVertexArray(terrain_vao);
-            gl.DrawArrays(triangles_mode,stone_start,terrain_vertices-stone_start);
+            draw_batches(terrain_draws,clip,true);
         }
         gl.Disable(offset_fill);
     }
@@ -1208,32 +1367,19 @@ struct LunarRenderer::Impl {
 
     lunar::PageRevisions shadow_revisions() const {
         lunar::PageRevisions stamps{};
-        const auto hash_coordinate=[](std::uint64_t stamp,float v){
-            return (stamp^static_cast<std::uint32_t>(std::lround(v*64.0f)))*1099511628211ull;
-        };
         for(const auto& draw:opaque){
-            if(!draw.casts_shadow) continue;
-            for(Int i=draw.first;i+2<draw.first+draw.count;i+=3){
-                std::array<float,3> x{},y{};
-                for(int v=0;v<3;++v){
-                    const auto p=vertices[i+v].position;
-                    x[v]=dot(p,page_x);
-                    y[v]=dot(p,page_y);
-                }
-                const auto x0=std::max(0,int(std::floor(*std::min_element(x.begin(),x.end())/shadow_page_meters))-shadow_origin.x);
-                const auto x1=std::min(lunar::page_grid-1,int(std::floor(*std::max_element(x.begin(),x.end())/shadow_page_meters))-shadow_origin.x);
-                const auto y0=std::max(0,int(std::floor(*std::min_element(y.begin(),y.end())/shadow_page_meters))-shadow_origin.y);
-                const auto y1=std::min(lunar::page_grid-1,int(std::floor(*std::max_element(y.begin(),y.end())/shadow_page_meters))-shadow_origin.y);
-                if(x1<x0 || y1<y0) continue;
-                std::uint64_t stamp=1469598103934665603ull;
-                for(int v=0;v<3;++v){
-                    const auto p=vertices[i+v].position;
-                    stamp=hash_coordinate(hash_coordinate(hash_coordinate(stamp,p.x),p.y),p.z);
-                }
-                for(int y_page=y0;y_page<=y1;++y_page) for(int x_page=x0;x_page<=x1;++x_page){
-                    auto& current=stamps[y_page*lunar::page_grid+x_page];
-                    current=((current^stamp)*1099511628211ull)|1ull;
-                }
+            if(!draw.shadow_stamp) continue;
+            const auto page=[&](Vec3 axis,Vec3 corner,int origin){
+                return int(std::floor(dot(axis,corner)/shadow_page_meters))-origin;
+            };
+            const auto& bounds=draw.bounds;
+            const int x0=std::max(0,page(page_x,bounds.support(page_x*-1),shadow_origin.x));
+            const int x1=std::min(lunar::page_grid-1,page(page_x,bounds.support(page_x),shadow_origin.x));
+            const int y0=std::max(0,page(page_y,bounds.support(page_y*-1),shadow_origin.y));
+            const int y1=std::min(lunar::page_grid-1,page(page_y,bounds.support(page_y),shadow_origin.y));
+            for(int y=y0;y<=y1;++y) for(int x=x0;x<=x1;++x){
+                auto& current=stamps[y*lunar::page_grid+x];
+                current=((current^draw.shadow_stamp)*1099511628211ull)|1ull;
             }
         }
         return stamps;
@@ -1274,10 +1420,11 @@ struct LunarRenderer::Impl {
             gl.FramebufferTextureLayer(framebuffer,depth_attachment,shadow_atlas,0,upload.layer);
             gl.Clear(depth_bit);
             matrix(shadow,LightProjection,projection);
+            const lunar::ClipVolume clip(projection);
             gl.BindVertexArray(mesh_vao);
-            for(const auto& draw:opaque) if(draw.casts_shadow) gl.DrawArrays(triangles_mode,draw.first,draw.count);
+            draw_batches(opaque,clip,true);
             gl.BindVertexArray(terrain_vao);
-            gl.DrawArrays(triangles_mode,stone_start,terrain_vertices-stone_start);
+            draw_batches(terrain_draws,clip,true);
         }
         gl.Disable(offset_fill);
     }
@@ -1410,14 +1557,13 @@ struct LunarRenderer::Impl {
             gl.BindBuffer(draw_indirect_buffer,0);
         }else{
             gl.BindVertexArray(terrain_vao);
-            gl.DrawArrays(triangles_mode,0,terrain_vertices);
+            draw_batches(terrain_draws,camera_clip);
         }
         gl.Uniform1i(primitive_ids[Terrain],0);
         gl.BindVertexArray(mesh_vao);
-        for(const auto& draw:opaque) gl.DrawArrays(triangles_mode,draw.first,draw.count);
+        draw_batches(opaque,camera_clip);
 
         gl.BindFramebuffer(framebuffer,gbuffer.fbo);
-        attach_depth(0);
         gl.Disable(depth_test);
         screen(material_resolve);
         sample(material_resolve,VisibilityMap,0,visibility.color);
@@ -1430,7 +1576,6 @@ struct LunarRenderer::Impl {
         compute.bind_buffer(storage_buffer,3,clustered?cluster_vertices:terrain_buffer);
         compute.bind_buffer(storage_buffer,4,mesh_buffer);
         gl.DrawArrays(triangles_mode,0,3);
-        attach_depth(gbuffer.depth);
     }
 
     void render_geometry(){
@@ -1445,10 +1590,10 @@ struct LunarRenderer::Impl {
         ground_page_state(geometry);
         gl.Uniform1i(geometry[Terrain],1);
         gl.BindVertexArray(terrain_vao);
-        gl.DrawArrays(triangles_mode,0,terrain_vertices);
+        draw_batches(terrain_draws,camera_clip);
         gl.Uniform1i(geometry[Terrain],0);
         gl.BindVertexArray(mesh_vao);
-        for(const auto& draw:opaque) gl.DrawArrays(triangles_mode,draw.first,draw.count);
+        draw_batches(opaque,camera_clip);
     }
 
     void reset_history(bool scene_reset){
@@ -1492,27 +1637,36 @@ struct LunarRenderer::Impl {
         constexpr std::size_t triangle_limit=126000;
         constexpr float radius=244.0f;
         std::vector<lunar::RayTriangle> triangles;
-        triangles.reserve(std::min<std::size_t>(triangle_limit,vertices.size()/3+8192));
-        const auto include=[&](const lunar::RayTriangle& t){
-            const float x=std::clamp(scene.focus.x,std::min({t.a[0],t.b[0],t.c[0]}),std::max({t.a[0],t.b[0],t.c[0]}));
-            const float z=std::clamp(scene.focus.z,std::min({t.a[2],t.b[2],t.c[2]}),std::max({t.a[2],t.b[2],t.c[2]}));
-            const float dx=x-scene.focus.x,dz=z-scene.focus.z;
-            if(dx*dx+dz*dz<radius*radius && triangles.size()<triangle_limit) triangles.push_back(t);
+        triangles.reserve(std::min<std::size_t>(triangle_limit,opaque_positions.size()/3+8192));
+        const auto nearby=[&](const lunar::Bounds& bounds){
+            const float dx=std::clamp(scene.focus.x,bounds.low.x,bounds.high.x)-scene.focus.x;
+            const float dz=std::clamp(scene.focus.z,bounds.low.z,bounds.high.z)-scene.focus.z;
+            return dx*dx+dz*dz<radius*radius;
         };
         for(const auto& draw:opaque){
-            for(Int i=draw.first;i+2<draw.first+draw.count;i+=3){
-                const auto& v=vertices[static_cast<std::size_t>(i)];
-                if(v.material!=static_cast<float>(LunarMaterial::Marking))
-                    include(lunar::ray_triangle(v.position,vertices[i+1].position,vertices[i+2].position,v.tint,v.material));
+            if(triangles.size()==triangle_limit) break;
+            if(!nearby(draw.bounds) || vertices[draw.first].material==static_cast<float>(LunarMaterial::Marking)) continue;
+            for(Int i=draw.first;i+2<draw.first+draw.count && triangles.size()<triangle_limit;i+=3){
+                const auto& a=vertices[i];
+                const auto b=vertices[i+1].position,c=vertices[i+2].position;
+                lunar::Bounds bounds{a.position,a.position};
+                bounds.include(b);
+                bounds.include(c);
+                if(nearby(bounds)) triangles.push_back(lunar::ray_triangle(a.position,b,c,a.tint,a.material));
             }
         }
-        for(const auto& triangle:landscape_rays) include(triangle);
-        auto job=std::make_shared<std::packaged_task<lunar::RayTree()>>(
+        for(const auto& t:landscape_rays){
+            if(triangles.size()==triangle_limit) break;
+            const Vec3 a{t.a[0],t.a[1],t.a[2]};
+            lunar::Bounds bounds{a,a};
+            bounds.include({t.b[0],t.b[1],t.b[2]});
+            bounds.include({t.c[0],t.c[1],t.c[2]});
+            if(nearby(bounds)) triangles.push_back(t);
+        }
+        ray_job=TaskPool::shared().submit(
             [input=std::move(triangles),focus=scene.focus,generation=ray_generation]() mutable {
                 return lunar::build_ray_tree(std::move(input),focus,generation);
             });
-        ray_job=job->get_future();
-        TaskPool::shared().submit([job]{ (*job)(); });
         next_ray_build=now+milliseconds(92);
     }
 
@@ -1654,14 +1808,6 @@ struct LunarRenderer::Impl {
     void render_lighting(const Target* computed){
         gl.Disable(depth_test);
         gl.BindFramebuffer(framebuffer,hdr.fbo);
-        screen(sky);
-        sample(sky,DepthMap,3,gbuffer.depth);
-        matrix(sky,InverseViewProjection,inverse);
-        vector(sky,Eye,scene.eye);
-        vector(sky,Sun,scene.sun_direction);
-        gl.Uniform1f(sky[Daylight],scene.daylight);
-        gl.DrawArrays(triangles_mode,0,3);
-
         screen(lighting);
         gbuffer_state(lighting);
         lighting_state(lighting);
@@ -1714,16 +1860,63 @@ struct LunarRenderer::Impl {
         sample(transparency,SurfaceMaps,5,surface_maps,texture_array);
         ground_page_state(transparency);
         lighting_state(transparency);
-        for(const auto& draw:translucent) gl.DrawArrays(triangles_mode,draw.first,draw.count);
+        const auto first=static_cast<Int>(opaque_positions.size());
+        if(weighted) gl.DrawArrays(triangles_mode,first,static_cast<Int>(transparent_vertices.size()));
+        else for(const auto& draw:translucent) gl.DrawArrays(triangles_mode,first+draw.first,draw.count);
         gl.Disable(blend);
         gl.Disable(depth_test);
         gl.DepthMask(1);
     }
 
+    std::array<Int,4> volume_scissor(Int w,Int h) const {
+        Vec2 low{1,1},high{-1,-1};
+        bool visible=false;
+        const auto& m=view_projection.m;
+        for(std::size_t i=0;i<volume_count;++i){
+            const auto& volume=volumes[i];
+            const Vec3 end=volume.origin+normalize(volume.axis)*volume.length;
+            lunar::Bounds bounds{volume.origin,volume.origin};
+            bounds.include(end);
+            const float radius=std::max(volume.radius,volume.nozzle_radius);
+            const Vec3 margin{radius,radius,radius};
+            bounds.low=bounds.low-margin;
+            bounds.high=bounds.high+margin;
+            if(!camera_clip.intersects(bounds)) continue;
+            visible=true;
+            for(int corner=0;corner<8;++corner){
+                const float x=(corner&1)?bounds.high.x:bounds.low.x;
+                const float y=(corner&2)?bounds.high.y:bounds.low.y;
+                const float z=(corner&4)?bounds.high.z:bounds.low.z;
+                const float clip_w=m[3]*x+m[7]*y+m[11]*z+m[15];
+                const float clip_z=m[2]*x+m[6]*y+m[10]*z+m[14];
+                // A bound crossing the near plane can surround the camera.
+                if(clip_w<=0.0001f || clip_z<-clip_w) return {0,0,w,h};
+                const Vec2 point{(m[0]*x+m[4]*y+m[8]*z+m[12])/clip_w,
+                                 (m[1]*x+m[5]*y+m[9]*z+m[13])/clip_w};
+                low={std::min(low.x,point.x),std::min(low.y,point.y)};
+                high={std::max(high.x,point.x),std::max(high.y,point.y)};
+            }
+        }
+        if(!visible) return {};
+        const auto pixel=[](float coordinate,Int extent){
+            return (std::clamp(coordinate,-1.0f,1.0f)*.5f+.5f)*extent;
+        };
+        const Int x0=std::max(0,Int(std::floor(pixel(low.x,w)))-2),x1=std::min(w,Int(std::ceil(pixel(high.x,w)))+2);
+        const Int y0=std::max(0,Int(std::floor(pixel(low.y,h)))-2),y1=std::min(h,Int(std::ceil(pixel(high.y,h)))+2);
+        return {x0,y0,x1-x0,y1-y0};
+    }
+
     void render_volumes(){
         if(!volume_count) return;
+        const Int w=std::max(1,width/2),h=std::max(1,height/2);
+        const auto [x,y,box_width,box_height]=volume_scissor(w,h);
         gl.BindFramebuffer(framebuffer,volume_target.fbo);
-        gl.Viewport(0,0,std::max(1,width/2),std::max(1,height/2));
+        gl.Viewport(0,0,w,h);
+        if(box_width!=w || box_height!=h){
+            gl.ClearColor(0,0,0,0);
+            gl.Clear(color_bit);
+        }
+        if(box_width<=0 || box_height<=0) return;
         screen(volume_program);
         shader_options(volume_program,graphics.features);
         sample(volume_program,DepthMap,0,gbuffer.depth);
@@ -1747,7 +1940,10 @@ struct LunarRenderer::Impl {
         gl.Uniform4fv(volume_program[VolumeAxis],count,axis.front().data());
         gl.Uniform4fv(volume_program[VolumeColor],count,color.front().data());
         gl.Uniform4fv(volume_program[VolumeParams],count,parameters.front().data());
+        gl.Enable(scissor_test);
+        gl.Scissor(x,y,box_width,box_height);
         gl.DrawArrays(triangles_mode,0,3);
+        gl.Disable(scissor_test);
     }
 
     UInt resolve_world(UInt reflection_texture){
@@ -1795,7 +1991,6 @@ struct LunarRenderer::Impl {
         gl.Viewport(0,0,width,height);
         gl.ClearColor(0,0,0,0);
         gl.Clear(color_bit);
-        attach_depth(gbuffer.depth);
         gl.Enable(depth_test);
         gl.DepthMask(0);
         gl.Enable(blend);
@@ -1804,15 +1999,15 @@ struct LunarRenderer::Impl {
         gl.BindVertexArray(mesh_vao);
         matrix(line,ViewProjection,view_projection);
         gl.Uniform1i(line[Terrain],0);
+        const auto first=static_cast<Int>(opaque_positions.size()+transparent_vertices.size());
         for(const auto& draw:lines){
             gl.LineWidth(std::clamp(draw.width,1.0f,max_line_width));
-            gl.DrawArrays(lines_mode,draw.first,draw.count);
+            gl.DrawArrays(lines_mode,first+draw.first,draw.count);
         }
         gl.LineWidth(1);
         gl.DepthMask(1);
         gl.Disable(blend);
         gl.Disable(depth_test);
-        attach_depth(0);
     }
 
     void post_process(UInt resolved){
@@ -1836,28 +2031,35 @@ struct LunarRenderer::Impl {
             gl.DrawArrays(triangles_mode,0,3);
         }
 
-        gl.Viewport(0,0,history_width,history_height);
-        gl.BindFramebuffer(framebuffer,ldr.fbo);
+        const bool learned=temporal_aa() && graphics.enabled(Feature::LearnedUpscale) && width*1.18f<history_width;
+        const float spatial=graphics.aa==GraphicsAA::Off?0.0f:
+            temporal_aa() && history_valid?(graphics.aa_quality==3?0.52f:0.0f):1.0f;
+        const bool direct=spatial==0.0f && !learned;
+        const bool has_overlay=!lines.empty();
+        render_lines();
+        gl.BindFramebuffer(framebuffer,direct?0:ldr.fbo);
+        gl.Viewport(0,0,direct?output_width:history_width,direct?output_height:history_height);
         screen(composite);
         sample(composite,Source,0,resolved);
         sample(composite,Glow,1,graphics.bloom>0?bloom_a.color:0);
+        sample(composite,OverlayMap,2,direct && has_overlay?overlay.color:0);
+        gl.Uniform1i(composite[UseTransparency],direct && has_overlay);
         shader_options(composite,graphics.features);
         gl.Uniform1f(composite[BloomStrength],0.0043f*graphics.bloom);
         gl.Uniform1f(composite[Exposure],1.05f*std::exp2(0.1f*graphics.exposure_tenths));
         gl.DrawArrays(triangles_mode,0,3);
-        render_lines();
+        if(direct) return;
 
         gl.BindFramebuffer(framebuffer,0);
         gl.Viewport(0,0,output_width,output_height);
         screen(fxaa);
         sample(fxaa,Source,0,ldr.color);
-        sample(fxaa,OverlayMap,1,lines.empty()?0:overlay.color);
-        gl.Uniform1i(fxaa[UseTransparency],!lines.empty());
-        const float spatial=graphics.aa==GraphicsAA::Off?0.0f:temporal_aa() && history_valid?0.52f:1.0f;
+        sample(fxaa,OverlayMap,1,has_overlay?overlay.color:0);
+        gl.Uniform1i(fxaa[UseTransparency],has_overlay);
         gl.Uniform1f(fxaa[SpatialAA],spatial);
         gl.Uniform1i(fxaa[AAQuality],graphics.aa_quality);
         gl.Uniform1f(fxaa[Sharpen],width<history_width?0.22f:0.05f);
-        gl.Uniform1i(fxaa[LearnedUpscale],temporal_aa() && graphics.enabled(Feature::LearnedUpscale) && width*1.18f<history_width);
+        gl.Uniform1i(fxaa[LearnedUpscale],learned);
         gl.Uniform2f(fxaa[InputPixelSize],1.0f/width,1.0f/height);
         gl.Uniform2f(fxaa[PixelSize],1.0f/history_width,1.0f/history_height);
         gl.DrawArrays(triangles_mode,0,3);
@@ -1865,6 +2067,7 @@ struct LunarRenderer::Impl {
 
     void finish(){
         if(!in_scene) return;
+        prepare_opaque_vertices();
         upload();
         gl.Enable(depth_test);
         gl.DepthFunc(less_equal);
@@ -1911,7 +2114,10 @@ struct LunarRenderer::Impl {
         gl.Enable(depth_test);
         gl.Enable(blend);
         gl.BlendFunc(src_alpha,inv_src_alpha);
-        vertices.clear();
+        opaque_positions.clear();
+        opaque_styles.clear();
+        transparent_vertices.clear();
+        line_vertices.clear();
         opaque.clear();
         translucent.clear();
         lines.clear();
@@ -1946,10 +2152,14 @@ bool LunarRenderer::campus_atmosphere(const Mat4& projection,Vec3 eye,float seco
 void LunarRenderer::triangles(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint,
                               const LunarSurfaceMapping& mapping){
     if(material==LunarMaterial::Marking && !impl_->graphics.enabled(Feature::Decals)) return;
-    impl_->append(vertices,static_cast<Int>(material),tint,false,1.0f,mapping);
+    impl_->append_triangles(vertices,static_cast<Int>(material),tint,&mapping);
+}
+void LunarRenderer::triangles(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint){
+    if(material==LunarMaterial::Marking && !impl_->graphics.enabled(Feature::Decals)) return;
+    impl_->append_triangles(vertices,static_cast<Int>(material),tint,nullptr);
 }
 void LunarRenderer::lines(const std::vector<Vec3>& vertices,Color tint,float width){
-    impl_->append(vertices,line_material,tint,true,width);
+    impl_->append_lines(vertices,tint,width);
 }
 void LunarRenderer::finish(){ impl_->finish(); }
 

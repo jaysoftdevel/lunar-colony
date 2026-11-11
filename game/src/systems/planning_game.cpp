@@ -108,20 +108,42 @@ MissionFacility mission_step_facility(MissionPreparationStep step){
     return MissionFacility::Overview;
 }
 
-void draw_campus_builder(Renderer& r,const resources::Builder& b,Color body,Color edge={0.08f,0.11f,0.13f,1.0f}){
-    if(!b.mesh.foundation.empty()) r.draw_triangles_3d(b.mesh.foundation,{body.r*0.72f,body.g*0.72f,body.b*0.72f,body.a});
-    if(!b.mesh.body.empty()) r.draw_triangles_3d(b.mesh.body,body);
-    if(!b.mesh.details.empty()) r.draw_triangles_3d(b.mesh.details,{std::min(1.0f,body.r*1.13f),std::min(1.0f,body.g*1.13f),std::min(1.0f,body.b*1.13f),body.a});
-    (void)edge; // Coplanar wire edges shimmer on rotation; use solid facets.
+struct CampusGeometry {
+    struct Batch { std::vector<Vec3> vertices;Color tint;int material; };
+    std::vector<Batch> batches;
+
+    void append(std::vector<Vec3> vertices,Color tint,int material=-1){
+        if(vertices.empty()) return;
+        if(!batches.empty()){
+            auto& last=batches.back();
+            const auto c=last.tint;
+            if(last.material==material && c.r==tint.r && c.g==tint.g && c.b==tint.b && c.a==tint.a){
+                last.vertices.insert(last.vertices.end(),vertices.begin(),vertices.end());
+                return;
+            }
+        }
+        batches.push_back({std::move(vertices),tint,material});
+    }
+
+    void draw(Renderer& r,bool textured) const {
+        for(const auto& batch:batches){
+            if(!textured || batch.material<0) r.draw_triangles_3d(batch.vertices,batch.tint);
+            else r.draw_material_triangles_3d(batch.vertices,batch.material,batch.tint);
+        }
+    }
+};
+
+void append_campus_builder(CampusGeometry& r,resources::Builder& b,Color body){
+    r.append(std::move(b.mesh.foundation),{body.r*0.72f,body.g*0.72f,body.b*0.72f,body.a});
+    r.append(std::move(b.mesh.body),body);
+    r.append(std::move(b.mesh.details),{std::min(1.0f,body.r*1.13f),std::min(1.0f,body.g*1.13f),std::min(1.0f,body.b*1.13f),body.a});
 }
 
-void campus_face(Renderer& r,Vec3 a,Vec3 b,Vec3 c,Vec3 d,Color color,int material=-1){
-    const std::vector<Vec3> vertices{a,b,c,a,c,d};
-    if(material<0) r.draw_triangles_3d(vertices,color);
-    else r.draw_material_triangles_3d(vertices,material,color);
+void campus_face(CampusGeometry& r,Vec3 a,Vec3 b,Vec3 c,Vec3 d,Color color,int material=-1){
+    r.append({a,b,c,a,c,d},color,material);
 }
 
-void campus_box(Renderer& r,Vec3 center,Vec3 size,Color color,int wall_material=6){
+void campus_box(CampusGeometry& r,Vec3 center,Vec3 size,Color color,int wall_material=6){
     // All six normals point outwards, important for stable directional lighting
     // and world-aligned 1024px material textures (no overlapping wire edges).
     const Vec3 lo=center-size*0.5f,hi=center+size*0.5f;
@@ -134,13 +156,13 @@ void campus_box(Renderer& r,Vec3 center,Vec3 size,Color color,int wall_material=
     campus_face(r,{hi.x,lo.y,hi.z},{hi.x,lo.y,lo.z},{hi.x,hi.y,lo.z},{hi.x,hi.y,hi.z},tone(0.89f),wall_material);
 }
 
-void campus_material_box(Renderer& r,Vec3 center,Vec3 size,int material,Color tint){
+void campus_material_box(CampusGeometry& r,Vec3 center,Vec3 size,int material,Color tint){
     resources::Builder b;
     b.box(b.mesh.body,center,size,true);
-    r.draw_material_triangles_3d(b.mesh.body,material,tint);
+    r.append(std::move(b.mesh.body),tint,material);
 }
 
-void campus_shadow(Renderer& r,Vec3 center,float sx,float sz,float height){
+void campus_shadow(CampusGeometry& r,Vec3 center,float sx,float sz,float height){
     // Projected geometric shadow. The apparent sun comes from upper-left;
     // shadows are grounded on the terrain, including tall launch towers.
     const float dx=height*0.44f, dz=height*0.28f;
@@ -150,9 +172,9 @@ void campus_shadow(Renderer& r,Vec3 center,float sx,float sz,float height){
     campus_face(r,a,b,c,d,{0.012f,0.023f,0.034f,0.42f});
 }
 
-void campus_cylinder(Renderer& r,Vec3 center,float height,float radius,Color color,int segments);
+void campus_cylinder(CampusGeometry& r,Vec3 center,float height,float radius,Color color,int segments);
 
-void campus_tree(Renderer& r,float x,float z,float scale){
+void campus_tree(CampusGeometry& r,float x,float z,float scale){
     // Native coastal shrub/oak silhouette: thin trunk and two overlapping
     // crown tiers; its shadow shares the same global sunlight direction.
     campus_shadow(r,{x,0,z},1.7f*scale,1.6f*scale,3.8f*scale);
@@ -179,20 +201,20 @@ void campus_daylight_sky(Renderer& r){
     }
 }
 
-void campus_detail_road_sign(Renderer& r,float x,float z){
+void campus_detail_road_sign(CampusGeometry& r,float x,float z){
     campus_box(r,{x,1.5f,z},{0.1f,2.9f,0.1f},{0.38f,0.41f,0.39f,1},8);
     campus_box(r,{x,2.85f,z},{0.15f,0.8f,1.35f},{0.27f,0.46f,0.46f,1},8);
     campus_box(r,{x+0.12f,2.8f,z},{0.05f,0.35f,1.08f},{0.88f,0.88f,0.83f,1},8);
 }
 
-void campus_detail_floodlight(Renderer& r,float x,float z,float height){
+void campus_detail_floodlight(CampusGeometry& r,float x,float z,float height){
     campus_box(r,{x,height*0.50f,z},{0.16f,height,0.16f},{0.57f,0.60f,0.58f,1},8);
     campus_box(r,{x,height+0.14f,z},{1.5f,0.15f,0.24f},{0.60f,0.61f,0.60f,1},8);
     for(float dx:{-0.52f,0.52f})
         campus_box(r,{x+dx,height+0.08f,z-0.19f},{0.45f,0.30f,0.22f},{0.87f,0.91f,0.84f,1},8);
 }
 
-void campus_detail_service_vehicle(Renderer& r,float x,float z,bool cargo){
+void campus_detail_service_vehicle(CampusGeometry& r,float x,float z,bool cargo){
     const Color body=cargo?Color{0.64f,0.70f,0.70f,1}:Color{0.76f,0.74f,0.63f,1};
     campus_box(r,{x,0.80f,z},{cargo?4.0f:2.8f,1.2f,1.9f},body,8);
     campus_box(r,{x+(cargo?1.5f:0.84f),1.25f,z},{cargo?1.6f:1.1f,1.2f,1.75f},body,8);
@@ -201,7 +223,7 @@ void campus_detail_service_vehicle(Renderer& r,float x,float z,bool cargo){
         campus_cylinder(r,{x+sx,0.43f,z+sz},0.52f,0.39f,{0.095f,0.10f,0.11f,1},8);
 }
 
-void campus_detail_roof_equipment(Renderer& r,Vec3 p,float roof_y){
+void campus_detail_roof_equipment(CampusGeometry& r,Vec3 p,float roof_y){
     const Color silver{0.66f,0.70f,0.69f,1};
     campus_box(r,{p.x-3,roof_y+0.68f,p.z-2.8f},{2.6f,1.2f,2.0f},silver,8);
     campus_box(r,{p.x+2.3f,roof_y+0.42f,p.z-2.5f},{3.0f,0.70f,1.2f},{0.42f,0.50f,0.51f,1},8);
@@ -210,7 +232,7 @@ void campus_detail_roof_equipment(Renderer& r,Vec3 p,float roof_y){
     campus_box(r,{p.x+0.15f,roof_y+0.68f,p.z+2.5f},{0.24f,1.4f,0.24f},silver,8);
 }
 
-void campus_dune_geometry(Renderer& r){
+void campus_dune_geometry(CampusGeometry& r){
     // Sloped terrain mesh, not an overlapping box, along the mainland shore.
     for(int segment=0;segment<28;++segment){
         const float za=-110.0f+segment*8.0f,zb=za+8.0f;
@@ -224,7 +246,7 @@ void campus_dune_geometry(Renderer& r){
     }
 }
 
-void campus_service_details(Renderer& r){
+void campus_service_details(CampusGeometry& r){
     campus_detail_roof_equipment(r,{-40,0,5},4.45f);
     campus_detail_roof_equipment(r,{-15,0,-27},5.1f);
     campus_detail_roof_equipment(r,{7,0,26},6.2f);
@@ -249,7 +271,7 @@ void campus_service_details(Renderer& r){
     }
 }
 
-void render_campus_landscape(Renderer& r){
+void build_campus_landscape(CampusGeometry& r){
     // Fixed-size gameplay campus (128 x 128); the view's visual coastline
     // extends past the interactable parcel for a natural oblique horizon.
     campus_material_box(r,{0,-0.24f,0},{232,0.35f,224},1,{0.51f,0.43f,0.27f,1});
@@ -314,13 +336,13 @@ void render_campus_landscape(Renderer& r){
     }
 }
 
-void campus_cylinder(Renderer& r,Vec3 center,float height,float radius,Color color,int segments=16){
+void campus_cylinder(CampusGeometry& r,Vec3 center,float height,float radius,Color color,int segments=16){
     resources::Builder b;
     b.cylinder_y(b.mesh.body,center,height,radius,segments,true);
-    draw_campus_builder(r,b,color);
+    append_campus_builder(r,b,color);
 }
 
-void render_campus_building(Renderer& r,const CampusBuilding& c,bool hovered,bool required){
+void build_campus_building(CampusGeometry& r,const CampusBuilding& c,bool hovered,bool required){
     const Color neutral=hovered?Color{0.30f,0.63f,0.70f,1.0f}:required?Color{0.36f,0.57f,0.37f,1.0f}:Color{0.31f,0.39f,0.43f,1.0f};
     const Color light=hovered?Color{0.40f,0.73f,0.78f,1.0f}:required?Color{0.49f,0.68f,0.48f,1.0f}:Color{0.43f,0.48f,0.49f,1.0f};
     const Color dark=hovered?Color{0.22f,0.50f,0.58f,1.0f}:required?Color{0.25f,0.45f,0.27f,1.0f}:Color{0.22f,0.28f,0.31f,1.0f};
@@ -366,7 +388,7 @@ void render_campus_building(Renderer& r,const CampusBuilding& c,bool hovered,boo
             resources::Builder dish;
             dish.cylinder_y(dish.mesh.body,{p.x,5.0f,p.z},3.0f,0.45f,10,true);
             dish.dome(dish.mesh.details,{p.x,6.3f,p.z},3.6f,5,18,true,0.32f);
-            draw_campus_builder(r,dish,light);
+            append_campus_builder(r,dish,light);
             for(int i=0;i<5;++i)campus_box(r,{p.x-6.1f+i*3.0f,2.2f,p.z+7.06f},{1.9f,1.2f,0.11f},{0.13f,0.34f,0.42f,1},7);
             campus_box(r,{p.x+6.1f,6.4f,p.z-4.0f},{0.22f,5.0f,0.22f},{0.56f,0.59f,0.59f,1});
             campus_cylinder(r,{p.x+6.1f,9.0f,p.z-4.0f},0.25f,1.15f,{0.82f,0.83f,0.77f,1},16);
@@ -398,6 +420,42 @@ void render_campus_building(Renderer& r,const CampusBuilding& c,bool hovered,boo
             break;
         }
     }
+}
+
+void draw_campus(Renderer& renderer,int hovered,MissionFacility required,bool textured){
+    struct BuildingGeometry { CampusGeometry normal,required,hovered; };
+    struct SceneGeometry {
+        CampusGeometry landscape,shadows,service;
+        std::array<BuildingGeometry,kCampusBuildings.size()> buildings;
+    };
+    static const auto geometry=[](){
+        SceneGeometry result;
+        TaskPool::shared().parallel_for(kCampusBuildings.size()+2,[&](std::size_t job){
+            if(job==0){
+                build_campus_landscape(result.landscape);
+                for(const auto& site:kCampusBuildings)
+                    campus_shadow(result.shadows,site.center,site.footprint.x,site.footprint.z,site.footprint.y);
+            }else if(job==1){
+                campus_service_details(result.service);
+            }else{
+                const auto i=job-2;
+                auto& building=result.buildings[i];
+                build_campus_building(building.normal,kCampusBuildings[i],false,false);
+                build_campus_building(building.required,kCampusBuildings[i],false,true);
+                build_campus_building(building.hovered,kCampusBuildings[i],true,false);
+            }
+        });
+        return result;
+    }();
+    geometry.landscape.draw(renderer,textured);
+    geometry.shadows.draw(renderer,textured);
+    for(std::size_t i=0;i<kCampusBuildings.size();++i){
+        const auto& building=geometry.buildings[i];
+        const auto& mesh=hovered==static_cast<int>(i)?building.hovered:
+                         kCampusBuildings[i].facility==required?building.required:building.normal;
+        mesh.draw(renderer,textured);
+    }
+    geometry.service.draw(renderer,textured);
 }
 
 bool project_campus_label(const Mat4& m,Vec3 p,int viewport_width,int viewport_height,float ui_scale,float& sx,float& sy){
@@ -1003,7 +1061,7 @@ void GameApp::deploy_lunar_base_from_mission(){
     placement_storage_size_=StorageDomeSize::Small;
     storage_gate_placement_active_=false;
     storage_gate_placement_owner_=kNoRobotIndex;
-    habitat_view_mode_=HabitatViewMode::Default;
+    habitat_view_mode_=HabitatViewMode::FullHull;
     game_speed_=GameSpeed::Normal;
     last_running_speed_=1;
     clear_world_selection();
@@ -1264,14 +1322,7 @@ void GameApp::render_planning_game(Renderer& r){
         campus_daylight_sky(r);
     r.set_3d(planning_vp);
     if(planning_.view==PlanningView::Site){
-        render_campus_landscape(r);
-        // Shadows are cast onto the fully developed terrain before drawing
-        // solid buildings, so each structure appears grounded.
-        for(const auto& site:kCampusBuildings)
-            campus_shadow(r,site.center,site.footprint.x,site.footprint.z,site.footprint.y);
-        for(std::size_t i=0;i<kCampusBuildings.size();++i)
-            render_campus_building(r,kCampusBuildings[i],campus_hover==(int)i,kCampusBuildings[i].facility==next_facility);
-        campus_service_details(r);
+        draw_campus(r,campus_hover,next_facility,!mesh_layout_active());
     }else{
         r.draw_triangles_3d(playfield_.floor_triangles(),{0.038f,0.050f,0.062f,1});
         r.draw_lines_3d(playfield_.grid_lines(),{0.13f,0.24f,0.29f,0.55f},1.0f);

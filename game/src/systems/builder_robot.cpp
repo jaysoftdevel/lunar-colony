@@ -1101,6 +1101,10 @@ Vec3 GameApp::construction_drop_position(const ConstructionTargetRef& target) co
 }
 
 Vec3 GameApp::construction_drop_package_position(const ConstructionTargetRef& target,int visual_slot) const {
+    return construction_drop_package_position(target,visual_slot,-1);
+}
+
+Vec3 GameApp::construction_drop_package_position(const ConstructionTargetRef& target,int visual_slot,int stage) const {
     // The rover handoff remains outside the future wall envelope, but delivered
     // material is stored INSIDE the blueprint. This keeps the visible site tidy
     // without asking a carrier to drive into geometry that may become solid on
@@ -1138,13 +1142,14 @@ Vec3 GameApp::construction_drop_package_position(const ConstructionTargetRef& ta
     // Linear projects have no enclosed footprint, so stage their boxes directly
     // on the active blueprint centreline instead of beside it. Keep the rows
     // narrow enough to remain within the corridor/walkway/channel build strip.
-    const Vec3 center=construction_target_position(target);
+    Vec3 center=construction_target_position(target);
     Vec3 tangent{1.0f,0.0f,0.0f};
     auto tangent_from_path=[&](const std::vector<Vec3>& path){
         if(path.size()<2) return;
-        const std::uint8_t step=construction_target_step(target);
+        const int step=stage>=0?stage:construction_target_step(target);
         const std::uint8_t steps=std::max<std::uint8_t>(1,construction_target_total_steps(target));
         const float f=((float)step+0.5f)/(float)steps;
+        if(stage>=0) center=point_along_path(path,f);
         const Vec3 a=point_along_path(path,std::max(0.0f,f-0.03f));
         const Vec3 b=point_along_path(path,std::min(1.0f,f+0.03f));
         Vec3 d=b-a; d.y=0.0f;
@@ -2113,18 +2118,22 @@ void GameApp::update_builder_robot(float dt){
         nav.walkway_geo.assign(walkway_network_.connections().size(),{});
         if(!nav_wall_cache_) nav_wall_cache_=std::make_shared<NavWallCache>();
         auto& wall_cache=nav_wall_cache_->entries;
+        std::vector<std::function<void()>> rebuild_walls;
         auto wall_key=[](ConstructionTargetKind kind,std::size_t index){
             return ((std::uint64_t)kind<<56)|(std::uint64_t)index;
         };
-        // Returns the cached wall sets of one target, rebuilding them through
-        // `fill` only when its construction stage/geometry signature changed.
+        // Register map entries on the simulation thread. Workers fill distinct
+        // entries after the map has stopped changing and before any queries use it.
         auto wall_entry=[&](ConstructionTargetKind kind,std::size_t index,std::uint64_t signature,auto&& fill)->NavWallCache::Entry&{
             auto& entry=wall_cache[wall_key(kind,index)];
             if(!entry.built || entry.signature!=signature){
-                entry=NavWallCache::Entry{};
-                entry.built=true;
-                entry.signature=signature;
-                fill(entry);
+                rebuild_walls.emplace_back([target=&entry,signature,fill=std::forward<decltype(fill)>(fill)]{
+                    NavWallCache::Entry updated;
+                    fill(updated);
+                    updated.signature=signature;
+                    updated.built=true;
+                    *target=std::move(updated);
+                });
             }
             return entry;
         };
@@ -2142,7 +2151,7 @@ void GameApp::update_builder_robot(float dt){
             sig=nav_hash(nav_hash(sig,nav_float_bits(h.position.z)),nav_float_bits(h.rotation_degrees));
             for(const auto* part:{&mesh.foundation,&mesh.shell,&mesh.interior,&mesh.details,&mesh.glazing})
                 sig=nav_mesh_signature(sig,*part);
-            auto& entry=wall_entry(ConstructionTargetKind::Habitat,i,sig,[&](NavWallCache::Entry& e){
+            auto& entry=wall_entry(ConstructionTargetKind::Habitat,i,sig,[&h,&mesh,current,total](NavWallCache::Entry& e){
                 const std::uint8_t next=(std::uint8_t)std::min<int>((int)current+1,(int)total);
                 if(next<=current) return;
                 const auto from=construction_sequence::habitat_visibility(current);
@@ -2178,7 +2187,7 @@ void GameApp::update_builder_robot(float dt){
             sig=nav_hash(nav_hash(sig,nav_float_bits(item.position.z)),nav_float_bits(item.rotation_degrees));
             for(const auto* part:{&mesh.foundation,&mesh.body,&mesh.details})
                 sig=nav_mesh_signature(sig,*part);
-            auto& entry=wall_entry(ConstructionTargetKind::Resource,i,sig,[&](NavWallCache::Entry& e){
+            auto& entry=wall_entry(ConstructionTargetKind::Resource,i,sig,[&item,&mesh,current,total](NavWallCache::Entry& e){
                 const std::uint8_t next=(std::uint8_t)std::min<int>((int)current+1,(int)total);
                 if(next<=current) return;
                 const auto from=construction_sequence::resource_visibility(current);
@@ -2206,7 +2215,7 @@ void GameApp::update_builder_robot(float dt){
             const std::uint8_t total=construction_target_total_steps(ref);
             std::uint64_t sig=nav_hash(nav_hash(current,total),c.construction.total_steps);
             sig=nav_mesh_signature(nav_mesh_signature(sig,c.mesh.shell),c.mesh.details);
-            auto& entry=wall_entry(ConstructionTargetKind::Corridor,i,sig,[&](NavWallCache::Entry& e){
+            auto& entry=wall_entry(ConstructionTargetKind::Corridor,i,sig,[&c,current,total,identity](NavWallCache::Entry& e){
                 const float steps=(float)std::max<std::uint8_t>(1,c.construction.total_steps);
                 if(c.construction.step>0){
                     const float f=(float)c.construction.step/steps;
@@ -2235,7 +2244,7 @@ void GameApp::update_builder_robot(float dt){
             const std::uint8_t total=construction_target_total_steps(ref);
             std::uint64_t sig=nav_hash(nav_hash(current,total),c.construction.total_steps);
             sig=nav_mesh_signature(sig,c.mesh.details);
-            auto& entry=wall_entry(ConstructionTargetKind::Walkway,i,sig,[&](NavWallCache::Entry& e){
+            auto& entry=wall_entry(ConstructionTargetKind::Walkway,i,sig,[&c,current,total,identity](NavWallCache::Entry& e){
                 const float steps=(float)std::max<std::uint8_t>(1,c.construction.total_steps);
                 if(c.construction.step>0){
                     const float f=(float)c.construction.step/steps;
@@ -2248,6 +2257,11 @@ void GameApp::update_builder_robot(float dt){
                 if(last>first) append_wall_triangles(e.next,c.mesh.details,first,last,identity);
             });
             nav.walkway_geo[i]={{},&entry.partial,&entry.next};
+        }
+        if(!rebuild_walls.empty()){
+            eng::TaskPool::shared().parallel_for(rebuild_walls.size(),[&](std::size_t job){
+                rebuild_walls[job]();
+            });
         }
         auto merge_bounds=[&](const NavSnapshot::Bounds& b){
             if(!nav.any_pending){ nav.pending_union=b; nav.any_pending=true; return; }
@@ -3090,123 +3104,168 @@ void GameApp::update_builder_robot(float dt){
         Vec3 escape{};
     };
 
+    auto next_stage_packages=[&](const ConstructionTargetRef& target,std::uint8_t step){
+        std::vector<CachedResourceObstacle> packages;
+        if(target.kind!=ConstructionTargetKind::Corridor && target.kind!=ConstructionTargetKind::Utility &&
+           target.kind!=ConstructionTargetKind::Walkway) return packages;
+        const auto* buffer=construction_site_buffer(target);
+        const auto* plan=construction_target_plan(target);
+        if(!buffer || !plan) return packages;
+        const auto remaining=positive_difference(*buffer,plan->next_step_cost(construction_target_step(target)));
+        for(std::size_t i=0;i<kMaterialResourceCount && packages.size()<36;++i){
+            const auto material=(MaterialResource)i;
+            auto stock=remaining.amount(material);
+            const auto capacity=std::max<std::int64_t>(1,resource_package_capacity_kg(material));
+            while(stock>0 && packages.size()<36){
+                const auto amount=std::min(stock,capacity);
+                const auto position=construction_drop_package_position(target,(int)packages.size(),step);
+                packages.push_back({position,resource_package_half_width(material,amount)*1.41421356f});
+                stock-=amount;
+            }
+        }
+        return packages;
+    };
+    auto stage_blocks=[&](const ConstructionTargetRef& target,std::uint8_t step,
+                          const std::vector<CachedResourceObstacle>& packages,Vec3 p,float radius){
+        return target_future_envelope_contains(target,step,p,radius) || target_blocks_at_step(target,step,p,radius) ||
+               std::any_of(packages.begin(),packages.end(),[&](const auto& box){
+                   return dist_xz(p,box.position)<radius+box.radius;
+               });
+    };
+
     // A local footprint check is not enough to protect a rover from being
     // enclosed by several structures/corridors that collectively form a ring.
     // Build a coarse full-playfield connectivity map at construction commit
     // time.  The perimeter service lane is permanently structure-free, so a
     // rover connected to that lane cannot be sealed into a construction pocket.
-    auto assess_exterior_connectivity=[&](std::size_t robot_index,const ConstructionTargetRef* future_target,std::uint8_t future_step){
-        ExteriorRouteAssessment result{};
-        if(robot_index>=builder_robots_.size()) return result;
+    auto assess_exterior_connectivity=[&](std::size_t robot_index,const ConstructionTargetRef& target,std::uint8_t future_step,
+                                           const std::vector<CachedResourceObstacle>& packages){
         const auto& robot=builder_robots_[robot_index];
         const float radius=robot_resource_clearance_radius(robot.role)+kRobotObstacleMargin;
-        const float half=std::max(2.0f,(float)playfield_.size()*0.5f-radius-0.18f);
+        const float half=std::max(2.0f,(float)playfield_.size()*0.5f-
+            std::max(radius,robot_safety_corridor_radius(robot.role))-0.18f);
+        auto blocked_by_future=[&](Vec3 p){
+            return stage_blocks(target,future_step,packages,p,radius);
+        };
+        auto future_edge_clear=[&](Vec3 from,Vec3 to){
+            const int samples=std::max(1,(int)std::ceil(dist_xz(from,to)/0.25f));
+            for(int sample=0;sample<=samples;++sample)
+                if(blocked_by_future(from+(to-from)*((float)sample/(float)samples))) return false;
+            return true;
+        };
+        auto current_edge_clear=[&](Vec3 from,Vec3 to){
+            return robot_structure_move_allowed(robot,from,to);
+        };
+
+        const bool pose_blocked_by_future=blocked_by_future(robot.position);
+        if(!pose_blocked_by_future){
+            // An exact, swept line to the perimeter proves egress even when
+            // the rover is between all rows of the one-metre topology grid.
+            const auto p=robot.position;
+            for(Vec3 edge:std::array<Vec3,4>{{{p.x,0,half},{p.x,0,-half},{half,0,p.z},{-half,0,p.z}}})
+                if(current_edge_clear(p,edge) && future_edge_clear(p,edge)) return ExteriorRouteAssessment{};
+        }
+
         constexpr float cell=1.0f;
         const int side=std::max(5,(int)std::floor((2.0f*half)/cell)+1);
         const std::size_t count=(std::size_t)side*(std::size_t)side;
-        std::vector<unsigned char> current_clear(count,0),future_clear(count,0),exterior(count,0),visited(count,0);
         auto index=[&](int x,int z){ return (std::size_t)z*(std::size_t)side+(std::size_t)x; };
-        auto point=[&](int x,int z){
-            const float fx=-half+(2.0f*half)*(float)x/(float)(side-1);
-            const float fz=-half+(2.0f*half)*(float)z/(float)(side-1);
-            return Vec3{fx,rover_floor_height({fx,0.0f,fz}),fz};
-        };
-        auto blocked_by_future=[&](Vec3 p){
-            if(!future_target || !future_target->valid()) return false;
-            return target_future_envelope_contains(*future_target,future_step,p,radius) ||
-                   target_blocks_at_step(*future_target,future_step,p,radius);
-        };
+        std::vector<Vec3> points(count);
+        std::vector<std::uint8_t> current_clear(count),future_clear(count),exterior(count),visited(count);
         for(int z=0;z<side;++z) for(int x=0;x<side;++x){
-            const Vec3 p=point(x,z);
-            const bool clear=robot_structure_move_allowed(robot,p,p);
-            current_clear[index(x,z)]=(unsigned char)clear;
-            future_clear[index(x,z)]=(unsigned char)(clear && !blocked_by_future(p));
+            const auto i=index(x,z);
+            Vec3 p{-half+(2.0f*half)*(float)x/(float)(side-1),0,-half+(2.0f*half)*(float)z/(float)(side-1)};
+            p.y=rover_floor_height(p);
+            points[i]=p;
+            current_clear[i]=current_edge_clear(p,p);
+            future_clear[i]=current_clear[i] && !blocked_by_future(p);
         }
-        std::vector<std::size_t> queue;queue.reserve(count);
+
+        std::vector<std::size_t> queue;
+        queue.reserve(count);
         auto push_exterior=[&](int x,int z){
-            const auto i=index(x,z);if(!future_clear[i] || exterior[i])return;exterior[i]=1;queue.push_back(i);
+            const auto i=index(x,z);
+            if(future_clear[i] && !exterior[i]){
+                exterior[i]=1;
+                queue.push_back(i);
+            }
         };
         for(int i=0;i<side;++i){push_exterior(i,0);push_exterior(i,side-1);push_exterior(0,i);push_exterior(side-1,i);}
-        std::size_t q=0;
         constexpr int dx[4]{1,-1,0,0},dz[4]{0,0,1,-1};
-        auto edge_clear=[&](std::size_t a,std::size_t b,bool future){
-            const int ax=(int)(a%(std::size_t)side),az=(int)(a/(std::size_t)side);
-            const int bx=(int)(b%(std::size_t)side),bz=(int)(b/(std::size_t)side);
-            const Vec3 pa=point(ax,az),pb=point(bx,bz);
-            // Cell-center occupancy alone is not enough: two individually clear
-            // samples may still be separated by the inflated corner of a hull
-            // or corridor. Use the same swept-chassis predicate as the real rover
-            // mover for every topology edge so a graph route is physically drivable.
-            if(!robot_structure_move_allowed(robot,pa,pb)) return false;
-            if(!future || !future_target || !future_target->valid()) return true;
-            // The future stage is not part of the live nav cache yet. Sample the
-            // short (<=1 m) graph edge densely against its inflated construction
-            // envelope so the topology graph cannot tunnel through a stage that
-            // is about to become solid.
-            constexpr int samples=4;
-            for(int sample=0;sample<=samples;++sample){
-                const float t=(float)sample/(float)samples;
-                const Vec3 p=pa+(pb-pa)*t;
-                if(blocked_by_future(p)) return false;
-            }
-            return true;
-        };
-        while(q<queue.size()){
-            const auto i=queue[q++];const int x=(int)(i%(std::size_t)side),z=(int)(i/(std::size_t)side);
-            for(int d=0;d<4;++d){
-                const int nx=x+dx[d],nz=z+dz[d];if(nx<0||nz<0||nx>=side||nz>=side)continue;
-                const auto ni=index(nx,nz);
-                if(future_clear[ni]&&!exterior[ni]&&edge_clear(i,ni,true)){exterior[ni]=1;queue.push_back(ni);}
-            }
-        }
-        int sx=(int)std::lround((robot.position.x+half)*(float)(side-1)/(2.0f*half));
-        int sz=(int)std::lround((robot.position.z+half)*(float)(side-1)/(2.0f*half));
-        sx=std::clamp(sx,0,side-1);sz=std::clamp(sz,0,side-1);
-        std::size_t start=index(sx,sz);
-        if(!current_clear[start]){
-            float best=std::numeric_limits<float>::max();
-            for(int rz=std::max(0,sz-3);rz<=std::min(side-1,sz+3);++rz)for(int rx=std::max(0,sx-3);rx<=std::min(side-1,sx+3);++rx){
-                const auto ri=index(rx,rz);if(!current_clear[ri])continue;const float d=dist_xz(robot.position,point(rx,rz));if(d<best){best=d;start=ri;}
-            }
-        }
-        if(current_clear[start] && exterior[start]) return result;
-        result.exterior_connected=false;
-
-        // For a construction step that is ABOUT to close the pocket, find the
-        // nearest cell that is reachable with today's geometry and remains in
-        // the exterior component after the new stage appears. Routing there
-        // before commit preserves continuous physical motion through the last
-        // still-open gap.
-        queue.clear();q=0;
-        if(current_clear[start]){visited[start]=1;queue.push_back(start);}
-        while(q<queue.size()){
-            const auto i=queue[q++];
-            if(exterior[i]){const int x=(int)(i%(std::size_t)side),z=(int)(i/(std::size_t)side);result.escape=point(x,z);result.escape_valid=true;return result;}
+        auto for_each_neighbor=[&](std::size_t i,const auto& visit){
             const int x=(int)(i%(std::size_t)side),z=(int)(i/(std::size_t)side);
             for(int d=0;d<4;++d){
-                const int nx=x+dx[d],nz=z+dz[d];if(nx<0||nz<0||nx>=side||nz>=side)continue;
-                const auto ni=index(nx,nz);
-                if(current_clear[ni]&&!visited[ni]&&edge_clear(i,ni,false)){visited[ni]=1;queue.push_back(ni);}
+                const int nx=x+dx[d],nz=z+dz[d];
+                if(nx>=0 && nz>=0 && nx<side && nz<side) visit(index(nx,nz));
+            }
+        };
+        for(std::size_t q=0;q<queue.size();++q){
+            const auto i=queue[q];
+            for_each_neighbor(i,[&](std::size_t next){
+                if(future_clear[next] && !exterior[next] &&
+                   current_edge_clear(points[i],points[next]) && future_edge_clear(points[i],points[next])){
+                    exterior[next]=1;
+                    queue.push_back(next);
+                }
+            });
+        }
+
+        const auto grid_coordinate=[&](float value){
+            return std::clamp((int)std::lround((value+half)*(float)(side-1)/(2.0f*half)),0,side-1);
+        };
+        const int sx=grid_coordinate(robot.position.x),sz=grid_coordinate(robot.position.z);
+        // Attach the real pose to every visible nearby cell. Snapping to the
+        // nearest free cell can put the rover in the wrong aisle, across a
+        // cargo stack or on the far side of a wall.
+        queue.clear();
+        bool affected=pose_blocked_by_future;
+        constexpr int pose_link_span=7;
+        for(int ring=0;ring<=pose_link_span;++ring){
+            for(int z=std::max(0,sz-ring);z<=std::min(side-1,sz+ring);++z){
+                for(int x=std::max(0,sx-ring);x<=std::min(side-1,sx+ring);++x){
+                    if(std::max(std::abs(x-sx),std::abs(z-sz))!=ring) continue;
+                    const auto i=index(x,z);
+                    if(!current_clear[i] || !current_edge_clear(robot.position,points[i])) continue;
+                    const bool clear_after_commit=future_clear[i] && future_edge_clear(robot.position,points[i]);
+                    if(exterior[i] && clear_after_commit) return ExteriorRouteAssessment{};
+                    affected=affected || !clear_after_commit;
+                    visited[i]=1;
+                    queue.push_back(i);
+                }
             }
         }
-        // Legacy saves can already contain a completely sealed component. A
-        // continuous route no longer exists, so expose the nearest clear point
-        // in the exterior component for the one-time emergency extraction.
-        float best=std::numeric_limits<float>::max();
-        for(int z=0;z<side;++z)for(int x=0;x<side;++x){const auto i=index(x,z);if(!exterior[i])continue;const Vec3 p=point(x,z);const float d=dist_xz(robot.position,p);if(d<best){best=d;result.escape=p;result.escape_valid=true;}}
-        return result;
+
+        // Find an escape the rover can drive now, before the new geometry
+        // appears. A pending stage only holds traffic if it cuts across the
+        // rover's reachable area. A remote stage must not keep replacing the
+        // cargo route of a rover already in an aisle the grid cannot represent.
+        for(std::size_t q=0;q<queue.size();++q){
+            const auto i=queue[q];
+            if(exterior[i]) return ExteriorRouteAssessment{false,true,points[i]};
+            for_each_neighbor(i,[&](std::size_t next){
+                if(!current_clear[next] || !current_edge_clear(points[i],points[next])) return;
+                affected=affected || !future_clear[next] || !future_edge_clear(points[i],points[next]);
+                if(!visited[next]){
+                    visited[next]=1;
+                    queue.push_back(next);
+                }
+            });
+        }
+        return ExteriorRouteAssessment{!affected,false,{}};
     };
 
-    auto robot_safe_for_next_stage=[&](std::size_t robot_index,const ConstructionTargetRef& target,std::uint8_t next_step){
+    auto robot_safe_for_next_stage=[&](std::size_t robot_index,const ConstructionTargetRef& target,std::uint8_t next_step,
+                                      const std::vector<CachedResourceObstacle>& packages){
+        if(target.kind==ConstructionTargetKind::Utility && packages.empty()) return true;
         const auto& robot=builder_robots_[robot_index];
         const float radius=robot_resource_clearance_radius(robot.role)+kRobotObstacleMargin;
-        if(target_future_envelope_contains(target,next_step,robot.position,radius)) return false;
-        if(target_blocks_at_step(target,next_step,robot.position,radius)) return false;
-        if(!assess_exterior_connectivity(robot_index,&target,next_step).exterior_connected) return false;
+        if(stage_blocks(target,next_step,packages,robot.position,radius)) return false;
+        if(!assess_exterior_connectivity(robot_index,target,next_step,packages).exterior_connected) return false;
         return true;
     };
 
-    auto safe_stage_commit_destination=[&](std::size_t robot_index,const ConstructionTargetRef& target,std::uint8_t next_step){
+    auto safe_stage_commit_destination=[&](std::size_t robot_index,const ConstructionTargetRef& target,std::uint8_t next_step,
+                                           const std::vector<CachedResourceObstacle>& packages={}){
         const auto& robot=builder_robots_[robot_index];
         const float body_radius=robot_resource_clearance_radius(robot.role);
 
@@ -3233,8 +3292,7 @@ void GameApp::update_builder_robot(float dt){
                         Vec3 candidate=robot.position+Vec3{std::cos(a),0.0f,std::sin(a)}*radius;
                         candidate.y=rover_floor_height(candidate);
                         if(!robot_position_clear(robot_index,candidate) || !fleet_position_clear(robot_index,candidate)) continue;
-                        if(target_future_envelope_contains(target,next_step,candidate,body_radius+kRobotObstacleMargin)) continue;
-                        if(target_blocks_at_step(target,next_step,candidate,body_radius+kRobotObstacleMargin)) continue;
+                        if(stage_blocks(target,next_step,packages,candidate,body_radius+kRobotObstacleMargin)) continue;
                         if(!robot_structure_move_allowed(robot,candidate,candidate)) continue;
                         return candidate;
                     }
@@ -3270,8 +3328,7 @@ void GameApp::update_builder_robot(float dt){
                 candidate.y=rover_floor_height(candidate);
                 if(!robot_position_clear(robot_index,candidate)) continue;
                 if(!fleet_position_clear(robot_index,candidate)) continue;
-                if(target_future_envelope_contains(target,next_step,candidate,body_radius+kRobotObstacleMargin)) continue;
-                if(target_blocks_at_step(target,next_step,candidate,body_radius+kRobotObstacleMargin)) continue;
+                if(stage_blocks(target,next_step,packages,candidate,body_radius+kRobotObstacleMargin)) continue;
                 // Candidate itself must be legal with respect to completed
                 // structures/pressure volumes. The actual escape route is
                 // calculated by the cooperative planner before movement starts.
@@ -3294,13 +3351,13 @@ void GameApp::update_builder_robot(float dt){
         return best;
     };
 
-    auto fleet_safe_for_next_stage=[&](const ConstructionTargetRef& target,std::uint8_t next_step){
+    auto fleet_safe_for_next_stage=[&](const ConstructionTargetRef& target,std::uint8_t next_step,
+                                      const std::vector<CachedResourceObstacle>& packages){
         for(std::size_t i=0;i<builder_robots_.size();++i){
-            if(!robot_safe_for_next_stage(i,target,next_step)) return false;
+            if(!robot_safe_for_next_stage(i,target,next_step,packages)) return false;
             const auto& contract=builder_robots_[i].safety.active_contract;
             if(contract.valid && robots::contract_intersects_region(contract,[&](Vec3 p,float radius){
-                return target_future_envelope_contains(target,next_step,p,radius) ||
-                       target_blocks_at_step(target,next_step,p,radius);
+                return stage_blocks(target,next_step,packages,p,radius);
             })) return false;
         }
         return true;
@@ -3316,8 +3373,11 @@ void GameApp::update_builder_robot(float dt){
         auto& constructor=builder_robots_[ci];
         if(constructor.role!=RobotRole::Constructor || !constructor.stage_commit_pending || !constructor.target.valid()) continue;
         const auto next_step=(std::uint8_t)std::min<int>((int)construction_target_step(constructor.target)+1,(int)construction_target_total_steps(constructor.target));
+        // A linear build shifts its material stacks along the route as each
+        // stage completes. Reserve their next positions before advancing.
+        const auto packages=next_stage_packages(constructor.target,next_step);
         for(std::size_t ri=0;ri<builder_robots_.size();++ri){
-            if(robot_safe_for_next_stage(ri,constructor.target,next_step)){
+            if(robot_safe_for_next_stage(ri,constructor.target,next_step,packages)){
                 builder_robots_[ri].stage_commit_safe_position={};
                 builder_robots_[ri].stage_commit_safe_position_valid=false;
                 builder_robots_[ri].stage_commit_alternate_attempted=false;
@@ -3333,13 +3393,12 @@ void GameApp::update_builder_robot(float dt){
                 // through it. Dynamic fleet conflicts are handled by the route
                 // governor; changing the goal here would recreate route thrash.
                 if(!robot_position_clear(ri,candidate)) return false;
-                if(target_future_envelope_contains(constructor.target,next_step,candidate,body_radius+kRobotObstacleMargin)) return false;
-                if(target_blocks_at_step(constructor.target,next_step,candidate,body_radius+kRobotObstacleMargin)) return false;
+                if(stage_blocks(constructor.target,next_step,packages,candidate,body_radius+kRobotObstacleMargin)) return false;
                 return robot_structure_move_allowed(evac,candidate,candidate);
             };
             if(!evacuation_destination_still_valid(evac.stage_commit_safe_position)){
-                const auto enclosure=assess_exterior_connectivity(ri,&constructor.target,next_step);
-                evac.stage_commit_safe_position=enclosure.escape_valid?enclosure.escape:safe_stage_commit_destination(ri,constructor.target,next_step);
+                const auto enclosure=assess_exterior_connectivity(ri,constructor.target,next_step,packages);
+                evac.stage_commit_safe_position=enclosure.escape_valid?enclosure.escape:safe_stage_commit_destination(ri,constructor.target,next_step,packages);
                 evac.stage_commit_safe_position_valid=true;
                 evac.stage_commit_alternate_attempted=false;
                 clear_route(evac);
@@ -3369,7 +3428,7 @@ void GameApp::update_builder_robot(float dt){
                 // escape remains the only valid choice, keep it and let the normal
                 // certified route planner continue working toward it.
                 evac.service_slot_offset=(std::uint8_t)((evac.service_slot_offset+7u)%24u);
-                const auto enclosure=assess_exterior_connectivity(ri,&constructor.target,next_step);
+                const auto enclosure=assess_exterior_connectivity(ri,constructor.target,next_step,packages);
                 if(enclosure.escape_valid){
                     evac.stage_commit_safe_position=enclosure.escape;
                     evac.stage_commit_safe_position_valid=true;
@@ -5112,9 +5171,14 @@ void GameApp::update_builder_robot(float dt){
 
             if(robot.stage_commit_pending){
                 const auto next_step=(std::uint8_t)std::min<int>((int)construction_target_step(robot.target)+1,(int)construction_target_total_steps(robot.target));
-                if(!fleet_safe_for_next_stage(robot.target,next_step)) continue;
+                const auto packages=next_stage_packages(robot.target,next_step);
+                if(!fleet_safe_for_next_stage(robot.target,next_step,packages)) continue;
                 record_robot_operation_result(robot,true);
                 if(advance_construction_target(robot.target,kConstructionStepSeconds)){
+                    if(!packages.empty()){
+                        cached_resource_obstacles.insert(cached_resource_obstacles.end(),packages.begin(),packages.end());
+                        rebuild_resource_bins();
+                    }
                     subtract_bundle(*shared_site_buffer,step_cost);
                     site_owner.stage_materials_picked=false;
                     // Every builder starts the next stage's work sequence from phase zero.

@@ -41,26 +41,39 @@ ResourceMesh make_oxygen_storage(){
 }
 
 ResourceModelLibrary::ResourceModelLibrary(){
-    meshes_[(size_t)ResourceKind::SolarPanel]=resources::refine_future_resource(resources::make_solar_panel(),ResourceKind::SolarPanel);
-    meshes_[(size_t)ResourceKind::WaterDriller]=resources::refine_future_resource(resources::make_water_driller(),ResourceKind::WaterDriller);
-    meshes_[(size_t)ResourceKind::PowerStorage]=resources::refine_future_resource(resources::make_power_storage(),ResourceKind::PowerStorage);
-    meshes_[(size_t)ResourceKind::WaterStorage]=resources::refine_future_resource(resources::make_water_storage(),ResourceKind::WaterStorage);
-    meshes_[(size_t)ResourceKind::OreDriller]=resources::refine_future_resource(resources::make_ore_driller(),ResourceKind::OreDriller);
-    meshes_[(size_t)ResourceKind::WaterPurifier]=resources::refine_future_resource(resources::make_water_purifier(),ResourceKind::WaterPurifier);
-    meshes_[(size_t)ResourceKind::Antenna]=resources::refine_future_resource(resources::make_antenna(),ResourceKind::Antenna);
-    meshes_[(size_t)ResourceKind::LandingPad]=resources::refine_future_resource(resources::make_landing_pad(),ResourceKind::LandingPad);
-    meshes_[(size_t)ResourceKind::RobotWorkshop]=resources::make_robot_workshop();
-    meshes_[(size_t)ResourceKind::HydrogenGenerator]=resources::refine_future_resource(resources::make_hydrogen_generator(),ResourceKind::HydrogenGenerator);
-    meshes_[(size_t)ResourceKind::HydrogenTank]=resources::refine_future_resource(resources::make_hydrogen_tank(),ResourceKind::HydrogenTank);
-    meshes_[(size_t)ResourceKind::OxygenTank]=make_oxygen_storage();
-    storage_domes_[(size_t)StorageDomeSize::Small]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Small),ResourceKind::StorageDome);
-    storage_domes_[(size_t)StorageDomeSize::Mid]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Mid),ResourceKind::StorageDome);
-    storage_domes_[(size_t)StorageDomeSize::Big]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Big),ResourceKind::StorageDome);
-    storage_domes_[(size_t)StorageDomeSize::Huge]=resources::refine_future_resource(resources::make_storage_dome(StorageDomeSize::Huge),ResourceKind::StorageDome);
-    for(std::size_t i=0;i<(std::size_t)StorageDomeSize::Count;++i) storage_gates_[i]=resources::make_storage_gate((StorageDomeSize)i);
+    struct Generator { ResourceKind kind;ResourceMesh (*make)();bool refine=true; };
+    constexpr Generator generators[]{
+        {ResourceKind::SolarPanel,resources::make_solar_panel},
+        {ResourceKind::WaterDriller,resources::make_water_driller},
+        {ResourceKind::PowerStorage,resources::make_power_storage},
+        {ResourceKind::WaterStorage,resources::make_water_storage},
+        {ResourceKind::OreDriller,resources::make_ore_driller},
+        {ResourceKind::WaterPurifier,resources::make_water_purifier},
+        {ResourceKind::Antenna,resources::make_antenna},
+        {ResourceKind::LandingPad,resources::make_landing_pad},
+        {ResourceKind::RobotWorkshop,resources::make_robot_workshop,false},
+        {ResourceKind::HydrogenGenerator,resources::make_hydrogen_generator},
+        {ResourceKind::HydrogenTank,resources::make_hydrogen_tank},
+        {ResourceKind::OxygenTank,make_oxygen_storage,false}
+    };
+    constexpr auto base_count=std::size(generators);
+    auto& pool=eng::TaskPool::shared();
+    pool.parallel_for(base_count+storage_domes_.size(),[&](std::size_t i){
+        if(i<base_count){
+            const auto& generator=generators[i];
+            auto mesh=generator.make();
+            if(generator.refine) mesh=resources::refine_future_resource(std::move(mesh),generator.kind);
+            meshes_[static_cast<std::size_t>(generator.kind)]=std::move(mesh);
+        }else{
+            const auto index=i-base_count;
+            const auto size=static_cast<StorageDomeSize>(index);
+            storage_domes_[index]=resources::refine_future_resource(resources::make_storage_dome(size),ResourceKind::StorageDome);
+            storage_gates_[index]=resources::make_storage_gate(size);
+        }
+    });
     meshes_[(size_t)ResourceKind::StorageGate]=storage_gates_[0];
     meshes_[(size_t)ResourceKind::StorageDome]=storage_domes_[(size_t)StorageDomeSize::Small];
-    for(std::size_t i=0;i<(std::size_t)ResourceKind::Count;++i){
+    pool.parallel_for(small_meshes_.size(),[&](std::size_t i){
         const auto kind=(ResourceKind)i;
         if(kind==ResourceKind::HydrogenTank||kind==ResourceKind::OxygenTank){
             // Preserve physical vessel volume: 0.63^3 ~= 0.25, matching the
@@ -74,7 +87,7 @@ ResourceModelLibrary::ResourceModelLibrary(){
         }else{
             small_meshes_[i]=(kind==ResourceKind::StorageDome || kind==ResourceKind::RobotWorkshop || kind==ResourceKind::StorageGate)?meshes_[i]:scale_xz(meshes_[i],0.76f);
         }
-    }
+    });
 }
 
 const ResourceMesh& ResourceModelLibrary::mesh(ResourceKind kind,ResourceSizeTier size) const {

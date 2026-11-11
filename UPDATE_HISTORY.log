@@ -882,3 +882,29 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Integrate rolling curves with a lateral grip limit, brake along the measured heading, and steer and roll the rendered wheels from certified motion.
 - Restart navigation from the current pose after five failed attempts. Preserve the active job, cargo, and reservations.
 - Redraw the build catalog icons and label each tool with a short caption.
+
+0.53.0 - Rendering and colony interface
+- Cull lunar terrain and meshes per camera and light view. Batch OpenGL geometry by pass and compact the lighting and presentation passes.
+- Batch HUD shapes and antialiased text on OpenGL and Direct3D 12. Reduce redundant Direct3D 12 pipeline binds.
+- Use the Balanced profile on new installations. Keep High and independent controls for compute lighting, texture pages, and post-processing.
+- Cache route distances for colony airflow and reduce per-frame cargo and telemetry allocations.
+- Redesign the title backdrop, telemetry and build toolbar, and improve module colors and landing-pad markings.
+
+0.54.0 - CPU affinity and parallel game workloads
+- Size the persistent C++ worker pool from the launcher's available logical CPUs. Assign workers with Linux CPU affinity masks or Windows CPU Sets and report placement with --cpu-info.
+- Run model generation, terrain relief and clutter generation, and OpenGL opaque mesh preparation across independent CPU ranges.
+- Build and cache the Stage 1 campus meshes and facility highlights in parallel.
+- Parallelize navigation wall rebuilds, utility route intersections, and theme synthesis. Apply gameplay state updates and submit graphics commands in application-thread order.
+
+0.54.1 - Carrier routing and compact saves
+- Connect the carrier's exact pose to reachable route cells around tight cargo aisles. Check construction evacuation against a route the rover can drive from its actual position.
+- Reserve the next position of material stacks before advancing construction along a connection.
+- Use the supplied 0.54.0 colony layout for Debug blueprint starts and Stage 3 Template Mode.
+- Move player saves to the workspace-root savegames folder on launch and preserve slots with conflicting filenames.
+- Write compact schema 48 saves. Regenerate connection meshes and junctions when loading and preserve the persistent colony state.
+
+0.54.2 - Ore hauling and hull views
+- Halve ore driller output to 60 kg per in-game day for standard drillers and 30 kg for small drillers at full power.
+- Route fresh ore through carrier pickup, even when a belt is connected. Older in-flight ore and storage-to-pad trade keep their delivery paths.
+- Use basic terrain and structure textures on Classic and when the enhanced renderer is unavailable.
+- Start new games with Full Hull. None hides shells and glazing in rendering while retaining collision, access and interior equipment.

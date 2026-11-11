@@ -82,7 +82,7 @@ struct TestColony {
                 scene.light_count=light_count;
                 active=r.begin_lunar_scene(scene);
             }
-            if(!active) r.draw_triangles_3d(floor,{0.20f,0.21f,0.23f,1});
+            if(!active) r.draw_lunar_surface(floor,LunarMaterial::Regolith,{0.38f,0.37f,0.35f,1});
         }
 
         constexpr std::array materials{LunarMaterial::Pad,LunarMaterial::Paint,LunarMaterial::Alloy,

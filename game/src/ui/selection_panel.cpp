@@ -933,9 +933,9 @@ void GameApp::render_selection_panel(Renderer& r){
                     const bool to_storage=route==ConveyorRoute::OreStorage;
                     const bool receiver_built=to_storage?placed_resources_[u.endpoint_b.index].construction.complete():
                                                         placed_habitats_[u.endpoint_b.index].construction.complete();
-                    status=!drill.construction.complete() || !receiver_built?"WAITING FOR ENDPOINT CONSTRUCTION":
+                    status=u.ore_cargo==ore::no_cargo?"DRILLER OUTPUT USES ROVERS":
+                        !drill.construction.complete() || !receiver_built?"WAITING FOR ENDPOINT CONSTRUCTION":
                         drill.supply.power_fraction<=0?"WAITING FOR DRILLER POWER":
-                        u.ore_cargo==ore::no_cargo?"WAITING FOR ORE BOX":
                         u.ore_distance_m<utility_network_.connection_length((std::size_t)selected_utility_)?"TRANSPORTING ORE":
                         to_storage?"WAITING FOR STORAGE SPACE":"WAITING FOR PROCESSING";
                     if(u.ore_cargo<ore::no_cargo)

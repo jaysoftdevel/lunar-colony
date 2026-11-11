@@ -397,12 +397,9 @@ void refresh_known_nodes(State& s,std::uint64_t epoch,const PathPlannerCallbacks
             s.node_penalty_epoch[index]=epoch;
         }
     };
-    if(callbacks.parallel_samples && known.size()>=2*cells_per_job){
-        eng::TaskPool::shared().parallel_for((known.size()+cells_per_job-1)/cells_per_job,[&](std::size_t job){
-            const auto first=job*cells_per_job;
-            sample_range(first,std::min(known.size(),first+cells_per_job));
-        });
-    }else sample_range(0,known.size());
+    if(callbacks.parallel_samples && known.size()>=2*cells_per_job)
+        eng::TaskPool::shared().parallel_for_ranges(known.size(),cells_per_job,sample_range);
+    else sample_range(0,known.size());
     std::vector<int> repairs;
     for(std::size_t i=0;i<known.size();++i)
         if(changed[i]) repairs.push_back(known[i]);
@@ -422,7 +419,10 @@ bool extract_route(State& s,const PathPlanRequest& request,std::uint64_t epoch,
     // Retain the validated connection from the exact robot pose to the grid.
     // Dropping this vertex made smoothing try to cut a corner directly to the
     // first grid NEIGHBOR, falsely rejecting a valid exit from a narrow bay.
-    if(s.global_search && current>=0){const Vec3 entry=point_for(s,current,callbacks);if(dist_xz(request.start,entry)>0.03f)raw.push_back(entry);}
+    if(s.global_search && current>=0){
+        const Vec3 entry=point_for(s,current,callbacks);
+        if(dist_xz(request.start,entry)>0.03f) raw.push_back(entry);
+    }
     std::vector<std::uint8_t> visited(s.g.size(),0);
     const int guard_limit=std::min<int>((int)s.g.size(),4096);
     for(int guard=0;guard<guard_limit;++guard){
@@ -616,8 +616,20 @@ IncrementalPathResult plan_incremental_path(const PathPlanRequest& request,
 
         std::vector<Vec3> raw;
         bool repair_requested=false;
-        if(extract_route(state,request,world_epoch,callbacks,raw,repair_requested))
-            return smooth_route(request,callbacks,raw,geometric)?IncrementalPathResult::Success:global_fallback();
+        if(extract_route(state,request,world_epoch,callbacks,raw,repair_requested)){
+            if(smooth_route(request,callbacks,raw,geometric)) return IncrementalPathResult::Success;
+            // The ordinary local route starts with the first grid successor.
+            // If smoothing cannot reach it from the real pose, keep the
+            // validated entry vertex and try the two-leg connection.
+            if(!state.global_search){
+                const auto entry=point_for(state,state.last_start_index,callbacks);
+                if(dist_xz(request.start,entry)>0.03f){
+                    raw.insert(raw.begin(),entry);
+                    if(smooth_route(request,callbacks,raw,geometric)) return IncrementalPathResult::Success;
+                }
+            }
+            return global_fallback();
+        }
         if(!repair_requested) return global_fallback();
         ++state.incremental_repair_count;
     }

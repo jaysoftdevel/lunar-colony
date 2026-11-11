@@ -13,9 +13,11 @@ GraphicsSettings graphics_profile_settings(BenchmarkProfile profile,const Graphi
         return settings;
     }
 
-    GraphicsSettings settings;
+    const bool balanced=profile==BenchmarkProfile::Balanced;
+    GraphicsSettings settings=balanced?balanced_graphics_settings():GraphicsSettings{};
     settings.exposure_tenths=current.exposure_tenths;
     settings.vertical_sync=current.vertical_sync;
+    if(balanced) return settings;
     const int quality=profile==BenchmarkProfile::High?3:profile==BenchmarkProfile::Balanced?2:1;
     for(const auto feature:scalable_graphics_features) settings.set_quality(feature,quality);
     settings.render_scale=quality_budget(quality,65,85,100);

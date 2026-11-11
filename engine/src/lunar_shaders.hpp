@@ -47,15 +47,7 @@ void main(){
 }
 )GLSL";
 
-inline constexpr const char* sky_fragment=R"GLSL(#version 330 core
-in vec2 uv;
-out vec4 pixel;
-uniform mat4 inverseViewProjection;
-uniform vec3 eye;
-uniform vec3 sun;
-uniform float daylight;
-uniform sampler2D depthMap;
-
+inline constexpr const char* sky_functions=R"GLSL(
 float hash(vec3 p){
     p=fract(p*0.1031);
     p+=dot(p,p.yxz+33.33);
@@ -70,10 +62,7 @@ float noise(vec3 p){
     vec4 v=mix(low,high,f.z);
     return mix(mix(v.x,v.y,f.x),mix(v.z,v.w,f.x),f.y);
 }
-void main(){
-    if(texture(depthMap,uv).r<1.0) discard;
-    vec4 q=inverseViewProjection*vec4(uv*2.0-1.0,0.99,1.0);
-    vec3 ray=normalize(q.xyz/q.w-eye);
+vec3 lunarSky(vec3 ray){
     vec3 sky=vec3(0.00020,0.00029,0.00047);
     vec3 galactic=normalize(vec3(0.58,0.44,0.68));
     float galacticLatitude=dot(ray,galactic);
@@ -112,7 +101,7 @@ void main(){
         float disc=(1.0-smoothstep(0.0042,0.0057,angle))*step(0.99,toward);
         sky+=vec3(1.0,0.83,0.64)*daylight*(disc*18.0+0.11*exp(-100.0*angle)*toward);
     }
-    pixel=vec4(sky,1.0);
+    return sky;
 }
 )GLSL";
 
@@ -334,7 +323,7 @@ Surface sampleSurface(vec3 world,vec3 tex,vec3 face,vec3 worldDx,vec3 worldDy,ve
         vec4 streamed=groundDetail(world.xz,worldDx.xz,worldDy.xz);
         vec2 slope=dents.xy+(grain.ba-0.5)*0.18+(streamed.ba-0.5)*0.13;
         n=normalize(face+vec3(-slope.x,0.0,-slope.y));
-        vec3 soil=mix(vec3(0.115,0.106,0.099),vec3(0.227,0.211,0.190),0.64*field.x+0.36*field.y);
+        vec3 soil=mix(vec3(0.084,0.089,0.097),vec3(0.208,0.190,0.168),0.64*field.x+0.36*field.y);
         albedo=soil*(0.66+0.22*field.z+0.20*grit+0.35*grain.r)*(1.0-dents.z*0.74);
         albedo=mix(albedo,albedo*vec3(0.65,0.63,0.61)*(0.74+0.37*grain.r),stone);
         albedo*=0.92+0.16*streamed.r;
@@ -378,6 +367,8 @@ Surface sampleSurface(vec3 world,vec3 tex,vec3 face,vec3 worldDx,vec3 worldDy,ve
             albedo=tint*(0.91+0.15*map.r);
             roughness=0.51;
         }
+    }else{
+        albedo*=basicSurfaceTone(tex,cross(texDx,texDy),float(kind),false,footprint);
     }
     metal=kind==1?0.61:kind==3?0.31:0.0;
     if(kind==1 || kind==3 || kind==4){
@@ -415,14 +406,13 @@ vec3 environment(vec3 d){
 }
 float filteredShadow(sampler2DArrayShadow map,vec3 uv,int layer,float filterRadius,float bias){
     vec2 texel=filterRadius/vec2(textureSize(map,0).xy);
-    float lit=0.0,total=0.0;
-    for(int y=-1;y<=1;++y) for(int x=-1;x<=1;++x){
-        if(shadowQuality<3 && abs(x)+abs(y)>=shadowQuality) continue;
-        float weight=float((2-abs(x))*(2-abs(y)));
-        lit+=weight*texture(map,vec4(uv.xy+vec2(x,y)*texel,float(layer),uv.z-bias));
-        total+=weight;
-    }
-    return lit/max(total,1.0);
+    vec4 center=vec4(uv.xy,float(layer),uv.z-bias);
+    float lit=texture(map,center);
+    if(shadowQuality<=1) return lit;
+    vec4 x=vec4(texel.x,0,0,0),y=vec4(0,texel.y,0,0);
+    lit=4.0*lit+2.0*(texture(map,center-x)+texture(map,center+x)+texture(map,center-y)+texture(map,center+y));
+    if(shadowQuality==2) return lit/12.0;
+    return (lit+texture(map,center-x-y)+texture(map,center-x+y)+texture(map,center+x-y)+texture(map,center+x+y))/16.0;
 }
 
 vec2 pageVisibility(vec3 n,vec3 p){
@@ -571,7 +561,11 @@ vec4 screenIndirect(vec3 p,vec3 n,bool contactAO,bool diffuseGI){
 }
 void main(){
     float depth=texture(depthMap,uv).r;
-    if(depth>=1.0) discard;
+    if(depth>=1.0){
+        vec3 ray=normalize(reconstruct(uv,0.995,inverseViewProjection)-eye);
+        pixel=vec4(lunarSky(ray),1.0);
+        return;
+    }
     vec4 base=texture(baseMap,uv);
     vec4 properties=texture(materialMap,uv);
     if(properties.g>0.5){ pixel=vec4(base.rgb*5.0,1.0); return; }
@@ -817,6 +811,8 @@ in vec2 uv;
 out vec4 pixel;
 uniform sampler2D source;
 uniform sampler2D glow;
+uniform sampler2D overlayMap;
+uniform bool useTransparency;
 uniform float bloomStrength;
 uniform float exposure;
 void main(){
@@ -829,7 +825,12 @@ void main(){
     linear=max(vec3(0.0),linear*exposure);
     vec3 film=option(OPT_filmic)?clamp((linear*(2.51*linear+0.03))/(linear*(2.43*linear+0.59)+0.14),0.0,1.0)
                                 :linear/(1.0+linear);
-    pixel=vec4(pow(film,vec3(1.0/2.2)),1.0);
+    vec3 displayColor=pow(film,vec3(1.0/2.2));
+    if(useTransparency){
+        vec4 overlay=texture(overlayMap,uv);
+        displayColor=displayColor*(1.0-overlay.a)+overlay.rgb;
+    }
+    pixel=vec4(displayColor,1.0);
 }
 )GLSL";
 

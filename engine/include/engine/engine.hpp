@@ -129,6 +129,7 @@ public:
         draw_lunar_surface(vertices,material,tint);
     }
     virtual void draw_rect(Rect r, Color color)=0;
+    virtual void draw_gradient_rect(Rect r,Color top,Color){ draw_rect(r,top); }
     virtual void draw_line(Vec2 a, Vec2 b, Color color, float width=1.0f)=0;
     virtual void draw_text(Vec2 p, const std::string& text, float scale, Color color)=0;
     virtual int width() const=0;
@@ -137,6 +138,11 @@ public:
     virtual std::string gpu_vendor() const=0;
     virtual std::string gpu_renderer() const=0;
     virtual std::string gpu_version() const=0;
+};
+
+struct CpuWorkerInfo {
+    std::size_t available{},lanes{},assigned_workers{};
+    bool affinity_enabled{};
 };
 
 class TaskPool {
@@ -149,7 +155,16 @@ public:
     static TaskPool& shared();
     std::size_t parallel_lanes() const;
     std::size_t background_workers() const;
-    std::future<void> submit(std::function<void()> task);
+    CpuWorkerInfo cpu_info() const;
+
+    template<class Fn>
+    auto submit(Fn&& fn) -> std::future<std::invoke_result_t<std::decay_t<Fn>&>> {
+        using Result=std::invoke_result_t<std::decay_t<Fn>&>;
+        auto task=std::make_shared<std::packaged_task<Result()>>(std::forward<Fn>(fn));
+        auto result=task->get_future();
+        enqueue([task=std::move(task)]{ (*task)(); });
+        return result;
+    }
 
     // Runs fn(0..count-1) across the calling thread and the helper workers and
     // returns when every index finished. Indices are claimed dynamically, so a
@@ -179,6 +194,7 @@ public:
         job->count=count;
         job->fn=&fn;
         auto run=std::make_shared<std::function<void()>>([job](){
+            std::size_t completed=0;
             for(;;){
                 const std::size_t i=job->next.fetch_add(1,std::memory_order_relaxed);
                 if(i>=job->count) break;
@@ -188,8 +204,10 @@ public:
                     if(!job->failed.test_and_set(std::memory_order_relaxed))
                         job->error=std::current_exception();
                 }
-                if(job->done.fetch_add(1,std::memory_order_acq_rel)+1==job->count) job->done.notify_all();
+                ++completed;
             }
+            if(completed && job->done.fetch_add(completed,std::memory_order_acq_rel)+completed==job->count)
+                job->done.notify_all();
         });
         post_shared(run,helpers,true);
         (*run)();
@@ -199,7 +217,26 @@ public:
         if(job->error) std::rethrow_exception(job->error);
     }
 
+    // Give large arrays contiguous jobs without recruiting helpers for tiny
+    // workloads. Callbacks own disjoint [first,last) ranges.
+    template<class Fn>
+    void parallel_for_ranges(std::size_t count,std::size_t minimum_grain,Fn&& fn){
+        if(!count) return;
+        const auto lanes=parallel_lanes();
+        const auto ranges=std::min(count/std::max<std::size_t>(1,minimum_grain),lanes*4);
+        if(lanes==1 || ranges<=1){
+            fn(0,count);
+            return;
+        }
+        const auto width=count/ranges,extra=count%ranges;
+        parallel_for(ranges,[&](std::size_t range){
+            const auto first=range*width+std::min(range,extra);
+            fn(first,first+width+(range<extra));
+        });
+    }
+
 private:
+    void enqueue(std::function<void()> task);
     void post_shared(const std::shared_ptr<std::function<void()>>& task,std::size_t copies,bool joined=false);
     void discard_shared(const std::shared_ptr<std::function<void()>>& task);
     struct Impl;
@@ -207,6 +244,7 @@ private:
 };
 
 std::size_t cpu_parallel_lanes();
+std::string cpu_worker_summary();
 
 class GameDelegate {
 public:
@@ -246,13 +284,13 @@ private:
 
 namespace ui {
 struct Theme {
-    Color panel{0.055f,0.065f,0.08f,0.96f};
-    Color panel2{0.09f,0.105f,0.13f,0.96f};
-    Color text{0.90f,0.94f,0.98f,1.0f};
-    Color muted{0.52f,0.60f,0.67f,1.0f};
-    Color accent{0.22f,0.72f,0.82f,1.0f};
-    Color accent_hover{0.34f,0.83f,0.91f,1.0f};
-    Color border{0.20f,0.25f,0.30f,1.0f};
+    Color panel{0.047f,0.065f,0.086f,0.96f};
+    Color panel2{0.085f,0.12f,0.15f,0.96f};
+    Color text{0.92f,0.96f,0.98f,1.0f};
+    Color muted{0.64f,0.72f,0.78f,1.0f};
+    Color accent{0.39f,0.85f,0.78f,1.0f};
+    Color accent_hover{0.17f,0.31f,0.35f,1.0f};
+    Color border{0.20f,0.30f,0.35f,1.0f};
     // Base typography multiplier in logical layout units. Resolution/user zoom
     // is applied once by the shared UI transform, including to this text.
     float font_scale{1.50f};

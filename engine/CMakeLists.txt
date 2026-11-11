@@ -20,7 +20,7 @@ else()
         src/audio_openal.cpp
     )
 endif()
-target_sources(game_engine PRIVATE src/graphics_settings.cpp)
+target_sources(game_engine PRIVATE src/cpu_affinity.cpp src/graphics_settings.cpp)
 target_include_directories(game_engine PUBLIC include)
 target_compile_definitions(game_engine PUBLIC
     GAME_PLATFORM_NAME="${GAME_PLATFORM_NAME}"

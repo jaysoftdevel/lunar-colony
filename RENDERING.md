@@ -1,4 +1,21 @@
-# Rendering in v0.52.6
+# Rendering
+
+New installations start on **Balanced**. This profile renders the 3D scene
+at 85% scale and keeps the HUD at display resolution. On Linux it uses deferred
+raster lighting, cascaded sun shadows and temporal antialiasing. The **High**
+profile enables supported compute lighting, visibility buffers and streamed
+surface detail. Existing saved choices are loaded at startup. Select **Balanced**
+or **Reset Defaults** in Graphics to use the new defaults.
+
+The OpenGL lunar renderer batches opaque geometry, transparent geometry and
+lines separately. Camera culling and light-space culling use their respective
+view volumes, so an object outside the camera can still cast a visible shadow.
+The renderer shades sky and opaque surfaces in the same pass and can present
+the tone-mapped world directly when spatial edge filtering is idle.
+
+Both backends draw HUD panels, icons and antialiased text in submission order
+from a shared vertex batch. The HUD font atlas ships with the source. Its
+license is staged alongside the executables.
 
 ## Windows
 
@@ -22,8 +39,9 @@ The build can stage the stable Agility SDK 1.620.1 runtime for both executables.
 
 The Linux renderer selects the compute path on desktop OpenGL 4.3 or newer.
 OpenGL 3.3 uses deferred raster lighting, screen-space effects, and the same
-world materials and UI. The enhanced lunar renderer has an older mesh-view
-fallback if its required render targets or shaders are unavailable.
+world materials and UI. When the enhanced pass is unavailable or Classic is
+selected, Full Graphics uses a forward pass with basic procedural terrain and
+material textures. Debug Meshed keeps the engineering wireframe view.
 
 The Earth campus uses a scattering sky, distance haze, and an animated
 ray-marched cloud layer. Lunar stages use an airless sky and localized exhaust
@@ -47,7 +65,7 @@ The buildable playfield uses a flat placement plane with shaded crater relief.
 | GPU-driven rendering | Compute frustum culling and detail selection write indirect terrain draw commands. |
 | Hair, cloth, and skin | Anisotropic highlights and strand shading on the coverall hair mesh, fabric relief and sheen, animated coverall wrinkles, and skin diffusion. |
 | Decals and virtual texturing | Worn landing-pad paint overlays, dust on low cladding, and paged regolith color, slope, and roughness. |
-| Order-independent transparency | Weighted color accumulation and optical-depth resolve for glass and translucent cutaways. |
+| Order-independent transparency | Weighted color accumulation and optical-depth resolve for glass and other translucent materials. |
 | Neural radiance caching and denoising | A small online neural model learns a diffuse-lighting prior from ray samples. An offline-trained confidence model guides geometry-aware temporal filtering. |
 
 Ray tracing uses ordinary GPU compute instructions. Dedicated Vulkan or DXR

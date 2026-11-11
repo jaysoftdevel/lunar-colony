@@ -11,15 +11,31 @@ namespace {
 struct CategoryButton {
     BuildCategory category;
     BuildIcon icon;
+    const char* caption;
     const char* name;
 };
 constexpr CategoryButton CATEGORIES[]={
-    {BuildCategory::Habitats,BuildIcon::CategoryHabitats,"HABITATS / INFRASTRUCTURE"},
-    {BuildCategory::Structures,BuildIcon::CategoryResources,"RESOURCES / FACILITIES"}
+    {BuildCategory::Habitats,BuildIcon::CategoryHabitats,"HABITATS","HABITATS / INFRASTRUCTURE"},
+    {BuildCategory::Structures,BuildIcon::CategoryResources,"FACILITIES","RESOURCES / FACILITIES"}
 };
 constexpr int CATEGORY_COUNT=(int)(sizeof(CATEGORIES)/sizeof(CATEGORIES[0]));
 constexpr float category_size=42.f,category_gap=7.f,category_x=12.f;
 constexpr float category_right=category_x+CATEGORY_COUNT*(category_size+category_gap)-category_gap;
+
+void catalog_tile(Renderer& r,Rect box,const ui::Theme& theme,bool hover,bool selected){
+    const Color top=selected?Color{.115f,.25f,.26f,1}:hover?theme.accent_hover:theme.panel2;
+    const Color bottom=selected?Color{.065f,.14f,.16f,1}:theme.panel;
+    r.draw_gradient_rect(box,top,bottom);
+    const Color edge=selected || hover?theme.accent:theme.border;
+    r.draw_rect({box.x,box.y,box.w,selected?2.f:1.f},edge);
+    r.draw_rect({box.x,box.y+box.h-1.f,box.w,1.f},theme.border);
+}
+
+void catalog_caption(Renderer& r,Rect box,const std::string& caption,const ui::Theme& theme,bool active){
+    const float scale=ui::fit_text(caption,ui::font_scale(.57f*GAME_FONT_BOOST,theme),{box.w-4,10});
+    const float width=ui::text_extent(caption,scale).x;
+    r.draw_text({box.x+(box.w-width)*.5f,box.y+box.h-11},caption,scale,active?theme.text:theme.muted);
+}
 }
 
 Rect GameApp::activity_log_button_rect() const {
@@ -31,7 +47,7 @@ Rect GameApp::activity_log_button_rect() const {
 void GameApp::render_build_bar(Renderer& r){
     if(lander_.deploying()||lander_.awaiting_site||lander_.awaiting_stash){
         const float w=ui_width(r),y=ui_height(r)-BUILD_BAR_H;
-        r.draw_rect({0,y,w,BUILD_BAR_H},kHudFill);
+        r.draw_gradient_rect({0,y,w,BUILD_BAR_H},{.045f,.07f,.09f,.78f},{.025f,.042f,.059f,.92f});
         const char* message=lander_.awaiting_site?"CLICK TOUCHDOWN SITE  /  GREEN OUTLINE = CLEAR  /  ESC MENU":
             lander_.phase<LanderPhase::Landed?"LANDER DESCENDING  /  PLACE THE STASH AFTER TOUCHDOWN":
             lander_.awaiting_stash?"TOUCHDOWN COMPLETE  /  CLICK CLEAR GROUND BESIDE THE LANDER TO PLACE THE STASH":
@@ -44,7 +60,7 @@ void GameApp::render_build_bar(Renderer& r){
     const float logical_w=ui_width(r);
     const float logical_h=ui_height(r);
     const float y=logical_h-BUILD_BAR_H;
-    r.draw_rect({0,y,logical_w,BUILD_BAR_H},kHudFill);
+    r.draw_gradient_rect({0,y,logical_w,BUILD_BAR_H},{.045f,.07f,.09f,.78f},{.025f,.042f,.059f,.92f});
     r.draw_line({0,y},{logical_w,y},theme_.border,1.0f);
 
     constexpr float view_area_w=345.0f;
@@ -56,14 +72,9 @@ void GameApp::render_build_bar(Renderer& r){
         const bool hover=box.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
         const bool selected=build_catalog_.category()==CATEGORIES[i].category;
         if(hover) hovered_category=i;
-        r.draw_rect(box,hover?Color{0.11f,0.15f,0.18f,1.0f}:Color{0.055f,0.07f,0.09f,1.0f});
-        const Color border=selected?theme_.accent:(hover?theme_.accent_hover:theme_.border);
-        const float bw=selected?2.5f:1.3f;
-        r.draw_line({box.x,box.y},{box.x+box.w,box.y},border,bw);
-        r.draw_line({box.x+box.w,box.y},{box.x+box.w,box.y+box.h},border,bw);
-        r.draw_line({box.x+box.w,box.y+box.h},{box.x,box.y+box.h},border,bw);
-        r.draw_line({box.x,box.y+box.h},{box.x,box.y},border,bw);
-        render_build_icon(r,CATEGORIES[i].icon,{box.x+7,box.y+7,box.w-14,box.h-14},selected?theme_.accent:theme_.text);
+        catalog_tile(r,box,theme_,hover,selected);
+        render_build_icon(r,CATEGORIES[i].icon,{box.x+8,box.y+3,box.w-16,box.h-16},selected?theme_.accent:theme_.text);
+        catalog_caption(r,box,CATEGORIES[i].caption,theme_,selected || hover);
         if(hover && ui_input_.left_pressed){
             build_catalog_.set_category(CATEGORIES[i].category);
             build_catalog_scroll_=0;
@@ -133,22 +144,14 @@ void GameApp::render_build_bar(Renderer& r){
                 const float divider=tile_x-section_gap*.5f;
                 r.draw_line({divider,y+8},{divider,y+72},theme_.border,1.4f);
             }
-            game_label_fitted(r,{tile_x,y+5,width(slot,group_end),13},items[(std::size_t)item_index].group,.38f,theme_,true);
+            game_label_fitted(r,{tile_x,y+5,width(slot,group_end),13},items[(std::size_t)item_index].group,.56f,theme_,true);
         }
         const bool hover=box.contains((float)ui_input_.mouse_x,(float)ui_input_.mouse_y);
         const bool selected=item_index==build_catalog_.selected_index();
         if(hover) hovered_item=item_index;
-        r.draw_rect(box,hover?Color{0.12f,0.16f,0.19f,1.0f}:Color{0.065f,0.08f,0.10f,1.0f});
-        const Color border=selected?theme_.accent:(hover?theme_.accent_hover:theme_.border);
-        const float bw=selected?3.0f:1.5f;
-        r.draw_line({box.x,box.y},{box.x+box.w,box.y},border,bw);
-        r.draw_line({box.x+box.w,box.y},{box.x+box.w,box.y+box.h},border,bw);
-        r.draw_line({box.x+box.w,box.y+box.h},{box.x,box.y+box.h},border,bw);
-        r.draw_line({box.x,box.y+box.h},{box.x,box.y},border,bw);
+        catalog_tile(r,box,theme_,hover,selected);
         render_build_icon(r,item.icon,{box.x+6,box.y+4,box.w-12,box.h-19},selected?theme_.accent:theme_.text);
-        const float scale=ui::fit_text(item.caption,ui::font_scale(.40f*GAME_FONT_BOOST,theme_),{box.w-6,10});
-        const float caption_width=ui::text_extent(item.caption,scale).x;
-        r.draw_text({box.x+(box.w-caption_width)*.5f,box.y+37},item.caption,scale,theme_.text);
+        catalog_caption(r,box,item.caption,theme_,selected || hover);
         if(hover && ui_input_.left_pressed){
             const int before=build_catalog_.selected_index();
             build_catalog_.select(item_index);
@@ -189,16 +192,16 @@ void GameApp::render_build_bar(Renderer& r){
         }
     }else if(hovered_category>=0){
         line1=CATEGORIES[hovered_category].name;
-        line2="BUILD SUBMENU";
     }
     if(!line1.empty()){
         const float tw=std::min(logical_w-16.0f,std::max(168.0f,std::max(game_text_width(line1,0.78f,theme_),game_text_width(line2,0.60f,theme_))+22.0f));
         const float tx=std::clamp((float)ui_input_.mouse_x-tw*0.5f,8.0f,logical_w-tw-8.0f);
-        Rect tip={tx,y-60.0f,tw,52.0f};
+        const float height=line2.empty()?30.0f:52.0f;
+        Rect tip={tx,y-height-8.0f,tw,height};
         if(!keep_clear_of_activity_log(tip))return;
         layout::hud_panel(r,tip,theme_);
         game_label_fitted(r,{tip.x+10,tip.y+5,tip.w-20,16},line1,0.78f,theme_);
-        game_label_fitted(r,{tip.x+10,tip.y+25,tip.w-20,16},line2,0.60f,theme_,true);
+        if(!line2.empty()) game_label_fitted(r,{tip.x+10,tip.y+25,tip.w-20,16},line2,0.60f,theme_,true);
     }
 }
 

@@ -122,6 +122,7 @@ bool plan_corridor_path(const PathPlanRequest& request,
         float side_extent{8.0f};
         float along_margin{4.0f};
         int requested_expansions{1200};
+        bool extended_endpoints{false};
     };
 
     // If the normal corridor search fails in a blocked scene, run one broader
@@ -133,9 +134,11 @@ bool plan_corridor_path(const PathPlanRequest& request,
     const float fallback_side_extent=std::max(base_side_extent+8.0f,base_side_extent*1.55f);
     const float fallback_along_margin=std::max(base_along_margin*1.65f,fallback_side_extent*1.10f);
     const int fallback_expansions=std::max(request.max_expansions+900,request.max_expansions*2);
-    const std::array<GridAttempt,2> attempts{{
-        {base_cell,base_side_extent,base_along_margin,request.max_expansions},
-        {std::max(0.70f,base_cell*1.18f),fallback_side_extent,fallback_along_margin,fallback_expansions}
+    const float fallback_cell=std::max(0.70f,base_cell*1.18f);
+    const std::array<GridAttempt,3> attempts{{
+        {base_cell,base_side_extent,base_along_margin,request.max_expansions,false},
+        {fallback_cell,fallback_side_extent,fallback_along_margin,fallback_expansions,false},
+        {fallback_cell,fallback_side_extent,fallback_along_margin,fallback_expansions,true}
     }};
 
     for(const auto& attempt:attempts){
@@ -199,7 +202,7 @@ bool plan_corridor_path(const PathPlanRequest& request,
         int goal_index=-1;
         int expansions=0;
         const int max_expansions=std::clamp(attempt.requested_expansions,64,std::max(64,total));
-        const float goal_tolerance=std::max(request.stop_radius+0.16f,cell*0.82f);
+        const float goal_tolerance=std::max(request.stop_radius+0.16f,attempt.extended_endpoints?3.5f:cell*0.82f);
 
         while(!open.empty() && expansions<max_expansions){
             const int cur=open.top().idx;
@@ -214,6 +217,28 @@ bool plan_corridor_path(const PathPlanRequest& request,
             if(dist_xz(cp,goal)<=goal_tolerance && callbacks.segment_clear(cp,goal)){
                 goal_index=cur;
                 break;
+            }
+
+            // An exact pose in a cargo aisle may see the open ground beyond
+            // the stacks even when all eight adjacent grid cells are blocked.
+            // Connect it to the visible grid cells at the aisle mouth. Keep
+            // the ordinary eight-neighbor search for the rest of the route.
+            if(cur==start_index && attempt.extended_endpoints){
+                constexpr float entry_distance=7.0f;
+                const int span=(int)std::ceil(entry_distance/cell);
+                for(int v=std::max(0,sv-span);v<=std::min(nv-1,sv+span);++v){
+                    for(int u=std::max(0,su-span);u<=std::min(nu-1,su+span);++u){
+                        const int ni=index(u,v);
+                        if(ni==start_index) continue;
+                        const Vec3 np=point(u,v);
+                        const float distance=dist_xz(start,np);
+                        if(distance>entry_distance || !cell_clear(u,v) || !callbacks.segment_clear(start,np)) continue;
+                        g[(std::size_t)ni]=distance;
+                        parent[(std::size_t)ni]=start_index;
+                        open.push({distance+dist_xz(np,goal),ni});
+                    }
+                }
+                continue;
             }
 
             for(std::size_t n=0;n<du.size();++n){
@@ -260,13 +285,17 @@ bool plan_corridor_path(const PathPlanRequest& request,
         const std::size_t max_skip=std::max<std::size_t>(1,request.visibility_skip_limit);
         while(i<raw.size()){
             const std::size_t farthest=std::min(raw.size()-1,i+max_skip);
-            std::size_t best=i;
+            std::size_t best=raw.size();
             for(std::size_t candidate=farthest+1;candidate>i;--candidate){
                 const std::size_t j=candidate-1;
                 if(callbacks.segment_clear(anchor,raw[j])){
                     best=j;
                     break;
                 }
+            }
+            if(best==raw.size()){
+                geometric.clear();
+                break;
             }
             geometric.push_back(raw[best]);
             anchor=raw[best];

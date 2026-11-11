@@ -82,7 +82,10 @@ public:
     void clear(){ connections_.clear(); }
     const std::vector<WalkwayConnection>& connections() const { return connections_; }
     std::vector<WalkwayConnection>& mutable_connections() { return connections_; }
-    void restore_connections(std::vector<WalkwayConnection> connections){ connections_=std::move(connections); }
+    void restore_connections(std::vector<WalkwayConnection> connections,bool rebuild_geometry=false){
+        connections_=std::move(connections);
+        if(rebuild_geometry) rebuild_walkway_merges();
+    }
 
     std::optional<WalkwayConnection> preview_connection(
         const WalkwayBuildAnchor& source,const WalkwayBuildAnchor& target,

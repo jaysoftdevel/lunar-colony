@@ -304,7 +304,7 @@ void GameApp::start_new_game(Stage3Mode stage3_mode){
     placement_storage_size_=StorageDomeSize::Small;
     storage_gate_placement_active_=false;
     storage_gate_placement_owner_=kNoRobotIndex;
-    habitat_view_mode_=HabitatViewMode::Default;
+    habitat_view_mode_=HabitatViewMode::FullHull;
     game_speed_=start_template?GameSpeed::Pause:GameSpeed::Normal;
     last_running_speed_=1;
     clear_world_selection();

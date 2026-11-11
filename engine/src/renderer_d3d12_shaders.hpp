@@ -2,6 +2,50 @@
 
 namespace eng::d3d12_shaders {
 
+inline constexpr char ui[]=R"HLSL(
+cbuffer UiConstants : register(b0) { column_major float4x4 projection; };
+ByteAddressBuffer fontAtlas : register(t0);
+
+struct UiVertex {
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+UiVertex VSMain(float2 position : POSITION, float2 uv : TEXCOORD0, float4 color : COLOR0)
+{
+    UiVertex result;
+    result.position=mul(projection,float4(position,0.0,1.0));
+    result.position.z=0.5*(result.position.z+result.position.w);
+    result.uv=uv;
+    result.color=color;
+    return result;
+}
+
+float texel(int2 p)
+{
+    uint address=uint(p.y*512+p.x);
+    uint packed=fontAtlas.Load(address & ~3u);
+    return float((packed >> ((address & 3u)*8u)) & 255u)/255.0;
+}
+
+float4 PSMain(UiVertex input) : SV_TARGET
+{
+    float coverage=1.0;
+    if(input.uv.x>=0.0){
+        float2 at=clamp(input.uv*float2(512,256)-0.5,0.0,float2(510.999,254.999));
+        int2 p=int2(at);
+        float2 fraction=frac(at);
+        float top=lerp(texel(p),texel(p+int2(1,0)),fraction.x);
+        float bottom=lerp(texel(p+int2(0,1)),texel(p+int2(1,1)),fraction.x);
+        float distanceToEdge=lerp(top,bottom,fraction.y);
+        float edge=clamp(fwidth(distanceToEdge)*0.55,0.017,0.28);
+        coverage=smoothstep(0.49-edge,0.49+edge,distanceToEdge);
+    }
+    return float4(input.color.rgb,input.color.a*coverage);
+}
+)HLSL";
+
 inline constexpr char draw_constants[]=R"HLSL(
 cbuffer DrawConstants : register(b0)
 {
@@ -161,6 +205,9 @@ float4 PSLunar(SurfaceVertex input) : SV_TARGET
         float wear=gMaterialDetail>=2u?smoothstep(0.52,0.74,grain):0.0;
         albedo*=kind==Skin || kind==Glass?0.94+0.12*grain:0.82+0.34*grain-0.12*wear;
         roughness=lerp(roughness,0.76,wear*0.23);
+    } else if (kind != Marking) {
+        float3 localFace=cross(ddx(coord),ddy(coord));
+        albedo*=basicSurfaceTone(coord,localFace,gMaterial,false,footprint);
     }
     if (gDecals >= 2u && (kind == Paint || kind == Pad)) {
         float dust = regolithField(world.xz,footprint).y * (1.0 - smoothstep(0.1, 1.8, world.y));

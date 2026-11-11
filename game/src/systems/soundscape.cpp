@@ -34,7 +34,8 @@ void Soundscape::set_music_enabled(bool enabled){
 void Soundscape::update_music(){
     if(!music_enabled_) return;
     if(!theme_requested_){
-        theme_job_=std::async(std::launch::async,synthesize_theme);
+        auto& pool=eng::TaskPool::shared();
+        theme_job_=pool.background_workers()?pool.submit(synthesize_theme):std::async(std::launch::async,synthesize_theme);
         theme_requested_=true;
     }
     if(theme_job_.valid() && theme_job_.wait_for(std::chrono::seconds(0))==std::future_status::ready){

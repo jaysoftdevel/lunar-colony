@@ -22,6 +22,10 @@ int main(int argc,char** argv){
         std::cout<<(game::build::debug_features?"Debug":"Release")<<"\n";
         return 0;
     }
+    if(argc>1 && std::string_view(argv[1])=="--cpu-info"){
+        std::cout<<eng::cpu_worker_summary()<<'\n';
+        return 0;
+    }
     eng::Application app;
     eng::AppConfig cfg;
     cfg.width=1600;

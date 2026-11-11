@@ -42,7 +42,11 @@ constexpr std::array display{
     Row{"VERTICAL SYNC","Sync presentation to the display refresh to reduce tearing.",Control::Vsync},
     Row{"3D RENDER SCALE","Set internal 3D resolution independently of the interface.",Control::Scale},
     Row{"ANTI-ALIASING","Choose the method used to smooth edges in the 3D image.",Control::AA},
+#ifdef _WIN32
     Row{"ANTI-ALIASING QUALITY","Set the amount of spatial edge smoothing.",Control::AAQuality},
+#else
+    Row{"ANTI-ALIASING QUALITY","Set the spatial filter. High adds edge cleanup after temporal AA.",Control::AAQuality},
+#endif
 #ifndef _WIN32
     toggle("LEARNED UPSCALING","Reconstructs detail at reduced scale with temporal AA.",F::LearnedUpscale,Requirement::Temporal),
 #endif
@@ -56,7 +60,7 @@ constexpr std::array textures{
     toggle("CLOTH DETAIL","Scales fabric texture detail.",F::Cloth),
     toggle("SKIN SHADING","Adjusts the sample count for skin diffusion.",F::Skin),
 #endif
-    toggle("MATERIAL DETAIL","Scales regolith grain and fine detail on lunar surfaces.",F::MaterialDetail),
+    toggle("MATERIAL DETAIL","Scales lunar textures above the basic material detail.",F::MaterialDetail),
     toggle("PROJECTED SURFACE DETAIL","Controls landing-pad markings, wear and dust layers.",F::Decals)
 };
 constexpr std::array environment{
@@ -98,10 +102,10 @@ constexpr std::array effects{
 };
 constexpr std::array advanced{
 #ifdef _WIN32
-    Row{"RENDERER","Enhanced Direct3D 12 lunar lighting or classic mesh graphics.",Control::Path},
+    Row{"RENDERER","Enhanced Direct3D 12 lunar lighting or Classic with basic textures.",Control::Path},
     Row{"TERRAIN VRS","Use 2x2 shading on terrain outside the build area.",Control::TerrainVrs},
 #else
-    Row{"RENDERER","Auto uses available compute features. Deferred uses raster effects.",Control::Path},
+    Row{"RENDERER","Auto uses available compute features. Classic uses basic textures.",Control::Path},
     toggle("VISIBILITY BUFFER","Reconstructs materials from triangle IDs on the compute path.",F::VisibilityBuffer,Requirement::Visibility),
     toggle("GPU TERRAIN CULLING","Uses GPU culling and indirect draws for terrain clusters.",F::GpuTerrain,Requirement::Terrain),
 #endif
@@ -149,6 +153,7 @@ constexpr std::array aa_names{"TEMPORAL","FXAA","OFF"};
 constexpr std::array shadow_names{"PAGED + CSM","CASCADES","OFF"};
 constexpr std::array transparency_names{"WEIGHTED","SORTED"};
 constexpr std::array quality_names{"OFF","LOW","MEDIUM","HIGH"};
+constexpr std::array material_quality_names{"BASIC","LOW","MEDIUM","HIGH"};
 constexpr std::array detail_names{"LOW","MEDIUM","HIGH"};
 constexpr std::array display_names{"WINDOWED","FULLSCREEN"};
 constexpr std::array enabled_names{"OFF","ON"};
@@ -247,12 +252,11 @@ void GameApp::render_graphics_settings(Renderer& r){
     const auto caps=r.graphics_capabilities();
 #ifdef _WIN32
     const char* status=mesh_layout_active()?"DEBUG MESH ACTIVE / SETTINGS APPLY TO FULL GRAPHICS":
-        !caps.enhanced?"DIRECT3D 12 CLASSIC / ENHANCED GRAPHICS UNAVAILABLE":
-        graphics_.path==GraphicsPath::Classic?"DIRECT3D 12 CLASSIC":"DIRECT3D 12 ENHANCED LUNAR GRAPHICS";
+        !caps.enhanced || graphics_.path==GraphicsPath::Classic?"DIRECT3D 12 CLASSIC / BASIC TEXTURES":
+        "DIRECT3D 12 ENHANCED LUNAR GRAPHICS";
 #else
     const char* status=mesh_layout_active()?"DEBUG MESH ACTIVE / SETTINGS APPLY TO FULL GRAPHICS":
-        !caps.enhanced?"STANDARD BACKEND / ENHANCED GRAPHICS UNAVAILABLE":
-        graphics_.path==GraphicsPath::Classic?"CLASSIC VIEW":
+        !caps.enhanced || graphics_.path==GraphicsPath::Classic?"OPENGL CLASSIC / BASIC TEXTURES":
         graphics_.path==GraphicsPath::Auto && (caps.ray_lighting || caps.visibility_buffer || caps.pages)?
             "OPENGL AUTO / COMPUTE AVAILABLE":"OPENGL DEFERRED RASTER";
 #endif
@@ -380,7 +384,8 @@ void GameApp::render_graphics_settings(Renderer& r){
         switch(row.control){
             case Control::Feature:{
                 if(scalable_graphics_feature(row.feature))
-                    choose(graphics_.quality(row.feature),quality_names,[&](int index){next.set_quality(row.feature,index);});
+                    choose(graphics_.quality(row.feature),row.feature==F::MaterialDetail?material_quality_names:quality_names,
+                           [&](int index){next.set_quality(row.feature,index);});
                 else
                     choose(graphics_.enabled(row.feature),enabled_names,[&](int index){next.set(row.feature,index!=0);});
                 break;

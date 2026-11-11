@@ -1,4 +1,5 @@
 #include "game/systems/sound_assets.hpp"
+#include "engine/engine.hpp"
 
 #include <algorithm>
 #include <array>
@@ -274,46 +275,56 @@ std::vector<std::int16_t> synthesize_theme(){
         return static_cast<float>(std::sin(turn*phase));
     };
 
-    for(std::size_t chord=0;chord<chords.size();++chord){
-        std::array<double,6> frequencies{};
-        for(std::size_t i=0;i<frequencies.size();++i) frequencies[i]=frequency(chords[chord][i]);
-        const double melody=frequency(motif[chord]);
-        const int start=int(chord)*chord_frames;
-        for(int offset=-overlap;offset<chord_frames+overlap;++offset){
-            const int frame=start+offset;
-            const double t=static_cast<double>(frame)/rate;
-            const float local=float(offset)/rate;
-            const float weight=attack(local+1.5f,3.0f)*(1.0f-attack(local-5.5f,3.0f));
-            const float drift=oscillator(0.071*t+0.17*chord);
-            auto& sample=dry[(frame+frame_count)%frame_count];
-            float center{},spread{};
-            for(std::size_t i=0;i<frequencies.size();++i){
-                const double phase=frequencies[i]*t;
-                center+=levels[i]*(.79f*oscillator(phase)+
-                    (.15f+.05f*drift)*oscillator(2*phase+0.08*drift)+.045f*oscillator(3*phase+0.13));
-                if(i>0)
-                    spread+=levels[i]*.28f*oscillator(phase*1.0012+0.24*i+0.055*drift);
+    auto& pool=eng::TaskPool::shared();
+    // Each job owns its samples, including the portions that wrap at the seam.
+    // Mix chords in their original order within each range.
+    pool.parallel_for_ranges(dry.size(),8192,[&](std::size_t first,std::size_t last){
+        for(std::size_t chord=0;chord<chords.size();++chord){
+            std::array<double,6> frequencies{};
+            for(std::size_t i=0;i<frequencies.size();++i) frequencies[i]=frequency(chords[chord][i]);
+            const double melody=frequency(motif[chord]);
+            const int start=int(chord)*chord_frames;
+            const auto add_sample=[&](std::array<float,2>& sample,int frame){
+                const double t=static_cast<double>(frame)/rate;
+                const float local=float(frame-start)/rate;
+                const float weight=attack(local+1.5f,3.0f)*(1.0f-attack(local-5.5f,3.0f));
+                const float drift=oscillator(0.071*t+0.17*chord);
+                float center{},spread{};
+                for(std::size_t i=0;i<frequencies.size();++i){
+                    const double phase=frequencies[i]*t;
+                    center+=levels[i]*(.79f*oscillator(phase)+
+                        (.15f+.05f*drift)*oscillator(2*phase+0.08*drift)+.045f*oscillator(3*phase+0.13));
+                    if(i>0)
+                        spread+=levels[i]*.28f*oscillator(phase*1.0012+0.24*i+0.055*drift);
+                }
+                const float note_time=local-1.65f;
+                const float note_weight=attack(note_time,1.25f)*fall(note_time,.52f)*
+                    (1.0f-attack(local-5.1f,1.65f));
+                const float air=note_weight*(.10f*oscillator(melody*t)+.036f*oscillator(melody*t*2.0+0.1));
+                sample[0]+=weight*(center+spread)+air;
+                sample[1]+=weight*(center-spread)+air*.83f;
+            };
+            for(int loop:{-frame_count,0,frame_count}){
+                const int begin=std::max(int(first),start-overlap-loop);
+                const int end=std::min(int(last),start+chord_frames+overlap-loop);
+                for(int i=begin;i<end;++i) add_sample(dry[i],i+loop);
             }
-            const float note_time=local-1.65f;
-            const float note_weight=attack(note_time,1.25f)*fall(note_time,.52f)*
-                (1.0f-attack(local-5.1f,1.65f));
-            const float air=note_weight*(.10f*oscillator(melody*t)+.036f*oscillator(melody*t*2.0+0.1));
-            sample[0]+=weight*(center+spread)+air;
-            sample[1]+=weight*(center-spread)+air*.83f;
         }
-    }
+    });
 
     // Circular cross-channel delays give the pad depth without a seam.
     std::vector<std::int16_t> pcm(static_cast<std::size_t>(frame_count)*2);
-    for(int i=0;i<frame_count;++i){
-        const auto& early=dry[(i+frame_count-rate*231/1000)%frame_count];
-        const auto& late=dry[(i+frame_count-rate*593/1000)%frame_count];
-        const auto& tail=dry[(i+frame_count-rate*971/1000)%frame_count];
-        for(std::size_t channel=0;channel<2;++channel){
-            const float mixed=dry[i][channel]+.21f*early[1-channel]+.15f*late[channel]+.09f*tail[1-channel];
-            pcm[std::size_t(i)*2+channel]=static_cast<std::int16_t>(std::lround(24576.f*std::tanh(1.40f*mixed)));
+    pool.parallel_for_ranges(dry.size(),8192,[&](std::size_t first,std::size_t last){
+        for(std::size_t i=first;i<last;++i){
+            const auto& early=dry[(i+frame_count-rate*231/1000)%frame_count];
+            const auto& late=dry[(i+frame_count-rate*593/1000)%frame_count];
+            const auto& tail=dry[(i+frame_count-rate*971/1000)%frame_count];
+            for(std::size_t channel=0;channel<2;++channel){
+                const float mixed=dry[i][channel]+.21f*early[1-channel]+.15f*late[channel]+.09f*tail[1-channel];
+                pcm[i*2+channel]=static_cast<std::int16_t>(std::lround(24576.f*std::tanh(1.40f*mixed)));
+            }
         }
-    }
+    });
     return pcm;
 }
 

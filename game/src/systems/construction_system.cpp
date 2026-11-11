@@ -169,6 +169,7 @@ void GameApp::toggle_construction_priority(const ConstructionTargetRef& t){
     astronaut_schedule_seconds_=0.f;
 }
 bool GameApp::construction_ready_connection(const ConstructionTargetRef& t) const {
+    if(t.kind!=ConstructionTargetKind::Corridor && t.kind!=ConstructionTargetKind::Utility) return false;
     if(construction_target_complete(t) || !construction_target_dependencies_ready(t))return false;
     // Open-ended segments are not connections between completed structures.
     if(t.kind==ConstructionTargetKind::Corridor && t.index<corridor_network_.connections().size()){

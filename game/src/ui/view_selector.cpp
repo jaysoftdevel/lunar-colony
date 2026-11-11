@@ -18,12 +18,12 @@ using namespace world_labels;
 void GameApp::render_view_selector(Renderer& r,float y,float logical_w){
     constexpr float margin=10.0f;
     constexpr float gap=5.0f;
-    constexpr float default_w=74.0f;
-    constexpr float full_w=58.0f;
+    constexpr float full_w=82.0f;
+    constexpr float none_w=50.0f;
     constexpr float button_h=31.0f;
     constexpr float speed_group_w=176.0f;
     constexpr float between_groups=12.0f;
-    const float view_group_w=default_w+full_w+gap;
+    const float view_group_w=full_w+none_w+gap;
     const float total_w=speed_group_w+between_groups+view_group_w;
     const float x=logical_w-total_w-margin;
     const float by=y+35.0f;
@@ -65,11 +65,11 @@ void GameApp::render_view_selector(Renderer& r,float y,float logical_w){
     game_label(r,{speed_box.x+(speed_box.w-sw)*0.5f,speed_box.y+7.0f},speed_label,0.42f,theme_);
 
     const float view_x=x+speed_group_w+between_groups;
-    game_label(r,{view_x,y+6.0f},"VIEW",0.48f,theme_,true);
+    game_label(r,{view_x,y+6.0f},"HULL",0.48f,theme_,true);
     struct ViewButton { HabitatViewMode mode; const char* label; float width; };
     const ViewButton buttons[]={
-        {HabitatViewMode::Default,"DEFAULT",default_w},
-        {HabitatViewMode::Full,"FULL",full_w}
+        {HabitatViewMode::FullHull,"FULL HULL",full_w},
+        {HabitatViewMode::None,"NONE",none_w}
     };
 
     float bx=view_x;

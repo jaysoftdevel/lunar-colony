@@ -42,7 +42,6 @@ double load_kw(const PlacedHabitat& h){
         default:return 0.3;
     }
 }
-double path_length(const std::vector<eng::Vec3>& path){double n=0;for(std::size_t i=1;i<path.size();++i)n+=eng::length(path[i]-path[i-1]);return n;}
 double hydroponics_power_kw(const PlacedHabitat& h,bool light_phase){
     if(h.kind!=HabitatKind::BioDome || !light_phase) return 0.0;
     double total=0.0;
@@ -86,14 +85,11 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
     };
 
     std::vector<SupplyState*> nodes;
-    std::vector<eng::Vec3> positions;
-    std::vector<double> runs,initial_oxygen;
+    std::vector<double> initial_oxygen;
     const auto node_count=topology.node_components.size();
     nodes.reserve(node_count);
-    positions.reserve(node_count);
-    runs.reserve(node_count);
     initial_oxygen.reserve(node_count);
-    const auto add_node=[&](SupplyState& s,eng::Vec3 p,double volume,double run){
+    const auto add_node=[&](SupplyState& s,double volume){
         s.volume_m3=volume;s.warnings=0;s.power_fraction=0;
         s.oxygen_kg=std::clamp(s.oxygen_kg,0.0,volume*kOxygenKgPerM3);
         s.oxygen_produced_kg_per_day=0;s.water_processed_litres_per_day=0;
@@ -101,7 +97,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
         s.hydrogen_consumed_kg_per_day=0;s.hydrogen_power_kw=0;
         s.oxygen_net_kg_per_day=0;s.air_change_percentage_points_per_day=0;
         s.power_demand_kw=0;s.water_demand_litres_per_day=0;s.oxygen_demand_kg_per_day=0;
-        nodes.push_back(&s);positions.push_back(p);runs.push_back(run);initial_oxygen.push_back(s.oxygen_kg);
+        nodes.push_back(&s);initial_oxygen.push_back(s.oxygen_kg);
     };
     for(std::size_t i=0;i<placed_habitats_.size();++i){
         auto& h=placed_habitats_[i];
@@ -112,7 +108,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             // Interior envelope reduced for the shell, equipment and curved roof.
             volume=m.footprint_x*m.footprint_z*std::max(0.0f,m.height-m.walkable_floor_y)*0.65;
         }
-        add_node(h.supply,h.position,volume,0);
+        add_node(h.supply,volume);
         if(complete){
             if(h.kind==HabitatKind::OxygenGeneratorDome)
                 h.supply.hydrogen_kg=std::clamp(h.supply.hydrogen_kg,0.0,hydrogen_buffer_capacity(h));
@@ -147,7 +143,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             const auto& m=resource_models_.mesh(r);
             volume=m.footprint_x*m.footprint_z*std::max(0.0f,m.height-m.walkable_floor_y)*0.65;
         }
-        add_node(r.supply,r.position,volume,0);
+        add_node(r.supply,volume);
         if(!complete)continue;
         // A standalone battery/tank/solar plant is its own component, never a global pool.
         const auto key=services.resources[i].connected?services.resources[i].component:nodes.size()+1000000;
@@ -184,13 +180,13 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
     }
     for(auto& u:utility_network_.mutable_connections()){
         const bool active=u.kind==UtilityKind::SupplyChannel && u.construction.complete();
-        const double len=active?path_length(u.path):0.0;
-        add_node(u.supply,u.path.empty()?eng::Vec3{}:u.path[u.path.size()/2],active?std::max(0.02,len*0.005):0.0,len);
+        const double len=topology.run_lengths[nodes.size()];
+        add_node(u.supply,active?std::max(0.02,len*0.005):0.0);
     }
     for(auto& c:corridor_network_.mutable_connections()){
         const bool complete=c.construction.complete();
-        const double len=complete?path_length(c.path):0.0;
-        add_node(c.supply,c.path.empty()?eng::Vec3{}:c.path[c.path.size()/2],complete?std::max(0.1,len*4.0):0.0,len);
+        const double len=topology.run_lengths[nodes.size()];
+        add_node(c.supply,complete?std::max(0.1,len*4.0):0.0);
     }
     double initial_energy=0,initial_water=0,consumed_water=0,demanded_energy=0,supplied_energy=0;
     for(const auto& r:placed_resources_)if(r.construction.complete()){
@@ -551,17 +547,13 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
                 if(a>=nodes.size() || b>=nodes.size() || nodes[a]->volume_m3<=0 || nodes[b]->volume_m3<=0)continue;
                 const double difference=nodes[a]->breathability()/100.0-nodes[b]->breathability()/100.0;
                 const std::size_t from=difference>=0?a:b,to=difference>=0?b:a;
-                const double route=std::max((double)eng::length(positions[a]-positions[b]),(runs[a]+runs[b])*0.5);
+                const double route=topology.air_link_lengths[i];
                 flux={from,to,std::abs(difference)*12.0*hours/(1.0+route/10.0)};
             }
         };
-        constexpr std::size_t links_per_job=128;
-        if(fluxes.size()>=4*links_per_job){
-            eng::TaskPool::shared().parallel_for((fluxes.size()+links_per_job-1)/links_per_job,[&](std::size_t job){
-                const auto first=job*links_per_job;
-                measure_fluxes(first,std::min(fluxes.size(),first+links_per_job));
-            });
-        }else measure_fluxes(0,fluxes.size());
+        if(fluxes.size()>=512)
+            eng::TaskPool::shared().parallel_for_ranges(fluxes.size(),64,measure_fluxes);
+        else measure_fluxes(0,fluxes.size());
         // Keep the accumulation in topology order for identical transfers
         // and donor limits across different worker counts.
         out.assign(node_count,0.0);

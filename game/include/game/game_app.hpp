@@ -84,7 +84,7 @@ private:
     // The selected mode is saved independently from the top-level game phase.
     enum class NewGameMode : std::uint8_t { Career = 0, FreePlay = 1 };
     enum class Stage3Mode : std::uint8_t { Sandbox, Template, AstronautTest };
-    enum class HabitatViewMode { Default, Full };
+    enum class HabitatViewMode { FullHull=0, None=1 };
     enum class WorldLayoutMode { FullGraphics, Mesh };
     enum class GameSpeed { Normal = 0, Quick, Fast, Pause };
     enum class FirstPersonMode { Off, DropPending, Active };
@@ -264,7 +264,7 @@ private:
     // cursor and validated before a gate blueprint is created.
     bool storage_gate_placement_active_{false};
     std::size_t storage_gate_placement_owner_{std::numeric_limits<std::size_t>::max()};
-    HabitatViewMode habitat_view_mode_=HabitatViewMode::Default;
+    HabitatViewMode habitat_view_mode_=HabitatViewMode::FullHull;
     GameSpeed game_speed_=GameSpeed::Normal;
     std::uint8_t last_running_speed_{1};
     SelectionKind selection_kind_=SelectionKind::None;
@@ -537,6 +537,7 @@ private:
     eng::Vec3 construction_target_position(const ConstructionTargetRef& target) const;
     eng::Vec3 construction_drop_position(const ConstructionTargetRef& target) const;
     eng::Vec3 construction_drop_package_position(const ConstructionTargetRef& target,int visual_slot) const;
+    eng::Vec3 construction_drop_package_position(const ConstructionTargetRef& target,int visual_slot,int stage) const;
     bool construction_target_complete(const ConstructionTargetRef& target) const;
     bool construction_target_dependencies_ready(const ConstructionTargetRef& target) const;
     const ConstructionResourcePlan* construction_target_plan(const ConstructionTargetRef& target) const;

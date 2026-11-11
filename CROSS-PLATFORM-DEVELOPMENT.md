@@ -11,7 +11,7 @@ Gameplay, simulation, construction, navigation/RVO2, save/load, UI logic and tes
 
 ## Mirrored commands
 
-The shell and batch commands build the two variants from the same sources. Release includes the campaign and playable stages. Debug also enables the developer frame, layout switch, robot orders, template starts, and Stage 3 scenarios. Both executables share their platform's `bin/savegames` folder. Stage 3 test saves open in Debug.
+The shell and batch commands build the two variants from the same sources. Release includes the campaign and playable stages. Debug also enables the developer frame, layout switch, robot orders, template starts, and Stage 3 scenarios. Both executables share the workspace's `savegames/` folder. Stage 3 test saves open in Debug.
 
 | Action | Linux | Windows |
 |---|---|---|
@@ -33,9 +33,9 @@ Linux builds in `build/linux/Release` and `build/linux/Debug`. Windows uses the 
 |---|---|---|
 | Executables | `build/linux/bin` | `build/windows/bin` |
 | OpenAL Soft | `bin/lib/libopenal.so.1` when installed | `bin/OpenAL32.dll` from `install-deps.bat` |
-| Scenario template for Debug | `bin/debug/0-40-32-debug-start.gmsave` | `bin/debug/0-40-32-debug-start.gmsave` |
+| Scenario template for Debug | `build/linux/bin/debug/0-54-0-debug-start.gmsave` | `build/windows/bin/debug/0-54-0-debug-start.gmsave` |
 | Optional Agility runtime | — | `bin/D3D12` |
-| Player saves | `bin/savegames` | `bin/savegames` |
+| Player saves | `savegames/` at the workspace root | `savegames/` at the workspace root |
 
 The game can run from its platform's `bin` directory without the source tree. Keep its runtime subdirectories with the executables. The host still provides its graphics driver, window system, and OS libraries. Graphics preferences use the user's existing configuration directory.
 
@@ -56,4 +56,4 @@ When changing shared gameplay behavior, run `test.sh`/`test.bat` on both hosts b
 
 ## Save compatibility
 
-Both platforms retain the same `.gmsave` format and executable-relative `savegames` layout. Do not introduce native path separators into serialized save data; normalize runtime paths only at the platform/file-system boundary.
+Both platforms use the same `.gmsave` format. Schema 48 stores connection layouts and rebuilds corridor, supply-channel, conveyor and walkway meshes on load. Older schemas remain readable. A standalone installation without the source tree uses `savegames/` beside its executables.

@@ -122,7 +122,7 @@ baseline remains untouched, Stage-3 full-base start unchanged. Save schema 29.
 ## Verification and packaging
 
 - Optional headless regressions: configure with `-DGAME_BUILD_NAVIGATION_TESTS=ON`, then use CTest. They cover swept fleet separation, smooth open travel, obstacle corners, changed scenes, occupied service points, opposing traffic, single-lane yielding, rotations/size tiers, storage ports, interior headroom and construction logistics.
-- Update archive: `game-update-vX.Y.Z.zip` containing one `game-update-vX.Y.Z/` directory with `update.patch`, `apply.sh`, `apply.bat` and `update-summary.txt`. Installers print the full changed-file summary and do not build. Clean builds preserve existing executable-adjacent savegames, including on build failure.
+- Update archive: `game-update-vX.Y.Z.zip` containing one `game-update-vX.Y.Z/` directory with `update.patch`, `apply.sh`, `apply.bat` and `update-summary.txt`. Installers print the full changed-file summary and leave building to the user. Clean builds preserve the workspace-root `savegames/` directory.
 - v0.40.47 remains the historical logistics/build baseline. For current locomotion and access behavior, this document supersedes older version notes in `ARCHITECTURE.md`.
 
 ## v0.41.6 storage handling and pressure doors

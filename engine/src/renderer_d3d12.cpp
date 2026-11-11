@@ -1,9 +1,10 @@
 #include "engine/engine.hpp"
 #include "engine/ui_metrics.hpp"
-#include "engine/ui_font.hpp"
 #include "renderer_d3d12_shaders.hpp"
 #include "surface_field_shaders.hpp"
+#include "lunar_bounds.hpp"
 #include "lunar_light_fader.hpp"
+#include "ui_batch.hpp"
 
 #ifndef _WIN32
 #error renderer_d3d12.cpp is Windows-only
@@ -29,6 +30,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -156,12 +158,17 @@ ComPtr<ID3DBlob> compile_shader(const char* source,const char* entry,const char*
 }
 
 constexpr const char* kBasicShader=R"HLSL(
-struct VSOut { float4 position : SV_POSITION; };
+struct VSOut {
+    float4 position : SV_POSITION;
+    float3 coordinate : TEXCOORD0;
+};
 
 VSOut VSMain(float3 position : POSITION)
 {
     VSOut o;
     o.position = clip_position(position);
+    float4 p=float4(position,1.0);
+    o.coordinate=float3(dot(p,gSurfaceAxes[0]),dot(p,gSurfaceAxes[1]),dot(p,gSurfaceAxes[2]));
     return o;
 }
 
@@ -178,16 +185,22 @@ void GSLine(line VSOut inputLine[2], inout TriangleStream<VSOut> stream)
     float2 offsetNdc = perp * max(gLineWidth,1.0) / max(gViewport,float2(1.0,1.0));
 
     VSOut v;
-    v.position = inputLine[0].position; v.position.xy += offsetNdc * wa; stream.Append(v);
-    v.position = inputLine[0].position; v.position.xy -= offsetNdc * wa; stream.Append(v);
-    v.position = inputLine[1].position; v.position.xy += offsetNdc * wb; stream.Append(v);
-    v.position = inputLine[1].position; v.position.xy -= offsetNdc * wb; stream.Append(v);
+    v = inputLine[0]; v.position.xy += offsetNdc * wa; stream.Append(v);
+    v = inputLine[0]; v.position.xy -= offsetNdc * wa; stream.Append(v);
+    v = inputLine[1]; v.position.xy += offsetNdc * wb; stream.Append(v);
+    v = inputLine[1]; v.position.xy -= offsetNdc * wb; stream.Append(v);
     stream.RestartStrip();
 }
 
 float4 PSMain(VSOut input) : SV_TARGET
 {
-    return gColor;
+    if(gMaterial<0.0) return gColor;
+    float3 dx=ddx(input.coordinate),dy=ddy(input.coordinate);
+    float3 normal=cross(dx,dy);
+    normal*=rsqrt(max(dot(normal,normal),1e-20));
+    // Regolith is LunarMaterial's terrain value.
+    float tone=basicSurfaceTone(input.coordinate,normal,gMaterial,gMaterial==2.0,max(length(dx),length(dy)));
+    return float4(saturate(gColor.rgb*tone*basicSurfaceLight(normal)),gColor.a);
 }
 
 float4 PSLinear(VSOut input) : SV_TARGET
@@ -198,6 +211,11 @@ float4 PSLinear(VSOut input) : SV_TARGET
 
 constexpr D3D12_INPUT_ELEMENT_DESC kPositionInput{
     "POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0
+};
+constexpr D3D12_INPUT_ELEMENT_DESC kUiInput[]{
+    {"POSITION",0,DXGI_FORMAT_R32G32_FLOAT,0,0,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+    {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,offsetof(ui::Vertex,uv),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+    {"COLOR",0,DXGI_FORMAT_R8G8B8A8_UNORM,0,offsetof(ui::Vertex,color),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}
 };
 
 D3D12_BLEND_DESC blend_desc(){
@@ -289,31 +307,41 @@ D3D12_RESOURCE_DESC target_desc(int width,int height,DXGI_FORMAT format,D3D12_RE
 std::vector<Vec3> lunar_horizon(float half,int relief){
     constexpr std::array offsets{0.0f,32.0f,72.0f,128.0f,210.0f,340.0f,540.0f,810.0f,1150.0f,1700.0f};
     const int segments=relief?quality_budget(relief,12,20,32):4;
-    std::vector<Vec3> previous(4*segments),current(4*segments);
-    std::vector<Vec3> terrain;
-    terrain.reserve((offsets.size()-1)*current.size()*6);
-    for(float offset:offsets){
-        const float radius=half+offset;
-        const float relief_scale=relief?std::clamp(offset/280.0f,0.0f,1.0f):0.0f;
-        for(int step=0;step<segments;++step){
-            const float edge=radius*(2.0f*step/segments-1.0f);
-            current[step]={edge,0,-radius};
-            current[step+segments]={radius,0,edge};
-            current[step+2*segments]={-edge,0,radius};
-            current[step+3*segments]={-radius,0,-edge};
-        }
-        for(auto& p:current){
-            const float hills=std::sin(p.x*0.008f)*std::cos(p.z*0.008f);
-            const float ridges=std::sin(p.x*0.020f+p.z*0.012f)*std::cos(p.z*0.017f);
-            p.y=relief_scale*(22.0f*hills+5.0f*ridges+10.0f);
-        }
-        if(offset>0.0f){
-            for(std::size_t i=0;i<current.size();++i){
-                const std::size_t j=(i+1)%current.size();
-                terrain.insert(terrain.end(),{previous[i],current[j],current[i],previous[i],previous[j],current[j]});
+    const std::size_t ring_size=4*segments;
+    std::vector<Vec3> rings(offsets.size()*ring_size);
+    const auto sample=[&](std::size_t first,std::size_t last){
+        for(std::size_t ring=first;ring<last;++ring){
+            const float offset=offsets[ring];
+            const float radius=half+offset;
+            const float relief_scale=relief?std::clamp(offset/280.0f,0.0f,1.0f):0.0f;
+            auto* current=rings.data()+ring*ring_size;
+            for(int step=0;step<segments;++step){
+                const float edge=radius*(2.0f*step/segments-1.0f);
+                current[step]={edge,0,-radius};
+                current[step+segments]={radius,0,edge};
+                current[step+2*segments]={-edge,0,radius};
+                current[step+3*segments]={-radius,0,-edge};
+            }
+            for(std::size_t i=0;i<ring_size;++i){
+                auto& p=current[i];
+                const float hills=std::sin(p.x*0.008f)*std::cos(p.z*0.008f);
+                const float ridges=std::sin(p.x*0.020f+p.z*0.012f)*std::cos(p.z*0.017f);
+                p.y=relief_scale*(22.0f*hills+5.0f*ridges+10.0f);
             }
         }
-        previous=current;
+    };
+    if(relief>=2) TaskPool::shared().parallel_for_ranges(offsets.size(),1,sample);
+    else sample(0,offsets.size());
+
+    std::vector<Vec3> terrain;
+    terrain.reserve((offsets.size()-1)*ring_size*6);
+    for(std::size_t ring=1;ring<offsets.size();++ring){
+        const auto* previous=rings.data()+(ring-1)*ring_size;
+        const auto* current=previous+ring_size;
+        for(std::size_t i=0;i<ring_size;++i){
+            const std::size_t j=(i+1)%ring_size;
+            terrain.insert(terrain.end(),{previous[i],current[j],current[i],previous[i],previous[j],current[j]});
+        }
     }
     return terrain;
 }
@@ -328,6 +356,12 @@ class D3D12Renderer final : public Renderer {
     int pending_height_{};
     bool depth_enabled_{true};
     Mat4 mvp_{Mat4::identity()};
+    lunar::ClipVolume lunar_clip_{Mat4::identity()};
+    float ui_scale_{1.0f};
+    ui::Batch ui_batch_;
+    ComPtr<ID3D12RootSignature> ui_signature_{};
+    ComPtr<ID3D12PipelineState> ui_pipeline_{};
+    ComPtr<ID3D12Resource> ui_atlas_{};
 
     ComPtr<IDXGIFactory6> factory_{};
     ComPtr<IDXGIAdapter1> adapter_{};
@@ -350,6 +384,10 @@ class D3D12Renderer final : public Renderer {
     bool frame_open_{false};
     bool tearing_supported_{false};
     bool upload_overflow_reported_{false};
+    ID3D12RootSignature* current_signature_{};
+    ID3D12PipelineState* current_pipeline_{};
+    D3D_PRIMITIVE_TOPOLOGY current_topology_{D3D_PRIMITIVE_TOPOLOGY_UNDEFINED};
+    bool scene_constants_bound_{};
 
     GraphicsSettings graphics_=graphics_settings_from_environment();
     bool enhanced_barriers_{};
@@ -645,7 +683,8 @@ class D3D12Renderer final : public Renderer {
     }
 
     bool create_pipeline(ID3D12RootSignature* signature,ID3DBlob* vs,ID3DBlob* ps,ID3DBlob* gs,
-                         DXGI_FORMAT format,bool depth,bool mesh,ComPtr<ID3D12PipelineState>& out){
+                         DXGI_FORMAT format,bool depth,bool mesh,ComPtr<ID3D12PipelineState>& out,
+                         D3D12_INPUT_LAYOUT_DESC input={}){
         D3D12_GRAPHICS_PIPELINE_STATE_DESC p{};
         p.pRootSignature=signature;
         p.VS={vs->GetBufferPointer(),vs->GetBufferSize()};
@@ -656,7 +695,7 @@ class D3D12Renderer final : public Renderer {
         p.SampleMask=UINT_MAX;
         p.RasterizerState=raster_desc();
         p.DepthStencilState=depth_desc(depth);
-        if(mesh) p.InputLayout={&kPositionInput,1};
+        if(mesh) p.InputLayout=input.pInputElementDescs?input:D3D12_INPUT_LAYOUT_DESC{&kPositionInput,1};
         p.PrimitiveTopologyType=gs?D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE:D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         p.NumRenderTargets=1;
         p.RTVFormats[0]=format;
@@ -665,6 +704,39 @@ class D3D12Renderer final : public Renderer {
         const HRESULT hr=device_->CreateGraphicsPipelineState(&p,IID_PPV_ARGS(&out));
         if(FAILED(hr)) log_hresult("CreateGraphicsPipelineState",hr);
         return SUCCEEDED(hr);
+    }
+
+    bool create_ui_pipeline(){
+        D3D12_ROOT_PARAMETER roots[2]{};
+        roots[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        roots[0].Constants.Num32BitValues=16;
+        roots[0].ShaderVisibility=D3D12_SHADER_VISIBILITY_VERTEX;
+        roots[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;
+        roots[1].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_ROOT_SIGNATURE_DESC signature{};
+        signature.NumParameters=2;
+        signature.pParameters=roots;
+        signature.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+        if(!create_signature(signature,ui_signature_)) return false;
+
+        auto vs=compile_shader(d3d12_shaders::ui,"VSMain","vs_5_1");
+        auto ps=compile_shader(d3d12_shaders::ui,"PSMain","ps_5_1");
+        ComPtr<ID3D12PipelineState> pipeline;
+        if(!vs || !ps || !create_pipeline(ui_signature_.Get(),vs.Get(),ps.Get(),nullptr,kBackBufferFormat,false,true,
+                                          pipeline,{kUiInput,static_cast<UINT>(std::size(kUiInput))})) return false;
+
+        const auto& pixels=ui::font_atlas();
+        const auto heap=heap_props(D3D12_HEAP_TYPE_UPLOAD);
+        const auto desc=buffer_desc(pixels.size());
+        if(FAILED(device_->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                   nullptr,IID_PPV_ARGS(&ui_atlas_)))) return false;
+        void* mapped{};
+        const D3D12_RANGE read_range{0,0};
+        if(FAILED(ui_atlas_->Map(0,&read_range,&mapped))) return false;
+        std::memcpy(mapped,pixels.data(),pixels.size());
+        ui_atlas_->Unmap(0,nullptr);
+        ui_pipeline_=std::move(pipeline);
+        return true;
     }
 
     bool create_root_signature_and_psos(){
@@ -681,7 +753,8 @@ class D3D12Renderer final : public Renderer {
         rs.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         if(!create_signature(rs,root_signature_)) return false;
 
-        const std::string basic=std::string(d3d12_shaders::draw_constants)+kBasicShader;
+        const std::string basic=std::string(d3d12_shaders::draw_constants)+surface_shaders::hlsl_types+
+            surface_shaders::fields+surface_shaders::basic_material+kBasicShader;
         auto vs=compile_shader(basic.c_str(),"VSMain","vs_5_1");
         auto gs=compile_shader(basic.c_str(),"GSLine","gs_5_1");
         auto ps=compile_shader(basic.c_str(),"PSMain","ps_5_1");
@@ -693,9 +766,10 @@ class D3D12Renderer final : public Renderer {
         };
         if(!classic(false,true,triangles_depth_) || !classic(false,false,triangles_no_depth_) ||
            !classic(true,true,lines_depth_) || !classic(true,false,lines_no_depth_)) return false;
+        if(!create_ui_pipeline()) std::cerr<<"Font atlas unavailable; using the bitmap HUD.\n";
 
         const bool lunar=create_lunar_pipeline(basic,vs.Get(),gs.Get()) && create_lunar_targets();
-        std::cout<<"D3D12 lunar rendering: "<<(lunar?"FP16 lighting and post-processing":"classic meshes")
+        std::cout<<"D3D12 lunar rendering: "<<(lunar?"FP16 lighting and post-processing":"classic textures")
                  <<" | barriers: "<<(enhanced_barriers_?"enhanced":"legacy")
                  <<" | terrain VRS: "<<(variable_rate_shading_?"available":"unavailable")<<"\n";
         return true;
@@ -711,7 +785,7 @@ class D3D12Renderer final : public Renderer {
            (static_cast<UINT>(format.Support1)&needed)!=needed) return false;
 
         const std::string lunar=std::string(d3d12_shaders::draw_constants)+surface_shaders::hlsl_types+
-            surface_shaders::fields+d3d12_shaders::lunar;
+            surface_shaders::fields+surface_shaders::basic_material+d3d12_shaders::lunar;
         auto lunar_vs=compile_shader(lunar.c_str(),"VSLunar","vs_5_1");
         auto lunar_ps=compile_shader(lunar.c_str(),"PSLunar","ps_5_1");
         auto linear_ps=compile_shader(basic.c_str(),"PSLinear","ps_5_1");
@@ -853,10 +927,43 @@ class D3D12Renderer final : public Renderer {
         return frame.upload->GetGPUVirtualAddress()+aligned;
     }
 
+    void bind_pipeline(ID3D12RootSignature* signature,ID3D12PipelineState* pipeline,D3D_PRIMITIVE_TOPOLOGY topology){
+        if(signature!=current_signature_){
+            command_list_->SetGraphicsRootSignature(signature);
+            current_signature_=signature;
+            scene_constants_bound_=false;
+        }
+        if(pipeline!=current_pipeline_){
+            command_list_->SetPipelineState(pipeline);
+            current_pipeline_=pipeline;
+        }
+        if(topology!=current_topology_){
+            command_list_->IASetPrimitiveTopology(topology);
+            current_topology_=topology;
+        }
+    }
+
+    void flush_ui(){
+        auto& vertices=ui_batch_.vertices;
+        if(vertices.empty()) return;
+        const auto bytes=vertices.size()*sizeof(ui::Vertex);
+        const auto address=upload(vertices.data(),bytes,16);
+        if(address){
+            const D3D12_VERTEX_BUFFER_VIEW vb{address,static_cast<UINT>(bytes),sizeof(ui::Vertex)};
+            bind_pipeline(ui_signature_.Get(),ui_pipeline_.Get(),D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            command_list_->SetGraphicsRoot32BitConstants(0,16,mvp_.m.data(),0);
+            command_list_->SetGraphicsRootShaderResourceView(1,ui_atlas_->GetGPUVirtualAddress());
+            command_list_->IASetVertexBuffers(0,1,&vb);
+            command_list_->DrawInstanced(static_cast<UINT>(vertices.size()),1,0,0);
+        }
+        vertices.clear();
+    }
+
     void draw(const void* data,std::size_t vertices,bool lines,Color c,float width,
-              LunarMaterial material=LunarMaterial::Paint,bool coarse=false,
+              std::optional<LunarMaterial> material=std::nullopt,bool coarse=false,
               const LunarSurfaceMapping& mapping={}){
         if(!frame_open_ || vertices==0) return;
+        flush_ui();
         constexpr UINT stride=3u*sizeof(float);
         const auto bytes=vertices*stride;
         const auto address=upload(data,bytes,16u);
@@ -868,9 +975,11 @@ class D3D12Renderer final : public Renderer {
         else if(lines) pso=depth_enabled_?lines_depth_.Get():lines_no_depth_.Get();
         else pso=depth_enabled_?triangles_depth_.Get():triangles_no_depth_.Get();
         set_coarse_shading(coarse);
-        command_list_->SetPipelineState(pso);
-        command_list_->SetGraphicsRootSignature(root_signature_.Get());
-        if(lunar_active_ && !lines) command_list_->SetGraphicsRootConstantBufferView(1,scene_constants_);
+        bind_pipeline(root_signature_.Get(),pso,lines?D3D_PRIMITIVE_TOPOLOGY_LINELIST:D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        if(lunar_active_ && !lines && !scene_constants_bound_){
+            command_list_->SetGraphicsRootConstantBufferView(1,scene_constants_);
+            scene_constants_bound_=true;
+        }
 
         DrawConstants constants{};
         std::memcpy(constants.mvp,mvp_.m.data(),sizeof(constants.mvp));
@@ -878,7 +987,7 @@ class D3D12Renderer final : public Renderer {
         constants.viewport[0]=static_cast<float>(lunar_active_?lunar_width_:width_);
         constants.viewport[1]=static_cast<float>(lunar_active_?lunar_height_:height_);
         constants.line_width=std::max(1.0f,width);
-        constants.material=static_cast<float>(material);
+        constants.material=lunar_active_ || material?static_cast<float>(material.value_or(LunarMaterial::Paint)):-1.0f;
         const Vec3 axes[]{mapping.x,mapping.y,mapping.z};
         for(std::size_t i=0;i<3;++i){
             constants.surface_axes[i][0]=axes[i].x;
@@ -888,7 +997,6 @@ class D3D12Renderer final : public Renderer {
         }
         command_list_->SetGraphicsRoot32BitConstants(0,sizeof(constants)/sizeof(UINT),&constants,0);
         command_list_->IASetVertexBuffers(0,1,&vb);
-        command_list_->IASetPrimitiveTopology(lines?D3D_PRIMITIVE_TOPOLOGY_LINELIST:D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         command_list_->DrawInstanced(static_cast<UINT>(vertices),1,0,0);
     }
 
@@ -930,6 +1038,10 @@ class D3D12Renderer final : public Renderer {
         set_viewport(width_,height_);
         command_list_->SetPipelineState(composite_pso_.Get());
         command_list_->DrawInstanced(3,1,0,0);
+        current_signature_=nullptr;
+        current_pipeline_=nullptr;
+        current_topology_=D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+        scene_constants_bound_=false;
 
         // Both textures begin and end in RT layout. One set of targets can
         // serve all swap-chain frames on the same direct queue.
@@ -998,6 +1110,10 @@ public:
         HRESULT hr=frame.allocator->Reset();
         if(SUCCEEDED(hr)) hr=command_list_->Reset(frame.allocator.Get(),nullptr);
         if(FAILED(hr)){ log_hresult("Reset D3D12 frame",hr); return; }
+        current_signature_=nullptr;
+        current_pipeline_=nullptr;
+        current_topology_=D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+        scene_constants_bound_=false;
         coarse_shading_=false;
         transition(render_targets_[frame_index_].Get(),TextureUse::Present,TextureUse::RenderTarget);
 
@@ -1010,12 +1126,14 @@ public:
 
         set_viewport(width_,height_);
         depth_enabled_=true;
+        ui_batch_.vertices.clear();
         frame_open_=true;
     }
 
     void end_frame() override {
         if(!frame_open_) return;
         finish_lunar_scene();
+        flush_ui();
         transition(render_targets_[frame_index_].Get(),TextureUse::RenderTarget,TextureUse::Present);
         if(FAILED(command_list_->Close())){ frame_open_=false; return; }
         ID3D12CommandList* lists[]{command_list_.Get()};
@@ -1050,13 +1168,17 @@ public:
     }
 
     void set_3d(const Mat4& view_proj) override {
+        flush_ui();
         finish_lunar_scene();
         mvp_=view_proj;
         depth_enabled_=true;
     }
     void set_2d(float scale=1.0f) override {
-        finish_lunar_scene();
         scale=std::max(0.01f,scale);
+        if(!depth_enabled_ && scale==ui_scale_) return;
+        flush_ui();
+        finish_lunar_scene();
+        ui_scale_=scale;
         mvp_=ortho(0,(float)width_/scale,(float)height_/scale,0,-1,1);
         depth_enabled_=false;
     }
@@ -1081,6 +1203,7 @@ public:
     bool begin_lunar_scene(const LunarScene& scene) override {
         if(!frame_open_ || lunar_active_ || !lunar_target_ || (graphics_.bloom>0 && !bloom_target_) ||
            graphics_.path==GraphicsPath::Classic) return false;
+        flush_ui();
 
         SceneConstants constants{};
         const Vec3 sun=normalize(scene.sun_direction);
@@ -1114,6 +1237,8 @@ public:
         if(lunar_depth_) command_list_->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
         set_viewport(lunar_width_,lunar_height_);
         mvp_=scene.view_projection;
+        lunar_clip_=lunar::ClipVolume(scene.view_projection);
+        scene_constants_bound_=false;
         depth_enabled_=true;
         lunar_active_=true;
 
@@ -1133,31 +1258,53 @@ public:
     }
 
     bool lunar_scene_active() const override { return lunar_active_; }
+    bool lunar_mesh_visible(const std::vector<Vec3>& vertices) const {
+        if(vertices.empty()) return false;
+        if(!lunar_active_) return true;
+        lunar::Bounds bounds{vertices.front(),vertices.front()};
+        for(const auto p:vertices) bounds.include(p);
+        return lunar_clip_.intersects(bounds);
+    }
     void draw_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint) override {
-        if(lunar_active_ && material==LunarMaterial::Marking && !graphics_.enabled(GraphicsFeature::Decals)) return;
-        draw(vertices.data(),vertices.size(),false,tint,1.0f,material);
+        draw_mapped_lunar_surface(vertices,material,tint,{});
     }
 
     void draw_mapped_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial material,Color tint,
                                   const LunarSurfaceMapping& mapping) override {
         if(lunar_active_ && material==LunarMaterial::Marking && !graphics_.enabled(GraphicsFeature::Decals)) return;
-        draw(vertices.data(),vertices.size(),false,tint,1.0f,material,false,mapping);
+        if(!lunar_mesh_visible(vertices)) return;
+        const bool shade=lunar_active_ || (material!=LunarMaterial::Emissive && material!=LunarMaterial::Marking);
+        draw(vertices.data(),vertices.size(),false,tint,1.0f,shade?std::optional{material}:std::nullopt,false,mapping);
+    }
+
+    void draw_material_triangles_3d(const std::vector<Vec3>& vertices,int material,Color tint) override {
+        draw_lunar_surface(vertices,material<2?LunarMaterial::Regolith:LunarMaterial::Paint,tint);
     }
 
     void draw_lines_3d(const std::vector<Vec3>& vertices,Color color,float width=1.0f) override {
         draw(vertices.data(),vertices.size(),true,color,width);
     }
     void draw_triangles_3d(const std::vector<Vec3>& vertices,Color color) override {
+        if(!lunar_mesh_visible(vertices)) return;
         draw(vertices.data(),vertices.size(),false,color,1.0f);
     }
-    void draw_rect(Rect r,Color c) override {
-        const float v[]={r.x,r.y,0,r.x+r.w,r.y,0,r.x+r.w,r.y+r.h,0,
-                         r.x,r.y,0,r.x+r.w,r.y+r.h,0,r.x,r.y+r.h,0};
-        draw(v,6,false,c,1.0f);
+    void draw_rect(Rect r,Color c) override { draw_gradient_rect(r,c,c); }
+    void draw_gradient_rect(Rect r,Color top,Color bottom) override {
+        if(!frame_open_) return;
+        if(!depth_enabled_ && ui_pipeline_) ui_batch_.quad(r,top,bottom);
+        else{
+            const float v[]={r.x,r.y,0,r.x+r.w,r.y,0,r.x+r.w,r.y+r.h,0,
+                             r.x,r.y,0,r.x+r.w,r.y+r.h,0,r.x,r.y+r.h,0};
+            draw(v,6,false,top,1.0f);
+        }
     }
     void draw_line(Vec2 a,Vec2 b,Color c,float width=1.0f) override {
-        const auto v=ui::line_quad(a,b,width);
-        draw(v.data(),v.size()/3u,false,c,1.0f);
+        if(!frame_open_) return;
+        if(!depth_enabled_ && ui_pipeline_) ui_batch_.stroke(a,b,c,width);
+        else{
+            const auto v=ui::line_quad(a,b,width);
+            draw(v.data(),v.size()/3u,false,c,1.0f);
+        }
     }
     void draw_text(Vec2 p,const std::string& text,float scale,Color c) override;
 
@@ -1172,25 +1319,12 @@ public:
 
 
 void D3D12Renderer::draw_text(Vec2 p,const std::string& text,float scale,Color c){
-    std::vector<float> vertices;
-    vertices.reserve(text.size()*7u*5u*18u/2u);
-    const float origin_x=p.x;
-    auto quad=[&](float x,float y){
-        const float x1=x+scale,y1=y+scale;
-        const float q[]={x,y,0,x1,y,0,x1,y1,0, x,y,0,x1,y1,0,x,y1,0};
-        vertices.insert(vertices.end(),q,q+18);
-    };
-    for(char raw:text){
-        char ch=(raw>='a'&&raw<='z')?(char)(raw-'a'+'A'):raw;
-        if(ch=='\n'){ p.y+=8*scale; p.x=origin_x; continue; }
-        auto it=ui::kBitmapFont.find(ch);
-        if(it==ui::kBitmapFont.end()){ p.x+=6*scale; continue; }
-        const auto& rows=it->second;
-        for(int y=0;y<7;++y) for(int x=0;x<5;++x)
-            if(rows[y]&(1<<(4-x))) quad(p.x+x*scale,p.y+y*scale);
-        p.x+=6*scale;
+    if(!frame_open_) return;
+    if(!depth_enabled_ && ui_pipeline_) ui_batch_.text(p,text,scale,c);
+    else{
+        const auto vertices=ui::bitmap_text(p,text,scale);
+        draw(vertices.data(),vertices.size()/3u,false,c,1.0f);
     }
-    draw(vertices.data(),vertices.size()/3u,false,c,1.0f);
 }
 
 std::unique_ptr<Renderer> create_d3d12_renderer(){ return std::make_unique<D3D12Renderer>(); }

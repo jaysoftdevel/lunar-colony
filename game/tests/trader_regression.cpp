@@ -148,7 +148,7 @@ struct TraderRegression {
 
         auto& stock=app.placed_resources_[si];
         stock.stored_ore_boxes[0]=storage_dome_capacity_kg(stock.storage_size)/ore::box_kg;
-        app.placed_resources_[di].mined_ore_kg[0]=ore::box_kg;
+        belts[intake].ore_cargo=0; // Cargo already in transit in an older save.
         app.update_ore_logistics(app.utility_network_.connection_length(intake)/ore::belt_speed_mps+1);
         require(belts[intake].ore_cargo==0,"full dome did not hold the arriving ore crate");
         stock.stored_ore_boxes[0]=1;
@@ -297,8 +297,16 @@ struct TraderRegression {
         // All supported zoom levels retain accessible trade controls after scrolling.
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom){GameApp p(engine);setup(p);p.ui_scale_index_=zoom;Capture c;c.resize(1280,720);p.render(c);p.selection_panel_scroll_=p.selection_panel_max_scroll();p.render(c);c.button("TRADE");p.call_trader(0);p.update_trader(24);p.render(c);p.selection_panel_scroll_=p.selection_panel_max_scroll();p.render(c);c.button("START LOADING");}
         for(auto phase:{TradePhase::Approach,TradePhase::Docked,TradePhase::Loading,TradePhase::Departing}){
-            GameApp wire(engine);setup(wire);require(wire.call_trader(0),"wire ship fixture call");wire.trader_.phase=phase;wire.trader_.elapsed=phase==TradePhase::Approach?15:phase==TradePhase::Departing?5:0;
-            Capture c;wire.render_trader(c);require(c.triangles.empty()&&!c.lines.empty(),"trader submits filled surfaces / missing wire mesh");
+            GameApp ship(engine);setup(ship);require(ship.call_trader(0),"ship fixture call");ship.trader_.phase=phase;ship.trader_.elapsed=phase==TradePhase::Approach?15:phase==TradePhase::Departing?5:0;
+            ship.graphics_.path=eng::GraphicsPath::Classic;
+            Capture c;ship.render_trader(c);
+            require(!c.triangles.empty(),"Classic Full Graphics lost the filled trader mesh");
+            if constexpr(build::debug_features){
+                c.begin_frame({});
+                ship.world_layout_mode_=GameApp::WorldLayoutMode::Mesh;
+                ship.render_trader(c);
+                require(c.triangles.empty()&&!c.lines.empty(),"Debug Meshed lost the trader wire mesh");
+            }
         }
         if(const char* output=std::getenv("TRADER_CAPTURE_DIR")){
             std::filesystem::create_directories(output);

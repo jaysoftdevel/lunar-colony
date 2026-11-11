@@ -13,7 +13,7 @@ This workspace contains the shared Linux and Windows sources for JSD Lunar Base.
 - Automatic probing of the highest GPU feature level, up to `D3D_FEATURE_LEVEL_12_2` (DirectX 12 Ultimate-class hardware).
 - Hardware depth buffer and alpha blending.
 - GPU geometry-shader expansion for thick mesh/wireframe lines so the blue/yellow/green construction visualization remains close to the Linux version.
-- The existing persistent C++ task pool, with Windows logical-processor counting across processor groups.
+- A persistent C++ task pool sized to the available logical processors across Windows processor groups, with CPU Set placement for individual workers.
 
 The game intentionally refuses the WARP software rasterizer, matching the Linux build's existing requirement for a hardware GPU renderer.
 
@@ -69,10 +69,11 @@ If you use a newer Visual Studio generator, replace the generator name according
 
 ## Runtime controls
 
-The same performance environment variables remain available:
+Run `run.bat --cpu-info` to see the detected logical processors, pool lanes and successful worker placements.
 
 ```text
-GAME_CPU_LANES=<n>          Cap total simulation/planner CPU lanes.
+GAME_CPU_LANES=<n>          Cap task-pool lanes, including the application lane.
+GAME_CPU_PIN=0              Let Windows place the workers.
 GAME_ROUTE_SEARCH_LANES=<n> Cap concurrent heavy route-search jobs.
 GAME_VSYNC=0|1              0/unset = uncapped present, 1 = synchronized present.
 GAME_FRAME_LIMIT_FPS=<n>    Optional explicit frame limiter.
@@ -82,7 +83,7 @@ When VSync is off and the driver/display supports DXGI tearing, the Direct3D bac
 
 ## Save-game compatibility
 
-The Windows build uses the same binary `.gmsave` serializer/schema as the Linux game. Saves are placed in `savegames/` beside `game.exe`, matching the existing installed-game-relative behavior. Compatible saves can be copied between Linux and Windows. The Release executable opens campaign and normal colony saves. Stage 3 test saves require Debug.
+Windows and Linux use the same binary `.gmsave` format. Both builds use `savegames/` at the workspace root and migrate existing `build\windows\bin\savegames\` saves on launch. A standalone installation uses `savegames/` beside the executable. The Release executable opens campaign and normal colony saves. Stage 3 test saves require Debug.
 
 ## Platform differences / items that are not literally portable
 
@@ -92,7 +93,7 @@ The complete gameplay feature set is retained, but these Linux implementation de
 - **XRandR monitor mode switching** is replaced by `EnumDisplaySettingsExW` / `ChangeDisplaySettingsExW`.
 - **GLX/OpenGL rendering** is replaced by Direct3D 12 and DXGI. The result is intended to be visually equivalent, but pixel-level rasterization/anti-aliasing can differ between OpenGL and Direct3D drivers.
 - **`/proc/self/exe`** executable discovery is replaced by `GetModuleFileNameW`.
-- **Linux `sched_getaffinity` CPU visibility** is replaced by Windows processor-group enumeration plus the C++ worker pool.
+- **Linux CPU affinity masks** correspond to Windows processor groups and CPU Set selection.
 - **GLX swap-interval extensions** are replaced by DXGI Present/VSync/tearing control.
 
 Windows loads the same sound mixer through the Win64 OpenAL Soft runtime. `install-deps.bat` installs that runtime beside both executables.
