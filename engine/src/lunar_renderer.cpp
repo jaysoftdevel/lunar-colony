@@ -1722,7 +1722,7 @@ struct LunarRenderer::Impl {
             origin[i]={v.origin.x,v.origin.y,v.origin.z,v.length};
             axis[i]={direction.x,direction.y,direction.z,v.radius};
             color[i]={v.tint.r,v.tint.g,v.tint.b,v.density};
-            parameters[i]={v.emission,v.cone?1.0f:0.0f,0.0f,0.0f};
+            parameters[i]={v.emission,v.cone?1.0f:0.0f,v.nozzle_radius,v.plume_length};
         }
         const auto count=static_cast<Int>(volume_count);
         gl.Uniform4fv(volume_program[VolumeOrigin],count,origin.front().data());

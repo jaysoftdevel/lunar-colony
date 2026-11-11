@@ -34,6 +34,8 @@ struct LunarVolume {
     float density{};
     float emission{};
     bool cone{};
+    float nozzle_radius{};
+    float plume_length{}; // Unclipped reach when the ground shortens length.
 };
 
 struct LunarScene {

@@ -350,8 +350,8 @@ void GameApp::render_selection_panel(Renderer& r){
         if(robot.safety.motion_intent==robots::MotionIntent::Retreat) navigation<<" / RETREAT";
         if(robot.safety.blocker_robot_id<builder_robots_.size()) navigation<<" / BLOCKED BY "<<robot_identity(robot.safety.blocker_robot_id);
         if(robot.safety.block_reason!=robots::BlockReason::None) navigation<<" / "<<robots::block_reason_name(robot.safety.block_reason);
-        if(robot.safety.nearby_robot_count>0){
-            navigation<<" / NEAR "<<robot.safety.nearby_robot_count;
+        if(!robot.safety.nearby_robot_ids.empty()){
+            navigation<<" / NEAR "<<robot.safety.nearby_robot_ids.size();
             if(robot.safety.nearest_robot_id<builder_robots_.size())
                 navigation<<" ("<<robot_identity(robot.safety.nearest_robot_id)<<" "
                           <<std::fixed<<std::setprecision(1)<<robot.safety.nearest_robot_distance_m<<"M)";

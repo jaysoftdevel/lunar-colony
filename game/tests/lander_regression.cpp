@@ -18,12 +18,19 @@ struct Capture:eng::Renderer {
     struct Line {eng::Vec3 a,b;eng::Color color;};std::vector<Line> lines;
     struct Tri {eng::Vec3 a,b,c;eng::Color color;};std::vector<Tri> triangles;
     struct Text {std::string text;eng::Rect rect;};std::vector<Text> texts;eng::Rect last_rect{};
+    bool accept_volumes=false;
+    std::vector<eng::LunarVolume> volumes;
     bool initialize(void*,std::uintptr_t,int,int)override{return true;}void resize(int x,int y)override{w=x;h=y;}
-    void begin_frame(eng::Color)override{triangles.clear();lines.clear();texts.clear();hud=false;}void end_frame()override{}
+    void begin_frame(eng::Color)override{triangles.clear();lines.clear();texts.clear();volumes.clear();hud=false;}void end_frame()override{}
     void set_3d(const eng::Mat4& m)override{matrix=m;hud=false;}void set_2d(float s)override{scale=s;hud=true;}
     void draw_lines_3d(const std::vector<eng::Vec3>& v,eng::Color color,float)override{for(std::size_t i=0;i+1<v.size();i+=2)lines.push_back({v[i],v[i+1],color});}
     void draw_triangles_3d(const std::vector<eng::Vec3>& v,eng::Color color)override{
         for(std::size_t i=0;i+2<v.size();i+=3)triangles.push_back({v[i],v[i+1],v[i+2],color});
+    }
+    bool draw_lunar_volume(const eng::LunarVolume& volume)override{
+        if(!accept_volumes)return false;
+        volumes.push_back(volume);
+        return true;
     }
     void draw_rect(eng::Rect p,eng::Color)override{last_rect=p;}
     void draw_line(eng::Vec2,eng::Vec2,eng::Color,float)override{}
@@ -52,6 +59,102 @@ struct LanderRegression {
     static eng::Vec2 screen(GameApp& a,eng::Vec3 p){auto m=a.camera_.view_projection(1600.f/900);float w=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];return {(m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12])/w*800+800,450-(m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13])/w*450};}
     static void click(GameApp& a,eng::Vec3 p){auto s=screen(a,p);eng::InputState in;in.mouse_x=(int)s.x;in.mouse_y=(int)s.y;in.left_pressed=true;a.update(0,in);}
     static void roundtrip(GameApp& a,const std::string& name,bool legacy_preflight_stash=false){std::string error;require(a.save_game_to_name(name,error),error);auto path=std::filesystem::path(a.save_game_directory())/(name+".gmsave");GameApp b(a.app_);require(b.load_game_from_file(path.string(),error),error);require(b.lander_.awaiting_site==a.lander_.awaiting_site&&b.lander_.awaiting_stash==(a.lander_.awaiting_stash && !legacy_preflight_stash)&&b.lander_.salvaged==a.lander_.salvaged&&b.lander_.boxed==a.lander_.boxed,"placement/salvage flags lost on load");require(eng::length(b.lander_.stash_center-a.lander_.stash_center)<.001f&&b.ground_resource_piles_.size()==a.ground_resource_piles_.size(),"stash/boxes lost on load");require(b.resources_.amounts().total_amount()==a.resources_.amounts().total_amount(),"inventory changed on resume");require(b.colony_seeds_==a.colony_seeds_&&b.lander_.seeds_aboard==a.lander_.seeds_aboard,"seed custody changed on resume");std::filesystem::remove(path);}
+    static void exhaust(GameApp& app){
+        using eng::Vec3;
+        const auto saved=app.lander_;
+        app.lander_.phase=LanderPhase::Approach;
+        app.lander_.elapsed=35.f;
+        const auto flight=lunar_lander_flight(app.lander_.elapsed);
+        const float angle=flight.roll_degrees*3.14159265359f/180.f;
+        const float cosine=std::cos(angle),sine=std::sin(angle);
+        const Vec3 axis{sine,-cosine,0};
+        const Vec3 origin=app.lander_.site+flight.offset;
+        require(std::abs(sine)>.02f,"test must sample a tilted approach");
+
+        Capture volume,fallback;
+        volume.accept_volumes=true;
+        app.render_lunar_lander(volume);
+        app.render_lunar_lander(fallback);
+        require(volume.volumes.size()==3,"expected three high-altitude plumes and no dust");
+        for(std::size_t i=0;i<3;++i){
+            const auto& jet=volume.volumes[i];
+            const float x=(static_cast<float>(i)-1)*1.48f;
+            const Vec3 mouth=origin+Vec3{x*cosine-.40f*sine,x*sine+.40f*cosine,-1.48f};
+            require(jet.cone && eng::length(jet.origin-mouth)<.001f &&
+                    eng::length(jet.axis-axis)<.001f,"plume detached from its tilted nozzle");
+            require(jet.nozzle_radius>.4f && jet.nozzle_radius<.59f && jet.radius>jet.nozzle_radius &&
+                    jet.length<=jet.plume_length && jet.length>2.f,"invalid expanding jet profile");
+            const auto on_aperture=[&](Vec3 p,float min_radius,float max_radius){
+                const Vec3 delta=p-mouth;
+                const float distance=eng::length(delta);
+                return std::abs(eng::dot(delta,axis))<.002f &&
+                    distance>=min_radius && distance<=max_radius;
+            };
+            const auto has_ring=[&](const Capture& capture,float min_radius,float max_radius){
+                return std::any_of(capture.triangles.begin(),capture.triangles.end(),[&](const auto& t){
+                    return t.color.b>.85f && t.color.a<1 &&
+                        (on_aperture(t.a,min_radius,max_radius) || on_aperture(t.b,min_radius,max_radius) ||
+                         on_aperture(t.c,min_radius,max_radius));
+                });
+            };
+            require(has_ring(volume,.33f,.37f) && has_ring(fallback,.33f,.37f) &&
+                    has_ring(fallback,.48f,.50f),"fallback or core geometry missed a nozzle");
+        }
+        if constexpr(build::debug_features){
+            app.world_layout_mode_=GameApp::WorldLayoutMode::Mesh;
+            Capture wire;
+            wire.accept_volumes=true;
+            app.render_lunar_lander(wire);
+            require(wire.volumes.empty() && wire.triangles.empty(),"meshed layout rendered solid exhaust");
+            for(const auto& jet:volume.volumes)
+                require(std::any_of(wire.lines.begin(),wire.lines.end(),[&](const auto& l){
+                    return l.color.b>.85f && eng::length(l.a-jet.origin)<.50f;
+                }),"meshed layout lost a jet");
+            app.world_layout_mode_=GameApp::WorldLayoutMode::FullGraphics;
+        }
+
+        app.lander_.elapsed=76.f;
+        volume.begin_frame({});
+        fallback.begin_frame({});
+        app.render_lunar_lander(volume);
+        app.render_lunar_lander(fallback);
+        std::size_t jet_count=0,dust_count=0;
+        for(const auto& v:volume.volumes){
+            if(v.cone){
+                ++jet_count;
+                require(std::abs((v.origin+v.axis*v.length).y)<.001f && v.length<v.plume_length,
+                        "plume did not clip at the surface");
+            }else{
+                ++dust_count;
+                const bool at_impact=std::any_of(volume.volumes.begin(),volume.volumes.end(),[&](const auto& jet){
+                    return jet.cone && eng::length(jet.origin+jet.axis*jet.length-v.origin)<.02f;
+                });
+                require(at_impact && v.length<v.radius,"dust missed the jet footprint");
+            }
+        }
+        require(jet_count==3 && dust_count==3,"expected three near-ground jets and three dust footprints");
+        for(const auto& t:fallback.triangles)
+            if(t.color.b>.85f && t.color.a<1)
+                require(std::min({t.a.y,t.b.y,t.c.y})>=0,"fallback exhaust crossed the surface");
+        const float full_emission=volume.volumes.front().emission;
+        app.lander_.elapsed=kLanderDescentSeconds-.12f;
+        volume.begin_frame({});
+        app.render_lunar_lander(volume);
+        require(!volume.volumes.empty() && volume.volumes.front().cone && volume.volumes.front().emission<full_emission*.25f,
+                "engine cutoff did not fade");
+
+        app.lander_.phase=LanderPhase::Settling;
+        app.lander_.elapsed=.3f;
+        volume.begin_frame({});
+        app.render_lunar_lander(volume);
+        require(volume.volumes.size()==3 && std::none_of(volume.volumes.begin(),volume.volumes.end(),
+            [](const auto& v){return v.cone;}),"touchdown left an active jet or cut off the dust abruptly");
+        app.lander_.elapsed=2.2f;
+        volume.begin_frame({});
+        app.render_lunar_lander(volume);
+        require(volume.volumes.empty(),"landing dust did not clear");
+        app.lander_=saved;
+    }
     static void unload_queue(eng::Application& engine){
         using namespace world_math;
         // A full 12-rover cabin is the tightest case. Also sample each legacy
@@ -215,6 +318,7 @@ struct LanderRegression {
             }
             a.lander_=saved;
         }
+        exhaust(a);
         if(const char* output=std::getenv("LANDER_CAPTURE_DIR")){
             std::filesystem::create_directories(output);Capture c;
             a.camera_.restore({25,25,29,{0,2,0}});c.set_3d(a.camera_.view_projection(1600.f/900));a.render_lunar_lander(c);c.write(std::filesystem::path(output)/"lander.json");

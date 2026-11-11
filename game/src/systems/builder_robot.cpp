@@ -2620,6 +2620,10 @@ void GameApp::update_builder_robot(float dt){
     // rolling-path sampler, traffic speed governor, collision fallback steering,
     // breadcrumb reverse logic and overlap-nudge recovery.
     std::vector<robots::NavigationRequest> navigation_requests(builder_robots_.size());
+    std::vector<robots::SafetyAgent> safety_agents;
+    const auto mix_epoch=[](std::uint64_t& hash,std::uint64_t value){
+        hash^=value+0x9e3779b97f4a7c15ULL+(hash<<6)+(hash>>2);
+    };
 
     auto heading_between=[](Vec3 from,Vec3 to,float fallback){
         const float dx=to.x-from.x,dz=to.z-from.z;
@@ -2713,15 +2717,15 @@ void GameApp::update_builder_robot(float dt){
 
     auto route_other_is_static_obstacle=[&](std::size_t robot_index,std::size_t other_index){
         if(robot_index>=builder_robots_.size() || other_index>=builder_robots_.size() || robot_index==other_index) return false;
-        const auto& other=builder_robots_[other_index];
+        const auto& other=safety_agents[other_index];
         const bool other_active=other_index<navigation_requests.size() && navigation_requests[other_index].active;
         if(!other_active) return true;
-        if(std::abs(other.current_speed_mps)>0.30f) return false;
-        if(other.safety.motion_intent==robots::MotionIntent::Wait ||
-           other.safety.mode==robots::SafetyMode::Idle ||
-           other.safety.mode==robots::SafetyMode::Working ||
-           other.safety.mode==robots::SafetyMode::Blocked ||
-           other.safety.mode==robots::SafetyMode::Waiting)
+        if(std::abs(other.speed_mps)>0.30f) return false;
+        if(other.runtime->motion_intent==robots::MotionIntent::Wait ||
+           other.runtime->mode==robots::SafetyMode::Idle ||
+           other.runtime->mode==robots::SafetyMode::Working ||
+           other.runtime->mode==robots::SafetyMode::Blocked ||
+           other.runtime->mode==robots::SafetyMode::Waiting)
             return true;
         const auto own_priority=robot_index<navigation_requests.size()?navigation_requests[robot_index].task_priority:0u;
         const auto other_priority=other_index<navigation_requests.size()?navigation_requests[other_index].task_priority:0u;
@@ -2731,22 +2735,16 @@ void GameApp::update_builder_robot(float dt){
     auto route_fleet_point_clear=[&](std::size_t robot_index,Vec3 candidate){
         if(robot_index>=builder_robots_.size()) return false;
         const auto& robot=builder_robots_[robot_index];
+        const auto& self=safety_agents[robot_index];
         const float own_hard_radius=robot_safety_corridor_radius(robot.role)+
             robots::kSafetyNumericMarginM;
-        for(std::size_t other_index=0;other_index<builder_robots_.size();++other_index){
-            if(other_index==robot_index || !route_other_is_static_obstacle(robot_index,other_index)) continue;
-            const auto& other=builder_robots_[other_index];
-            const float other_hard_radius=robot_safety_corridor_radius(other.role)+
-                robots::kSafetyNumericMarginM;
-            const float required=own_hard_radius+other_hard_radius+
-                0.06f;
+        for(const auto other_index:self.runtime->nearby_robot_ids){
+            if(!route_other_is_static_obstacle(robot_index,other_index)) continue;
+            const auto& other=safety_agents[other_index];
+            const float required=own_hard_radius+other.radius_m+robots::kSafetyNumericMarginM+0.06f;
             const float candidate_distance=dist_xz(candidate,other.position);
             if(candidate_distance>=required) continue;
-
-            // A save can begin with two physically clear rovers already inside
-            // the personal zones. The active rover may leave that state, but
-            // every sampled route point must maintain or increase separation.
-            const float current_distance=dist_xz(robot.position,other.position);
+            const float current_distance=dist_xz(self.position,other.position);
             if(current_distance<required &&
                candidate_distance+robots::kPersonalZoneEscapeEpsilonM>=current_distance)
                 continue;
@@ -2755,34 +2753,25 @@ void GameApp::update_builder_robot(float dt){
         return true;
     };
 
-    auto parked_fleet_point_clear=[&](std::size_t robot_index,Vec3 candidate){
-        const auto& self=builder_robots_[robot_index];
-        for(std::size_t other_index=0;other_index<builder_robots_.size();++other_index){
-            if(other_index==robot_index || navigation_requests[other_index].active) continue;
-            const auto& other=builder_robots_[other_index];
-            if(other.safety.temporary_goal_valid || std::abs(other.current_speed_mps)>0.03f) continue;
-            const float required=robot_safety_corridor_radius(self.role)+robot_safety_corridor_radius(other.role)+
-                2.0f*robots::kSafetyNumericMarginM+0.06f;
-            const float d=dist_xz(candidate,other.position);
-            if(d<required && d+0.001f<dist_xz(self.position,other.position)) return false;
-        }
-        return true;
+    const auto parked_neighbor=[&](std::size_t index){
+        const auto& agent=safety_agents[index];
+        return !navigation_requests[index].active && !agent.runtime->temporary_goal_valid &&
+               std::abs(agent.speed_mps)<=0.03f;
     };
-    auto parked_fleet_segment_clear=[&](std::size_t robot_index,Vec3 a,Vec3 b){
-        const auto& self=builder_robots_[robot_index];
-        for(std::size_t other_index=0;other_index<builder_robots_.size();++other_index){
-            if(other_index==robot_index || navigation_requests[other_index].active) continue;
-            const auto& other=builder_robots_[other_index];
-            if(other.safety.temporary_goal_valid || std::abs(other.current_speed_mps)>0.03f) continue;
-            const float required=robot_safety_corridor_radius(self.role)+robot_safety_corridor_radius(other.role)+
-                2.0f*robots::kSafetyNumericMarginM+0.06f;
-            const float d=segment_distance_xz(other.position,a,b);
+    const auto parked_fleet_segment_clear=[&](std::size_t robot_index,Vec3 from,Vec3 to){
+        const auto& self=safety_agents[robot_index];
+        for(const auto index:self.runtime->nearby_robot_ids){
+            if(!parked_neighbor(index)) continue;
+            const auto& other=safety_agents[index];
+            const float required=self.radius_m+other.radius_m+2.0f*robots::kSafetyNumericMarginM+0.06f;
+            const float d=segment_distance_xz(other.position,from,to);
             if(d<required && d+0.001f<dist_xz(self.position,other.position)) return false;
         }
         return true;
     };
 
     auto route_fleet_segment_clear=[&](std::size_t robot_index,Vec3 from,Vec3 to){
+        if(safety_agents[robot_index].runtime->nearby_robot_ids.empty()) return true;
         const float length=dist_xz(from,to);
         const int samples=std::max(1,(int)std::ceil(length/0.55f));
         // The route origin is the rover's current occupied point and is allowed
@@ -2825,7 +2814,7 @@ void GameApp::update_builder_robot(float dt){
             callbacks.floor_height=[&,hard_margin](Vec3 p){ return rover_floor_height(p); };
             callbacks.point_clear=[&,hard_margin](Vec3 p){
                 return robot_position_clear(robot_index,p) &&
-                       parked_fleet_point_clear(robot_index,p) &&
+                       parked_fleet_segment_clear(robot_index,p,p) &&
                        robot_structure_move_allowed_with_margin(robot,p,p,hard_margin);
             };
             callbacks.segment_clear=[&,hard_margin](Vec3 a,Vec3 b){
@@ -2870,6 +2859,15 @@ void GameApp::update_builder_robot(float dt){
             return penalty;
         };
 
+        // Only parked rovers whose detection circles overlap can affect this
+        // route. Include their poses in this rover's D* cache revision.
+        for(const auto index:robot.safety.nearby_robot_ids){
+            if(!parked_neighbor(index)) continue;
+            const auto position=safety_agents[index].position;
+            mix_epoch(world_revision,index+1);
+            mix_epoch(world_revision,static_cast<std::uint64_t>(std::llround(position.x*100.0)));
+            mix_epoch(world_revision,static_cast<std::uint64_t>(std::llround(position.z*100.0)));
+        }
         route.clear();
         const auto result=robots::plan_incremental_path(request,world_revision,callbacks,planner_state,route);
         if(result==robots::IncrementalPathResult::Success)
@@ -6004,9 +6002,6 @@ void GameApp::update_builder_robot(float dt){
     // construction-step commit happens above). Every planner/contract query in
     // this tick reads the same precomputed structure snapshot.
     build_nav_snapshot();
-    auto mix_epoch=[](std::uint64_t& h,std::uint64_t v){
-        h^=v+0x9e3779b97f4a7c15ULL+(h<<6)+(h>>2);
-    };
     std::uint64_t world_epoch=1469598103934665603ULL;
     mix_epoch(world_epoch,placed_habitats_.size());
     mix_epoch(world_epoch,placed_resources_.size());
@@ -6040,18 +6035,6 @@ void GameApp::update_builder_robot(float dt){
         mix_epoch(world_epoch,(std::uint64_t)std::llround(obstacle.radius*100.0f));
     }
 
-    // Parked actors are static map obstacles until a real task or certified
-    // yield makes them mobile. Epoch-tag their exact footprint changes so D*
-    // can repair the route instead of repeatedly publishing a path through an
-    // idle rover when the bounded fallback search cannot find a wide detour.
-    for(std::size_t i=0;i<builder_robots_.size();++i){
-        const auto& rover=builder_robots_[i];
-        if(navigation_requests[i].active || rover.safety.temporary_goal_valid || std::abs(rover.current_speed_mps)>0.03f) continue;
-        mix_epoch(world_epoch,i+1);
-        mix_epoch(world_epoch,(std::uint64_t)(std::int64_t)std::llround(rover.position.x*100.0f));
-        mix_epoch(world_epoch,(std::uint64_t)(std::int64_t)std::llround(rover.position.z*100.0f));
-    }
-
     if(trader_.phase==TradePhase::Loading){
         update_trade_hauling(dt,
             [&](std::size_t i,Vec3 p){return !safety_repositioning[i] && robot_position_clear(i,p) && fleet_position_clear(i,p);},
@@ -6067,7 +6050,6 @@ void GameApp::update_builder_robot(float dt){
     for(std::size_t i=0;i<builder_robots_.size();++i)
         if(builder_robots_[i].operation_retry.relocation_pending()) navigation_requests[i]={};
 
-    std::vector<robots::SafetyAgent> safety_agents;
     safety_agents.reserve(builder_robots_.size());
     for(std::size_t i=0;i<builder_robots_.size();++i){
         auto& robot=builder_robots_[i];
@@ -6167,7 +6149,8 @@ void GameApp::update_builder_robot(float dt){
         robot.traffic_blocker_index=safety.blocker_robot_id<builder_robots_.size()?safety.blocker_robot_id:kNoRobotIndex;
         robot.traffic_escape_active=safety.motion_intent==robots::MotionIntent::Retreat;
         robot.traffic_detour_active=safety.stationary_detour_active;
-        robot.traffic_detour_avoid_index=safety.stationary_detour_blocker<builder_robots_.size()?safety.stationary_detour_blocker:kNoRobotIndex;
+        robot.traffic_detour_avoid_index=safety.stationary_detour_active &&
+            safety.traffic_detour_partner<builder_robots_.size()?safety.traffic_detour_partner:kNoRobotIndex;
         robot.route_force_full_replan=false;
         robot.route_search_tier=0;
         robot.route_replan_cooldown=0.0f;

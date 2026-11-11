@@ -860,3 +860,12 @@ v0.50.13 - Stage 1 usability and direct item activation
 0.52.16 - Multicore workload scheduling
 - Reuse the host-wide CPU pool for navigation cost refresh, large air networks, procedural texture preparation, and ray-tree subtrees.
 - Prioritize work the frame is waiting for and retire unused helper work without changing fleet dispatch or simulation commit order.
+
+0.52.17 - Rover collision detection radius
+- Each rover has a 5 m detection circle. Overlapping circles activate robot traffic prediction, steering and local detour checks.
+- Evaluate the circles on every movement step. Keep static clearance and swept chassis verification for all moves.
+
+0.52.18 - Lander engine exhaust
+- Anchor three expanding jets to the engine bell mouths and rotate them with the lander.
+- Add bright cores, throttle and cutoff fades, and a geometry fallback when plume volumes are unavailable.
+- Clip the exhaust at the surface and disperse dust outward from each jet footprint after touchdown.

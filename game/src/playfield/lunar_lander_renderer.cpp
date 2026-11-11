@@ -8,6 +8,16 @@ namespace game {
 namespace {
 using eng::Vec3;using eng::Color;using eng::LunarMaterial;
 constexpr float pi=3.14159265359f;
+constexpr std::array<Vec3,3> nozzle_mouths{{{-1.48f,.40f,-1.48f},{0,.40f,-1.48f},{1.48f,.40f,-1.48f}}};
+constexpr float nozzle_aperture=.49f;
+constexpr float dust_drift_seconds=2.1f;
+struct LanderRoll {
+    explicit LanderRoll(float degrees):cosine(std::cos(degrees*pi/180)),sine(std::sin(degrees*pi/180)){}
+    float cosine,sine;
+    Vec3 apply(Vec3 point) const {
+        return {point.x*cosine-point.y*sine,point.x*sine+point.y*cosine,point.z};
+    }
+};
 struct Part {Color color;std::vector<Vec3> vertices;};
 struct Mesh {
     explicit Mesh(bool solid):solid(solid){}
@@ -51,10 +61,10 @@ struct Mesh {
         }
     }
     void draw(eng::Renderer& r,Vec3 offset,float roll=0,float opacity=1,LunarMaterial material=LunarMaterial::Paint)const{
-        const float a=roll*pi/180,c=std::cos(a),s=std::sin(a);
+        const LanderRoll rotation(roll);
         for(const auto& part:parts){
             auto points=part.vertices;
-            for(auto& v:points) v=Vec3{v.x*c-v.y*s,v.x*s+v.y*c,v.z}+offset;
+            for(auto& v:points) v=rotation.apply(v)+offset;
             Color color=part.color;
             color.a*=opacity;
             if(solid) r.draw_lunar_surface(points,material,color);
@@ -64,6 +74,93 @@ struct Mesh {
 };
 constexpr Color white{0.76f,0.79f,0.78f,1},gold{0.60f,0.39f,0.14f,1},dark{0.075f,0.095f,0.12f,1},metal{0.35f,0.40f,0.44f,1},blue{0.10f,0.26f,0.42f,1};
 float smooth(float u){u=std::clamp(u,0.0f,1.0f);return u*u*(3-2*u);}
+
+float visual_throttle(float time){
+    // The flight velocity is continuous at the keyframes. Its average
+    // derivative keeps the plume throttle continuous there too.
+    constexpr float lunar_gravity=1.62f;
+    const float start=std::max(0.f,time-.35f);
+    const float end=std::min(time+.35f,kLanderDescentSeconds-.001f);
+    const Vec3 acceleration=(lunar_lander_flight(end).velocity-lunar_lander_flight(start).velocity)*
+        (1.f/(end-start));
+    return std::clamp(std::hypot(acceleration.x,acceleration.y+lunar_gravity)/lunar_gravity,.55f,1.55f);
+}
+
+void draw_plume_shell(Mesh& plume,Vec3 mouth,const LanderRoll& roll,float reach,float clipped,
+                      float radius,float intensity,bool core){
+    constexpr int sides=20,bands=9;
+    const float limit=std::min(clipped/reach,1.0f);
+    const auto ring_point=[&](int side,float fraction){
+        const float angle=2*pi*side/sides;
+        const float width=core?radius*(1-.96f*std::pow(fraction,1.3f)):
+            nozzle_aperture+(radius-nozzle_aperture)*std::pow(fraction,.72f);
+        Vec3 p=mouth+roll.apply({width*std::cos(angle),-reach*fraction,width*std::sin(angle)});
+        p.y=std::max(.008f,p.y);
+        return p;
+    };
+    // Keep the bands at fixed positions relative to the nozzle. Ground
+    // clipping shortens the last visible band without compressing the jet.
+    for(int band=bands-1;band>=0;--band){
+        const float start=static_cast<float>(band)/bands;
+        if(start>=limit)continue;
+        const float end=std::min(static_cast<float>(band+1)/bands,limit);
+        const float t=(start+end)*.5f;
+        const float fade=(1-t)*(1-t)*smooth((limit-t)/std::min(.18f,limit));
+        const Color color=core?Color{.97f-.48f*t,.98f-.18f*t,1,.74f*fade*intensity}:
+            Color{.36f-.16f*t,.62f-.23f*t,.99f-.08f*t,.13f*fade*intensity};
+        for(int i=0;i<sides;++i)
+            plume.quad(color,ring_point(i,start),ring_point(i+1,start),ring_point(i+1,end),ring_point(i,end));
+    }
+}
+
+void render_lander_exhaust(eng::Renderer& renderer,Vec3 origin,const LanderFlightSample& flight,
+                           float time,float since_cutoff,bool powered,bool solid,int particle_count){
+    const float throttle=visual_throttle(time);
+    const float burn=smooth(time/.32f)*smooth((kLanderDescentSeconds-time)/.70f);
+    const LanderRoll roll(flight.roll_degrees);
+    const Vec3 axis=roll.apply({0,-1,0});
+    Mesh sheath(solid),cores(solid),dust(solid);
+    for(std::size_t i=0;i<nozzle_mouths.size();++i){
+        const Vec3 mouth=origin+roll.apply(nozzle_mouths[i]);
+        const float phase=static_cast<float>(i)*2.1f;
+        const float pulse=1+.035f*std::sin(time*12.5f+phase)+.025f*std::sin(time*20.2f-phase);
+        const float reach=(6.1f+4.5f*throttle)*pulse;
+        const float ground_distance=std::max(0.f,mouth.y/(-axis.y));
+        const float visible=std::min(reach*(.44f+.56f*burn),ground_distance);
+        const float strength=std::min(1.f,burn*(.69f+.27f*throttle)*pulse);
+        const float spread=nozzle_aperture+reach*.18f;
+        if(powered && visible>.02f && strength>.005f){
+            const bool volume=solid && renderer.draw_lunar_volume({mouth,axis,visible,spread,
+                {.27f,.56f,.96f,1},1.02f*strength,3.5f*strength,true,nozzle_aperture,reach});
+            if(!volume)
+                draw_plume_shell(sheath,mouth,roll,reach,visible,spread,strength,false);
+            draw_plume_shell(cores,mouth,roll,reach*.34f,visible,nozzle_aperture*.71f,strength,true);
+        }
+        if(!solid)continue;
+        const float pressure=smooth((1-ground_distance/reach)/.80f);
+        const float drift=1-smooth(since_cutoff/dust_drift_seconds);
+        if(pressure*drift<.005f)continue;
+        Vec3 impact=mouth+axis*ground_distance;
+        impact.y=.012f;
+        const float radius=1.6f+2.4f*pressure+1.05f*since_cutoff;
+        renderer.draw_lunar_volume({impact,{0,1,0},.35f+.52f*pressure,radius,
+            {.48f,.45f,.41f,1},.36f*pressure*drift,0,false});
+        for(int j=static_cast<int>(i);j<particle_count;j+=static_cast<int>(nozzle_mouths.size())){
+            const float angle=static_cast<float>(j)*2.399963f+phase;
+            const float lifespan=.82f+.16f*static_cast<float>(j%6);
+            const float age=std::fmod(time*.92f+static_cast<float>(j)*.173f,lifespan)+since_cutoff;
+            if(age>=lifespan)continue;
+            const float radial=.37f+age*(2.8f+.55f*static_cast<float>(j%7));
+            const float height=.025f+.81f*age*(lifespan-age);
+            const Vec3 p=impact+Vec3{std::cos(angle)*radial,height,std::sin(angle)*radial};
+            const float opacity=.68f*pressure*drift*smooth(age/.09f)*(1-smooth(age/lifespan));
+            dust.box(p,{.07f,.045f,.12f},{.58f,.54f,.49f,opacity});
+        }
+    }
+    sheath.draw(renderer,{},0,1,LunarMaterial::Emissive);
+    cores.draw(renderer,{},0,1,LunarMaterial::Emissive);
+    dust.draw(renderer,{},0,1,LunarMaterial::Regolith);
+}
 
 }
 void GameApp::render_lunar_lander(eng::Renderer& r){
@@ -176,9 +273,12 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
     top.beam({-1.07f,6.15f,-1.72f},{-1.07f,7.65f,-1.72f},.055f,white);
 
     // Engine cluster and six visibly articulated struts with wide pads.
-    for(float x:{-1.48f,0.f,1.48f}){
-        gear.cylinder({x,.40f,-1.48f},.59f,1.48f,metal,.28f);
-        gear.cylinder({x,.49f,-1.48f},.62f,.14f,white);
+    for(const Vec3 mouth:nozzle_mouths){
+        gear.cylinder(mouth,.59f,1.48f,metal,.28f);
+        gear.cylinder(mouth,.59f,0,{.30f,.23f,.22f,1},nozzle_aperture);
+        gear.cylinder(mouth,nozzle_aperture,.64f,dark,.29f);
+        gear.cylinder(mouth+Vec3{0,.07f,0},.61f,.11f,{.46f,.36f,.31f,1},.59f);
+        gear.cylinder(mouth+Vec3{0,1.31f,0},.39f,.22f,white,.34f);
     }
     for(float x:{-1.f,1.f}) for(float z:{-1.f,0.f,1.f}){
         const Vec3 root{x*4.19f,2.45f,z*2.53f-.33f};
@@ -234,36 +334,10 @@ void GameApp::render_lunar_lander(eng::Renderer& r){
     // Keep the last recovery frame visible while waiting for a place for its parts.
     const float last_cut=smooth((work-16.0f)/2.0f);
     gear.draw(r,origin-Vec3{0,.24f*last_cut,0},flight.roll_degrees,1-.72f*last_cut);
-    if(lander_.in_flight()){
-        // Vacuum exhaust has no smoke column. Dust follows low lunar-gravity
-        // ballistic arcs only when the plume reaches the regolith.
-        Mesh exhaust(solid);
-        const float pulse=.92f+.08f*std::sin(lander_.elapsed*31);
-        const float plume=std::min(origin.y+.55f,2.5f+1.8f*flight.thrust_acceleration)*pulse;
-        const bool volumetric=solid && r.draw_lunar_volume({origin+Vec3{0,.55f,-.60f},{0,-1,0},plume,
-            std::max(0.18f,plume*0.31f),{0.20f,0.54f,0.98f,1},0.89f,4.1f,true});
-        if(!volumetric){
-            exhaust.cylinder({0,.55f-plume,-.6f},1.5f*plume/5.0f,plume,{.18f,.44f,.75f,.27f},.55f);
-            exhaust.cylinder({0,.55f-plume*.6f,-.6f},.45f,plume*.6f,{.55f,.80f,1,.60f},.36f);
-            exhaust.draw(r,origin,flight.roll_degrees,1,LunarMaterial::Emissive);
-        }
-        if(solid && origin.y<8.0f){
-            const float dust=1.0f-std::clamp(origin.y/8.0f,0.0f,1.0f);
-            r.draw_lunar_volume({origin-Vec3{0,origin.y-0.06f,0},{0,1,0},
-                0.75f+1.2f*dust,2.2f+5.6f*dust,{0.46f,0.43f,0.38f,1},0.66f*dust,0.0f,false});
-        }
-        const int particles=graphics_.particle_density==0?0:eng::quality_budget(graphics_.particle_density,12,24,42);
-        if(origin.y<16 && particles>0){
-            Mesh dust(solid);
-            for(int i=0;i<particles;++i){
-                const float angle=(float)i*2.399963f,age=std::fmod(lander_.elapsed*.85f+(float)i*.071f,1.1f);
-                const float speed=3.0f+((float)(i%5))*.6f;
-                const float radial=1+age*speed,height=std::max(.03f,1.1f*age-.81f*age*age);
-                Vec3 p=lander_.site+Vec3{std::cos(angle)*radial,height,std::sin(angle)*radial};
-                dust.box(p,{.065f,.045f,.13f},{.44f,.43f,.40f,.55f*(1-origin.y/16)});
-            }
-            dust.draw(r,{});
-        }
-    }
+    const int particles=graphics_.particle_density==0?0:eng::quality_budget(graphics_.particle_density,12,24,42);
+    if(lander_.in_flight())
+        render_lander_exhaust(r,origin,flight,lander_.elapsed,0,true,solid,particles);
+    else if(lander_.phase==LanderPhase::Settling && lander_.elapsed<dust_drift_seconds)
+        render_lander_exhaust(r,lander_.site,flight,kLanderDescentSeconds,lander_.elapsed,false,solid,particles);
 }
 } // namespace game

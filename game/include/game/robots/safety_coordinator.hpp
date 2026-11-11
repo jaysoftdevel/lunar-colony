@@ -22,7 +22,8 @@ inline constexpr float kPlannerHorizonSeconds = 1.00f;
 inline constexpr float kSafetyNumericMarginM = 0.025f;
 inline constexpr float kBlockingWaitTimeoutSeconds = 0.85f;
 inline constexpr float kFaultRecoveryMaxWaitSeconds = 3.0f;
-inline constexpr float kNeighborAwarenessRadiusM = 8.0f;
+inline constexpr float kRobotCollisionDetectionRadiusM = 5.0f;
+inline constexpr float kRobotCollisionDetectionDistanceM = 2.0f*kRobotCollisionDetectionRadiusM;
 // Personal rover safety zone beyond the hard physical hull. Every rover owns
 // this buffer and every other rover must respect it. The pairwise desired gap
 // is therefore twice this value. The hard collision envelope remains separate.
@@ -160,7 +161,7 @@ struct SafetyRuntime {
     // around a stationary fleet obstacle.  The original goal stays intact and
     // is resumed automatically after this waypoint is reached.
     bool stationary_detour_active{false};
-    std::size_t stationary_detour_blocker{kNoSafetyRobot};
+    std::size_t traffic_detour_partner{kNoSafetyRobot};
     float stop_radius{0.15f};
     float speed_scale{1.0f};
     std::uint64_t goal_revision{0};
@@ -193,10 +194,9 @@ struct SafetyRuntime {
     std::uint32_t brake_fallbacks{0};
     std::uint32_t rejected_contracts{0};
 
-    // Local fleet awareness is refreshed for every rover each safety tick.
-    // It is advisory telemetry/planning input only; the shared reservation
-    // board remains the final movement authority.
-    std::uint32_t nearby_robot_count{0};
+    // Sorted by rover ID. The coordinator refreshes this list from the
+    // measured poses before traffic planning and after each motion commit.
+    std::vector<std::size_t> nearby_robot_ids;
     std::size_t nearest_robot_id{kNoSafetyRobot};
     float nearest_robot_distance_m{std::numeric_limits<float>::infinity()};
     float predicted_robot_clearance_m{std::numeric_limits<float>::infinity()};

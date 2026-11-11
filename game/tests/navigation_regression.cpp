@@ -8,6 +8,7 @@
 #include "game/world/mesh_portals.hpp"
 #include "game/world/lunar_look.hpp"
 #include "game/world/storage_loading_gate.hpp"
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <chrono>
@@ -172,6 +173,96 @@ void fleet_case(const std::string& name,std::vector<Vec3> starts,std::vector<Vec
     const auto ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();
     std::cout<<name<<": completed in "<<t<<" s, "<<ms<<" ms CPU/wall\n";
 }
+void collision_radius_case(){
+    std::vector<SafetyRuntime> runtime(3);
+    std::vector<SafetyAgent> agents(3);
+    std::vector<NavigationRequest> requests(3);
+    SafetyWorldCallbacks world;
+    world.floor_height=[](Vec3){return 0.0f;};
+    world.point_clear=[](std::size_t,Vec3){return true;};
+    world.segment_clear=[](std::size_t,Vec3,Vec3){return true;};
+    std::atomic<unsigned> fleet_queries{};
+    world.stationary_segment_clear=[&](std::size_t,Vec3,Vec3){
+        ++fleet_queries;
+        return true;
+    };
+    world.incremental_route=[](std::size_t,Vec3,Vec3 goal,float,std::uint64_t,
+                               IncrementalPathPlannerState&,std::vector<Vec3>& route){
+        route={goal};
+        return IncrementalPathResult::Success;
+    };
+    const auto initialize=[&](std::size_t id,Vec3 start,Vec3 goal,float heading){
+        runtime[id]={};
+        agents[id]={id,start,heading,0,0.99f,6.0f,4.8f,6.4f,250.0f,&runtime[id]};
+        requests[id]={true,goal,0.18f,1.0f,false,1};
+    };
+    initialize(0,{0,0,-20},{0,0,20},0);
+    initialize(1,{10,0,-20},{10,0,20},0);
+    initialize(2,{22,0,-20},{22,0,20},0);
+    for(int frame=0;frame<300;++frame){
+        const auto stats=safety_tick(0.01f,frame*0.01f,1,agents,requests,world);
+        require(!stats.invariant_fault,"separate circles caused a safety fault");
+        for(std::size_t i=0;i<agents.size();++i){
+            require(runtime[i].nearby_robot_ids.empty() && !runtime[i].avoidance_velocity_valid &&
+                    runtime[i].avoidance_elapsed==0.0f,"disjoint or touching circles activated avoidance");
+            require(std::abs(agents[i].position.x-requests[i].goal.x)<1e-5f,"isolated rover left its route");
+            if(frame>180) require(agents[i].speed_mps>5.9f,"isolated rover lost cruise speed");
+        }
+    }
+    require(fleet_queries.load()==0,"isolated rovers ran fleet route checks");
+
+    agents.resize(2);
+    requests.resize(2);
+    initialize(0,{0,0,-12},{0,0,12},0);
+    initialize(1,{0,0,12},{0,0,-12},180);
+    bool engaged=false,cleared=false;
+    for(int frame=0;frame<3000;++frame){
+        const auto before=agents;
+        const auto stats=safety_tick(0.01f,frame*0.01f,2,agents,requests,world);
+        require(!stats.invariant_fault,"crossing circles caused a safety fault");
+        const bool overlapping=distance(agents[0].position,agents[1].position)<10.f;
+        for(std::size_t i=0;i<agents.size();++i){
+            require(runtime[i].nearby_robot_ids.size()==static_cast<std::size_t>(overlapping),
+                    "detection did not track the current 5 m circles");
+            require(overlapping || !runtime[i].avoidance_velocity_valid,"avoidance survived separation");
+            if(distance(agents[i].position,requests[i].goal)<.22f && std::abs(agents[i].speed_mps)<.06f)
+                requests[i].active=false;
+        }
+        const TubePiece first{0,.01f,before[0].position,agents[0].position,agents[0].radius_m};
+        const TubePiece second{0,.01f,before[1].position,agents[1].position,agents[1].radius_m};
+        require(!moving_discs_overlap(first,second,0,.01f),"head-on rovers collided inside the detection circles");
+        engaged|=runtime[0].avoidance_velocity_valid && runtime[1].avoidance_velocity_valid;
+        cleared|=engaged && !overlapping;
+        if(!requests[0].active && !requests[1].active) break;
+    }
+    require(engaged && cleared && !requests[0].active && !requests[1].active,
+            "head-on encounter failed to enter, leave and finish after avoidance");
+
+    agents.resize(3);
+    requests.resize(3);
+    initialize(0,{0,0,0},{0,0,20},0);
+    initialize(1,{9.9f,0,0},{9.9f,0,20},0);
+    initialize(2,{19.8f,0,0},{19.8f,0,20},0);
+    safety_tick(.01f,0,3,agents,requests,world);
+    require(runtime[0].nearby_robot_ids==std::vector<std::size_t>{1} &&
+            runtime[1].nearby_robot_ids==std::vector<std::size_t>{0,2} &&
+            runtime[2].nearby_robot_ids==std::vector<std::size_t>{1},
+            "a shared neighbor extended avoidance beyond direct overlap");
+
+    // Release only the departing pair's detour. The other two rovers remain
+    // inside each other's detection circles.
+    runtime[0].temporary_goal_valid=true;
+    runtime[0].temporary_goal={-5,0,0};
+    runtime[0].stationary_detour_active=true;
+    runtime[0].traffic_detour_partner=1;
+    initialize(1,{11,0,0},{11,0,20},0);
+    safety_tick(.01f,.01f,3,agents,requests,world);
+    require(!runtime[0].temporary_goal_valid && runtime[0].goal_valid &&
+            runtime[0].nearby_robot_ids.empty() && runtime[1].nearby_robot_ids==std::vector<std::size_t>{2},
+            "separation failed to release the active detour");
+    std::cout<<"5 m circles, free cruise, head-on avoidance and pairwise exit passed\n";
+}
+
 void fault_recovery_case(const std::string& name,std::size_t count,bool unsafe_origin=false,bool idle=false,bool pending=false){
     std::vector<SafetyRuntime> runtime(count);
     std::vector<SafetyAgent> agents(count);
@@ -3009,7 +3100,8 @@ struct NavigationRegression {
 
 int main(int argc,char** argv){
     try{
-        if(argc>1 && std::string(argv[1])=="global-routes") game::NavigationRegression::global_routes();
+        if(argc>1 && std::string(argv[1])=="collision-radius") collision_radius_case();
+        else if(argc>1 && std::string(argv[1])=="global-routes") game::NavigationRegression::global_routes();
         else if(argc>2 && std::string(argv[1])=="saved-route") game::NavigationRegression::saved_route(argv[2]);
         else if(argc>2 && std::string(argv[1])=="profile") game::NavigationRegression::profile(argv[2]);
         else if(argc>1 && std::string(argv[1])=="operation-relocation") game::NavigationRegression::operation_relocation();
