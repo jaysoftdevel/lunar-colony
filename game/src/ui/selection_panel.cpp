@@ -460,11 +460,71 @@ void GameApp::render_selection_panel(Renderer& r){
             game_label(r,{x,p.y+254},"SITE  NO ACTIVE CONSTRUCTION LEDGER",0.42f,theme_,true);
         }
 
-        game_label(r,{x,p.y+300},recovery.str(),0.40f,theme_,true);
-        game_label(r,{x,p.y+322},power.str(),0.42f,theme_,true);
-        game_label(r,{x,p.y+344},condition.str(),0.42f,theme_,true);
+        // An idle robot has no active target. Inspect the oldest queued build
+        // so the player can see why no next assignment can be made.
+        ConstructionTargetRef diagnostic_target=robot.target;
+        if(!diagnostic_target.valid() || construction_target_complete(diagnostic_target)){
+            for(const auto& job:construction_queue()){
+                if(construction_target_complete(job.target)) continue;
+                diagnostic_target=job.target;
+                break;
+            }
+        }
+        std::string resource_line="MATERIALS  NO PENDING BLUEPRINT";
+        std::string blocked_line="SOURCE ACCESS  NO PENDING PICKUP";
+        std::string dependency_line="BUILD GATE  NO PENDING BLUEPRINT";
+        if(diagnostic_target.valid() && !construction_target_complete(diagnostic_target)){
+            const ResourceBundle outstanding=construction_site_remaining(diagnostic_target,true);
+            const ResourceBundle needed=construction_site_remaining(diagnostic_target,false);
+            ResourceBundle accessible{},sealed{},reserved{};
+            for(const auto& pile:ground_resource_piles_)
+                if(pile.amount>0) accessible.amount(pile.resource)+=pile.amount;
+            for(const auto& store:placed_resources_){
+                if(store.kind!=ResourceKind::StorageDome || !store.construction.complete()) continue;
+                const bool gate_ready=storage_loading::has_ready_gate(store);
+                for(const auto& box:store.stored_boxes)
+                    if(box.amount>0) (gate_ready?accessible:sealed).amount(box.resource)+=box.amount;
+            }
+            for(const auto& other:builder_robots_){
+                if(!other.cargo_committed_to_build ||
+                   (other.mode!=BuilderRobotMode::Fetching && other.mode!=BuilderRobotMode::Delivering)) continue;
+                for(std::size_t i=0;i<kMaterialResourceCount;++i){
+                    const auto m=(MaterialResource)i;
+                    reserved.amount(m)+=std::max<std::int64_t>(0,
+                        other.logistics_reservation.amount(m)-other.cargo.amount(m));
+                }
+            }
+            std::ostringstream missing,blocked;
+            for(std::size_t i=0;i<kMaterialResourceCount;++i){
+                const auto m=(MaterialResource)i;
+                const auto need=outstanding.amount(m);
+                if(need<=0) continue;
+                const auto free=std::max<std::int64_t>(0,accessible.amount(m)-reserved.amount(m));
+                if(need>free){
+                    missing<<material_resource_symbol(m)<<" "<<(need-free)<<" KG ";
+                    if(sealed.amount(m)>0)
+                        blocked<<material_resource_symbol(m)<<" "<<sealed.amount(m)<<" KG (NO GATE) ";
+                }
+            }
+            resource_line=missing.str().empty()
+                ?(needed.empty()?"MATERIALS  NEXT STEP SUPPLIED":"MATERIALS  AVAILABLE / RESERVED FOR TRANSPORT")
+                :"UNAVAILABLE  "+missing.str();
+            blocked_line=blocked.str().empty()
+                ?(outstanding.empty()?"SOURCE ACCESS  SUPPLY ALLOCATED":"SOURCE ACCESS  CHECK PICKUP ROUTE / RESERVATIONS")
+                :"BLOCKED STORAGE  "+blocked.str();
+            dependency_line=construction_target_dependencies_ready(diagnostic_target)
+                ?"BUILD GATE  PREREQUISITES SATISFIED"
+                :"BUILD GATE  WAITING FOR CONNECTED STRUCTURE";
+            if(!robot.target.valid()) dependency_line+=" / NEXT "+target_identity(diagnostic_target);
+        }
+        game_label(r,{x,p.y+298},resource_line,0.40f,theme_);
+        game_label(r,{x,p.y+320},blocked_line,0.40f,theme_);
+        game_label(r,{x,p.y+342},dependency_line,0.40f,theme_);
+        game_label(r,{x,p.y+366},recovery.str(),0.40f,theme_,true);
+        game_label(r,{x,p.y+388},power.str(),0.42f,theme_,true);
+        game_label(r,{x,p.y+410},condition.str(),0.42f,theme_,true);
         if(robot.safety.mode==robots::SafetyMode::Fault){
-            Rect reset{x,p.y+370.0f-panel_scroll,p.w-28,30};
+            Rect reset{x,p.y+436.0f-panel_scroll,p.w-28,30};
             if(row_visible(reset.y,reset.h) && ui::button(r,ui_input_,reset,"RESET FAILSAFE / STATE MACHINE",theme_,true)){
                 auto& reset_robot=builder_robots_[robot_index];
                 reset_robot.safety={};

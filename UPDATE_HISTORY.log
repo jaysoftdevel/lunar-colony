@@ -756,11 +756,6 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Load reserved packaged goods and raw ore from Storage Domes onto the trader through a connected Landing Pad.
 - Resume belt shipments from save and hand reserved parcels to rovers when their belt is removed.
 
-0.51.20 - Spatial audio
-- Bring the OpenAL sound engine and synthesized sound effects into the mainline.
-- Add campus, suit, cabin and machinery ambience and sounds for crew, cargo and gameplay events.
-- Add master sound volume and mute controls in Settings.
-
 0.52.0 - Full project rendering edition
 - Add visibility-buffer material resolve and GPU-driven terrain cluster draws.
 - Stream terrain detail, regolith textures and near-sun shadow pages.
@@ -908,3 +903,7 @@ v0.50.13 - Stage 1 usability and direct item activation
 - Route fresh ore through carrier pickup, even when a belt is connected. Older in-flight ore and storage-to-pad trade keep their delivery paths.
 - Use basic terrain and structure textures on Classic and when the enhanced renderer is unavailable.
 - Start new games with Full Hull. None hides shells and glazing in rendering while retaining collision, access and interior equipment.
+
+0.54.3 - Align logistics stock counts with accessible storage gates and source-lease expiry; expose missing and blocked materials and construction prerequisites in robot status.
+
+0.54.4 - Unified Windows/Linux source baseline; platform-specific renderers and build paths retained. Identical shared simulation, navigation, save handling, robot diagnostics and UI for both targets.

@@ -139,7 +139,7 @@ float GameApp::selection_panel_content_height() const {
     if(selection_kind_==SelectionKind::Stash)return landing_message_.empty()?245.f:267.f;
     float extra=0;
     const float warning_font=eng::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_);
-    if(selection_kind_==SelectionKind::Robot) return 416.0f;
+    if(selection_kind_==SelectionKind::Robot) return 484.0f;
     if(selection_kind_==SelectionKind::Habitat){
         HabitatKind kind=HabitatKind::CrewQuarters;
         if(selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size()){

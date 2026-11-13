@@ -4436,7 +4436,9 @@ void GameApp::update_builder_robot(float dt){
         for(const auto& pile:ground_resource_piles_)
             if(pile.resource==material && pile.amount>0) amount+=pile.amount;
         for(const auto& structure:placed_resources_){
-            if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete()) continue;
+            // Inaccessible storage cannot satisfy a carrier's pickup request.
+            if(structure.kind!=ResourceKind::StorageDome || !structure.construction.complete() ||
+               !storage_loading::has_ready_gate(structure)) continue;
             for(const auto& box:structure.stored_boxes)
                 if(box.resource==material && box.amount>0) amount+=box.amount;
         }
@@ -4455,6 +4457,12 @@ void GameApp::update_builder_robot(float dt){
             // stock ownership until the carrier reaches the explicit 12 s
             // cancellation condition. Using a shorter source-only timeout lets
             // a second rover reserve kilograms that the first one still owns.
+            // Mirror construction_site_reserved(): an unresolved carrier must
+            // not monopolize the global source ledger after its 2 s route
+            // resolution window has expired.
+            if(other.role==RobotRole::Carrier && other.cargo.empty() &&
+               !other.route_active && other.action==BuilderRobotAction::None &&
+               other.current_speed_mps<0.05f && other.route_resolution_elapsed>=2.0f) continue;
             if(other.role==RobotRole::Carrier && other.cargo.empty() &&
                other.blocked_elapsed>11.5f && !other.route_active &&
                other.action==BuilderRobotAction::None) continue;
