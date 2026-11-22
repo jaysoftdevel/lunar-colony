@@ -1,3 +1,4 @@
+#include "game/systems/driller_acoustics.hpp"
 #include "game/game_app.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/robot_workshop.hpp"
@@ -300,10 +301,24 @@ void GameApp::update_soundscape(float dt,const game::runtime::InputState& input)
         const auto id=key(Resource,seq);
         const bool built=item.construction.complete();
         if(const auto old=audio.observe(id,built); old && !*old && built) completion(item.position);
-        if(!built || !nearby(item.position,48.0f)) continue;
+        const bool drilling=item.kind==ResourceKind::OreDriller || item.kind==ResourceKind::WaterDriller;
+        if(!built || (!drilling && !nearby(item.position,48.0f))) continue;
         const Cue cue=resource_loop(item.kind);
         if(cue!=Cue::Count && item.power_enabled && item.supply.power_fraction>=.5 && (!paused || cue!=Cue::Drill))
-            audio.loop(id,cue,world_voice(item.position+Vec3{0,1.0f,0},cue==Cue::Drill?.48f:.24f,47,1,1));
+        {
+            const Vec3 source=item.position+Vec3{0,1.0f,0};
+            auto voice=world_voice(source,cue==Cue::Drill?.65f:.24f,47,1,1);
+            if(cue==Cue::Drill){
+                const float aspect=float(viewport_width_)/std::max(1,viewport_height_);
+                const auto vp=fpv?first_person_.view_projection(aspect):camera_.view_projection(aspect);
+                voice.gain*=sound::driller_presence(source,fpv?first_person_.eye_position():camera_eye,vp);
+                // Explicit eye-distance attenuation above; retain a close spatial
+                // offset for stereo bearing without a second distance curve.
+                voice.position=listener+game::runtime::normalize(source-(fpv?first_person_.eye_position():camera_eye));
+                voice.range=1000.f;
+            }
+            if(voice.gain>.0004f)audio.loop(id,cue,voice);
+        }
         if(item.kind==ResourceKind::SolarPanel && item.solar_tracking_enabled && item.solar_visual_initialized && !paused){
             const auto sun=status_.sun_pose();
             const auto target=sun.above_horizon?sun.direction:solar_tracking::fixed_panel_normal(item.rotation_degrees);

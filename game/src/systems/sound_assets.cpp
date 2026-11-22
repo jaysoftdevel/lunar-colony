@@ -108,9 +108,14 @@ float synth(Cue cue,float t,float u,float variant,const Bands& n){
             return (.19f*n.bass+.20f*n.body+.05f*n.mid)*(.74f+.15f*slow)+
                 .14f*servo(t,44.1f,2.3f)+.05f*sine(89,t)+.03f*sine(172,t);
         case Cue::Drill: {
-            const float tooth=.50f+.44f*sine(17.7f,t+0.012f*slow);
-            return (.33f*n.bass+.34f*n.body+.23f*n.mid+.055f*n.treble)*tooth+
-                .14f*servo(t,53.2f,3.6f)+.064f*sine(161.2f,t);
+            // Gearbox torque, irregular percussive rock fracture and granular
+            // rubble chatter. Independent rates keep it from sounding like a fan.
+            const float strike=std::pow(.5f+.5f*sine(11.3f,t+.003f*slow),12.f);
+            const float chip=std::pow(std::max(0.f,sine(37.1f,t)*sine(23.7f,t)),5.f);
+            const float load=.65f+.18f*sine(1.7f,t)+.12f*sine(3.1f,t);
+            return load*(.19f*servo(t,42.4f,2.8f)+.065f*sine(84.8f,t)+.035f*sine(169.6f,t))+
+                strike*(.48f*n.bass+.42f*n.body+.21f*n.mid+.18f*sine(116,t))+
+                chip*(.30f*n.mid+.16f*n.treble)+(.14f*n.body+.11f*n.mid)*(.55f+.35f*wobble);
         }
         case Cue::Mill:
             return (.24f*n.bass+.25f*n.body+.14f*n.mid+.08f*n.treble)*(.64f+.23f*sine(23.1f,t))+

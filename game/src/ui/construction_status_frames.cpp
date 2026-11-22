@@ -380,10 +380,16 @@ void GameApp::render_supply_indicators(SceneRenderer& r){
     const auto draw=[&](Vec3 position,float height,const SupplyState& supply,bool inside,bool storage_full,bool power_enabled){
         float x=0,y=0;if(!project_world_to_logical(vp,position+Vec3{0,height+1.0f,0},r.width(),r.height(),ui_scale_,x,y))return;
         if(!power_enabled){
-            const Color info{0.34f,0.84f,1.0f,1.0f};
-            r.draw_rect({x-8,y-16,16,18},{0.02f,0.06f,0.09f,0.95f});
-            r.draw_line({x,y-13},{x,y-11},info,2.5f);
-            r.draw_line({x,y-8},{x,y-2},info,2.5f);
+            const Color power{1.0f,.16f,.12f,1.0f};
+            r.draw_rect({x-11,y-19,22,24},{.06f,.02f,.02f,.95f});
+            // IEC-style power button: open ring plus a vertical stem.
+            for(int i=0;i<20;++i){
+                const float a=.65f+(6.2831853f-1.30f)*i/20.f;
+                const float b=.65f+(6.2831853f-1.30f)*(i+1)/20.f;
+                r.draw_line({x+8*std::sin(a),y-6-8*std::cos(a)},
+                            {x+8*std::sin(b),y-6-8*std::cos(b)},power,2.5f);
+            }
+            r.draw_line({x,y-17},{x,y-6},power,2.8f);
         }else if(supply.warnings){
             const Color color{1.0f,0.68f,0.10f,pulse};
             r.draw_line({x,y-16},{x-10,y+3},color,2.5f);r.draw_line({x-10,y+3},{x+10,y+3},color,2.5f);r.draw_line({x+10,y+3},{x,y-16},color,2.5f);

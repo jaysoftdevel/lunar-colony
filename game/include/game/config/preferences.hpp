@@ -7,6 +7,7 @@ struct Preferences {
     bool mesh_layout{};
     bool music_enabled{true};
     int first_person_fov{68};
+    bool show_fps{};
 };
 
 Preferences load_preferences();

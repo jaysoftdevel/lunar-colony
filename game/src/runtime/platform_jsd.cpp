@@ -96,7 +96,8 @@ int GameHost::run(const WindowConfig& config,std::unique_ptr<GameLoop> game){
                 in.left_down=(buttons&1)!=0;in.middle_down=(buttons&2)!=0;in.right_down=(buttons&4)!=0;
                 if(p.relative){in.mouse_x=w/2;in.mouse_y=h/2;}
             }
-            const auto now=std::chrono::steady_clock::now();const float dt=std::clamp(std::chrono::duration<float>(now-previous).count(),0.f,.1f);previous=now;
+            const auto now=std::chrono::steady_clock::now();in.frame_seconds=std::max(0.f,std::chrono::duration<float>(now-previous).count());
+            const float dt=std::clamp(in.frame_seconds,0.f,.1f);previous=now;
             game->on_resize(w,h);game->update(dt,in);game->render(*p.renderer);
             if(limit>0){
                 const auto budget=std::chrono::duration<double>(1.0/limit);

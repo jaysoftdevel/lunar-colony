@@ -34,7 +34,7 @@ void GameApp::update_workshop_gates(float dt){
             occupied=occupied || threshold;
             if(robot.workshop_index==index && robot.workshop_returning) requested=true;
             if(workshop::inside(item,robot.position) &&
-               (!robot.workshop_parked || robot.target.valid() || robot.action!=BuilderRobotAction::None)) requested=true;
+               (!robot.workshop_parked || robot.target.valid() || robot.ore_haul.active() || robot.action!=BuilderRobotAction::None)) requested=true;
             if(workshop::approach_hits(item,robot.position,robot.position,1.5f) &&
                (robot.route_active || std::abs(robot.current_speed_mps)>0.02f)) requested=true;
         }

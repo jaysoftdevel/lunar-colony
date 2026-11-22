@@ -177,7 +177,7 @@ public:
         hardware_=name.find("llvmpipe")==std::string::npos && name.find("softpipe")==std::string::npos && name.find("swrast")==std::string::npos;
         vsync_supported_=platform_.setVSync(graphics_.vertical_sync);
         initialize_ui();
-        std::cout<<"JSD 0.5.12 colony renderer: "<<gpu_renderer()<<" | "<<gpu_version()<<'\n';
+        std::cout<<"JSD 0.5.14 colony renderer: "<<gpu_renderer()<<" | "<<gpu_version()<<'\n';
     }
     ~JsdRenderer() override {
         gl_.DeleteProgram(ui_program_);gl_.DeleteVertexArrays(1,&ui_vao_);gl_.DeleteBuffers(1,&ui_vbo_);gl_.DeleteTextures(1,&ui_atlas_);
@@ -248,6 +248,8 @@ public:
         environment_.sunColor={1,.96f,.90f,1};environment_.sunIntensity=2.4f*std::clamp(scene.daylight,0.f,1.f);
         environment_.skyColor={.0003f,.0005f,.0008f,1};environment_.groundColor={.10f,.095f,.09f,1};
         environment_.ambientIntensity=.22f;environment_.fogDensity=0;
+        environment_.atmosphere.enabled=false;environment_.stars.enabled=true;
+        environment_.stars.intensity=2.0f;environment_.stars.orientation=rf::inverse(view_.correction);
         environment_.shadowDistance=scene.first_person?48.f:std::clamp(scene.eye.y*1.8f,60.f,400.f);
         environment_.atmosphere.time=scene.seconds;
         environment_.deltaSeconds=std::clamp(scene.seconds-previous_seconds_,.001f,.1f);previous_seconds_=scene.seconds;
@@ -262,6 +264,7 @@ public:
     bool draw_campus_atmosphere(const Mat4& vp,Vec3,float seconds) override{
         set_3d(vp);world_=true;environment_={};environment_.fogDensity=.06f;
         environment_.atmosphere.enabled=graphics_.enabled(GraphicsFeature::EarthAtmosphere);environment_.atmosphere.time=seconds;
+        environment_.stars.enabled=environment_.atmosphere.enabled;environment_.stars.orientation=rf::inverse(view_.correction);
         environment_.atmosphere.clouds=graphics_.enabled(GraphicsFeature::Clouds)?gfx::Quality::Low:gfx::Quality::Off;
         environment_.fogDensity=graphics_.enabled(GraphicsFeature::Haze)?.06f:0;
         return true;

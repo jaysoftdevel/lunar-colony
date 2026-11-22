@@ -5344,6 +5344,30 @@ void GameApp::update_builder_robot(float dt){
         }
     }
 
+    // Dispatch ore collection before optional return-to-home and new empty
+    // construction trips. Existing loads/trader tasks retain their ownership.
+    const bool ore_job=std::any_of(builder_robots_.begin(),builder_robots_.end(),[](const auto& robot){return robot.ore_haul.active();}) ||
+        (std::any_of(placed_resources_.begin(),placed_resources_.end(),[](const auto& source){return source.kind==ResourceKind::OreDriller && *std::max_element(source.mined_ore_kg.begin(),source.mined_ore_kg.end())>=ore::box_kg;}) &&
+         (std::any_of(placed_resources_.begin(),placed_resources_.end(),[](const auto& item){return item.kind==ResourceKind::StorageDome && item.construction.complete() && storage_loading::has_ready_gate(item);}) ||
+          std::any_of(placed_habitats_.begin(),placed_habitats_.end(),[](const auto& plant){return (plant.kind==HabitatKind::ProcessingFacility || plant.kind==HabitatKind::Factory) && plant.construction.complete() && plant.supply.power_fraction>0 && plant.supply.breathability()>=95;})));
+    if(ore_job){
+    build_nav_snapshot();
+    update_ore_hauling(dt,
+        [&](std::size_t i,Vec3 p){return !safety_repositioning[i] && robot_position_clear(i,p) && fleet_position_clear(i,p);},
+        [&](std::size_t i,Vec3 p){move_towards(i,p,0.12f,0.85f);},
+        [&](std::size_t i){navigation_requests[i]={};},
+        [&](std::size_t i,Vec3 from,Vec3 to){
+            robots::PathPlanRequest request;request.start=from;request.goal=to;request.stop_radius=.2f;
+            request.cell_size=1.5f;request.corridor_half_width=18.f;request.max_expansions=1000;
+            robots::PathPlannerCallbacks callbacks;
+            callbacks.floor_height=[&](Vec3 p){return rover_floor_height(p);};
+            callbacks.point_clear=[&](Vec3 p){return robot_position_clear(i,p);};
+            callbacks.segment_clear=[&](Vec3 a,Vec3 b){return safety_segment_clear(i,a,b);};
+            callbacks.neighbor_clear=callbacks.segment_clear;
+            std::vector<Vec3> route;return robots::plan_corridor_path(request,callbacks,route);
+        });
+
+    }
     // CR-01 logistics robots are demand-driven. Every trip owns an explicit
     // reservation in kilograms. Site demand is therefore always:
     // required - delivered - fleet reservations. This is the authoritative
@@ -5976,7 +6000,7 @@ void GameApp::update_builder_robot(float dt){
         };
         bool exiting=false;
         for(const auto& r:builder_robots_)
-            if(workshop::inside(item,r.position) && r.target.valid()) exiting=true;
+            if(workshop::inside(item,r.position) && (r.target.valid() || r.ore_haul.active())) exiting=true;
         if(exiting) item.workshop_entry_owner=-1;
         else if(item.workshop_entry_owner<0 || !incoming((std::size_t)item.workshop_entry_owner)){
             item.workshop_entry_owner=-1;float best=std::numeric_limits<float>::max();
@@ -6084,10 +6108,6 @@ void GameApp::update_builder_robot(float dt){
             [&](std::size_t i){navigation_requests[i]={};});
     }
 
-    update_ore_hauling(dt,
-        [&](std::size_t i,Vec3 p){return !safety_repositioning[i] && robot_position_clear(i,p) && fleet_position_clear(i,p);},
-        [&](std::size_t i,Vec3 p){move_towards(i,p,0.12f,0.85f);},
-        [&](std::size_t i){navigation_requests[i]={};});
 
     for(std::size_t i=0;i<builder_robots_.size();++i)
         if(builder_robots_[i].operation_retry.replan_pending()) navigation_requests[i]={};

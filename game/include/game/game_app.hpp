@@ -33,6 +33,8 @@
 #include <vector>
 #include <string>
 
+namespace game::ore { struct Stockyard; }
+
 namespace game {
 
 enum class GroundPileKind : std::uint8_t { Loose, Stack, Stash };
@@ -124,6 +126,7 @@ private:
     int viewport_width_=1600;
     int viewport_height_=900;
     float fps_=0.0f;
+    bool show_fps_{};
     double ui_time_seconds_=0.0;
     static constexpr double kStatusRateRefreshSeconds=0.5;
     float ui_scale_=1.0f;
@@ -487,7 +490,8 @@ private:
     void record_robot_operation_result(BuilderRobotState& robot,bool success,std::uint64_t task=0);
     void render_robot_blockers(game::runtime::SceneRenderer& r);
     void update_ore_hauling(float dt,const std::function<bool(std::size_t,game::runtime::Vec3)>& clear,
-        const std::function<void(std::size_t,game::runtime::Vec3)>& move,const std::function<void(std::size_t)>& stop);
+        const std::function<void(std::size_t,game::runtime::Vec3)>& move,const std::function<void(std::size_t)>& stop,
+        const std::function<bool(std::size_t,game::runtime::Vec3,game::runtime::Vec3)>& reachable={});
     void update_trade_hauling(float dt,const std::function<bool(std::size_t,game::runtime::Vec3)>& clear,
         const std::function<void(std::size_t,game::runtime::Vec3)>& move,const std::function<void(std::size_t)>& stop);
     void render_trader(game::runtime::SceneRenderer& r);
@@ -519,6 +523,7 @@ private:
     bool purchase_planning_mission();
     bool complete_planning_mission_step();
     void update_resource_economy(float dt);
+    std::optional<ore::Stockyard> driller_stockyard(const PlacedResource& source) const;
     void update_ore_logistics(float dt);
     bool ore_survey_location(game::runtime::Vec3& point) const;
     void render_ore_deposits(game::runtime::SceneRenderer& r) const;
@@ -574,6 +579,7 @@ private:
     bool workshop_accessible(const PlacedResource& candidate) const;
     bool workshop_supplied(std::size_t resource_index) const;
     bool workshop_operational(std::size_t resource_index) const;
+    void render_workshop_services(game::runtime::SceneRenderer& r,std::size_t index) const;
     void render_workshop_gate(game::runtime::SceneRenderer& r,const PlacedResource& item,bool preview=false,bool valid=true) const;
     void assign_storage_loading_faces();
     void synchronize_storage_gates();

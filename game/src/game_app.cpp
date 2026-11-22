@@ -38,6 +38,7 @@ const char* GameApp::game_phase_short_name(GamePhase phase){
 void GameApp::on_start(){
     const auto preferences=load_preferences();
     graphics_=preferences.graphics;
+    show_fps_=preferences.show_fps;
     first_person_.set_fov(float(preferences.first_person_fov));
     world_layout_mode_=preferences.mesh_layout?WorldLayoutMode::Mesh:WorldLayoutMode::FullGraphics;
     soundscape_.set_music_enabled(preferences.music_enabled);
@@ -45,7 +46,7 @@ void GameApp::on_start(){
 }
 
 void GameApp::persist_preferences(){
-    preferences_save_failed_=!save_preferences({graphics_,world_layout_mode_==WorldLayoutMode::Mesh,soundscape_.music_enabled(),int(std::lround(first_person_.fov()))});
+    preferences_save_failed_=!save_preferences({graphics_,world_layout_mode_==WorldLayoutMode::Mesh,soundscape_.music_enabled(),int(std::lround(first_person_.fov())),show_fps_});
 }
 
 void GameApp::toggle_world_layout(){
@@ -122,6 +123,15 @@ void GameApp::render(SceneRenderer& r){
             case Screen::Credits: render_credits(r); break;
             case Screen::Playfield: break;
         }
+    }
+    if(show_fps_ && screen_==Screen::Playfield){
+        r.set_2d(ui_scale_);
+        float y=ui_height(r)-(first_person_mode_==FirstPersonMode::Active?30.f:BUILD_BAR_H+29.f);
+        if(first_person_mode_!=FirstPersonMode::Active && activity_log_visible()){
+            const auto dock=activity_log_panel_rect();if(dock.h>0)y=std::min(y,dock.y-29.f);
+        }
+        r.draw_rect({10,y,124,25},{.015f,.025f,.035f,.88f});
+        r.draw_text({17,y+6},"FPS "+std::to_string(int(std::lround(std::clamp(fps_,0.f,9999.f)))),2.0f,{1.f,.95f,.40f,1});
     }
     r.end_frame();
 }

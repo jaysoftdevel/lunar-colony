@@ -1,7 +1,7 @@
-# Lunar Colony 0.61.1 — external JSD engine
+# Lunar Colony 0.63.0 — external JSD engine
 
-The game requires the supplied **JSD 3d-engine source 0.5.12** in a separate
-directory. Apply the bundled engine 0.5.12 update before building. There is no in-game `engine/`
+The game requires the supplied **JSD 3d-engine source 0.5.14** in a separate
+directory. Apply the bundled engine 0.5.14 update before building. There is no in-game `engine/`
 directory, legacy engine target, alternate graphics backend, OpenAL backend,
 private ray-tracing pipeline, trained filter, or custom worker implementation.
 

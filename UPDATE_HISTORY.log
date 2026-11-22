@@ -1,3 +1,12 @@
+0.62.0 — Ore collection, gameplay HUD, first person and sky
+- Dispatch eligible carriers to completed, accessible storage gates for driller crates.
+- Skip blocked gates, request workshop departure doors, retain raw-ore accounting and retry safely.
+- Add persistent Release/Debug FPS counter in Gameplay options, using actual frame time.
+- Add outlined yellow crosshairs, Shift sprint and Space jump; Space pause remains in orbit.
+- Add native directional star sky with atmosphere/daylight treatment, FOV/aspect and camera reprojection.
+- Close workshop gable walls and replace green doors with detailed sliding metal shutters.
+- Pair game source 0.62.0 with external JSD engine source 0.5.13 on Linux and Windows.
+
 0.61.1 — Windows compatibility
 - Pair game 0.61.1 with external JSD engine source 0.5.12.
 - Share native Windows CMake/Visual Studio discovery with the engine build driver.

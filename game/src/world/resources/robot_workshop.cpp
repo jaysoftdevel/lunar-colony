@@ -31,7 +31,42 @@ ResourceMesh make_robot_workshop(){
         b.cylinder_between(b.mesh.details,u,v,0.065f,6,true,true);
         if(z==4.8f) continue;
         const Vec3 w=v+Vec3{0,0,2.4f},t=u+Vec3{0,0,2.4f};
-        Builder::tri(b.mesh.body,u,v,w);Builder::tri(b.mesh.body,u,w,t);
+        Builder::tri(b.mesh.glazing,u,v,w);Builder::tri(b.mesh.glazing,u,w,t);
+    }
+
+    // Every arch has two grounded stanchions. Keep these in the detail layer
+    // so disabling hull rendering still leaves a continuous load path.
+    for(float z:{-4.8f,-2.4f,0.f,2.4f,4.8f})for(float x:{-5.30f,5.30f}){
+        b.box(b.mesh.details,{x,1.60f,z},{.14f,2.40f,.16f});
+        b.box(b.mesh.details,{x,.46f,z},{.30f,.12f,.32f});
+    }
+    // Longitudinal glazing mullions and pressure seals meet each transverse rib.
+    for(int i=0;i<=12;++i){
+        const float a=PI*i/12;
+        b.cylinder_between(b.mesh.details,{5.30f*std::cos(a),2.80f+1.85f*std::sin(a),-4.8f},
+            {5.30f*std::cos(a),2.80f+1.85f*std::sin(a),4.8f},.038f,6);
+    }
+
+    // Suspended task-light housings are physically tied to the transverse ribs.
+    for(float x:{-3.25f,3.25f})for(float z:{-2.4f,2.4f}){
+        for(float offset:{-.38f,.38f}){
+            const float roof=2.8f+1.85f*std::sqrt(1.f-(x+offset)*(x+offset)/(5.3f*5.3f));
+            b.cylinder_between(b.mesh.details,{x+offset,3.60f,z},{x+offset,roof,z},.024f,6);
+        }
+        b.box(b.mesh.details,{x,3.63f,z},{1.18f,.10f,.26f});
+    }
+
+    // Seal both gables to the roof profile. The front cap starts above the
+    // sliding door in its central span; the rear has no opening.
+    std::vector<float> cuts{-5.30f,-workshop::kGateHalf,workshop::kGateHalf,5.30f};
+    for(int i=1;i<24;++i)cuts.push_back(-5.30f+10.60f*i/24.f);
+    std::sort(cuts.begin(),cuts.end());
+    for(float z:{-4.80f,4.80f})for(std::size_t i=1;i<cuts.size();++i){
+        const float a=cuts[i-1],c=cuts[i];
+        const auto top=[](float x){return 2.80f+1.85f*std::sqrt(std::max(0.f,1.f-x*x/(5.30f*5.30f)));};
+        const float bottom=z<0 && std::abs((a+c)*.5f)<workshop::kGateHalf?3.30f:2.80f;
+        Builder::tri(b.mesh.body,{a,bottom,z},{c,bottom,z},{c,top(c),z});
+        Builder::tri(b.mesh.body,{a,bottom,z},{c,top(c),z},{a,top(a),z});
     }
 
     // Four realistic parking/service stations.  Each bay retains a 2.5 x 2.9 m
@@ -45,6 +80,20 @@ ResourceMesh make_robot_workshop(){
         b.line({p.x-1.25f,0.415f,p.z-1.45f},{p.x+1.25f,0.415f,p.z-1.45f});
         b.line({p.x-1.25f,0.415f,p.z+1.45f},{p.x+1.25f,0.415f,p.z+1.45f});
         for(float x:{p.x-1.25f,p.x+1.25f}) b.line({x,0.415f,p.z-1.45f},{x,0.415f,p.z+1.45f});
+        // Wall-mounted tool drawers, diagnostic console, pneumatic reservoir
+        // and paired low service rails at every bay. The central aisle stays free.
+        b.box(b.mesh.details,{sign*4.82f,1.80f,p.z+.72f},{.34f,.65f,.62f});
+        for(int drawer=0;drawer<4;++drawer)
+            b.box(b.mesh.details,{sign*4.36f,.66f+drawer*.18f,p.z-.62f},{.07f,.045f,.34f});
+        b.cylinder_y(b.mesh.details,{sign*4.95f,.94f,p.z-.10f},.88f,.12f,10);
+        for(float offset:{-.68f,.68f})
+            b.box(b.mesh.details,{p.x+offset,.435f,p.z},{.075f,.07f,2.55f});
+        // Hose runs are attached to the cabinet and floor rather than suspended.
+        for(int segment=0;segment<8;++segment){
+            const float a=PI*segment/8,c=PI*(segment+1)/8;
+            b.cylinder_between(b.mesh.details,{sign*(4.48f+.14f*std::sin(a)),.82f+.30f*std::cos(a),p.z+.52f},
+                {sign*(4.48f+.14f*std::sin(c)),.82f+.30f*std::cos(c),p.z+.52f},.024f,6);
+        }
         for(int roller=0;roller<4;++roller)
             b.cylinder_z(b.mesh.details,{sign*4.62f,1.0f,p.z+0.34f+0.15f*roller},0.11f,0.04f,6);
     }

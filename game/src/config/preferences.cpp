@@ -60,6 +60,7 @@ Preferences load_preferences(){
         int value{};
         const auto parsed=std::from_chars(first,last,value);
         if(parsed.ec!=std::errc{} || parsed.ptr!=last) continue;
+        if(key=="show_fps")preferences.show_fps=value==1;
         if(key=="first_person_fov")preferences.first_person_fov=std::clamp(value,50,110);
         if(key=="path" && value>=0 && value<=2) settings.path=static_cast<GraphicsPath>(value);
         if(key=="aa" && value>=0 && value<=2) settings.aa=static_cast<GraphicsAA>(value);
@@ -124,6 +125,7 @@ bool save_preferences(const Preferences& preferences){
         const int quality=(settings.low_quality&bit)?1:(settings.medium_quality&bit)?2:3;
         file<<graphics_feature_keys[static_cast<unsigned>(feature)]<<"_quality="<<quality<<'\n';
     }
+    file<<"show_fps="<<preferences.show_fps<<'\n';
     file<<"first_person_fov="<<std::clamp(preferences.first_person_fov,50,110)<<'\n';
     file<<"vertical_sync="<<settings.vertical_sync<<'\n';
     file<<"mesh_layout="<<preferences.mesh_layout<<'\n'

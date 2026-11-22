@@ -1,10 +1,17 @@
-# JSD Lunar Base v0.61.1
+# JSD Lunar Base v0.63.0
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
-The game renders through the external **JSD 3d-engine 0.5.12**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+The game renders through the external **JSD 3d-engine 0.5.14**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
 
-Version 0.61.1 fixes Windows toolchain selection, DLL staging and Unicode save/settings paths.
+Version 0.63.0 adds a framed glass hangar roof, four equipped robot service bays,
+camera-aware rocky drilling audio, blueprint-safe ore stacks and a red power-off
+symbol. See [UPDATE-0.63.0.md](UPDATE-0.63.0.md) for details.
+
+The FPS option, high-contrast crosshair, sky sphere, sprint/jump and gate-based ore
+hauling from 0.62.0 are retained.
+
+The Windows build fixes from 0.61.1 are retained.
 Windows uses the same external engine source and rendering features as Linux.
 See [WINDOWS-COMPATIBILITY.md](WINDOWS-COMPATIBILITY.md) for validation.
 
@@ -31,11 +38,11 @@ Career follows the mission stages. Free Play lets you start at a selected stage 
 
 Both builds store `.gmsave` files in `savegames/` at the game workspace root. The first launch moves saves from the former Linux and Windows `bin/savegames/` directories and gives conflicting filenames a numeric suffix. Older saves open normally. Saving again writes the compact format.
 
-Press **1–3** to select a simulation speed and **Space** to pause or resume. A pulsing frame marks paused simulation. In first person, **J** jumps. In the Debug build, **Settings → Debug Layout** switches between the configured renderer and the meshed view. **Settings → Music** controls the atmospheric theme independently of sound effects.
+Press **1–3** to select a simulation speed and **Space** to pause or resume in orbit view. A pulsing frame marks paused simulation. In first person, **Shift** sprints and **Space** jumps (**J** is also accepted). In the Debug build, **Settings → Debug Layout** switches between the configured renderer and the meshed view. **Settings → Music** controls the atmospheric theme independently of sound effects.
 
 ## Build and run
 
-The game uses the external JSD 3d-engine 0.5.12 for rendering, platform, math,
+The game uses the external JSD 3d-engine 0.5.14 for rendering, platform, math,
 workers and audio. Its former in-game engine directory is removed. Game-specific
 bindings live under `game/src/runtime/` alongside the game code.
 

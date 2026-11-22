@@ -140,6 +140,8 @@ struct RobotOperationRetry {
 
 struct BuilderRobotState {
     ore::Haul ore_haul{};
+    float ore_probe_wait{}; // transient bounded retry; never serialized
+    std::uint64_t ore_probe_revision{};
     RobotRole role{RobotRole::Constructor};
     game::runtime::Vec3 position{};               // wheel contact / local floor position
     float heading_degrees{0.0f};

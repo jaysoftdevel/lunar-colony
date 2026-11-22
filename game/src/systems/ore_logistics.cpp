@@ -1,6 +1,8 @@
 #include "game/game_app.hpp"
 #include "game/ui/layout.hpp"
 #include "game/world/storage_loading_gate.hpp"
+#include "game/world/robot_workshop.hpp"
+#include "game/world/ore_stockyard.hpp"
 #include <limits>
 #include "game/util/world_math.hpp"
 #include <cmath>
@@ -11,6 +13,31 @@ namespace game {
 
 using namespace game::runtime;
 using namespace world_math;
+
+std::optional<ore::Stockyard> GameApp::driller_stockyard(const PlacedResource& source) const {
+    const auto& mesh=resource_models_.mesh(source);
+    return ore::find_stockyard(source.position,source.rotation_degrees,mesh.footprint_x,mesh.footprint_z,
+        utility_network_.connections(),[&](const world_math::OrientedFootprint& pad){
+            const float limit=playfield_.size()*.5f;
+            if(std::abs(pad.center.x)+world_math::projected_radius(pad,{1,0})>limit ||
+               std::abs(pad.center.y)+world_math::projected_radius(pad,{0,1})>limit)return false;
+            const auto blocks=[&](const auto& item,const auto& model){
+                return world_math::overlaps(pad,world_math::footprint(item.position,item.rotation_degrees,model.footprint_x,model.footprint_z),.20f);
+            };
+            for(const auto& item:placed_resources_)if(blocks(item,resource_models_.mesh(item)))return false;
+            for(const auto& item:placed_habitats_)if(blocks(item,habitat_models_.mesh(item)))return false;
+            const auto route_blocks=[&](const auto& links,float half){
+                for(const auto& link:links)for(std::size_t i=1;i<link.path.size();++i){
+                    const auto delta=link.path[i]-link.path[i-1];
+                    if(world_math::overlaps(pad,world_math::footprint((link.path[i]+link.path[i-1])*.5f,
+                        std::atan2(delta.x,delta.z)*57.29578f,2*half,std::hypot(delta.x,delta.z)),.2f))return true;
+                }
+                return false;
+            };
+            return !route_blocks(corridor_network_.connections(),geometry::kCorridorHalfWidth) &&
+                   !route_blocks(walkway_network_.connections(),geometry::kWalkwayHalfWidth);
+        });
+}
 
 void GameApp::update_ore_logistics(float dt){
     for(auto& drill:placed_resources_){
@@ -61,7 +88,8 @@ void GameApp::update_ore_logistics(float dt){
 }
 
 void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,Vec3)>& clear,
-    const std::function<void(std::size_t,Vec3)>& move,const std::function<void(std::size_t)>& stop){
+    const std::function<void(std::size_t,Vec3)>& move,const std::function<void(std::size_t)>& stop,
+    const std::function<bool(std::size_t,Vec3,Vec3)>& reachable){
     const auto plant_ready=[](const PlacedHabitat& plant){
         return (plant.kind==HabitatKind::ProcessingFacility || plant.kind==HabitatKind::Factory) &&
             plant.construction.complete() && plant.supply.power_fraction>0 && plant.supply.breathability()>=95;
@@ -82,6 +110,17 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
         return kNoRobotIndex;
     };
 
+    std::uint64_t revision=1469598103934665603ULL;
+    const auto hash=[&](std::uint64_t value){revision=(revision^value)*1099511628211ULL;};
+    for(const auto& item:placed_resources_){
+        hash(item.placement_sequence);hash(item.construction.step);hash(item.storage_loading_ready);
+        hash(item.workshop_gate_open>=.999f);
+        for(int face:storage_loading::faces(item,true))hash(std::uint64_t(face+1));
+        hash(storage_dome_used_kg(item));
+        for(double stock:item.mined_ore_kg)hash(std::uint64_t(stock/ore::box_kg));
+    }
+    for(const auto& item:placed_habitats_){hash(item.placement_sequence);hash(item.construction.step);}
+    hash(corridor_network_.connections().size());hash(utility_network_.connections().size());
     for(std::size_t ri=0;ri<builder_robots_.size();++ri){
         auto& rover=builder_robots_[ri];
         auto& haul=rover.ore_haul;
@@ -95,20 +134,28 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
         };
 
         const auto find_destination=[&]{
-            // Prefer processing while a receiver can work. Storage is the fallback.
+            // A ready, reachable storage gate owns the next collection trip.
+            // Processing remains available when no storage gate can accept ore.
             std::uint64_t best=0;
             float nearest=std::numeric_limits<float>::max();
             const auto consider=[&](const auto& item){
                 if(!item.placement_sequence)return;
                 for(const auto& other:builder_robots_)
                     if(&other!=&rover && other.ore_haul.active() && other.ore_haul.destination==item.placement_sequence)return;
-                const float distance=distance_xz(rover.position,item.position);
+                const float distance=distance_xz(haul.loaded || !haul.goal_valid?rover.position:haul.goal,item.position);
                 if(distance>=nearest)return;
                 nearest=distance;
                 best=item.placement_sequence;
             };
-            for(const auto& plant:placed_habitats_)if(plant_ready(plant))consider(plant);
-            if(!best)for(const auto& dome:placed_resources_)if(dome_ready(dome))consider(dome);
+            for(const auto& dome:placed_resources_)if(dome_ready(dome)){
+                bool accessible=false;
+                for(const int face:storage_loading::faces(dome,true))if(face>=0){
+                    const Vec3 service=storage_loading::service(dome,face);
+                    if(clear(ri,service) && (!reachable || reachable(ri,haul.loaded || !haul.goal_valid?rover.position:haul.goal,service))){accessible=true;break;}
+                }
+                if(accessible)consider(dome);
+            }
+            if(!best)for(const auto& plant:placed_habitats_)if(plant_ready(plant))consider(plant);
             return best;
         };
 
@@ -117,6 +164,15 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
                rover.action!=BuilderRobotAction::None || rover.debug_move_active || rover.drop_exit_pending ||
                rover.starter_charge_active || rover.battery_charge_kwh<rover.battery_capacity_kwh*.2f)continue;
 
+            const bool receiver=std::any_of(placed_resources_.begin(),placed_resources_.end(),dome_ready) ||
+                std::any_of(placed_habitats_.begin(),placed_habitats_.end(),plant_ready);
+            const bool pending=std::any_of(placed_resources_.begin(),placed_resources_.end(),[](const auto& source){return source.kind==ResourceKind::OreDriller && source.construction.complete() && *std::max_element(source.mined_ore_kg.begin(),source.mined_ore_kg.end())>=ore::box_kg;});
+            if(!receiver || !pending)continue;
+            for(auto& home:placed_resources_)if(home.kind==ResourceKind::RobotWorkshop && home.construction.complete() && workshop::inside(home,rover.position))home.workshop_gate_hold=std::max(home.workshop_gate_hold,.85f);
+            if(rover.ore_probe_revision!=revision){rover.ore_probe_revision=revision;rover.ore_probe_wait=0;}
+            rover.ore_probe_wait=std::max(0.f,rover.ore_probe_wait-dt);
+            if(rover.ore_probe_wait>0)continue;
+            rover.ore_probe_wait=.75f;
             float nearest=std::numeric_limits<float>::max();
             for(const auto& drill:placed_resources_){
                 if(drill.kind!=ResourceKind::OreDriller || !drill.construction.complete() ||
@@ -128,7 +184,15 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
                     if(&other!=&rover && other.ore_haul.active() && other.ore_haul.source==drill.placement_sequence)leased=true;
                 const float distance=distance_xz(rover.position,drill.position);
                 if(leased || distance>=nearest)continue;
-                nearest=distance;
+                const auto pad=driller_stockyard(drill);if(!pad)continue;
+                const auto kind=static_cast<std::uint8_t>(stock-drill.mined_ore_kg.begin());
+                Vec3 pickup{};bool accessible=false;
+                for(float side:{0.f,-1.f,1.f,-2.f,2.f}){
+                    const Vec3 point=pad->pickup(kind,side);
+                    if(clear(ri,point) && (!reachable || reachable(ri,rover.position,point))){pickup=point;accessible=true;break;}
+                }
+                if(!accessible)continue;
+                nearest=distance;haul.goal=pickup;haul.goal_valid=true;
                 haul.source=drill.placement_sequence;
                 haul.kind=static_cast<std::uint8_t>(stock-drill.mined_ore_kg.begin());
             }
@@ -153,7 +217,22 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
             dome=resource_index(haul.destination);
         }
 
+        if(haul.loaded && dome!=kNoRobotIndex && haul.goal_valid){
+            const auto& destination=placed_resources_[dome];
+            bool valid_gate=false;
+            for(int face:storage_loading::faces(destination,true))if(face>=0 && distance_xz(haul.goal,storage_loading::service(destination,face))<.1f && clear(ri,haul.goal))valid_gate=true;
+            if(!valid_gate)haul.goal_valid=false;
+        }
         const bool return_crate=haul.loaded && !haul.destination;
+        const auto pad=drill!=kNoRobotIndex?driller_stockyard(placed_resources_[drill]):std::nullopt;
+        if((!haul.loaded || return_crate) && !pad){stop(ri);if(!haul.loaded)finish();continue;}
+        // Planning a new channel can move the pad while a carrier is en route.
+        // Revalidate its approach and cancel any stale pickup animation.
+        if((!haul.loaded || return_crate) && haul.goal_valid){
+            bool current=false;
+            for(float side:{0.f,-1.f,1.f,-2.f,2.f})if(distance_xz(haul.goal,pad->pickup(haul.kind,side))<.05f)current=true;
+            if(!current){haul.goal_valid=false;rover.action=BuilderRobotAction::None;}
+        }
         if(return_crate && drill==kNoRobotIndex){
             stop(ri);
             haul.goal_valid=false;
@@ -172,19 +251,14 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
             float nearest=std::numeric_limits<float>::max();
             const auto consider=[&](Vec3 point){
                 const float distance=distance_xz(rover.position,point);
-                if(distance<nearest && clear(ri,point)){
+                if(distance<nearest && clear(ri,point) && (!reachable || reachable(ri,rover.position,point))){
                     nearest=distance;
                     haul.goal=point;
                     haul.goal_valid=true;
                 }
             };
             if(at_driller && drill!=kNoRobotIndex){
-                const auto& source=placed_resources_[drill];
-                const auto& mesh=resource_models_.mesh(source);
-                // Approach the outdoor stack from its free side, outside the crate rows.
-                const float x=(static_cast<float>(haul.kind)-1.5f)*.5f;
-                for(const float side:{0.f,-1.f,1.f,-2.f,2.f})
-                    consider(source.position+rotate_y({x+side,0,mesh.footprint_z*.5f+2.5f},source.rotation_degrees));
+                for(const float side:{0.f,-1.f,1.f,-2.f,2.f})consider(pad->pickup(haul.kind,side));
             }else if(plant!=kNoRobotIndex){
                 const auto& receiver=placed_habitats_[plant];
                 const auto& mesh=habitat_models_.mesh(receiver);
@@ -203,13 +277,11 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
         if(!haul.goal_valid){
             stop(ri);
             if(!haul.loaded)finish();
+            else {haul.destination=find_destination();haul.goal_valid=false;}
             continue;
         }
         if(at_driller && drill!=kNoRobotIndex){
-            const auto& source=placed_resources_[drill];
-            const auto& mesh=resource_models_.mesh(source);
-            focus=source.position+rotate_y({(static_cast<float>(haul.kind)-1.5f)*.5f,.035f,
-                mesh.footprint_z*.5f+.74f},source.rotation_degrees);
+            focus=pad->box(haul.kind,1);
         }else if(plant!=kNoRobotIndex)focus=placed_habitats_[plant].position;
         else if(dome!=kNoRobotIndex)focus=placed_resources_[dome].position;
         rover.interaction_position=haul.goal;

@@ -42,6 +42,14 @@ inline std::array<Fixture,4> pad_fixtures(const PlacedResource& pad,const Resour
     return out;
 }
 
+inline std::array<Fixture,4> workshop_fixtures(const PlacedResource& workshop){
+    std::array<Fixture,4> out{};std::size_t i=0;
+    for(float x:{-3.25f,3.25f})for(float z:{-2.4f,2.4f})
+        out[i++]={workshop.position+world_math::rotate_y({x,3.55f,z},workshop.rotation_degrees),
+            {1.10f,.09f,.20f},{.78f,.88f,1.f,1},5.8f,18.f};
+    return out;
+}
+
 inline void append_corridor_fixtures(std::vector<Fixture>& fixtures,const CorridorConnection& corridor){
     if(!corridor.construction.complete() || !powered(corridor.supply,true))return;
     // Space guide lights by metres along the deck, independent of path sampling.

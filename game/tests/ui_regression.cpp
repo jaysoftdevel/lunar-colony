@@ -545,8 +545,8 @@ struct UiRegression {
                 r.draws.clear();
                 app.render_supply_indicators(r);
                 require(std::count_if(r.draws.begin(),r.draws.end(),[](const auto& draw){
-                    return draw.type=='L' && draw.color.r==.34f && draw.color.g==.84f && draw.color.b==1.0f;
-                })==2,"powered-off info icon missing");
+                    return draw.type=='L' && draw.color.r==1.0f && draw.color.g==.16f && draw.color.b==.12f;
+                })==21,"powered-off red power symbol missing");
                 app.render_selection_panel(r);
                 click("POWER ON");
                 require(item.power_enabled,"resource power-on click failed");
@@ -829,6 +829,38 @@ struct UiRegression {
 #endif
         fs::remove_all(folder);
         std::cout<<"Workspace-root save discovery and Unicode save/preferences roundtrip passed\n";
+    }
+
+    static void gameplay_options(){
+        using namespace game::runtime;
+        const auto previous=load_preferences();
+        GameHost host;GameApp app(host);Recorder draw;
+        InputState slow;slow.frame_seconds=.5f;app.update_simulation(.1f,slow);require(app.fps_==2.f,"FPS counter uses the clamped simulation step");
+        app.screen_=GameApp::Screen::Settings;
+        app.show_fps_=false;app.render(draw);
+        float row=-1,left=0;Rect last{},button{};
+        for(const auto& d:draw.draws)if(d.type=='T' && d.text=="FPS COUNTER"){row=d.v[1];left=d.v[0];}
+        require(row>0,"FPS option missing in this build configuration");
+        for(const auto& d:draw.draws){
+            if(d.type=='R')last={d.v[0],d.v[1],d.v[2],d.v[3]};
+            if(d.type=='T' && d.text=="OFF" && d.v[0]>left && std::abs(d.v[1]-row)<14)button=last;
+        }
+        require(button.w>0,"FPS option has no toggle hitbox");
+        app.input_.mouse_x=int((button.x+button.w*.5f)*draw.scale);app.input_.mouse_y=int((button.y+button.h*.5f)*draw.scale);app.input_.left_pressed=true;app.render(draw);app.input_={};
+        require(app.show_fps_ && load_preferences().show_fps,"FPS toggle did not apply/persist");
+        GameApp restarted(host);restarted.on_start();require(restarted.show_fps_,"FPS preference lost at restart");
+        app.playfield_.rebuild(64);app.camera_.reset(64);app.screen_=GameApp::Screen::Playfield;app.fps_=60;
+        app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,0,0});app.render(draw);
+        unsigned gold=0,outline=0;bool fps=false;
+        for(const auto& d:draw.draws){
+            if(d.type=='T' && d.text=="FPS 60"){fps=true;require(d.v[0]<30 && d.v[1]>draw.h/draw.scale-40,"FPS counter is not lower left");}
+            if(d.type=='L' && d.color.r==1.f && d.color.g==.90f && d.color.b==.12f)++gold;
+            if(d.type=='L' && d.color.r==.015f && d.v[5]>=4)++outline;
+        }
+        require(fps && gold>=4 && outline>=4,"FPS or outlined high-contrast crosshair was not drawn");
+        app.show_fps_=false;app.render(draw);for(const auto& d:draw.draws)require(!(d.type=='T' && d.text=="FPS 60"),"Disabled FPS counter still draws");
+        require(save_preferences(previous),"Could not restore preferences");
+        std::cout<<"Release/Debug gameplay FPS UI, persistence, lower-left HUD and high-contrast crosshair passed\n";
     }
 
     static void fov_and_station_interiors(){
@@ -1412,7 +1444,7 @@ struct UiRegression {
                 if(scene==19)require(has_text("HYDROPONICS") && has_text("PHOTOPERIOD"),"Bio Dome details omit hydroponics/photoperiod status");
                 if(scene==9)require(has_text("WARNING:") && has_text("AIR BELOW 95%"),"storage warning icon reason missing");
                 if(scene==16 || scene==17)require(has_text("WARNING:") && has_text("INSUFFICIENT POWER"),"storage/workshop early return hides warning reasons");
-                if(scene==12)require(has_text("J JUMP") && has_text("SPACE PAUSE"),"POV help omits the jump or pause shortcut");
+                if(scene==12)require(has_text("SPACE JUMP") && has_text("SHIFT SPRINT") && !has_text("SPACE PAUSE"),"POV help omits sprint/jump or still advertises Space pause");
                 if(scene==14)require(has_text("-0.125"),"depleting interior details hide negative air change");
                 if(n==0)reference=r;else compare(reference,r,label);
                 if(!output.empty() && ((zoom==2 && (n==0 || n==4)) || (zoom==4 && n==0)))r.write(std::filesystem::path(output)/("ui-"+std::to_string(scene)+"-"+std::to_string(r.w)+"-zoom"+std::to_string(zoom)+".json"));
@@ -2507,6 +2539,7 @@ int main(int argc,char** argv){
             game::UiRegression::build_mode();
             game::UiRegression::recent_saves();
         }
+        else if(out=="gameplay-options") game::UiRegression::gameplay_options();
         else if(out=="runtime-paths") game::UiRegression::runtime_paths();
         else if(out=="fov-interiors") game::UiRegression::fov_and_station_interiors();
         else if(out=="graphics-quality") game::UiRegression::graphics_quality();

@@ -15,6 +15,8 @@ SOURCE-MANIFEST.txt
 STAGE1-CAMPAIGN-GUIDE.md
 STAGE1-UI-CONTROLS.md
 SURFACES-0.61.0.md
+UPDATE-0.62.0.md
+UPDATE-0.63.0.md
 UPDATE_HISTORY.log
 VALIDATION.md
 VERSION
@@ -58,6 +60,7 @@ game/include/game/systems/builder_robot.hpp
 game/include/game/systems/camera_controller.hpp
 game/include/game/systems/colony_status.hpp
 game/include/game/systems/construction_costs.hpp
+game/include/game/systems/driller_acoustics.hpp
 game/include/game/systems/first_person_controller.hpp
 game/include/game/systems/game_progress.hpp
 game/include/game/systems/lunar_lander.hpp
@@ -90,6 +93,7 @@ game/include/game/world/hydroponics.hpp
 game/include/game/world/lunar_look.hpp
 game/include/game/world/mesh_portals.hpp
 game/include/game/world/ore.hpp
+game/include/game/world/ore_stockyard.hpp
 game/include/game/world/playfield.hpp
 game/include/game/world/pressure_door.hpp
 game/include/game/world/resource_builder.hpp
@@ -230,6 +234,7 @@ game/tests/build_arguments_test.py
 game/tests/jsd_bridge_regression.cpp
 game/tests/jsd_runtime_regression.cpp
 game/tests/jsd_scene_regression.cpp
+game/tests/jsd_sky_regression.cpp
 game/tests/jsd_surface_regression.cpp
 game/tests/lander_regression.cpp
 game/tests/navigation_regression.cpp

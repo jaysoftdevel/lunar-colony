@@ -35,7 +35,7 @@ void GameApp::update_speed_shortcuts(const InputState& in){
     if(current>=1 && current<=3) last_running_speed_=static_cast<std::uint8_t>(current);
 
     auto next=in.key_number_pressed;
-    if(in.key_space_pressed) next=current==0?last_running_speed_:0;
+    if(in.key_space_pressed && first_person_mode_!=FirstPersonMode::Active) next=current==0?last_running_speed_:0;
     else if(next<1 || next>3) return;
     if(next>0) last_running_speed_=next;
     if(planning) planning_.time_speed=next;
@@ -78,8 +78,9 @@ void GameApp::update_simulation(float dt,const InputState& in){
     }
 
     ui_time_seconds_+=std::max(0.0f,dt);
-    if(dt>0.000001f){
-        const float instant=1.0f/dt;
+    const float frame_seconds=in.frame_seconds>0?in.frame_seconds:dt;
+    if(frame_seconds>0.000001f){
+        const float instant=1.0f/frame_seconds;
         fps_=fps_<=0.0f?instant:(fps_*0.90f+instant*0.10f);
     }
 

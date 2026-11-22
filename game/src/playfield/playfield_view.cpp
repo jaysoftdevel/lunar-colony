@@ -52,6 +52,12 @@ void GameApp::render_playfield(SceneRenderer& r){
                 for(const auto& fixture:lunar_look::pad_fixtures(pad,resource_models_.mesh(pad)))
                     lights.push_back(fixture.light());
             }
+            for(std::size_t i=0;i<placed_resources_.size();++i){
+                const auto& home=placed_resources_[i];
+                if(home.kind!=ResourceKind::RobotWorkshop || !home.construction.complete() ||
+                   !lunar_look::powered(home.supply,home.power_enabled) || !workshop_operational(i))continue;
+                for(const auto& fixture:lunar_look::workshop_fixtures(home))lights.push_back(fixture.light());
+            }
             scene.light_count=std::min(lights.size(),scene.lights.size());
             const auto distance_to_focus=[&](const LunarLight& light){
                 const Vec3 offset=light.position-focus;
@@ -230,17 +236,19 @@ void GameApp::render_selection_marquee(SceneRenderer& r){
 void GameApp::render_first_person_hud(SceneRenderer& r){
     if(first_person_mode_==FirstPersonMode::Active){
         const float cx=ui_width(r)*0.5f,cy=ui_height(r)*0.5f;
-        const Color cross{0.82f,0.94f,0.96f,0.90f};
-        r.draw_line({cx-8.0f,cy},{cx-2.0f,cy},cross,1.5f);
-        r.draw_line({cx+2.0f,cy},{cx+8.0f,cy},cross,1.5f);
-        r.draw_line({cx,cy-8.0f},{cx,cy-2.0f},cross,1.5f);
-        r.draw_line({cx,cy+2.0f},{cx,cy+8.0f},cross,1.5f);
+        const Color cross{1.f,.90f,.12f,1.f};
+        for(const auto& line:std::array<std::pair<Vec2,Vec2>,4>{{{{cx-9,cy},{cx-2,cy}},{{cx+2,cy},{cx+9,cy}},{{cx,cy-9},{cx,cy-2}},{{cx,cy+2},{cx,cy+9}}}})
+            r.draw_line(line.first,line.second,{.015f,.02f,.025f,1},4.f);
+        r.draw_line({cx-8.0f,cy},{cx-2.0f,cy},cross,2.0f);
+        r.draw_line({cx+2.0f,cy},{cx+8.0f,cy},cross,2.0f);
+        r.draw_line({cx,cy-8.0f},{cx,cy-2.0f},cross,2.0f);
+        r.draw_line({cx,cy+2.0f},{cx,cy+8.0f},cross,2.0f);
 
         Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,528.0f,49.0f};
         r.draw_rect(help,kHudFill);
-        game_label(r,{help.x+12.0f,help.y+8.0f},"FIRST PERSON TEST VIEW",0.64f,theme_);
+        game_label(r,{help.x+12.0f,help.y+8.0f},"FIRST PERSON VIEW",0.64f,theme_);
         game_label_fitted(r,{help.x+12.f,help.y+28.f,help.w-24.f,15.f},
-            "WASD WALK / SHIFT FAST / J JUMP / LMB GRAB-DROP / MOUSE LOOK / V OR ESC EXIT / SPACE PAUSE",.43f,theme_,true);
+            "WASD WALK / SHIFT SPRINT / SPACE JUMP / LMB GRAB-DROP / MOUSE LOOK / V OR ESC EXIT",.43f,theme_,true);
 
         const std::string environment=first_person_environment_label();
         Rect env{help.x,help.y+help.h+8.0f,help.w,31.0f};
@@ -334,7 +342,8 @@ void GameApp::render_playfield_crosshair(SceneRenderer& r){
         {hit.x,y,hit.z-arm},{hit.x,y,hit.z-gap},
         {hit.x,y,hit.z+gap},{hit.x,y,hit.z+arm}
     };
-    r.draw_lines_3d(lines,theme_.accent,2.8f*ui_scale_/UI_SCALES[2]);
+    r.draw_lines_3d(lines,{.015f,.02f,.025f,1},5.0f*ui_scale_/UI_SCALES[2]);
+    r.draw_lines_3d(lines,{1.f,.9f,.12f,1},2.5f*ui_scale_/UI_SCALES[2]);
 }
 
 } // namespace game

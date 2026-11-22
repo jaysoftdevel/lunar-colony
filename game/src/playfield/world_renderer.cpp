@@ -4,6 +4,7 @@
 #include "game/world/storage_loading_gate.hpp"
 #include "game/world/resource_builder.hpp"
 #include "game/world/robot_workshop.hpp"
+#include "game/world/ore_stockyard.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
 #include "game/util/mesh_wireframe.hpp"
@@ -515,6 +516,7 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
         const Color faint=valid?Color{0.18f,0.78f,0.56f,0.78f}:Color{0.92f,0.25f,0.20f,0.78f};
         mesh_wireframe::draw_layer(r,foundation,faint,1.20f);
         mesh_wireframe::draw_layer(r,body,line,1.35f);
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.glazing,position,rotation_degrees),faint,1.1f);
         mesh_wireframe::draw_layer(r,details,faint,1.10f);
         r.draw_lines_3d(edges,line,1.8f);
         draw_structure_ground_reservation(r,mesh.footprint_x,mesh.footprint_z,position,rotation_degrees,
@@ -523,6 +525,7 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
     }
 
     const bool show_hull=habitat_view_mode_==HabitatViewMode::FullHull || !resource_has_hull(kind);
+    const auto& glass_layer=show_hull?mesh.glazing:empty_mesh_layer;
     const auto& body_layer=show_hull?mesh.body:empty_mesh_layer;
     const auto& edge_layer=show_hull?mesh.edges:empty_mesh_layer;
     if(construction_step<kConstructionSteps){
@@ -543,6 +546,8 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
 
         mesh_wireframe::draw_layer(r,foundation,installed_dim,1.95f*boost);
         mesh_wireframe::draw_layer(r,body,installed,2.20f*boost);
+        mesh_wireframe::draw_layer(r,transformed_vertices(glass_layer,position,rotation_degrees),blueprint,1.1f*boost);
+        mesh_wireframe::draw_layer(r,transformed_vertices(construction_sequence::reveal_triangles(glass_layer,visibility.body),position,rotation_degrees),installed,1.7f*boost);
         mesh_wireframe::draw_layer(r,details,installed,1.95f*boost);
         if(!edges.empty()) r.draw_lines_3d(edges,installed,selected?3.45f:2.45f);
         if(construction_step==0 || (selected && !show_hull)){
@@ -567,10 +572,12 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
         if(kind==ResourceKind::WaterStorage || kind==ResourceKind::WaterDriller) trim={0.35f,0.58f,0.71f,1};
         if(kind==ResourceKind::HydrogenTank || kind==ResourceKind::OxygenTank) trim={0.51f,0.65f,0.61f,1};
         if(pad) trim={0.80f,0.74f,0.57f,1};
+        if(kind==ResourceKind::RobotWorkshop)trim={.40f,.45f,.49f,1};
         const auto mapping=station_mapping(position,rotation_degrees,unsigned(kind)+40);
         r.draw_mapped_lunar_surface(foundation,LunarMaterial::Pad,{.46f,.47f,.49f,1},mapping);
         r.draw_mapped_lunar_surface(body,pad?LunarMaterial::Deck:LunarMaterial::Hull,paint,mapping);
         r.draw_mapped_lunar_surface(details,pad?LunarMaterial::Hull:LunarMaterial::Alloy,trim,mapping);
+        r.draw_mapped_lunar_surface(transformed_vertices(glass_layer,position,rotation_degrees),LunarMaterial::Glass,{.50f,.76f,.85f,.24f},mapping);
         if(pad) draw_pad_markings(r,mesh,position,rotation_degrees);
         if(selected) r.draw_lines_3d(edges,{0.98f,0.85f,0.46f,0.88f},2.0f);
         return;
@@ -578,6 +585,7 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
     const float boost=selected?1.45f:1.0f;
     mesh_wireframe::draw_layer(r,foundation,{0.20f,0.84f,0.36f,1.0f},2.40f*boost);
     mesh_wireframe::draw_layer(r,body,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
+    mesh_wireframe::draw_layer(r,transformed_vertices(glass_layer,position,rotation_degrees),{.30f,.85f,.90f,.65f},1.5f*boost);
     mesh_wireframe::draw_layer(r,details,{0.22f,0.92f,0.40f,0.99f},2.35f*boost);
     r.draw_lines_3d(edges,selected?Color{1.0f,0.94f,0.55f,1.0f}:Color{0.18f,1.00f,0.38f,1.0f},selected?3.65f:2.90f);
 }
@@ -628,7 +636,19 @@ void GameApp::render_workshop_gate(SceneRenderer& r,const PlacedResource& item,b
         if(preview){
             resources::Builder b;b.oriented_box(b.mesh.body,center,side,{0,1,0},n,{workshop::kGateHalf+0.06f,2.90f,0.18f});
             mesh_wireframe::draw_layer(r,b.mesh.body,color,1.8f);
-        }else draw_pressure_box(r,center,side,n,{workshop::kGateHalf+0.06f,2.90f,0.18f},color,!mesh_layout_active());
+        }else if(mesh_layout_active())draw_pressure_box(r,center,side,n,{workshop::kGateHalf+0.06f,2.90f,0.18f},color,false);
+        else {
+            resources::Builder panel,rails,marks;
+            panel.oriented_box(panel.mesh.body,center,side,{0,1,0},n,{workshop::kGateHalf+0.06f,2.90f,.18f},false);
+            for(int row=0;row<9;++row)
+                rails.oriented_box(rails.mesh.body,center+Vec3{0,-1.32f+row*.33f,0}+n*.105f,side,{0,1,0},n,{workshop::kGateHalf-.08f,.045f,.035f},false);
+            for(float edge:{-1.f,1.f})rails.oriented_box(rails.mesh.body,center+side*(edge*(workshop::kGateHalf*.5f-.065f))+n*.105f,side,{0,1,0},n,{.055f,2.85f,.035f},false);
+            for(int stripe=0;stripe<6;++stripe)marks.oriented_box(marks.mesh.body,center+side*(-.94f+stripe*.37f)+Vec3{0,-1.27f,0}+n*.13f,side,{0,1,0},n,{.19f,.16f,.015f},false);
+            LunarSurfaceMapping mapping;mapping.origin=center;mapping.x=side;mapping.y={0,1,0};mapping.z=n;mapping.seed=sign<0?3101:3102;
+            r.draw_mapped_lunar_surface(panel.mesh.body,LunarMaterial::Hull,{.39f,.46f,.50f,1},mapping);
+            r.draw_mapped_lunar_surface(rails.mesh.body,LunarMaterial::Alloy,{.20f,.25f,.28f,1},mapping);
+            r.draw_mapped_lunar_surface(marks.mesh.body,LunarMaterial::Marking,{.95f,.65f,.12f,1},mapping);
+        }
     }
     for(int slot=0;slot<workshop::kBays;++slot){
         const Vec3 p=workshop::bay(item,slot);
@@ -720,6 +740,51 @@ void GameApp::render_robot_blockers(SceneRenderer& r){
     }
 }
 
+void GameApp::render_workshop_services(SceneRenderer& r,std::size_t index) const {
+    const auto& home=placed_resources_[index];if(!home.construction.complete())return;
+    const bool operational=workshop_operational(index);
+    const auto mapping=station_mapping(home.position,home.rotation_degrees,173);
+    if(operational && r.lunar_scene_active() && lunar_look::powered(home.supply,home.power_enabled))
+        for(const auto& fixture:lunar_look::workshop_fixtures(home))lunar_look::draw_fixture(r,fixture,home.rotation_degrees);
+    resources::Builder screens,tools,hoses;
+    for(int slot=0;slot<workshop::kBays;++slot){
+        const Vec3 p=workshop::bay_local(slot);const float sign=p.x<0?-1.f:1.f;
+        const auto robot=std::find_if(builder_robots_.begin(),builder_robots_.end(),[&](const auto& rover){
+            return rover.workshop_index==index && rover.workshop_bay==slot && rover.workshop_parked;
+        });
+        const bool parked=operational && robot!=builder_robots_.end();
+        const bool repair=parked && robot->condition<.999f;
+        const bool charging=parked && robot->battery_charge_kwh<robot->battery_capacity_kwh*.995f;
+        screens.box(screens.mesh.body,{sign*4.63f,1.85f,p.z+.72f},{.025f,.35f,.44f},false);
+        resources::Builder lamp;
+        lamp.box(lamp.mesh.body,{sign*4.61f,2.20f,p.z+.72f},{.035f,.09f,.42f},false);
+        const Color state=!operational?Color{.16f,.17f,.18f,1}:repair?Color{1.f,.51f,.08f,1}:
+            charging?Color{.15f,.78f,1.f,1}:parked?Color{.22f,1.f,.44f,1}:Color{.37f,.50f,.55f,1};
+        const auto lamp_vertices=transformed_vertices(lamp.mesh.body,home.position,home.rotation_degrees);
+        if(mesh_layout_active())mesh_wireframe::draw_layer(r,lamp_vertices,state,1.3f);
+        else r.draw_mapped_lunar_surface(lamp_vertices,operational?LunarMaterial::Emissive:LunarMaterial::Rubber,state,mapping);
+        // The tool deploys only for a powered, occupied bay needing repair.
+        // Motion follows real repair progress, and therefore freezes with simulation.
+        const float cycle=repair?std::sin((1.f-robot->condition)*80.f):0.f;
+        const Vec3 root{sign*3.95f,2.15f,p.z};
+        const Vec3 tip=repair?Vec3{sign*3.74f,1.45f,p.z+.16f*cycle}:Vec3{sign*4.12f,2.06f,p.z};
+        tools.cylinder_between(tools.mesh.body,root,tip,.046f,8);
+        tools.box(tools.mesh.body,tip,{.12f,.16f,.15f},false);
+        hoses.cylinder_between(hoses.mesh.body,{sign*4.68f,.93f,p.z+.66f},
+            {sign*4.62f,.49f,p.z+.47f},.035f,6);
+        if(charging)hoses.cylinder_between(hoses.mesh.body,{sign*4.62f,.49f,p.z+.47f},
+            {sign*4.02f,.62f,p.z+.32f},.035f,6);
+    }
+    if(mesh_layout_active()){
+        mesh_wireframe::draw_layer(r,transformed_vertices(tools.mesh.body,home.position,home.rotation_degrees),{.3f,.9f,.4f,1},1.4f);
+        return;
+    }
+    r.draw_mapped_lunar_surface(transformed_vertices(screens.mesh.body,home.position,home.rotation_degrees),
+        operational?LunarMaterial::Display:LunarMaterial::Rubber,operational?Color{.12f,.49f,.64f,1}:Color{.03f,.04f,.04f,1},mapping);
+    r.draw_mapped_lunar_surface(transformed_vertices(tools.mesh.body,home.position,home.rotation_degrees),LunarMaterial::Alloy,{.65f,.69f,.70f,1},mapping);
+    r.draw_mapped_lunar_surface(transformed_vertices(hoses.mesh.body,home.position,home.rotation_degrees),LunarMaterial::Rubber,{.055f,.065f,.075f,1},mapping);
+}
+
 void GameApp::render_resources(SceneRenderer& r){
     const bool solid=!mesh_layout_active();
     for(size_t i=0;i<placed_resources_.size();++i){
@@ -745,7 +810,7 @@ void GameApp::render_resources(SceneRenderer& r){
                 lunar_look::draw_fixture(r,fixture,instance.rotation_degrees);
         }
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position),solid);
-        if(instance.kind==ResourceKind::RobotWorkshop) render_workshop_gate(r,instance,!instance.construction.complete());
+        if(instance.kind==ResourceKind::RobotWorkshop){render_workshop_gate(r,instance,!instance.construction.complete());render_workshop_services(r,i);}
         if(instance.kind==ResourceKind::StorageGate && instance.storage_parent_index<placed_resources_.size()){
             const auto& owner=placed_resources_[instance.storage_parent_index];
             render_storage_gate_shutters(r,owner,instance.storage_loading_face,instance.storage_extension_open,instance.construction.progress());
@@ -753,12 +818,11 @@ void GameApp::render_resources(SceneRenderer& r){
 
         if(instance.kind==ResourceKind::OreDriller && instance.construction.complete()){
             ResourceBoxBatch raw_ore;
+            const auto pad=driller_stockyard(instance);
             for(std::size_t ore_kind=0;ore_kind<ore::materials.size();++ore_kind){
                 const int count=ore::boxes(instance.mined_ore_kg[ore_kind]);
-                for(int box=0;box<count;++box){
-                    const float x=(static_cast<float>(ore_kind)-1.5f)*.50f;
-                    const auto base=instance.position+rotate_y({x,.035f+(box/3)*.32f,
-                        mesh.footprint_z*.5f+.28f+(box%3)*.46f},instance.rotation_degrees);
+                for(int box=0;pad && box<count;++box){
+                    const auto base=pad->box(ore_kind,box);
                     draw_resource_box(r,base,.20f,.31f,ore::materials[ore_kind],false,&raw_ore);
                 }
             }

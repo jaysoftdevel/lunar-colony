@@ -1,3 +1,6 @@
+#include "game/world/ore_stockyard.hpp"
+#include "game/systems/driller_acoustics.hpp"
+#include "game/systems/sound_assets.hpp"
 #include "game/world/airlock_connections.hpp"
 #include "game/world/robot_workshop.hpp"
 #include "game/game_app.hpp"
@@ -39,7 +42,15 @@ bool segment_hits_mesh(Vec3 from,Vec3 to,const std::vector<Vec3>& mesh){
 }
 
 struct GeometryRecorder final:game::runtime::SceneRenderer {
-    std::vector<Vec3> triangles;
+    std::vector<Vec3> triangles,glass,displays;
+    std::vector<game::runtime::Color> service_lamps;
+    void draw_mapped_lunar_surface(const std::vector<Vec3>& v,game::runtime::LunarMaterial m,game::runtime::Color c,
+        const game::runtime::LunarSurfaceMapping&) override {
+        if(m==game::runtime::LunarMaterial::Glass)glass.insert(glass.end(),v.begin(),v.end());
+        if(m==game::runtime::LunarMaterial::Display)displays.insert(displays.end(),v.begin(),v.end());
+        if(m==game::runtime::LunarMaterial::Emissive)service_lamps.push_back(c);
+        draw_triangles_3d(v,c);
+    }
     bool initialize(void*,std::uintptr_t,int,int) override{return true;}
     void resize(int,int) override{} void begin_frame(game::runtime::Color) override{} void end_frame() override{}
     void set_3d(const game::runtime::Mat4&) override{} void set_2d(float) override{}
@@ -1219,6 +1230,131 @@ struct NavigationRegression {
         wait_parking(offline,"supply-and-power-enabled workshop");
         std::cout<<"Workshop supply gating, compact parking, task dispatch, ramp clearance, reachability, save/load and multi-workshop allocation passed\n";
     }
+    static void workshop_service_stockyard_audio(){
+        using namespace game::runtime;using namespace world_math;
+        GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        PlacedResource home;home.kind=ResourceKind::RobotWorkshop;home.construction.finish();home.position={0,0,0};
+        PlacedResource solar;solar.kind=ResourceKind::SolarPanel;solar.construction.finish();solar.position={-20,0,0};
+        app.placed_resources_={home,solar};
+        UtilityConnection power;power.kind=UtilityKind::SupplyChannel;power.construction.finish();
+        power.endpoint_a.kind=power.endpoint_b.kind=UtilityEndpointKind::Resource;power.endpoint_a.index=0;power.endpoint_b.index=1;
+        power.path={{-5.5f,0,0},{-17,0,0}};app.utility_network_.restore_connections({power});
+        const auto& mesh=app.resource_models_.mesh(home);
+        require(!mesh.glazing.empty(),"Workshop roof has no glazing");
+        require(segment_hits_mesh({0,4,0},{0,5,0},mesh.glazing),"Glass roof has an overhead gap");
+        for(float z:{-4.8f,-2.4f,0.f,2.4f,4.8f})for(float x:{-5.3f,5.3f})for(float y:{.55f,1.6f,2.7f})
+            require(segment_hits_mesh({x-.3f,y,z},{x+.3f,y,z},mesh.details),"Roof stanchion is not continuous to foundation");
+        GeometryRecorder full,cut;app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;
+        app.render_resource_mesh(full,mesh,{},0,false,true,false,kConstructionSteps,nullptr,home.kind);
+        require(full.glass.size()==mesh.glazing.size(),"Full hull does not submit transparent roof");
+        app.habitat_view_mode_=GameApp::HabitatViewMode::None;
+        app.render_resource_mesh(cut,mesh,{},0,false,true,false,kConstructionSteps,nullptr,home.kind);
+        require(cut.glass.empty() && !cut.triangles.empty(),"Hidden hull kept glass or removed frame/equipment");
+        app.first_person_.spawn({0,workshop::kDeck,0});
+        require(app.first_person_ceiling_height({0,workshop::kDeck,0})<4.7f,"Transparent roof lost physical ceiling");
+        app.builder_robots_.resize(4);
+        for(int slot=0;slot<4;++slot){auto& bot=app.builder_robots_[slot];bot.workshop_index=0;bot.workshop_bay=slot;bot.workshop_parked=true;bot.condition=.6f;bot.battery_capacity_kwh=10;bot.battery_charge_kwh=2;bot.position=workshop::bay(home,slot);}
+        require(app.workshop_operational(0),"Service fixture is not powered");
+        GeometryRecorder active;app.render_workshop_services(active,0);
+        require(active.service_lamps.size()==4 && active.displays.size()==4*36,"Not all four bays have repair indicators and diagnostic screens");
+        for(const auto& c:active.service_lamps)require(c.r==1.f && c.g==.51f,"Damaged parked robot has no active repair indicator");
+        app.builder_robots_[0].condition=app.builder_robots_[1].condition=1.f;
+        app.builder_robots_[0].battery_charge_kwh=10;app.builder_robots_[3].workshop_parked=false;
+        GeometryRecorder states;app.render_workshop_services(states,0);
+        require(states.service_lamps.size()==4 && states.service_lamps[0].g==1.f &&
+            states.service_lamps[1].b==1.f && states.service_lamps[2].r==1.f && states.service_lamps[3].r==.37f,
+            "Ready, charging, repair and idle service states are not distinct");
+        app.placed_resources_[0].power_enabled=false;
+        GeometryRecorder offline;app.render_workshop_services(offline,0);
+        require(offline.service_lamps.empty() && offline.displays.empty(),"Unpowered service bay still shows active equipment");
+        PlacedResource drill;drill.kind=ResourceKind::OreDriller;drill.construction.finish();drill.position={20,0,20};drill.placement_sequence=5;drill.mined_ore_kg[0]=25;
+        app.placed_resources_={drill};app.utility_network_.restore_connections({});
+        for(float yaw:{0.f,37.f,90.f,225.f}){
+            app.placed_resources_[0].rotation_degrees=yaw;const auto first=app.driller_stockyard(app.placed_resources_[0]);require(bool(first),"Empty ground has no ore outlet");
+            UtilityConnection planned;planned.kind=UtilityKind::SupplyChannel;planned.path={first->center-first->side*8,first->center+first->side*8};
+            app.utility_network_.restore_connections({planned});
+            const auto moved=app.driller_stockyard(app.placed_resources_[0]);require(moved && distance_xz(first->center,moved->center)>1,"Channel blueprint did not move ore outlet");
+            for(std::size_t kind=0;kind<ore::materials.size();++kind)for(int box=0;box<12;++box)
+                require(point_segment_distance_xz(moved->box(kind,box),planned.path[0],planned.path[1])>.80f,"Raw crate intersects planned supply channel");
+            require(app.placed_resources_[0].mined_ore_kg[0]==25,"Outlet relocation changed ore mass");
+            app.utility_network_.restore_connections({});
+        }
+        require(!ore::find_stockyard({},0,6,6,{},[](const auto&){return false;}),"Fully blocked outlet discarded its reservation policy");
+        // Eye distance and viewport presence are independent continuous controls.
+        Mat4 vp{};vp.m[0]=vp.m[5]=vp.m[10]=vp.m[15]=1;
+        const float near=sound::driller_presence({}, {0,0,4},vp),far=sound::driller_presence({}, {0,0,80},vp);
+        require(far<near*.2f,"Orbit zoom does not attenuate drilling");
+        require(sound::driller_presence({3,0,0},{3,0,4},vp)<near*.25f,"Offscreen drill remains at full presence");
+        auto behind=vp;behind.m[15]=-1;require(sound::driller_presence({}, {0,0,4},behind)<near*.25f,"Behind-camera drill remains at full presence");
+        const auto pcm=sound::synthesize(sound::Cue::Drill,0);double energy=0;int peak=0;
+        for(auto sample:pcm){peak=std::max(peak,std::abs(int(sample)));energy+=double(sample)*sample;}
+        require(pcm.size()>48000 && peak<32767 && std::sqrt(energy/pcm.size())>150,"Rock drill PCM is silent, clipped or too short");
+        std::cout<<"Glass roof/physical ceiling, grounded arches, four powered repair bays, rotated blueprint-safe ore outlets and view/zoom drilling acoustics passed\n";
+    }
+
+    static void fpv_controls_and_gables(){
+        game::runtime::GameHost host;GameApp app(host);app.playfield_.rebuild(128);app.screen_=GameApp::Screen::Playfield;
+        app.game_session_active_=true;app.active_game_phase_=GameApp::GamePhase::RobotPreparation;app.game_speed_=GameApp::GameSpeed::Normal;
+        app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,0,0});
+        game::runtime::InputState input;input.key_space_pressed=true;input.key_space_down=true;
+        app.update_simulation(1.f/60,input);
+        require(app.game_speed_==GameApp::GameSpeed::Normal && !app.first_person_.grounded(),"Space paused the game instead of jumping");
+        input.key_space_pressed=false;float peak=0;
+        for(int tick=0;tick<180;++tick){app.update_first_person(1.f/60,input);peak=std::max(peak,app.first_person_.feet_position().y);}
+        require(peak>.75f && peak<1.1f && app.first_person_.grounded(),"Lunar jump height, landing or held-key behavior changed");
+        FirstPersonController walk,sprint;walk.spawn({0,0,0});sprint.spawn({0,0,0});input={};input.key_w_down=true;
+        float walking=0,running=0;
+        for(int tick=0;tick<120;++tick){input.key_shift_down=false;walking+=game::runtime::length(walk.desired_displacement(input,1.f/60));input.key_shift_down=true;running+=game::runtime::length(sprint.desired_displacement(input,1.f/60));}
+        require(running>walking*1.75f,"Shift does not produce a useful sprint");
+        FirstPersonController low;low.spawn({0,0,0});low.advance_vertical(true,.02f,0,2.10f);
+        for(int tick=0;tick<180;++tick){low.advance_vertical(false,1.f/60,0,2.10f);require(low.feet_position().y+low.body_height()<=2.10f,"Jump penetrated the ceiling");}
+        app.first_person_mode_=GameApp::FirstPersonMode::Off;input={};input.key_space_pressed=true;app.update_speed_shortcuts(input);require(app.simulation_paused(),"Space no longer pauses orbit gameplay");
+        const auto& mesh=app.resource_models_.mesh(ResourceKind::RobotWorkshop);
+        for(float z:{-4.8f,4.8f})for(float x:{-4.f,-1.f,0.f,1.f,4.f}){
+            const float y=std::abs(x)>2.25f?3.30f:3.90f;
+            require(segment_hits_mesh({x,y,z-.2f},{x,y,z+.2f},mesh.body),"Workshop gable has an open hole");
+        }
+        require(!segment_hits_mesh({0,1.6f,-5.15f},{0,1.6f,-4.6f},mesh.body),"Gable fill sealed the moving gate aperture");
+        std::cout<<"Space jump/pause ownership, sprint, lunar landing, ceiling and sealed hangar gables passed\n";
+    }
+
+    static void ore_storage_dispatch(){
+        using namespace game::runtime;
+        GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        PlacedResource drill;drill.kind=ResourceKind::OreDriller;drill.position={-20,0,-8};drill.construction.finish();drill.placement_sequence=1;drill.mined_ore_kg[0]=ore::box_kg;
+        PlacedResource a;a.kind=ResourceKind::StorageDome;a.position={20,0,-9};a.construction.finish();a.placement_sequence=2;a.storage_loading_face=0;
+        PlacedResource b=a;b.position={0,0,26};b.placement_sequence=3;
+        app.placed_resources_={drill,a,b};
+        BuilderRobotState carrier;carrier.role=RobotRole::Carrier;carrier.position={-20,0,10};carrier.starter_exit_completed=true;carrier.battery_capacity_kwh=kCarrierRobotBatteryCapacityKwh;carrier.battery_charge_kwh=carrier.battery_capacity_kwh;
+        app.builder_robots_={carrier};
+        const auto clear=[](std::size_t,Vec3){return true;};
+        const auto move=[&](std::size_t i,Vec3 p){app.builder_robots_[i].position=p;}; // deterministic transaction driver; fleet movement tested by ore_carrier
+        const auto stop=[](std::size_t){};
+        const auto accessible=[](std::size_t,Vec3,Vec3 goal){return goal.x<10;}; // the nearer gate is inaccessible
+        auto tick=[&]{app.update_ore_hauling(.10f,clear,move,stop,accessible);};
+        tick();require(!app.builder_robots_[0].ore_haul.active(),"Ore assigned without a ready gate");
+        app.placed_resources_[1].storage_loading_ready=app.placed_resources_[2].storage_loading_ready=true;
+        tick();require(app.builder_robots_[0].ore_haul.active() && app.builder_robots_[0].ore_haul.destination==3,"New accessible gate did not immediately dispatch, or blocked gate was chosen");
+        const auto original_pad=app.driller_stockyard(app.placed_resources_[0]);
+        const auto old_goal=app.builder_robots_[0].ore_haul.goal;
+        UtilityConnection planned;planned.kind=UtilityKind::SupplyChannel;
+        planned.path={original_pad->center-original_pad->side*8,original_pad->center+original_pad->side*8};
+        app.utility_network_.restore_connections({planned});tick();
+        const auto new_pad=app.driller_stockyard(app.placed_resources_[0]);
+        require(new_pad && world_math::distance_xz(old_goal,app.builder_robots_[0].ore_haul.goal)>1 &&
+            world_math::distance_xz(new_pad->box(0,1),app.builder_robots_[0].interaction_focus_position)<.01f &&
+            app.placed_resources_[0].mined_ore_kg[0]==ore::box_kg,"Carrier kept a stale pickup goal after a supply-channel plan");
+        for(int step=0;step<80 && !app.builder_robots_[0].ore_haul.loaded;++step)tick();
+        require(app.builder_robots_[0].ore_haul.loaded && app.placed_resources_[0].mined_ore_kg[0]==0,"Pickup did not own exactly one raw crate");
+        app.placed_resources_[2].storage_loading_ready=false;
+        for(int step=0;step<80 && app.builder_robots_[0].ore_haul.active();++step)tick();
+        require(app.placed_resources_[0].mined_ore_kg[0]==ore::box_kg && app.placed_resources_[2].stored_ore_boxes[0]==0,"Gate loss lost or duplicated raw ore");
+        app.placed_resources_[2].storage_loading_ready=true;
+        for(int step=0;step<120 && app.placed_resources_[2].stored_ore_boxes[0]==0;++step)tick();
+        require(app.placed_resources_[2].stored_ore_boxes[0]==1 && app.placed_resources_[0].mined_ore_kg[0]==0 && app.resources_.amounts().empty(),"Accessible storage did not receive exactly one raw crate");
+        std::cout<<"Immediate gate dispatch, blocked-gate fallback, gate loss/recovery and ore conservation passed\n";
+    }
+
     static void ore_carrier(){
         game::runtime::GameHost engine;
         for(const bool use_dome:{false,true}){
@@ -1306,7 +1442,23 @@ struct NavigationRegression {
                         "carrier did not credit one refined crate");
             }
         }
-        std::cout<<"Ore carrier physical pickup, processing delivery, storage delivery, and save/load passed\n";
+        // A parked carrier must request its closed workshop gate before its
+        // route can be proven; otherwise job assignment and gate opening wait
+        // on one another forever.
+        GameApp parked(engine);parked.playfield_.rebuild(128);parked.active_game_phase_=GameApp::GamePhase::Debug;
+        PlacedResource home;home.kind=ResourceKind::RobotWorkshop;home.construction.finish();home.placement_sequence=1;home.workshop_gate_initialized=true;home.workshop_gate_open=0;
+        PlacedResource source;source.kind=ResourceKind::OreDriller;source.position={-20,0,-25};source.construction.finish();source.placement_sequence=2;source.mined_ore_kg[0]=ore::box_kg;
+        PlacedResource store;store.kind=ResourceKind::StorageDome;store.position={24,0,-20};store.construction.finish();store.placement_sequence=3;
+        parked.placed_resources_={home,source,store};parked.next_blueprint_placement_sequence_=4;
+        require(parked.add_storage_gate_at(2,0),"Parked-carrier fixture gate rejected");
+        const auto solar=parked.placed_resources_.size();
+        for(int i=0;i<3;++i){PlacedResource power;power.kind=i==2?ResourceKind::PowerStorage:ResourceKind::SolarPanel;power.position={42.f+i*7,0,42};power.construction.finish();power.placement_sequence=20+i;parked.placed_resources_.push_back(power);}
+        for(auto pair:{std::pair<std::size_t,std::size_t>{0,solar},{solar,solar+1},{solar+1,solar+2}}){UtilityConnection link;link.kind=UtilityKind::SupplyChannel;link.endpoint_a.kind=link.endpoint_b.kind=UtilityEndpointKind::Resource;link.endpoint_a.index=pair.first;link.endpoint_b.index=pair.second;link.construction.finish();parked.utility_network_.mutable_connections().push_back(link);}
+        require(parked.workshop_operational(0),"Parked-carrier workshop has no power fixture");
+        BuilderRobotState idle;idle.role=RobotRole::Carrier;idle.position=workshop::bay(parked.placed_resources_[0],0);idle.workshop_parked=true;idle.workshop_index=0;idle.workshop_bay=0;idle.starter_exit_completed=true;idle.battery_capacity_kwh=kCarrierRobotBatteryCapacityKwh;idle.battery_charge_kwh=idle.battery_capacity_kwh;idle.move_speed_mps=kCarrierRobotTransitSpeedMps;parked.builder_robots_={idle};
+        for(int tick=0;tick<900 && !parked.builder_robots_[0].ore_haul.active();++tick){parked.update_pressure_doors(1.f/90);parked.update_builder_robot(1.f/90);}
+        require(parked.builder_robots_[0].ore_haul.active() && !parked.builder_robots_[0].workshop_parked && parked.placed_resources_[0].workshop_gate_open>=.999f,"Closed workshop gate prevented ore dispatch");
+        std::cout<<"Ore physical pickup/storage, save/load and parked-carrier gate dispatch passed\n";
     }
 
     static void conveyor_ore(){
@@ -3294,6 +3446,9 @@ int main(int argc,char** argv){
             fault_recovery_case("bounded recovery search",1,false,false,true);
             fault_bounds_case();
         }
+        else if(argc>1 && std::string(argv[1])=="workshop-service") game::NavigationRegression::workshop_service_stockyard_audio();
+        else if(argc>1 && std::string(argv[1])=="fpv-controls") game::NavigationRegression::fpv_controls_and_gables();
+        else if(argc>1 && std::string(argv[1])=="ore-dispatch") game::NavigationRegression::ore_storage_dispatch();
         else if(argc>1 && std::string(argv[1])=="ore-carrier") game::NavigationRegression::ore_carrier();
         else if(argc>1 && std::string(argv[1])=="conveyor-ore") game::NavigationRegression::conveyor_ore();
         else if(argc>1 && std::string(argv[1])=="structure-routes") game::NavigationRegression::structure_routes();

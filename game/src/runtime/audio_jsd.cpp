@@ -83,8 +83,9 @@ void Audio::loop(std::uint64_t key,Clip id,const SoundVoice& voice){
     auto clip=p.clip(id,voice);if(!clip)return;
     auto& loop=p.loops[key];loop.frame=p.frame;
     const auto location=p.position(voice);const float gain=std::max(0.f,voice.gain)*p.volume;
-    const bool changed=loop.source!=clip || length(location-loop.location)>.25f || std::abs(gain-loop.gain)>.02f || voice.relative!=loop.voice.relative;
-    if(loop.sound.id && !changed)return;
+    if(loop.sound.id && loop.source==clip && p.mixer.update(loop.sound,location,gain,!voice.relative)){
+        loop.location=location;loop.gain=gain;loop.voice=voice;return;
+    }
     const auto now=std::chrono::steady_clock::now();
     if(loop.sound.id){
         loop.phase+=std::chrono::duration<double>(now-loop.started).count()*loop.source->sampleRate;

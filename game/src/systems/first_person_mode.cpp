@@ -761,7 +761,7 @@ float GameApp::first_person_ceiling_height(Vec3 p) const {
         if(item.kind!=ResourceKind::StorageDome && item.kind!=ResourceKind::RobotWorkshop)continue;
         const auto& m=resource_models_.mesh(item);
         if(!near_rotated_footprint(p,item.position,item.rotation_degrees,m.footprint_x,m.footprint_z,first_person_.body_radius()+0.5f))continue;
-        scan(m.body,item.position,item.rotation_degrees);
+        scan(m.body,item.position,item.rotation_degrees);scan(m.glazing,item.position,item.rotation_degrees);
         if(item.kind==ResourceKind::StorageDome)for(const auto& door:storage_dome_doors(i))if(point_in_doorway_clearance(p,door,first_person_.body_radius()))ceiling=std::min(ceiling,door.position.y+geometry::kDoorClearHeight);
     }
     for(const auto& c:corridor_network_.connections())if(c.construction.complete()){
@@ -1313,8 +1313,9 @@ void GameApp::update_first_person(float dt,const InputState& input){
         }
     }
     first_person_.set_feet_position(current);
-    const float ceiling=input.key_j_pressed || !first_person_.grounded()?first_person_ceiling_height(current):std::numeric_limits<float>::max();
-    first_person_.advance_vertical(input.key_j_pressed,dt,first_person_floor_height(current),ceiling);
+    const bool jump=input.key_space_pressed || input.key_j_pressed;
+    const float ceiling=jump || !first_person_.grounded()?first_person_ceiling_height(current):std::numeric_limits<float>::max();
+    first_person_.advance_vertical(jump,dt,first_person_floor_height(current),ceiling);
     update_first_person_resource_hover();
     if(input.left_pressed) first_person_grab_or_drop_resource();
 }

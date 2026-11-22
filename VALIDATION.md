@@ -1,3 +1,58 @@
+# Version 0.63.0 — hangar service bays and driller presentation
+
+- Linux Release: 24/24 CTest checks pass, including the new workshop/stockyard/audio
+  regression, live JSD audio updates, power-off UI, first-person controls and ore dispatch.
+- Linux Debug: 10/10 affected-feature checks pass, including full UI scaling,
+  navigation geometry, workshop parking/service gating, physical ore transport,
+  power switches and audio runtime. After extending service-state/pickup assertions,
+  both affected tests were rebuilt and passed again (2/2).
+- Native GL/EGL: 19 actual game scenes render. Glass-roof exterior, first-person
+  service interior and hull-hidden grounded-frame captures were inspected. Four
+  suspended task lights illuminate the service area. Mesa software rendering was used;
+  hardware GPU performance was not measured.
+- External engine portable tooling: 46/46 Python tests pass.
+- Windows x64: Release and Debug game, engine static archive, engine DLL and test
+  executables cross-build with Clang 22.1.8/MinGW via Zig. Final extended navigation
+  tests compile in both configurations. PE imports select SDL2.dll for Release and
+  SDL2d.dll for Debug; staged DLL hashes match the respective configuration outputs.
+- Native MSVC and Windows runtime/driver testing remain unverified. Historical Debug
+  stress scenarios outside the affected suite were not rerun.
+
+Feature checks cover transparent roof submission and physical ceiling, all ten
+foundation-to-arch columns, four service screens and repair indicators, distinct
+ready/charging/repair/idle/offline states, ore outlets at four driller rotations,
+planned-channel avoidance and carrier goal invalidation, ore conservation, blocked
+outlet buffering, view/distance sound attenuation, nonclipping drill PCM, live audio
+cursor preservation, smooth muting, stale handles and nonfinite-gain rejection.
+
+Update validation: 11/11 transaction/guard tests pass, including wrong roots/versions,
+local edits, corrupt payload, traversal/symlink rejection, idempotence and injected
+second-root failure rollback. A full source-root application and repeat-apply check
+also verify the delivered payload hashes and identities.
+
+Build tools: GCC 14.2, CMake 4.4.5, Ninja 1.13.2; shared C++20 game/engine sources.
+The package contains source changes only, with no binaries or build caches.
+
+---
+
+# Version 0.62.0 — gameplay, ore transport and sky
+
+Linux Release: 23/23 CTest checks pass. Targeted Linux Debug: 9/9 pass,
+including full UI scaling, geometry/pressure gates, physical ore transport,
+parked-workshop dispatch, FPS, first-person controls and sky projection.
+Engine portable tooling: 46/46 pass. Windows x64 Release and Debug game,
+engine archive, engine DLL and test targets cross-build successfully.
+Native MSVC and Windows execution remain unverified. Full historical Debug
+navigation stress scenarios were not rerun. The update package records its
+installation/rollback validation separately.
+
+Sixteen actual native game scenes render. Captures of front/rear/open workshop,
+star sky and options were inspected. Native sky checks cover translation/time
+stability, rotation, FOV, viewport aspect and atmospheric daylight extinction.
+GCC 14.2, CMake 4.4.5, Mesa EGL; Windows cross-build: Clang 22.1.8/MinGW via Zig.
+
+---
+
 # Version 0.61.1 — Windows compatibility
 
 Windows x64 Release and Debug game/engine archive/engine DLL cross-builds pass.

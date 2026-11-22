@@ -89,6 +89,7 @@ struct InputState {
     bool delete_pressed{};
     bool backspace_pressed{}, enter_pressed{};
     std::string text_input{};
+    float frame_seconds{}; // actual wall-clock frame, independent of simulation step clamp
 };
 
 class SceneRenderer {

@@ -1,4 +1,5 @@
 #include "game/game_app.hpp"
+#include "game/world/robot_workshop.hpp"
 #include "jsd_bridge.hpp"
 #include <frontier/detail/gl.hpp>
 #include <filesystem>
@@ -28,10 +29,12 @@ struct EngineIntegrationRegression {
         app.placed_habitats_.push_back(room);
         PlacedResource panel;panel.kind=ResourceKind::SolarPanel;panel.position={-10,0,0};panel.construction.step=kConstructionSteps;
         app.placed_resources_.push_back(panel);
+        PlacedResource hangar;hangar.kind=ResourceKind::RobotWorkshop;hangar.position={-18,0,-16};hangar.construction.finish();app.placed_resources_.push_back(hangar);
+        app.show_fps_=true;app.fps_=60;
         app.builder_robots_.resize(1);app.builder_robots_[0].position={-6,0,3};
         app.ground_resource_piles_={{MaterialResource::Iron,500,{-3,0,4},.5f,1}};
         vl::GL gl;gl.load([&](const char* name){return platform.resolve(name);});
-        const std::array names{"menu","orbit","first-person-exterior","first-person-interior","campus","graphics-menu","lab-interior","airlock-interior","biodome-interior","robot-closeup","fov-options"};
+        const std::array names{"menu","orbit","first-person-exterior","first-person-interior","campus","graphics-menu","lab-interior","airlock-interior","biodome-interior","robot-closeup","fov-options","sky-east","sky-west","workshop-front","workshop-rear","workshop-open","workshop-glass-roof","workshop-service-interior","workshop-grounded-frame"};
         for(std::size_t scene=0;scene<names.size();++scene){
             app.screen_=scene==0?GameApp::Screen::MainMenu:GameApp::Screen::Playfield;
             app.first_person_mode_=GameApp::FirstPersonMode::Off;
@@ -52,6 +55,27 @@ struct EngineIntegrationRegression {
                 app.first_person_.spawn({-6,0,6},0);
             }
             if(scene==10)app.screen_=GameApp::Screen::Settings;
+            if(scene>=11){
+                app.active_game_phase_=GameApp::GamePhase::RobotPreparation;
+                app.first_person_mode_=GameApp::FirstPersonMode::Active;
+                if(scene<=12){app.first_person_.spawn({0,0,14},scene==11?0.f:125.f);game::runtime::InputState look;look.mouse_dy=-500;app.first_person_.update_look(look);}
+                else{
+                    app.first_person_.spawn(scene==14?game::runtime::Vec3{-18,0,-3}:game::runtime::Vec3{-18,0,-30},scene==14?0.f:180.f);
+                    app.placed_resources_[1].workshop_gate_open=scene==15?1.f:0.f;
+                }
+            }
+            if(scene>=16){
+                auto& home=app.placed_resources_[1];home.supply.power_fraction=1;
+                UtilityConnection feed;feed.kind=UtilityKind::SupplyChannel;feed.construction.finish();
+                feed.endpoint_a.kind=feed.endpoint_b.kind=UtilityEndpointKind::Resource;feed.endpoint_a.index=0;feed.endpoint_b.index=1;
+                feed.path={app.placed_resources_[0].position,home.position};app.utility_network_.restore_connections({feed});
+                app.builder_robots_.resize(4);
+                for(int slot=0;slot<4;++slot){auto& robot=app.builder_robots_[slot];robot.position=workshop::bay(home,slot);robot.workshop_index=1;robot.workshop_bay=slot;robot.workshop_parked=true;robot.condition=.55f;robot.battery_capacity_kwh=10;robot.battery_charge_kwh=3;}
+                app.first_person_mode_=GameApp::FirstPersonMode::Off;
+                app.camera_.restore({22,55,35,home.position});
+                app.habitat_view_mode_=scene==18?GameApp::HabitatViewMode::None:GameApp::HabitatViewMode::FullHull;
+                if(scene==17){app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn(home.position+game::runtime::Vec3{0,workshop::kDeck,-3.7f},180);}
+            }
             for(int frame=0;frame<3;++frame){app.ui_time_seconds_+=1./60;app.render(*renderer);}
             std::vector<unsigned char> pixels(960*540*4);gl.ReadPixels(0,0,960,540,vl::GL_RGBA,vl::GL_UNSIGNED_BYTE,pixels.data());
             unsigned low=255,high=0;

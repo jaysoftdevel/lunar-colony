@@ -172,6 +172,7 @@ inline constexpr std::int64_t storage_dome_capacity_kg(StorageDomeSize size){
 
 struct ResourceMesh {
     std::vector<game::runtime::Vec3> body;
+    std::vector<game::runtime::Vec3> glazing; // Transparent pressure roof; physical even with hull hidden.
     std::vector<game::runtime::Vec3> foundation;
     std::vector<game::runtime::Vec3> details;
     std::vector<game::runtime::Vec3> edges;

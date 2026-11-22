@@ -11,6 +11,7 @@ ResourceMesh scale_xz(const ResourceMesh& source,float scale){
         for(auto& v:vertices){ v.x*=scale; v.z*=scale; }
     };
     scale_vertices(out.body);
+    scale_vertices(out.glazing);
     scale_vertices(out.foundation);
     scale_vertices(out.details);
     scale_vertices(out.edges);
