@@ -5,11 +5,11 @@
 #include <cmath>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 
 namespace {
-void draw_title_backdrop(Renderer& r,float w,float h){
+void draw_title_backdrop(SceneRenderer& r,float w,float h){
     r.draw_gradient_rect({0,0,w,h},{.012f,.023f,.043f,1},{.066f,.111f,.141f,1});
     for(unsigned i=0;i<76;++i){
         const unsigned seed=i*15485863u+641u;
@@ -72,7 +72,7 @@ void draw_title_backdrop(Renderer& r,float w,float h){
 }
 }
 
-void GameApp::render_menu(Renderer& r){
+void GameApp::render_menu(SceneRenderer& r){
     const float w=ui_width(r),h=ui_height(r);
     const auto recent=std::find_if(save_games_.begin(),save_games_.end(),[](const SaveGameEntry& entry){
         return build::debug_features || !entry.debug_only;

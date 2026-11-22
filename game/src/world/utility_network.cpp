@@ -12,7 +12,7 @@
 #include <cstdint>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace world_math;
 
 namespace {
@@ -404,14 +404,14 @@ void join_crossing_paths(const std::vector<Connection>& connections,Active activ
             if(paths_intersect_xz(connections[a.index].path,connections[b.index].path)) accept(a.index,b.index);
         }
     };
-    if(bounds.size()<32 || eng::TaskPool::shared().background_workers()==0){
+    if(bounds.size()<32 || game::runtime::GameJobs::shared().background_workers()==0){
         for(std::size_t i=0;i<bounds.size();++i) find_crossings(i,join);
         return;
     }
     // Preserve the original union and airflow-link ordering after the
     // independent intersection tests complete.
     std::vector<std::vector<std::size_t>> crossings(bounds.size());
-    eng::TaskPool::shared().parallel_for_ranges(bounds.size(),2,[&](std::size_t first,std::size_t last){
+    game::runtime::GameJobs::shared().parallel_for_ranges(bounds.size(),2,[&](std::size_t first,std::size_t last){
         for(std::size_t i=first;i<last;++i)
             find_crossings(i,[&](std::size_t,std::size_t other){ crossings[i].push_back(other); });
     });
@@ -1241,7 +1241,7 @@ UtilityServiceSnapshot UtilityNetwork::build_service_snapshot(
     const std::size_t total=c_base+c_count;
     if(total==0) return snapshot;
 
-    std::vector<eng::Vec3> positions(total);
+    std::vector<game::runtime::Vec3> positions(total);
     snapshot.run_lengths.resize(total);
     for(std::size_t i=0;i<h_count;++i) positions[h_base+i]=habitats[i].position;
     for(std::size_t i=0;i<r_count;++i) positions[r_base+i]=resources[i].position;
@@ -1249,7 +1249,7 @@ UtilityServiceSnapshot UtilityNetwork::build_service_snapshot(
         if(path.empty()) return;
         positions[node]=path[path.size()/2];
         for(std::size_t i=1;i<path.size();++i)
-            snapshot.run_lengths[node]+=eng::length(path[i]-path[i-1]);
+            snapshot.run_lengths[node]+=game::runtime::length(path[i]-path[i-1]);
     };
 
     UtilityDisjointSets sets(total);
@@ -1362,7 +1362,7 @@ UtilityServiceSnapshot UtilityNetwork::build_service_snapshot(
     for(std::size_t i=0;i<total;++i) snapshot.node_components[i]=sets.find(i);
     snapshot.air_link_lengths.reserve(snapshot.links.size());
     for(const auto& [a,b]:snapshot.links){
-        const double distance=eng::length(positions[a]-positions[b]);
+        const double distance=game::runtime::length(positions[a]-positions[b]);
         snapshot.air_link_lengths.push_back(std::max(distance,(snapshot.run_lengths[a]+snapshot.run_lengths[b])*0.5));
     }
     return snapshot;
@@ -1384,7 +1384,7 @@ void UtilityNetwork::rebuild_supply_junctions(){
     for(auto& c:connections_) c.mesh=make_mesh(c.kind,c.endpoint_a,c.endpoint_b,c.path,c.junctions);
 }
 
-eng::Vec3 UtilityConnection::cargo_position(float remaining) const {
+game::runtime::Vec3 UtilityConnection::cargo_position(float remaining) const {
     for(std::size_t i=1;i<path.size();++i){
         const auto segment=path[i]-path[i-1];
         const float horizontal=distance_xz(path[i],path[i-1]);
@@ -1392,7 +1392,7 @@ eng::Vec3 UtilityConnection::cargo_position(float remaining) const {
         if(remaining<=horizontal)return path[i-1]+segment*(remaining/horizontal);
         remaining-=horizontal;
     }
-    return path.empty()?eng::Vec3{}:path.back();
+    return path.empty()?game::runtime::Vec3{}:path.back();
 }
 
 const char* utility_kind_name(UtilityKind kind){

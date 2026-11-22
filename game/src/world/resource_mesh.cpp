@@ -7,7 +7,7 @@ namespace game {
 namespace {
 ResourceMesh scale_xz(const ResourceMesh& source,float scale){
     ResourceMesh out=source;
-    auto scale_vertices=[scale](std::vector<eng::Vec3>& vertices){
+    auto scale_vertices=[scale](std::vector<game::runtime::Vec3>& vertices){
         for(auto& v:vertices){ v.x*=scale; v.z*=scale; }
     };
     scale_vertices(out.body);
@@ -57,7 +57,7 @@ ResourceModelLibrary::ResourceModelLibrary(){
         {ResourceKind::OxygenTank,make_oxygen_storage,false}
     };
     constexpr auto base_count=std::size(generators);
-    auto& pool=eng::TaskPool::shared();
+    auto& pool=game::runtime::GameJobs::shared();
     pool.parallel_for(base_count+storage_domes_.size(),[&](std::size_t i){
         if(i<base_count){
             const auto& generator=generators[i];
@@ -80,7 +80,7 @@ ResourceModelLibrary::ResourceModelLibrary(){
             // 2 t SMALL versus 8 t STANDARD rated cryogenic LH2 capacities.
             small_meshes_[i]=meshes_[i];
             const float s=(float)kHydrogenTankSmallLinearScale;
-            auto scale=[s](std::vector<eng::Vec3>& vs){for(auto& v:vs)v=v*s;};
+            auto scale=[s](std::vector<game::runtime::Vec3>& vs){for(auto& v:vs)v=v*s;};
             auto& m=small_meshes_[i];
             scale(m.body);scale(m.foundation);scale(m.details);scale(m.edges);
             m.footprint_x*=s;m.footprint_z*=s;m.height*=s;

@@ -4,7 +4,7 @@
 #include <string_view>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 
 namespace {
@@ -22,7 +22,7 @@ constexpr int CATEGORY_COUNT=(int)(sizeof(CATEGORIES)/sizeof(CATEGORIES[0]));
 constexpr float category_size=42.f,category_gap=7.f,category_x=12.f;
 constexpr float category_right=category_x+CATEGORY_COUNT*(category_size+category_gap)-category_gap;
 
-void catalog_tile(Renderer& r,Rect box,const ui::Theme& theme,bool hover,bool selected){
+void catalog_tile(SceneRenderer& r,Rect box,const ui::Theme& theme,bool hover,bool selected){
     const Color top=selected?Color{.115f,.25f,.26f,1}:hover?theme.accent_hover:theme.panel2;
     const Color bottom=selected?Color{.065f,.14f,.16f,1}:theme.panel;
     r.draw_gradient_rect(box,top,bottom);
@@ -31,7 +31,7 @@ void catalog_tile(Renderer& r,Rect box,const ui::Theme& theme,bool hover,bool se
     r.draw_rect({box.x,box.y+box.h-1.f,box.w,1.f},theme.border);
 }
 
-void catalog_caption(Renderer& r,Rect box,const std::string& caption,const ui::Theme& theme,bool active){
+void catalog_caption(SceneRenderer& r,Rect box,const std::string& caption,const ui::Theme& theme,bool active){
     const float scale=ui::fit_text(caption,ui::font_scale(.57f*GAME_FONT_BOOST,theme),{box.w-4,10});
     const float width=ui::text_extent(caption,scale).x;
     r.draw_text({box.x+(box.w-width)*.5f,box.y+box.h-11},caption,scale,active?theme.text:theme.muted);
@@ -44,7 +44,7 @@ Rect GameApp::activity_log_button_rect() const {
     return {category_right+10.f,h-(BUILD_BAR_H+category_size)*.5f,76.f,category_size};
 }
 
-void GameApp::render_build_bar(Renderer& r){
+void GameApp::render_build_bar(SceneRenderer& r){
     if(lander_.deploying()||lander_.awaiting_site||lander_.awaiting_stash){
         const float w=ui_width(r),y=ui_height(r)-BUILD_BAR_H;
         r.draw_gradient_rect({0,y,w,BUILD_BAR_H},{.045f,.07f,.09f,.78f},{.025f,.042f,.059f,.92f});

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/math.hpp"
+#include "game/runtime/types.hpp"
 #include <array>
 #include "game/world/geometry_standards.hpp"
 #include <cstddef>
@@ -29,7 +29,7 @@ struct AstronautCache {
 };
 
 struct AstronautRestPose {
-    eng::Vec3 feet{};
+    game::runtime::Vec3 feet{};
     float heading_degrees{};
 };
 inline constexpr float kAstronautFieldMargin=0.45f;
@@ -48,7 +48,7 @@ inline constexpr std::array<AstronautRole,4> kAstronautRoles{{
 }};
 
 struct AstronautTestActor {
-    eng::Vec3 position{};
+    game::runtime::Vec3 position{};
     float heading_degrees{};
     float stride_phase{};
     float speed{};
@@ -66,10 +66,10 @@ struct AstronautTestActor {
     float order_timeout{};
     float passing_cooldown{};
     bool waiting_for_door{};
-    std::optional<eng::Vec3> destination{};
-    std::array<eng::Vec3,2> entry_waypoints{};
+    std::optional<game::runtime::Vec3> destination{};
+    std::array<game::runtime::Vec3,2> entry_waypoints{};
     std::uint8_t entry_step{2};
-    std::vector<eng::Vec3> route{};
+    std::vector<game::runtime::Vec3> route{};
     std::size_t route_step{};
     float retry_seconds{};
 };

@@ -4,7 +4,7 @@
 #include <algorithm>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 namespace {
 constexpr float header_height=26.f;
@@ -22,7 +22,7 @@ Rect GameApp::progress_tree_panel_rect() const {
     return {width-w-PLAYFIELD_MARGIN,STATUS_BAR_H+34.f,w,h};
 }
 
-void GameApp::render_progress_tree(Renderer& r){
+void GameApp::render_progress_tree(SceneRenderer& r){
     if(!progress_tree_visible())return;
     const auto progress=game_progress_snapshot();
     const Rect panel=progress_tree_panel_rect();

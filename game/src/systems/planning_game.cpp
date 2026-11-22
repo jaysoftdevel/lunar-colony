@@ -13,7 +13,7 @@
 #include <vector>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 
 namespace {
@@ -125,7 +125,7 @@ struct CampusGeometry {
         batches.push_back({std::move(vertices),tint,material});
     }
 
-    void draw(Renderer& r,bool textured) const {
+    void draw(SceneRenderer& r,bool textured) const {
         for(const auto& batch:batches){
             if(!textured || batch.material<0) r.draw_triangles_3d(batch.vertices,batch.tint);
             else r.draw_material_triangles_3d(batch.vertices,batch.material,batch.tint);
@@ -183,7 +183,7 @@ void campus_tree(CampusGeometry& r,float x,float z,float scale){
     campus_cylinder(r,{x,4.0f*scale,z},1.0f*scale,0.78f*scale,{0.27f,0.44f,0.27f,1},8);
 }
 
-void campus_daylight_sky(Renderer& r){
+void campus_daylight_sky(SceneRenderer& r){
     // Full-screen atmosphere gradient before the perspective scene. This is a
     // color field, not another coplanar world polygon; hence no depth fights.
     const float w=(float)r.width(), h=(float)r.height();
@@ -422,7 +422,7 @@ void build_campus_building(CampusGeometry& r,const CampusBuilding& c,bool hovere
     }
 }
 
-void draw_campus(Renderer& renderer,int hovered,MissionFacility required,bool textured){
+void draw_campus(SceneRenderer& renderer,int hovered,MissionFacility required,bool textured){
     struct BuildingGeometry { CampusGeometry normal,required,hovered; };
     struct SceneGeometry {
         CampusGeometry landscape,shadows,service;
@@ -430,7 +430,7 @@ void draw_campus(Renderer& renderer,int hovered,MissionFacility required,bool te
     };
     static const auto geometry=[](){
         SceneGeometry result;
-        TaskPool::shared().parallel_for(kCampusBuildings.size()+2,[&](std::size_t job){
+        GameJobs::shared().parallel_for(kCampusBuildings.size()+2,[&](std::size_t job){
             if(job==0){
                 build_campus_landscape(result.landscape);
                 for(const auto& site:kCampusBuildings)
@@ -1293,7 +1293,7 @@ void GameApp::log_planning_activities(){
     }
 }
 
-void GameApp::render_planning_game(Renderer& r){
+void GameApp::render_planning_game(SceneRenderer& r){
     app_.set_cursor_visible(true);
     const float aspect=(float)r.width()/std::max(1,r.height());
     const Mat4 planning_vp=camera_.campus_view_projection(aspect);
@@ -2030,7 +2030,7 @@ void GameApp::render_planning_game(Renderer& r){
 // independent of 3D camera controls and all serialized simulation state.
 // Geometry clipping is local to this view, so neither renderer backend needs
 // an additional scissor API to keep dragged nodes inside the research panel.
-void GameApp::render_planning_technology_tree(Renderer& r,Rect panel,bool compact){
+void GameApp::render_planning_technology_tree(SceneRenderer& r,Rect panel,bool compact){
     const Color navy{0.010f,0.026f,0.061f,1},navy2{0.017f,0.045f,0.088f,1};
     const Color cyan{0.22f,0.72f,0.99f,1},pale{0.80f,0.92f,1.0f,1};
     const Color soft{0.45f,0.61f,0.75f,1},green{0.32f,0.98f,0.70f,1};

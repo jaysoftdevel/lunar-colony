@@ -10,12 +10,12 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
-void GameApp::render_view_selector(Renderer& r,float y,float logical_w){
+void GameApp::render_view_selector(SceneRenderer& r,float y,float logical_w){
     constexpr float margin=10.0f;
     constexpr float gap=5.0f;
     constexpr float full_w=82.0f;

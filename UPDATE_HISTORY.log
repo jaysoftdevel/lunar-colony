@@ -1,3 +1,23 @@
+0.61.1 — Windows compatibility
+- Pair game 0.61.1 with external JSD engine source 0.5.12.
+- Share native Windows CMake/Visual Studio discovery with the engine build driver.
+- Preserve engine arguments, cached-root checks, both build variants, tests and build timing output.
+- Stage the correct SDL DLL beside every Windows game and test executable.
+- Propagate Windows API/header definitions to source consumers.
+- Keep Unicode filesystem paths through executable lookup, preferences and save/load.
+- Restore game-root save discovery after the removal of the old engine directory.
+- Fix portable engine mesh/clip cache keys for different file-clock representations.
+
+0.61.0 — Surface detail and station interiors
+- Upgrade external JSD engine to 0.5.11 with seeded aperiodic material recipes.
+- Add regolith, hull/pressure panels, grip deck, robot armor, fabric and animated console surfaces.
+- Attach material detail to structures and articulated robot components; keep detail on low presets.
+- Add fitted pressure liners, service runs, deck plates, instrument panels, lighting and bedding.
+- Add persistent vertical first-person FOV setting (50–110°, default 68°).
+- Preserve external-engine build argument, game saves and Linux/Windows shared sources.
+
+0.60.0 — Complete external-engine replacement: remove in-game engine sources/backends; use JSD platform, renderer, math, jobs and audio. Includes all 0.55.0 changes.
+0.55.0 — External JSD 0.5.10 rendering integration, first-person optics, source-path build argument, app-local SDL runtime. See ENGINE-INTEGRATION.md.
 v0.50.16 - Hydrogen Storage Tank (Stages 2 and 3)
 - Added detailed buildable H2 tank (400/800 kg) and network-local electrolysis hydrogen collection.
 - Added explicit landing-pad rocket/lander refueling from connected tanks, power/stock/capacity checks and separate docked-vehicle allocations.

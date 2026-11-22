@@ -6,15 +6,15 @@
 #include <numeric>
 namespace game {
 namespace {
-using eng::Vec3;using eng::Color;using resources::Builder;
+using game::runtime::Vec3;using game::runtime::Color;using resources::Builder;
 std::vector<Vec3> pose(const std::vector<Vec3>& src,Vec3 position,float rotation,float scale=1){std::vector<Vec3> out;out.reserve(src.size());for(auto p:src)out.push_back(world_math::rotate_y(p*scale,rotation)+position);return out;}
-void draw(eng::Renderer& r,const Builder& b,Vec3 p,bool solid,float yaw=0,float s=1,Color color={.42f,.58f,.65f,1},bool wire=false){
+void draw(game::runtime::SceneRenderer& r,const Builder& b,Vec3 p,bool solid,float yaw=0,float s=1,Color color={.42f,.58f,.65f,1},bool wire=false){
     if(solid){
-        const eng::LunarSurfaceMapping mapping{p,world_math::rotate_y({1,0,0},yaw),{0,1,0},
+        const game::runtime::LunarSurfaceMapping mapping{p,world_math::rotate_y({1,0,0},yaw),{0,1,0},
             world_math::rotate_y({0,0,1},yaw)};
-        r.draw_mapped_lunar_surface(pose(b.mesh.foundation,p,yaw,s),eng::LunarMaterial::Alloy,{.44f,.49f,.52f,1},mapping);
-        r.draw_mapped_lunar_surface(pose(b.mesh.body,p,yaw,s),eng::LunarMaterial::Paint,color,mapping);
-        r.draw_mapped_lunar_surface(pose(b.mesh.details,p,yaw,s),eng::LunarMaterial::Alloy,{.79f,.58f,.27f,1},mapping);
+        r.draw_mapped_lunar_surface(pose(b.mesh.foundation,p,yaw,s),game::runtime::LunarMaterial::Alloy,{.44f,.49f,.52f,1},mapping);
+        r.draw_mapped_lunar_surface(pose(b.mesh.body,p,yaw,s),game::runtime::LunarMaterial::Paint,color,mapping);
+        r.draw_mapped_lunar_surface(pose(b.mesh.details,p,yaw,s),game::runtime::LunarMaterial::Alloy,{.79f,.58f,.27f,1},mapping);
         return;
     }
     if(wire){r.draw_lines_3d(pose(b.mesh.edges,p,yaw,s),color,1);return;}
@@ -36,7 +36,7 @@ void package(Builder& b,TradeGood good,Vec3 p,float scale=1){
     }else{b.box(b.mesh.body,p+Vec3{0,.23f*scale,0},{.50f*scale,.46f*scale,.50f*scale});for(float x:{-.18f,.18f})b.box(b.mesh.details,p+Vec3{x,.23f*scale,0},{.04f,.49f*scale,.54f*scale});}
 }
 }
-void GameApp::render_trader(eng::Renderer& r){
+void GameApp::render_trader(game::runtime::SceneRenderer& r){
     const bool solid=!mesh_layout_active();
     // Reserved source crates and rover-deck cargo are views of the authoritative
     // lot/haul records, not extra resource objects that can be picked up twice.
@@ -60,7 +60,7 @@ void GameApp::render_trader(eng::Renderer& r){
             }
             // Several materials can share one source packing bay. Draw its
             // aggregate package once, avoiding overlapping duplicate meshes.
-            bool drawn=false;for(std::size_t j=0;j<i;++j)if(trader_.lots[j].remaining>0&&!trader_.lots[j].conveyor_sequence&&eng::length(trader_.lots[j].position-l.position)<.1f)drawn=true;
+            bool drawn=false;for(std::size_t j=0;j<i;++j)if(trader_.lots[j].remaining>0&&!trader_.lots[j].conveyor_sequence&&game::runtime::length(trader_.lots[j].position-l.position)<.1f)drawn=true;
             if(drawn)continue;
             Builder crate;package(crate,l.good,{});draw(r,crate,l.position,solid,0,1,package_color(l.good));
         }
@@ -110,7 +110,7 @@ void GameApp::render_trader(eng::Renderer& r){
             {0.25f,0.52f,0.96f,1},0.76f,3.3f,true})) return;
         Builder plume;plume.cylinder_y(plume.mesh.body,{0,-1.6f,0},4.0f,.6f,16,true);
         if(r.lunar_scene_active())
-            r.draw_lunar_surface(pose(plume.mesh.body,origin,pad.rotation_degrees,size),eng::LunarMaterial::Emissive,{.32f,.67f,1.0f,.48f});
+            r.draw_lunar_surface(pose(plume.mesh.body,origin,pad.rotation_degrees,size),game::runtime::LunarMaterial::Emissive,{.32f,.67f,1.0f,.48f});
         else r.draw_lines_3d(pose(plume.mesh.edges,origin,pad.rotation_degrees,size),{.35f,.65f,.95f,.55f},1);
     }
 }

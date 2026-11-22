@@ -3,8 +3,8 @@
 
 namespace game::resources {
 namespace {
-void ring(Builder& b,eng::Vec3 c,eng::Vec3 u,eng::Vec3 v,float r,int seg){
-    using namespace eng;
+void ring(Builder& b,game::runtime::Vec3 c,game::runtime::Vec3 u,game::runtime::Vec3 v,float r,int seg){
+    using namespace game::runtime;
     Vec3 prev=c+u*r;
     for(int i=1;i<=seg;++i){
         const float a=2.0f*PI*(float)i/(float)seg;

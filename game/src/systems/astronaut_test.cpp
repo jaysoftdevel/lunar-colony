@@ -6,7 +6,7 @@
 #include <limits>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace world_math;
 
 namespace {

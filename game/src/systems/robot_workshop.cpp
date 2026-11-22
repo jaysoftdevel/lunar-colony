@@ -62,7 +62,7 @@ bool GameApp::workshop_accessible(const PlacedResource& candidate) const {
     // same snapped footprint. Never re-run a map search every render frame.
     std::uint64_t key=1469598103934665603ULL;
     auto mix=[&](std::uint64_t v){key^=v+0x9e3779b97f4a7c15ULL+(key<<6)+(key>>2);};
-    auto pose=[&](eng::Vec3 p,float rotation){
+    auto pose=[&](game::runtime::Vec3 p,float rotation){
         mix((std::int64_t)std::llround(p.x*100));mix((std::int64_t)std::llround(p.z*100));mix((std::int64_t)std::llround(rotation*100));
     };
     pose(candidate.position,candidate.rotation_degrees);mix(playfield_.size());
@@ -79,7 +79,7 @@ bool GameApp::workshop_accessible(const PlacedResource& candidate) const {
     for(const auto& entry:cache) if(entry.owner==this && entry.key==key) return entry.reachable;
     constexpr float radius=1.12f;
     const float half=(float)playfield_.size()*0.5f-radius;
-    auto point_clear=[&](eng::Vec3 p){
+    auto point_clear=[&](game::runtime::Vec3 p){
         if(std::abs(p.x)>half || std::abs(p.z)>half) return false;
         auto box_blocks=[&](const auto& item,const auto& mesh){
             const auto q=world_math::rotate_y(p-item.position,-item.rotation_degrees);
@@ -100,7 +100,7 @@ bool GameApp::workshop_accessible(const PlacedResource& candidate) const {
         return true;
     };
     const auto start=workshop::world(candidate,{0,0,workshop::kApproachFar+1.0f});
-    eng::Vec3 goal{};float best=std::numeric_limits<float>::max();
+    game::runtime::Vec3 goal{};float best=std::numeric_limits<float>::max();
     for(const auto& robot:builder_robots_){
         if(!point_clear(robot.position)) continue;
         const float d=world_math::distance_xz(start,robot.position);
@@ -109,15 +109,15 @@ bool GameApp::workshop_accessible(const PlacedResource& candidate) const {
     bool reachable=false;
     if(best<std::numeric_limits<float>::max()){
         robots::PathPlannerCallbacks callbacks;
-        callbacks.floor_height=[](eng::Vec3){return 0.0f;};callbacks.point_clear=point_clear;
-        callbacks.segment_clear=[&](eng::Vec3 a,eng::Vec3 b){
+        callbacks.floor_height=[](game::runtime::Vec3){return 0.0f;};callbacks.point_clear=point_clear;
+        callbacks.segment_clear=[&](game::runtime::Vec3 a,game::runtime::Vec3 b){
             const int n=std::max(1,(int)std::ceil(world_math::distance_xz(a,b)/0.30f));
             for(int j=0;j<=n;++j) if(!point_clear(a+(b-a)*((float)j/n))) return false;
             return true;
         };
         robots::PathPlanRequest request;request.start=start;request.goal=goal;request.stop_radius=0.50f;
         request.cell_size=1.0f;request.corridor_half_width=half*2;request.max_expansions=8192;
-        std::vector<eng::Vec3> route;reachable=robots::plan_corridor_path(request,callbacks,route);
+        std::vector<game::runtime::Vec3> route;reachable=robots::plan_corridor_path(request,callbacks,route);
     }
     if(cache.size()>64) cache.clear();
     cache.push_back({this,key,reachable});

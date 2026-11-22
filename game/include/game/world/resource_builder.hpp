@@ -5,7 +5,7 @@
 #include <utility>
 
 namespace game::resources {
-using namespace eng;
+using namespace game::runtime;
 constexpr float PI=3.14159265358979323846f;
 
 struct Builder {

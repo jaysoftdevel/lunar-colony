@@ -11,7 +11,7 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
@@ -19,7 +19,7 @@ using namespace world_labels;
 namespace {
 // Shared menu backdrop: layered silhouettes rather than a static plain-color
 // screen. Coordinates are logical UI units and scale with the viewport.
-void draw_new_game_backdrop(Renderer& r,float w,float h){
+void draw_new_game_backdrop(SceneRenderer& r,float w,float h){
     r.draw_rect({0,0,w,h},{0.012f,0.025f,0.049f,1.0f});
     for(int band=0;band<18;++band){
         const float y=h*(float)band/18.0f;
@@ -51,7 +51,7 @@ void draw_new_game_backdrop(Renderer& r,float w,float h){
 }
 }
 
-void GameApp::render_new_game(Renderer& r){
+void GameApp::render_new_game(SceneRenderer& r){
     const float screen_w=ui_width(r), screen_h=ui_height(r);
     draw_new_game_backdrop(r,screen_w,screen_h);
     const bool compact=screen_h<680.0f;
@@ -183,7 +183,7 @@ void GameApp::render_new_game(Renderer& r){
     }
 }
 
-void GameApp::render_stage3_modes(Renderer& r){
+void GameApp::render_stage3_modes(SceneRenderer& r){
     if constexpr(!build::debug_features){
         screen_=Screen::NewGame;
         return;

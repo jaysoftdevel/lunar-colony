@@ -1,5 +1,5 @@
 #pragma once
-#include "engine/graphics_settings.hpp"
+#include "game/runtime/graphics_preferences.hpp"
 #include <array>
 #include <cstddef>
 #include <span>
@@ -10,8 +10,8 @@ enum class BenchmarkProfile { High, Balanced, Performance, Classic };
 enum class BenchmarkScene { Orbit, Surface, Campus };
 enum class BenchmarkStatus { Idle, Running, Complete, Cancelled, Resized, Failed };
 
-eng::GraphicsSettings graphics_profile_settings(BenchmarkProfile profile,const eng::GraphicsSettings& current,
-                                                const eng::GraphicsCapabilities& caps);
+game::runtime::GraphicsSettings graphics_profile_settings(BenchmarkProfile profile,const game::runtime::GraphicsSettings& current,
+                                                const game::runtime::GraphicsCapabilities& caps);
 
 struct BenchmarkStats {
     double mean_ms{};
@@ -20,7 +20,7 @@ struct BenchmarkStats {
 
 struct BenchmarkTrial {
     BenchmarkProfile profile{};
-    eng::GraphicsSettings settings{};
+    game::runtime::GraphicsSettings settings{};
     std::array<BenchmarkStats,3> scenes{};
     bool available{true};
     double worst_p90() const;
@@ -28,7 +28,7 @@ struct BenchmarkTrial {
 
 class GraphicsBenchmark {
 public:
-    void start(const eng::GraphicsSettings& current,const eng::GraphicsCapabilities& caps,int width,int height,int target);
+    void start(const game::runtime::GraphicsSettings& current,const game::runtime::GraphicsCapabilities& caps,int width,int height,int target);
     void record(double milliseconds,bool rendered_profile);
     void stop(BenchmarkStatus reason);
     bool running() const { return status_==BenchmarkStatus::Running; }

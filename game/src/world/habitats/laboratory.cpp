@@ -3,7 +3,7 @@
 
 namespace game::habitats {
 namespace {
-void mast(Builder& b,eng::Vec3 p,float h){
+void mast(Builder& b,game::runtime::Vec3 p,float h){
     b.cylinder_y(b.mesh.details,{p.x,p.y+h*0.5f,p.z},h,0.09f,8,true);
     b.box(b.mesh.details,{p.x,p.y+h,p.z},{0.42f,0.35f,0.42f});
 }

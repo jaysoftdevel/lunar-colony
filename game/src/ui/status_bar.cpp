@@ -8,14 +8,14 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_labels;
 
 namespace {
 
-void draw_resource_icon(Renderer& renderer,MaterialResource resource,Rect box,Color c){
-    const eng::ui::IconCanvas r(renderer,box,{22,28});
+void draw_resource_icon(SceneRenderer& renderer,MaterialResource resource,Rect box,Color c){
+    const game::runtime::ui::IconCanvas r(renderer,box,{22,28});
     const float x=0,y=0,w=22,h=28;
     const float cx=x+w*0.5f,cy=y+h*0.5f;
     switch(resource){
@@ -111,7 +111,7 @@ bool contains(Rect r,float x,float y){
 
 } // namespace
 
-void GameApp::render_status_bar(Renderer& r){
+void GameApp::render_status_bar(SceneRenderer& r){
     const float logical_w=ui_width(r);
     const bool paused=game_speed_==GameSpeed::Pause;
     if(ui_time_seconds_>=status_rate_display_.next_sample || paused!=status_rate_display_.paused){

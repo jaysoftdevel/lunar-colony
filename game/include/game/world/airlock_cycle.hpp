@@ -39,7 +39,7 @@ inline const char* chamber(float local_x,float partition,int inside_sign){
 // One controller owns all four seals. Request the next door in the direction
 // of travel; doors just passed close even when still within approach range.
 // This also permits retreat/backtracking without a one-way traversal script.
-inline void advance(Cycle& cycle,std::vector<DoorSample>& doors,eng::Vec3 feet,float wish_x,bool present,
+inline void advance(Cycle& cycle,std::vector<DoorSample>& doors,game::runtime::Vec3 feet,float wish_x,bool present,
                     int inside_sign,float radius,float dt){
     dt=std::clamp(dt,0.f,0.1f);
     cycle.requested=-1;cycle.equalizing=false;cycle.sealing=false;
@@ -90,22 +90,22 @@ inline void advance(Cycle& cycle,std::vector<DoorSample>& doors,eng::Vec3 feet,f
 
 // The entire partition is solid outside its human-sized aperture. This test
 // prevents walking round a leaf, shoulder clipping, and jumping over the seal.
-inline bool bulkhead_blocks(const CorridorDoor& door,float fraction,eng::Vec3 from,eng::Vec3 to,float radius,float height,float horizontal_scale=1.f){
-    const auto n=door.normal;const eng::Vec3 side{-n.z,0,n.x};
+inline bool bulkhead_blocks(const CorridorDoor& door,float fraction,game::runtime::Vec3 from,game::runtime::Vec3 to,float radius,float height,float horizontal_scale=1.f){
+    const auto n=door.normal;const game::runtime::Vec3 side{-n.z,0,n.x};
     const auto a=from-door.wall_position,b=to-door.wall_position;
-    const float da=eng::dot(a,n),db=eng::dot(b,n),slab=radius+0.07f;
+    const float da=game::runtime::dot(a,n),db=game::runtime::dot(b,n),slab=radius+0.07f;
     if(std::min(da,db)>slab || std::max(da,db)<-slab)return false;
     float t0=0,t1=1;const float dv=db-da;
     if(std::abs(dv)>0.00001f){t0=std::max(0.f,std::min((-slab-da)/dv,(slab-da)/dv));t1=std::min(1.f,std::max((-slab-da)/dv,(slab-da)/dv));}
     const auto p=a+(b-a)*t0,q=a+(b-a)*t1;
     // Finite elliptical pressure disk, matching the horizontally scaled mesh.
     // An internal bulkhead must never become an invisible wall across the map.
-    const float u=eng::dot(p,side),v=eng::dot(q,side);
+    const float u=game::runtime::dot(p,side),v=game::runtime::dot(q,side);
     const float near_side=u*v<=0?0:std::max(0.f,std::min(std::abs(u),std::abs(v))-radius);
     const float near_height=std::max({0.f,std::min(p.y,q.y)-1.75f,1.75f-(std::max(p.y,q.y)+height)});
     const float z=near_side/(2.12f*horizontal_scale),y=near_height/2.12f;
     if(z*z+y*y>1.f)return false;
-    return std::max(std::abs(eng::dot(p,side)),std::abs(eng::dot(q,side)))+radius+0.015f>pressure_door::clear_half_width(fraction) ||
+    return std::max(std::abs(game::runtime::dot(p,side)),std::abs(game::runtime::dot(q,side)))+radius+0.015f>pressure_door::clear_half_width(fraction) ||
         std::min(p.y,q.y)<-0.1f || std::max(p.y,q.y)+height>geometry::kDoorClearHeight;
 }
 } // namespace game::airlock

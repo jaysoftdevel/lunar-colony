@@ -7,20 +7,25 @@
 #include <string_view>
 #ifdef _WIN32
 #include <process.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #else
 #include <unistd.h>
 #endif
 
 namespace game {
 namespace {
-using namespace eng;
+using namespace game::runtime;
 
 std::filesystem::path config_path(){
-    if(const char* path=std::getenv("GAME_GRAPHICS_CONFIG"); path && *path) return path;
 #ifdef _WIN32
-    if(const char* appdata=std::getenv("APPDATA"); appdata && *appdata)
+    if(const wchar_t* path=_wgetenv(L"GAME_GRAPHICS_CONFIG"); path && *path) return path;
+    if(const wchar_t* appdata=_wgetenv(L"APPDATA"); appdata && *appdata)
         return std::filesystem::path(appdata)/"Lunar Frontier"/"graphics.cfg";
 #else
+    if(const char* path=std::getenv("GAME_GRAPHICS_CONFIG"); path && *path) return path;
     if(const char* xdg=std::getenv("XDG_CONFIG_HOME"); xdg && *xdg)
         return std::filesystem::path(xdg)/"lunar-frontier"/"graphics.cfg";
     if(const char* home=std::getenv("HOME"); home && *home)
@@ -41,7 +46,7 @@ constexpr std::pair<const char*,int GraphicsSettings::*> numbers[]{
 }
 
 Preferences load_preferences(){
-    Preferences preferences{eng::graphics_settings_from_environment()};
+    Preferences preferences{game::runtime::graphics_settings_from_environment()};
     auto& settings=preferences.graphics;
     std::uint32_t explicit_quality{};
     std::ifstream file(config_path());
@@ -55,6 +60,7 @@ Preferences load_preferences(){
         int value{};
         const auto parsed=std::from_chars(first,last,value);
         if(parsed.ec!=std::errc{} || parsed.ptr!=last) continue;
+        if(key=="first_person_fov")preferences.first_person_fov=std::clamp(value,50,110);
         if(key=="path" && value>=0 && value<=2) settings.path=static_cast<GraphicsPath>(value);
         if(key=="aa" && value>=0 && value<=2) settings.aa=static_cast<GraphicsAA>(value);
         if(key=="shadows" && value>=0 && value<=2) settings.shadows=static_cast<GraphicsShadows>(value);
@@ -118,6 +124,7 @@ bool save_preferences(const Preferences& preferences){
         const int quality=(settings.low_quality&bit)?1:(settings.medium_quality&bit)?2:3;
         file<<graphics_feature_keys[static_cast<unsigned>(feature)]<<"_quality="<<quality<<'\n';
     }
+    file<<"first_person_fov="<<std::clamp(preferences.first_person_fov,50,110)<<'\n';
     file<<"vertical_sync="<<settings.vertical_sync<<'\n';
     file<<"mesh_layout="<<preferences.mesh_layout<<'\n'
         <<"music="<<preferences.music_enabled<<'\n';
@@ -126,8 +133,12 @@ bool save_preferences(const Preferences& preferences){
 #endif
     file.close();
     if(file){
+#ifdef _WIN32
+        if(MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))return true;
+#else
         std::filesystem::rename(temporary,path,error);
-        if(!error) return true;
+        if(!error)return true;
+#endif
     }
     std::filesystem::remove(temporary,error);
     return false;

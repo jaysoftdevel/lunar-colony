@@ -2,12 +2,12 @@
 #include "game/world/habitats/habitat_interior_builder.hpp"
 
 namespace game::habitats {
-using namespace eng;
+using namespace game::runtime;
 using namespace interior_detail;
 
 namespace {
-void robot_arm(Builder& b,eng::Vec3 base,float facing){
-    using namespace eng;
+void robot_arm(Builder& b,game::runtime::Vec3 base,float facing){
+    using namespace game::runtime;
     const Vec3 p0=base;
     const Vec3 p1=base+Vec3{0,0.55f,0};
     const Vec3 p2=p1+Vec3{0.55f*facing,0.65f,0.15f};

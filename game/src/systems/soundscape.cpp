@@ -34,8 +34,8 @@ void Soundscape::set_music_enabled(bool enabled){
 void Soundscape::update_music(){
     if(!music_enabled_) return;
     if(!theme_requested_){
-        auto& pool=eng::TaskPool::shared();
-        theme_job_=pool.background_workers()?pool.submit(synthesize_theme):std::async(std::launch::async,synthesize_theme);
+        auto& pool=game::runtime::GameJobs::shared();
+        theme_job_=pool.submit(synthesize_theme);
         theme_requested_=true;
     }
     if(theme_job_.valid() && theme_job_.wait_for(std::chrono::seconds(0))==std::future_status::ready){
@@ -47,7 +47,7 @@ void Soundscape::update_music(){
     if(theme_clip_) audio_.loop(music_key,theme_clip_,{{},.30f,1.0f,1.0f,true,false,12});
 }
 
-bool Soundscape::begin(eng::Vec3 listener,eng::Vec3 direction,eng::Vec3 up){
+bool Soundscape::begin(game::runtime::Vec3 listener,game::runtime::Vec3 direction,game::runtime::Vec3 up){
     ++frame_;
     if(!initialized_ && volume_>0.0f) initialized_=audio_.initialize();
     if(!initialized_) return false;
@@ -61,7 +61,7 @@ bool Soundscape::begin(eng::Vec3 listener,eng::Vec3 direction,eng::Vec3 up){
 
 void Soundscape::finish(float dt){ if(initialized_) audio_.finish(dt); }
 
-eng::Audio::Clip Soundscape::clip(Cue cue,std::size_t variant){
+game::runtime::Audio::Clip Soundscape::clip(Cue cue,std::size_t variant){
     const auto i=static_cast<std::size_t>(cue);
     if(!attempted_[i][variant]){
         attempted_[i][variant]=true;
@@ -71,11 +71,11 @@ eng::Audio::Clip Soundscape::clip(Cue cue,std::size_t variant){
     return clips_[i][variant];
 }
 
-void Soundscape::play(Cue cue,const eng::SoundVoice& voice){
+void Soundscape::play(Cue cue,const game::runtime::SoundVoice& voice){
     if(const auto variants=variant_count(cue)) audio_.play(clip(cue,variant_counter_++%variants),voice);
 }
 
-void Soundscape::loop(std::uint64_t key,Cue cue,const eng::SoundVoice& voice,std::size_t variant){
+void Soundscape::loop(std::uint64_t key,Cue cue,const game::runtime::SoundVoice& voice,std::size_t variant){
     if(const auto variants=variant_count(cue)) audio_.loop(key,clip(cue,variant%variants),voice);
 }
 
@@ -90,7 +90,7 @@ std::optional<std::uint64_t> Soundscape::observe(std::uint64_t key,std::uint64_t
 
 namespace game {
 namespace {
-using eng::Vec3;
+using game::runtime::Vec3;
 using sound::Cue;
 
 enum Channel : std::uint64_t {
@@ -140,7 +140,7 @@ Vec3 center_of(const std::vector<Vec3>& path){
 }
 }
 
-void GameApp::update_soundscape(float dt,const eng::InputState& input){
+void GameApp::update_soundscape(float dt,const game::runtime::InputState& input){
     if(dt<=0.0f) return;
     const bool world=screen_==Screen::Playfield;
     const bool campus=world && active_game_phase_==GamePhase::Planning;
@@ -149,11 +149,11 @@ void GameApp::update_soundscape(float dt,const eng::InputState& input){
     const Vec3 feet=first_person_.feet_position();
     const Vec3 camera_eye=camera_.eye_position();
     const Vec3 listener=fpv?first_person_.eye_position():world?camera_.target()+Vec3{0,2,0}:Vec3{};
-    Vec3 forward=fpv?first_person_.look_direction():eng::normalize(camera_.target()-camera_eye);
-    Vec3 right=eng::normalize(eng::cross(forward,{0,1,0}));
-    if(eng::length(right)<0.01f) right={1,0,0};
-    if(eng::length(forward)<0.01f) forward={0,0,-1};
-    const Vec3 up=eng::normalize(eng::cross(right,forward));
+    Vec3 forward=fpv?first_person_.look_direction():game::runtime::normalize(camera_.target()-camera_eye);
+    Vec3 right=game::runtime::normalize(game::runtime::cross(forward,{0,1,0}));
+    if(game::runtime::length(right)<0.01f) right={1,0,0};
+    if(game::runtime::length(forward)<0.01f) forward={0,0,-1};
+    const Vec3 up=game::runtime::normalize(game::runtime::cross(right,forward));
 
     auto& audio=soundscape_;
     const bool active=audio.begin(listener,forward,up);
@@ -161,7 +161,7 @@ void GameApp::update_soundscape(float dt,const eng::InputState& input){
     audio.warning_cooldown=std::max(0.0f,audio.warning_cooldown-dt);
     audio.completion_cooldown=std::max(0.0f,audio.completion_cooldown-dt);
     const auto relative=[](float gain,float pitch=1.0f,std::uint8_t priority=3){
-        return eng::SoundVoice{{},gain,pitch,1.0f,true,false,priority};
+        return game::runtime::SoundVoice{{},gain,pitch,1.0f,true,false,priority};
     };
     const auto ui_sound=[&](Cue cue,float gain=.26f){ audio.play(cue,relative(gain)); };
     const auto screen_before=audio.observe(key(Global,1),static_cast<std::uint64_t>(screen_));
@@ -219,12 +219,12 @@ void GameApp::update_soundscape(float dt,const eng::InputState& input){
     const bool paused=game_speed_==GameSpeed::Pause;
     const auto nearby=[&](Vec3 p,float radius){
         const auto d=p-listener;
-        return eng::dot(d,d)<radius*radius;
+        return game::runtime::dot(d,d)<radius*radius;
     };
     const auto world_voice=[&](Vec3 p,float gain,float range,float pitch=1.0f,std::uint8_t priority=1,bool indoor=false){
         const bool direct=fpv && cabin && indoor;
         const float level=gain*(direct?1.0f:fpv?.27f:.52f);
-        return eng::SoundVoice{p,level,pitch,range*(fpv&&!direct?.62f:1.0f),false,!direct,priority};
+        return game::runtime::SoundVoice{p,level,pitch,range*(fpv&&!direct?.62f:1.0f),false,!direct,priority};
     };
     const auto alarm=[&](float level){
         if(audio.warning_cooldown>0.0f) return;
@@ -307,7 +307,7 @@ void GameApp::update_soundscape(float dt,const eng::InputState& input){
         if(item.kind==ResourceKind::SolarPanel && item.solar_tracking_enabled && item.solar_visual_initialized && !paused){
             const auto sun=status_.sun_pose();
             const auto target=sun.above_horizon?sun.direction:solar_tracking::fixed_panel_normal(item.rotation_degrees);
-            if(eng::dot(target,item.solar_visual_normal)<.99985f)
+            if(game::runtime::dot(target,item.solar_visual_normal)<.99985f)
                 audio.loop(id,Cue::Motor,world_voice(item.position+Vec3{0,3.2f,0},.13f,19,1.33f));
         }
         if(item.kind==ResourceKind::RobotWorkshop || item.kind==ResourceKind::StorageGate){

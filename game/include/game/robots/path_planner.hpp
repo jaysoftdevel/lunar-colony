@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -12,24 +12,24 @@ namespace game::robots {
 // coordinator never authorizes movement from it directly. Every actual command
 // must still pass short-horizon contract certification.
 struct PathPlannerCallbacks {
-    std::function<float(eng::Vec3)> floor_height;
-    std::function<bool(eng::Vec3)> point_clear;
-    std::function<bool(eng::Vec3,eng::Vec3)> segment_clear;
-    std::function<bool(eng::Vec3,eng::Vec3)> neighbor_clear;
+    std::function<float(game::runtime::Vec3)> floor_height;
+    std::function<bool(game::runtime::Vec3)> point_clear;
+    std::function<bool(game::runtime::Vec3,game::runtime::Vec3)> segment_clear;
+    std::function<bool(game::runtime::Vec3,game::runtime::Vec3)> neighbor_clear;
     // Optional soft navigation penalty. 0 means preferred free space; larger
     // values make the planner avoid the point when a reasonable alternative
     // exists. Infinity means blocked. This is used for MeshNav-style obstacle
     // inflation/clearance without turning useful narrow passages into hard
     // walls.
-    std::function<float(eng::Vec3)> traversal_cost;
+    std::function<float(game::runtime::Vec3)> traversal_cost;
     // Opt in when floor, clearance and cost callbacks are safe to call
     // concurrently against the same navigation snapshot.
     bool parallel_samples{false};
 };
 
 struct PathPlanRequest {
-    eng::Vec3 start{};
-    eng::Vec3 goal{};
+    game::runtime::Vec3 start{};
+    game::runtime::Vec3 goal{};
     float stop_radius{0.0f};
     float corridor_half_width{9.0f};
     float cell_size{0.72f};
@@ -46,7 +46,7 @@ struct PathPlanRequest {
 
 bool plan_corridor_path(const PathPlanRequest& request,
                         const PathPlannerCallbacks& callbacks,
-                        std::vector<eng::Vec3>& geometric);
+                        std::vector<game::runtime::Vec3>& geometric);
 
 // Persistent state for the game-native D* Lite planner. The representation is
 // deliberately engine-agnostic and contains only coarse navigation data; it is
@@ -68,7 +68,7 @@ struct IncrementalPathPlannerState {
     int nx{0};
     int nz{0};
     int last_start_index{-1};
-    eng::Vec3 goal{};
+    game::runtime::Vec3 goal{};
     float km{0.0f};
     std::uint64_t world_epoch{0};
     std::uint64_t open_serial{0};
@@ -111,6 +111,6 @@ IncrementalPathResult plan_incremental_path(const PathPlanRequest& request,
                                             std::uint64_t world_epoch,
                                             const PathPlannerCallbacks& callbacks,
                                             IncrementalPathPlannerState& state,
-                                            std::vector<eng::Vec3>& geometric);
+                                            std::vector<game::runtime::Vec3>& geometric);
 
 } // namespace game::robots

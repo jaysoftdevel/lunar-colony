@@ -16,7 +16,7 @@ inline constexpr float kApronDepth=2.80f;
 inline constexpr float kApronHalfWidth=2.65f;
 inline constexpr std::array<int,4> kCargoFaces{{4,5,6,7}};
 
-inline eng::Vec3 local_normal(int face){
+inline game::runtime::Vec3 local_normal(int face){
     switch(face){
         case 0:return {0,0,-1};
         case 2:return {0,0,1};
@@ -44,7 +44,7 @@ inline bool has_ready_gate(const PlacedResource& item){
     for(int f:faces(item,true)) if(f>=0) return true;
     return false;
 }
-inline eng::Vec3 local_normal(const PlacedResource& item,int selected=-1){
+inline game::runtime::Vec3 local_normal(const PlacedResource& item,int selected=-1){
     const int f=face(item,selected);
     if(f<8)return local_normal(f);
     float angle=item.storage_gate_angle_degrees;
@@ -55,7 +55,7 @@ inline void set_angle(PlacedResource& owner,int f,float angle){
     if(owner.storage_loading_face<0 || owner.storage_loading_face==f){owner.storage_loading_face=(std::int8_t)f;owner.storage_gate_angle_degrees=angle;return;}
     for(std::size_t i=0;i<owner.storage_extra_faces.size();++i)if(owner.storage_extra_faces[i]<0 || owner.storage_extra_faces[i]==f){owner.storage_extra_faces[i]=(std::int8_t)f;owner.storage_extra_angles[i]=angle;return;}
 }
-inline eng::Vec3 normal(const PlacedResource& item,int selected=-1){
+inline game::runtime::Vec3 normal(const PlacedResource& item,int selected=-1){
     return world_math::rotate_y(local_normal(item,selected),item.rotation_degrees);
 }
 inline float body_radius(const PlacedResource& item){
@@ -63,45 +63,45 @@ inline float body_radius(const PlacedResource& item){
     // Cargo modules remain separate solid children; no square corner extensions.
     return storage_dome_diameter_m(item.storage_size)*0.5f;
 }
-inline eng::Vec3 wall(const PlacedResource& item,int selected=-1){
+inline game::runtime::Vec3 wall(const PlacedResource& item,int selected=-1){
     return item.position+normal(item,selected)*(storage_dome_diameter_m(item.storage_size)*(5.35f/13.0f));
 }
-inline eng::Vec3 mouth(const PlacedResource& item,int selected=-1){
+inline game::runtime::Vec3 mouth(const PlacedResource& item,int selected=-1){
     return wall(item,selected)+normal(item,selected)*kDepth;
 }
 inline float outer_radius(const PlacedResource& item,int selected=-1){
-    return eng::length(mouth(item,selected)-item.position)+0.20f;
+    return game::runtime::length(mouth(item,selected)-item.position)+0.20f;
 }
-inline eng::Vec3 service(const PlacedResource& item,int selected=-1){
+inline game::runtime::Vec3 service(const PlacedResource& item,int selected=-1){
     return mouth(item,selected)+normal(item,selected)*kServiceOffset;
 }
 // The complete approach bay is forbidden to pressure tubes, including routes
 // passing a different structure. Call before an own-dock clearance exception.
-inline bool reserved_face(const PlacedResource& item,eng::Vec3 point,float margin,int selected){
+inline bool reserved_face(const PlacedResource& item,game::runtime::Vec3 point,float margin,int selected){
     if(item.kind!=ResourceKind::StorageDome) return false;
-    const auto n=normal(item,selected);const eng::Vec3 side{-n.z,0,n.x};
+    const auto n=normal(item,selected);const game::runtime::Vec3 side{-n.z,0,n.x};
     auto d=point-wall(item,selected);d.y=0;
-    return eng::dot(d,n)>=-0.25f-margin &&
-           eng::dot(point-item.position,n)<=outer_radius(item,selected)+kApronDepth+margin &&
-           std::abs(eng::dot(d,side))<=kApronHalfWidth+margin;
+    return game::runtime::dot(d,n)>=-0.25f-margin &&
+           game::runtime::dot(point-item.position,n)<=outer_radius(item,selected)+kApronDepth+margin &&
+           std::abs(game::runtime::dot(d,side))<=kApronHalfWidth+margin;
 }
-inline bool at_service_face(const PlacedResource& item,eng::Vec3 point,int selected){
+inline bool at_service_face(const PlacedResource& item,game::runtime::Vec3 point,int selected){
     return world_math::distance_xz(point,service(item,selected))<=kReach;
 }
-inline bool at_service(const PlacedResource& item,eng::Vec3 point){
+inline bool at_service(const PlacedResource& item,game::runtime::Vec3 point){
     for(int f:faces(item,true)) if(f>=0 && at_service_face(item,point,f)) return true;
     return false;
 }
-inline bool body_hits_buffer_face(const PlacedResource& item,eng::Vec3 point,float radius,int selected){
-    const auto n=normal(item,selected);const eng::Vec3 side{-n.z,0,n.x};
+inline bool body_hits_buffer_face(const PlacedResource& item,game::runtime::Vec3 point,float radius,int selected){
+    const auto n=normal(item,selected);const game::runtime::Vec3 side{-n.z,0,n.x};
     const auto d=point-wall(item,selected);
-    const float depth=eng::dot(mouth(item,selected)-wall(item,selected),n);
-    return eng::dot(d,n)>=-radius && eng::dot(d,n)<=depth+0.15f+radius &&
-        std::abs(eng::dot(d,side))<=kHalfWidth+0.12f+radius;
+    const float depth=game::runtime::dot(mouth(item,selected)-wall(item,selected),n);
+    return game::runtime::dot(d,n)>=-radius && game::runtime::dot(d,n)<=depth+0.15f+radius &&
+        std::abs(game::runtime::dot(d,side))<=kHalfWidth+0.12f+radius;
 }
-inline bool segment_reserved_face(const PlacedResource& item,eng::Vec3 a,eng::Vec3 b,float margin,int selected){
+inline bool segment_reserved_face(const PlacedResource& item,game::runtime::Vec3 a,game::runtime::Vec3 b,float margin,int selected){
     if(item.kind!=ResourceKind::StorageDome) return false;
-    const auto n=normal(item,selected);const eng::Vec3 side{-n.z,0,n.x};
+    const auto n=normal(item,selected);const game::runtime::Vec3 side{-n.z,0,n.x};
     const auto center=wall(item,selected);const auto d=b-a;
     float t0=0,t1=1;
     auto clip=[&](float start,float delta,float lo,float hi){
@@ -109,27 +109,27 @@ inline bool segment_reserved_face(const PlacedResource& item,eng::Vec3 a,eng::Ve
         float u=(lo-start)/delta,v=(hi-start)/delta;if(u>v) std::swap(u,v);
         t0=std::max(t0,u);t1=std::min(t1,v);return t0<=t1;
     };
-    return clip(eng::dot(a-center,n),eng::dot(d,n),-0.25f-margin,
-                outer_radius(item,selected)+kApronDepth-eng::dot(center-item.position,n)+margin) &&
-           clip(eng::dot(a-center,side),eng::dot(d,side),-kApronHalfWidth-margin,kApronHalfWidth+margin);
+    return clip(game::runtime::dot(a-center,n),game::runtime::dot(d,n),-0.25f-margin,
+                outer_radius(item,selected)+kApronDepth-game::runtime::dot(center-item.position,n)+margin) &&
+           clip(game::runtime::dot(a-center,side),game::runtime::dot(d,side),-kApronHalfWidth-margin,kApronHalfWidth+margin);
 }
 inline world_math::OrientedFootprint apron(const PlacedResource& item,int selected=-1){
     const auto n=normal(item,selected);const auto start=wall(item,selected)-n*0.25f;
     const auto end=item.position+n*(outer_radius(item,selected)+kApronDepth);
     const float rotation=std::atan2(n.x,n.z)*180.0f/3.14159265358979323846f;
-    return world_math::footprint((start+end)*0.5f,rotation,2*kApronHalfWidth,eng::length(end-start));
+    return world_math::footprint((start+end)*0.5f,rotation,2*kApronHalfWidth,game::runtime::length(end-start));
 }
-inline bool reserved(const PlacedResource& item,eng::Vec3 p,float margin=0){
+inline bool reserved(const PlacedResource& item,game::runtime::Vec3 p,float margin=0){
     if(item.kind!=ResourceKind::StorageDome) return false;
     for(int f:faces(item)) if(f>=0 && reserved_face(item,p,margin,f)) return true;
     return false;
 }
-inline bool segment_reserved(const PlacedResource& item,eng::Vec3 a,eng::Vec3 b,float margin){
+inline bool segment_reserved(const PlacedResource& item,game::runtime::Vec3 a,game::runtime::Vec3 b,float margin){
     if(item.kind!=ResourceKind::StorageDome) return false;
     for(int f:faces(item)) if(f>=0 && segment_reserved_face(item,a,b,margin,f)) return true;
     return false;
 }
-inline bool body_hits_buffer(const PlacedResource& item,eng::Vec3 p,float radius){
+inline bool body_hits_buffer(const PlacedResource& item,game::runtime::Vec3 p,float radius){
     for(int f:faces(item,true)) if(f>=0 && body_hits_buffer_face(item,p,radius,f)) return true;
     return false;
 }

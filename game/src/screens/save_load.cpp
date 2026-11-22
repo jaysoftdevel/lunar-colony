@@ -3,7 +3,7 @@
 #include <algorithm>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 
 namespace {
@@ -15,7 +15,7 @@ std::string display_name_field(const std::string& value){
 }
 }
 
-void GameApp::render_save_game(Renderer& r){
+void GameApp::render_save_game(SceneRenderer& r){
     ui::title(r,{32,26},"SAVE GAME",theme_);
     const float logical_w=ui_width(r);
     const float w=std::min(650.0f,logical_w-2.0f*SCREEN_MARGIN);
@@ -73,7 +73,7 @@ bool GameApp::resume_save(const SaveGameEntry& entry){
     return true;
 }
 
-void GameApp::render_load_game(Renderer& r){
+void GameApp::render_load_game(SceneRenderer& r){
     ui::title(r,{32,26},"LOAD GAME",theme_);
     const float logical_w=ui_width(r);
     const float logical_h=ui_height(r);
@@ -101,7 +101,8 @@ void GameApp::render_load_game(Renderer& r){
 
     if(save_games_.empty()){
         ui::label(r,{left,list_top+18.0f},"NO SAVE GAMES FOUND",0.92f,theme_,true);
-        ui::label_fitted(r,{left,list_top+48.0f,right-left,18},save_game_directory(),0.60f,theme_,true);
+        const auto directory=save_game_directory().u8string();
+        ui::label_fitted(r,{left,list_top+48.0f,right-left,18},std::string(directory.begin(),directory.end()),0.60f,theme_,true);
     }else{
         for(int row=0;row<visible;++row){
             const int index=load_save_scroll_+row;

@@ -4,7 +4,7 @@
 #include <cmath>
 
 namespace game::habitats {
-using namespace eng;
+using namespace game::runtime;
 constexpr float PI=3.14159265358979323846f;
 
 struct Builder {

@@ -11,7 +11,7 @@
 #include <limits>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace world_math;
 namespace {
 constexpr float PI=3.14159265358979323846f;

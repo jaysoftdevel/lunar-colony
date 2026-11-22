@@ -8,7 +8,7 @@
 #include <vector>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 
 namespace {
 struct CrewBatch {
@@ -27,7 +27,7 @@ struct CrewMesh {
 static_assert(kEVA.frames.size()==kEVA.vertex_count*3*(1+kCrewWalkFrames));
 static_assert(kCoverall.frames.size()==kCoverall.vertex_count*3*(1+kCrewWalkFrames));
 
-void draw_actor(Renderer& r,const CrewMesh& mesh,const AstronautTestActor& actor,const AstronautRole& role,const AstronautRestPose& pose,bool animated_cloth){
+void draw_actor(SceneRenderer& r,const CrewMesh& mesh,const AstronautTestActor& actor,const AstronautRole& role,const AstronautRestPose& pose,bool animated_cloth){
     const float phase=actor.stride_phase*kCrewWalkFrames;
     const int frame=(int)phase;
     const float alpha=phase-frame;
@@ -117,7 +117,7 @@ void draw_actor(Renderer& r,const CrewMesh& mesh,const AstronautTestActor& actor
     }
 }
 
-void draw_ring(Renderer& r,Vec3 center,float radius,Color color,float width){
+void draw_ring(SceneRenderer& r,Vec3 center,float radius,Color color,float width){
     constexpr int segments=32;
     std::vector<Vec3> outline;
     outline.reserve(segments*2);
@@ -133,7 +133,7 @@ void draw_ring(Renderer& r,Vec3 center,float radius,Color color,float width){
 }
 }
 
-void GameApp::render_test_astronauts(Renderer& r) const {
+void GameApp::render_test_astronauts(SceneRenderer& r) const {
     if(astronaut_cache_.oxygen_kg>0 || astronaut_cache_.food_kg>0 || astronaut_cache_.water_litres>0)
         draw_ring(r,{0,.018f,0},kCrewCacheRadius,{.30f,.68f,.58f,.55f},1.2f);
     for(std::size_t i=0;i<test_astronauts_.size();++i){

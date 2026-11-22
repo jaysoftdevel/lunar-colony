@@ -1,6 +1,6 @@
 #pragma once
-#include "engine/engine.hpp"
-#include "engine/ui_metrics.hpp"
+#include "game/runtime/presentation.hpp"
+#include "game/runtime/ui_metrics.hpp"
 #include <algorithm>
 #include <string>
 
@@ -14,11 +14,11 @@ constexpr float SECTION_GAP=18.0f;
 constexpr float STATUS_BAR_H=72.0f;
 constexpr float DEBUG_FRAME_H=220.0f;
 constexpr float kHudOpacity=.40f;
-constexpr eng::Color kHudFill{.025f,.035f,.045f,kHudOpacity};
+constexpr game::runtime::Color kHudFill{.025f,.035f,.045f,kHudOpacity};
 
-inline void hud_panel(eng::Renderer& r,eng::Rect bounds,eng::ui::Theme theme){
+inline void hud_panel(game::runtime::SceneRenderer& r,game::runtime::Rect bounds,game::runtime::ui::Theme theme){
     theme.panel.a=kHudOpacity;
-    eng::ui::panel(r,bounds,theme);
+    game::runtime::ui::panel(r,bounds,theme);
 }
 constexpr float BUILD_BAR_H=80.0f;
 constexpr float BUILD_ICON_SIZE=50.0f;
@@ -33,7 +33,7 @@ inline float resolution_scale(int width,int height,float user_zoom){
     return std::max(0.01f,std::min(std::max(1,width)/UI_REFERENCE_WIDTH,
                                   std::max(1,height)/UI_REFERENCE_HEIGHT)*user_zoom);
 }
-inline eng::Vec2 pointer_to_ui(eng::Vec2 pixels,float scale){return {pixels.x/scale,pixels.y/scale};}
+inline game::runtime::Vec2 pointer_to_ui(game::runtime::Vec2 pixels,float scale){return {pixels.x/scale,pixels.y/scale};}
 
 struct CommonResolution { int width; int height; };
 constexpr CommonResolution COMMON_RESOLUTIONS[]={
@@ -42,16 +42,16 @@ constexpr CommonResolution COMMON_RESOLUTIONS[]={
     {2560,1440},{2560,1600},{3440,1440},{3840,2160}
 };
 
-inline float text_width(const std::string& text,float scale,const eng::ui::Theme& theme){
-    return eng::ui::text_extent(text,eng::ui::font_scale(scale,theme)).x;
+inline float text_width(const std::string& text,float scale,const game::runtime::ui::Theme& theme){
+    return game::runtime::ui::text_extent(text,game::runtime::ui::font_scale(scale,theme)).x;
 }
-inline void game_label(eng::Renderer& r,eng::Vec2 pos,const std::string& text,float scale,
-                       const eng::ui::Theme& theme,bool muted=false){
-    eng::ui::label(r,pos,text,scale*GAME_FONT_BOOST,theme,muted);
+inline void game_label(game::runtime::SceneRenderer& r,game::runtime::Vec2 pos,const std::string& text,float scale,
+                       const game::runtime::ui::Theme& theme,bool muted=false){
+    game::runtime::ui::label(r,pos,text,scale*GAME_FONT_BOOST,theme,muted);
 }
-inline float game_text_width(const std::string& text,float scale,const eng::ui::Theme& theme){return text_width(text,scale*GAME_FONT_BOOST,theme);}
-inline void game_label_fitted(eng::Renderer& r,eng::Rect bounds,const std::string& text,float scale,
-                             const eng::ui::Theme& theme,bool muted=false){
-    eng::ui::label_fitted(r,bounds,text,scale*GAME_FONT_BOOST,theme,muted);
+inline float game_text_width(const std::string& text,float scale,const game::runtime::ui::Theme& theme){return text_width(text,scale*GAME_FONT_BOOST,theme);}
+inline void game_label_fitted(game::runtime::SceneRenderer& r,game::runtime::Rect bounds,const std::string& text,float scale,
+                             const game::runtime::ui::Theme& theme,bool muted=false){
+    game::runtime::ui::label_fitted(r,bounds,text,scale*GAME_FONT_BOOST,theme,muted);
 }
 } // namespace game::layout

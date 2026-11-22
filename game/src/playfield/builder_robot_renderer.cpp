@@ -6,9 +6,12 @@
 
 namespace game {
 namespace {
-using eng::Color;
-using eng::Renderer;
-using eng::Vec3;
+using game::runtime::Color;
+using game::runtime::SceneRenderer;
+using game::runtime::Vec3;
+using game::runtime::LunarMaterial;
+using game::runtime::LunarSurfaceMapping;
+using game::runtime::radians;
 
 struct MeshBits { std::vector<Vec3> tris; std::vector<Vec3> edges; };
 
@@ -75,7 +78,7 @@ float action_fraction(const BuilderRobotState& robot){
 }
 float smooth(float t){ t=std::clamp(t,0.0f,1.0f); return t*t*(3.0f-2.0f*t); }
 float segment(float t,float a,float b){ return b<=a?1.0f:smooth((t-a)/(b-a)); }
-Vec3 mix(Vec3 a,Vec3 b,float t){ return a+(b-a)*smooth(t); }
+Vec3 smooth_mix(Vec3 a,Vec3 b,float t){ return a+(b-a)*smooth(t); }
 
 Color resource_color(MaterialResource resource){
     switch(resource){
@@ -113,16 +116,16 @@ RobotArmPose robot_arm_pose(const BuilderRobotState& robot){
             const Vec3 carry_tool{0,0.94f,0.28f};
             const Vec3 carry_elbow{0,1.23f,0.18f};
             if(t<0.18f){
-                const float u=segment(t,0.0f,0.18f); pose.tool=mix(folded.tool,ready_tool,u); pose.elbow=mix(folded.elbow,ready_elbow,u);
+                const float u=segment(t,0.0f,0.18f); pose.tool=smooth_mix(folded.tool,ready_tool,u); pose.elbow=smooth_mix(folded.elbow,ready_elbow,u);
             }else if(t<0.50f){
-                const float u=segment(t,0.18f,0.50f); pose.tool=mix(ready_tool,low_tool,u); pose.elbow=mix(ready_elbow,low_elbow,u);
+                const float u=segment(t,0.18f,0.50f); pose.tool=smooth_mix(ready_tool,low_tool,u); pose.elbow=smooth_mix(ready_elbow,low_elbow,u);
             }else if(t<0.66f){
                 pose.tool=low_tool; pose.elbow=low_elbow;
                 pose.gripper_open=0.16f*(1.0f-segment(t,0.50f,0.66f))+0.035f*segment(t,0.50f,0.66f);
             }else if(t<0.90f){
-                const float u=segment(t,0.66f,0.90f); pose.tool=mix(low_tool,carry_tool,u); pose.elbow=mix(low_elbow,carry_elbow,u); pose.gripper_open=0.035f;
+                const float u=segment(t,0.66f,0.90f); pose.tool=smooth_mix(low_tool,carry_tool,u); pose.elbow=smooth_mix(low_elbow,carry_elbow,u); pose.gripper_open=0.035f;
             }else{
-                const float u=segment(t,0.90f,1.0f); pose.tool=mix(carry_tool,folded.tool,u); pose.elbow=mix(carry_elbow,folded.elbow,u); pose.gripper_open=0.035f;
+                const float u=segment(t,0.90f,1.0f); pose.tool=smooth_mix(carry_tool,folded.tool,u); pose.elbow=smooth_mix(carry_elbow,folded.elbow,u); pose.gripper_open=0.035f;
             }
             break;
         }
@@ -131,10 +134,10 @@ RobotArmPose robot_arm_pose(const BuilderRobotState& robot){
             const Vec3 carry_elbow{0,1.23f,0.18f};
             const Vec3 low_tool{0,0.25f,0.90f};
             const Vec3 low_elbow{0,0.83f,0.50f};
-            if(t<0.18f){ const float u=segment(t,0,0.18f); pose.tool=mix(folded.tool,carry_tool,u); pose.elbow=mix(folded.elbow,carry_elbow,u); pose.gripper_open=0.035f; }
-            else if(t<0.56f){ const float u=segment(t,0.18f,0.56f); pose.tool=mix(carry_tool,low_tool,u); pose.elbow=mix(carry_elbow,low_elbow,u); pose.gripper_open=0.035f; }
+            if(t<0.18f){ const float u=segment(t,0,0.18f); pose.tool=smooth_mix(folded.tool,carry_tool,u); pose.elbow=smooth_mix(folded.elbow,carry_elbow,u); pose.gripper_open=0.035f; }
+            else if(t<0.56f){ const float u=segment(t,0.18f,0.56f); pose.tool=smooth_mix(carry_tool,low_tool,u); pose.elbow=smooth_mix(carry_elbow,low_elbow,u); pose.gripper_open=0.035f; }
             else if(t<0.72f){ pose.tool=low_tool; pose.elbow=low_elbow; pose.gripper_open=0.035f+0.125f*segment(t,0.56f,0.72f); }
-            else{ const float u=segment(t,0.72f,1.0f); pose.tool=mix(low_tool,folded.tool,u); pose.elbow=mix(low_elbow,folded.elbow,u); pose.gripper_open=0.16f; }
+            else{ const float u=segment(t,0.72f,1.0f); pose.tool=smooth_mix(low_tool,folded.tool,u); pose.elbow=smooth_mix(low_elbow,folded.elbow,u); pose.gripper_open=0.16f; }
             break;
         }
         case BuilderRobotAction::ApplyResources:{
@@ -143,8 +146,8 @@ RobotArmPose robot_arm_pose(const BuilderRobotState& robot){
             const float sweep=std::sin(segment(t,0.18f,0.82f)*3.14159265359f*3.0f);
             const Vec3 work_tool{sweep*0.18f,0.50f,0.92f};
             const Vec3 work_elbow{sweep*0.05f,1.02f,0.50f};
-            pose.tool=mix(folded.tool,work_tool,deploy); pose.elbow=mix(folded.elbow,work_elbow,deploy);
-            if(t>0.82f){ pose.tool=mix(work_tool,folded.tool,retract); pose.elbow=mix(work_elbow,folded.elbow,retract); }
+            pose.tool=smooth_mix(folded.tool,work_tool,deploy); pose.elbow=smooth_mix(folded.elbow,work_elbow,deploy);
+            if(t>0.82f){ pose.tool=smooth_mix(work_tool,folded.tool,retract); pose.elbow=smooth_mix(work_elbow,folded.elbow,retract); }
             pose.gripper_open=0.055f; pose.tool_extension=0.12f;
             break;
         }
@@ -157,8 +160,8 @@ RobotArmPose robot_arm_pose(const BuilderRobotState& robot){
             const float lift=std::sin(work*3.14159265359f*2.0f);
             const Vec3 work_tool{raster*0.16f,0.62f+lift*0.10f,0.94f};
             const Vec3 work_elbow{raster*0.05f,1.07f,0.52f};
-            pose.tool=mix(folded.tool,work_tool,deploy); pose.elbow=mix(folded.elbow,work_elbow,deploy);
-            if(t>0.86f){ pose.tool=mix(work_tool,folded.tool,retract); pose.elbow=mix(work_elbow,folded.elbow,retract); }
+            pose.tool=smooth_mix(folded.tool,work_tool,deploy); pose.elbow=smooth_mix(folded.elbow,work_elbow,deploy);
+            if(t>0.86f){ pose.tool=smooth_mix(work_tool,folded.tool,retract); pose.elbow=smooth_mix(work_elbow,folded.elbow,retract); }
             pose.gripper_open=0.045f; pose.tool_extension=0.18f;
             break;
         }
@@ -167,9 +170,9 @@ RobotArmPose robot_arm_pose(const BuilderRobotState& robot){
             const Vec3 pickup_elbow{0,0.90f,0.48f};
             const Vec3 raised_tool{0,1.48f,0.78f};
             const Vec3 raised_elbow{0,1.56f,0.38f};
-            if(t<0.22f){ const float u=segment(t,0,0.22f); pose.tool=mix(folded.tool,pickup_tool,u); pose.elbow=mix(folded.elbow,pickup_elbow,u); pose.gripper_open=0.13f-0.09f*u; }
-            else if(t<0.72f){ const float u=segment(t,0.22f,0.72f); pose.tool=mix(pickup_tool,raised_tool,u); pose.elbow=mix(pickup_elbow,raised_elbow,u); pose.gripper_open=0.04f; }
-            else{ const float u=segment(t,0.72f,1.0f); pose.tool=mix(raised_tool,folded.tool,u); pose.elbow=mix(raised_elbow,folded.elbow,u); pose.gripper_open=0.04f+0.12f*u; }
+            if(t<0.22f){ const float u=segment(t,0,0.22f); pose.tool=smooth_mix(folded.tool,pickup_tool,u); pose.elbow=smooth_mix(folded.elbow,pickup_elbow,u); pose.gripper_open=0.13f-0.09f*u; }
+            else if(t<0.72f){ const float u=segment(t,0.22f,0.72f); pose.tool=smooth_mix(pickup_tool,raised_tool,u); pose.elbow=smooth_mix(pickup_elbow,raised_elbow,u); pose.gripper_open=0.04f; }
+            else{ const float u=segment(t,0.72f,1.0f); pose.tool=smooth_mix(raised_tool,folded.tool,u); pose.elbow=smooth_mix(raised_elbow,folded.elbow,u); pose.gripper_open=0.04f+0.12f*u; }
             break;
         }
         case BuilderRobotAction::None: break;
@@ -179,7 +182,7 @@ RobotArmPose robot_arm_pose(const BuilderRobotState& robot){
 
 } // namespace
 
-void GameApp::render_builder_robot(Renderer& r){
+void GameApp::render_builder_robot(SceneRenderer& r){
     // Starter logistics pad remains as a visual depot even after the initial
     // reserve is moved away. Six constructor bays and six carrier bays are marked beside it.
     if(!lander_.has_depot()){
@@ -395,21 +398,27 @@ void GameApp::render_builder_robot(Renderer& r){
         const Color lamp=working || robot.route_waiting_for_clearance?Color{1.f,.63f,.24f,1.f}:
             loaded?Color{.29f,.90f,.56f,1.f}:robot.route_active?Color{.36f,.81f,.97f,1.f}:Color{.44f,.49f,.54f,1.f};
         for(float x:{-.31f,.31f})add_box(lamps,{x,.54f,.65f},{.14f,.08f,.07f});
-        r.draw_lunar_surface(transform(lamps.tris,pos,heading,pitch),eng::LunarMaterial::Emissive,lamp);
-        r.draw_triangles_3d(transform(chassis.tris,pos,heading,pitch),carrier?Color{0.34f,0.48f,0.56f,1.0f}:Color{0.58f,0.61f,0.60f,1.0f});
-        r.draw_lunar_surface(transform(tires.tris,pos,heading,pitch),eng::LunarMaterial::Fabric,{0.08f,0.10f,0.11f,1.0f});
-        r.draw_lunar_surface(transform(hubs.tris,pos,heading,pitch),eng::LunarMaterial::Alloy,{0.37f,0.42f,0.43f,1});
-        r.draw_triangles_3d(transform(suspension.tris,pos,heading,pitch),{0.35f,0.37f,0.36f,1.0f});
-        r.draw_triangles_3d(transform(arm.tris,pos,arm_heading,pitch),carrier?Color{0.28f,0.56f,0.68f,1.0f}:Color{0.72f,0.46f,0.14f,1.0f});
-        r.draw_triangles_3d(transform(gripper.tris,pos,arm_heading,pitch),{0.23f,0.25f,0.24f,1.0f});
-        r.draw_triangles_3d(transform(sensor_mesh.tris,pos,heading,pitch),carrier?Color{0.18f,0.50f,0.62f,1.0f}:Color{0.30f,0.40f,0.43f,1.0f});
+        const auto draw=[&](const std::vector<Vec3>& points,float yaw,LunarMaterial material,Color tint){
+            const float angle=radians(pitch),c=std::cos(angle),s=std::sin(angle);
+            const LunarSurfaceMapping mapping{pos,world_math::rotate_y({1,0,0},yaw),
+                world_math::rotate_y({0,c,s},yaw),world_math::rotate_y({0,-s,c},yaw),unsigned(1000+robot_index)};
+            r.draw_mapped_lunar_surface(transform(points,pos,yaw,pitch),material,tint,mapping);
+        };
+        draw(lamps.tris,heading,LunarMaterial::Emissive,lamp);
+        draw(chassis.tris,heading,LunarMaterial::RobotPaint,carrier?Color{.34f,.48f,.56f,1}:Color{.58f,.61f,.60f,1});
+        draw(tires.tris,heading,LunarMaterial::Rubber,{.08f,.10f,.11f,1});
+        draw(hubs.tris,heading,LunarMaterial::Alloy,{.37f,.42f,.43f,1});
+        draw(suspension.tris,heading,LunarMaterial::Alloy,{.35f,.37f,.36f,1});
+        draw(arm.tris,arm_heading,LunarMaterial::RobotPaint,carrier?Color{.28f,.56f,.68f,1}:Color{.72f,.46f,.14f,1});
+        draw(gripper.tris,arm_heading,LunarMaterial::Alloy,{.23f,.25f,.24f,1});
+        draw(sensor_mesh.tris,heading,LunarMaterial::RobotPaint,carrier?Color{.18f,.50f,.62f,1}:Color{.30f,.40f,.43f,1});
         if(cargo_in_bay){
             auto material=MaterialResource::Iron;
             for(std::size_t i=1;i<kMaterialResourceCount;++i){
                 const auto candidate=static_cast<MaterialResource>(i);
                 if(robot.cargo.amount(candidate)>robot.cargo.amount(material))material=candidate;
             }
-            r.draw_lunar_surface(transform(cargo.tris,pos,heading,pitch),eng::LunarMaterial::Paint,resource_color(material));
+            draw(cargo.tris,heading,LunarMaterial::Hull,resource_color(material));
         }
         const Color edge{0.04f,0.06f,0.07f,1.0f};
         r.draw_lines_3d(transform(chassis.edges,pos,heading,pitch),edge,1.15f);
@@ -453,7 +462,7 @@ void GameApp::render_builder_robot(Renderer& r){
         if(robot.action==BuilderRobotAction::Welding||robot.action==BuilderRobotAction::Dismantle){
             const float active=segment(phase,0.14f,0.86f)*(1.0f-segment(phase,0.86f,1.0f));
             if(active>0.05f && graphics_.particle_density>0){
-                const int count=eng::quality_budget(graphics_.particle_density,3,6,9);
+                const int count=game::runtime::quality_budget(graphics_.particle_density,3,6,9);
                 std::vector<Vec3> sparks;
                 for(int i=0;i<count;++i){
                     const float a=phase*23.0f+(float)i*0.77f;

@@ -1,6 +1,7 @@
 # A save or preference can never enable debug tools in a Release build.
 add_compile_definitions(GAME_DEBUG_FEATURES=$<IF:$<CONFIG:Debug>,1,0>)
 
+include(cmake/Runtime.cmake)
 include(cmake/GameClusters.cmake)
 
 set(DEBUG_BLUEPRINT_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/debug-templates/0-54-0-debug-start.gmsave")
@@ -11,7 +12,7 @@ endif()
 
 add_executable(game src/main.cpp)
 target_include_directories(game PRIVATE include)
-target_link_libraries(game PRIVATE game_engine Threads::Threads rvo2)
+target_link_libraries(game PRIVATE colony_runtime Threads::Threads rvo2)
 target_compile_definitions(game PRIVATE GAME_VERSION="${GAME_VERSION_FULL}")
 if(MSVC)
     target_compile_options(game PRIVATE /W4 /permissive- /EHsc)
@@ -26,15 +27,16 @@ endforeach()
 if(GAME_BUILD_NAVIGATION_TESTS)
     add_executable(navigation_regression tests/navigation_regression.cpp)
     target_include_directories(navigation_regression PRIVATE include)
-    target_link_libraries(navigation_regression PRIVATE game_engine Threads::Threads rvo2)
+    target_link_libraries(navigation_regression PRIVATE colony_runtime Threads::Threads rvo2)
     foreach(cluster IN LISTS GAME_CLUSTER_TARGETS)
         target_sources(navigation_regression PRIVATE $<TARGET_OBJECTS:${cluster}>)
     endforeach()
     add_executable(ui_regression tests/ui_regression.cpp)
     target_include_directories(ui_regression PRIVATE include)
     target_compile_definitions(ui_regression PRIVATE
-        GAME_LEGACY_PLANNING_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/schema29-stage1-contracts.gmsave")
-    target_link_libraries(ui_regression PRIVATE game_engine Threads::Threads rvo2)
+        GAME_LEGACY_PLANNING_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/schema29-stage1-contracts.gmsave"
+        GAME_SOURCE_ROOT="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(ui_regression PRIVATE colony_runtime Threads::Threads rvo2)
     foreach(cluster IN LISTS GAME_CLUSTER_TARGETS)
         target_sources(ui_regression PRIVATE $<TARGET_OBJECTS:${cluster}>)
     endforeach()
@@ -52,6 +54,9 @@ if(GAME_BUILD_NAVIGATION_TESTS)
     add_test(NAME game_activity_log_ui COMMAND ui_regression activity-log)
     add_test(NAME game_build_mode COMMAND ui_regression build-mode)
     add_test(NAME game_graphics_quality COMMAND ui_regression graphics-quality)
+    add_test(NAME game_fov_station_interiors COMMAND ui_regression fov-interiors)
+    add_test(NAME game_runtime_paths COMMAND ui_regression runtime-paths)
+    add_test(NAME game_windows_build_driver COMMAND "${JSD_GUARD_PYTHON}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/windows_build_test.py")
     add_test(NAME navigation_collision_radius COMMAND navigation_regression collision-radius)
     add_test(NAME navigation_rover_steering COMMAND navigation_regression rover-steering)
     add_test(NAME navigation_operation_replan COMMAND navigation_regression operation-replan)
@@ -110,63 +115,25 @@ set_target_properties(game PROPERTIES
     # Keep both variants and their staged runtime files in the same bin directory.
     RUNTIME_OUTPUT_DIRECTORY "$<1:${GAME_BIN_DIR}>")
 
-if(WIN32)
-    set(GAME_OPENAL_RUNTIME "${PROJECT_SOURCE_DIR}/build/windows/bin/OpenAL32.dll" CACHE FILEPATH
-        "OpenAL Soft Win64 DLL staged beside the game")
-    set(openal_destination "OpenAL32.dll")
-else()
-    find_file(GAME_OPENAL_RUNTIME NAMES libopenal.so.1 PATHS ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
-    set(openal_destination "lib/libopenal.so.1")
+if(NOT WIN32)
     set_property(TARGET game APPEND PROPERTY BUILD_RPATH "$ORIGIN/lib")
-    if(NOT CMAKE_CROSSCOMPILING)
-        set(openal_notice "/usr/share/doc/libopenal1/copyright")
-    endif()
 endif()
 
 # Stage loose runtime files on incremental builds as well as fresh builds.
 add_custom_target(stage_game_runtime
     COMMAND "${CMAKE_COMMAND}" "-DRUNTIME_DIR=$<TARGET_FILE_DIR:game>"
         "-DDEBUG_TEMPLATE=${staged_debug_template}"
-        "-DOPENAL_LIBRARY=${GAME_OPENAL_RUNTIME}"
-        "-DOPENAL_DESTINATION=${openal_destination}"
-        "-DOPENAL_NOTICE=${openal_notice}"
         "-DUI_FONT_NOTICE=${PROJECT_SOURCE_DIR}/third_party/ui_font/OFL.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRuntime.cmake"
     VERBATIM
 )
 add_dependencies(game stage_game_runtime)
 
-if(WIN32)
-    set(GAME_D3D12_AGILITY_DIR "" CACHE PATH
-        "Optional DirectX 12 Agility SDK 1.620.1 x64 runtime directory")
-    if(DEFINED ENV{GAME_D3D12_AGILITY_DIR})
-        set(GAME_D3D12_AGILITY_DIR "$ENV{GAME_D3D12_AGILITY_DIR}")
-    endif()
-    if(GAME_D3D12_AGILITY_DIR)
-        set(d3d12_core "${GAME_D3D12_AGILITY_DIR}/D3D12Core.dll")
-        set(d3d12_layers "${GAME_D3D12_AGILITY_DIR}/D3D12SDKLayers.dll")
-        if(NOT EXISTS "${d3d12_core}")
-            message(FATAL_ERROR "GAME_D3D12_AGILITY_DIR must contain the x64 Agility SDK 1.620.1 D3D12Core.dll")
-        endif()
-        set(d3d12_runtime_files "${d3d12_core}")
-        if(EXISTS "${d3d12_layers}")
-            list(APPEND d3d12_runtime_files "${d3d12_layers}")
-        endif()
-        target_compile_definitions(game PRIVATE GAME_D3D12_AGILITY_VERSION=620)
-        add_custom_target(stage_d3d12_agility
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${GAME_BIN_DIR}/D3D12"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${d3d12_runtime_files} "${GAME_BIN_DIR}/D3D12"
-            VERBATIM
-        )
-        add_dependencies(game stage_d3d12_agility)
-    endif()
-endif()
-
 if(GAME_BUILD_NAVIGATION_TESTS)
     add_executable(lander_regression tests/lander_regression.cpp)
     target_include_directories(lander_regression PRIVATE include)
     target_compile_definitions(lander_regression PRIVATE GAME_LEGACY_LANDER_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
-    target_link_libraries(lander_regression PRIVATE game_engine Threads::Threads rvo2)
+    target_link_libraries(lander_regression PRIVATE colony_runtime Threads::Threads rvo2)
     foreach(cluster IN LISTS GAME_CLUSTER_TARGETS)
         target_sources(lander_regression PRIVATE $<TARGET_OBJECTS:${cluster}>)
     endforeach()
@@ -177,7 +144,7 @@ endif()
 if(GAME_BUILD_NAVIGATION_TESTS)
     add_executable(trader_regression tests/trader_regression.cpp)
     target_include_directories(trader_regression PRIVATE include)
-    target_link_libraries(trader_regression PRIVATE game_engine Threads::Threads rvo2)
+    target_link_libraries(trader_regression PRIVATE colony_runtime Threads::Threads rvo2)
     foreach(cluster IN LISTS GAME_CLUSTER_TARGETS)
         target_sources(trader_regression PRIVATE $<TARGET_OBJECTS:${cluster}>)
     endforeach()
@@ -188,6 +155,62 @@ endif()
 if(GAME_BUILD_NAVIGATION_TESTS)
     get_property(game_tests DIRECTORY PROPERTY TESTS)
     foreach(test IN LISTS game_tests)
-        set_tests_properties("${test}" PROPERTIES ENVIRONMENT "GAME_SAVE_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-saves/${test}")
+        set_property(TEST "${test}" APPEND PROPERTY ENVIRONMENT "GAME_SAVE_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-saves/${test}")
+    endforeach()
+endif()
+
+# JSD is linked statically. Its source-built SDL runtime stays app-local.
+if(WIN32)
+    set(jsd_runtime_dir "$<TARGET_FILE_DIR:game>")
+    set(jsd_sdl_name "$<TARGET_FILE_NAME:SDL2>")
+else()
+    set(jsd_runtime_dir "$<TARGET_FILE_DIR:game>/lib")
+    set(jsd_sdl_name "$<TARGET_SONAME_FILE_NAME:SDL2>")
+endif()
+add_custom_target(stage_jsd_runtime
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${jsd_runtime_dir}" "$<TARGET_FILE_DIR:game>/licenses"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:SDL2>" "${jsd_runtime_dir}/${jsd_sdl_name}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${JSD_GAME_ENGINE_DIR}/LICENSE.txt" "$<TARGET_FILE_DIR:game>/licenses/JSD-engine.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${JSD_GAME_ENGINE_DIR}/third_party/SDL2/LICENSE.txt" "$<TARGET_FILE_DIR:game>/licenses/SDL2.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${JSD_GAME_ENGINE_DIR}/third_party/JoltPhysics/LICENSE" "$<TARGET_FILE_DIR:game>/licenses/Jolt.txt"
+    DEPENDS SDL2
+    VERBATIM
+)
+add_dependencies(game stage_jsd_runtime)
+
+if(GAME_BUILD_NAVIGATION_TESTS AND GAME_BUILD_RENDER_TESTS)
+    add_executable(jsd_scene_regression tests/jsd_scene_regression.cpp)
+    target_include_directories(jsd_scene_regression PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime")
+    target_link_libraries(jsd_scene_regression PRIVATE colony_runtime Threads::Threads rvo2)
+    foreach(cluster IN LISTS GAME_CLUSTER_TARGETS)
+        target_sources(jsd_scene_regression PRIVATE $<TARGET_OBJECTS:${cluster}>)
+    endforeach()
+    add_test(NAME jsd_game_scenes COMMAND jsd_scene_regression)
+    set_tests_properties(jsd_game_scenes PROPERTIES TIMEOUT 180 ENVIRONMENT "GAME_SAVE_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-saves/jsd-game-scenes")
+endif()
+
+if(GAME_BUILD_NAVIGATION_TESTS AND GAME_BUILD_RENDER_TESTS)
+    add_executable(jsd_surface_regression tests/jsd_surface_regression.cpp)
+    target_link_libraries(jsd_surface_regression PRIVATE JSD::GameEngineStatic)
+    add_test(NAME jsd_aperiodic_materials COMMAND jsd_surface_regression)
+    set_tests_properties(jsd_aperiodic_materials PROPERTIES TIMEOUT 180)
+endif()
+
+# Tests live in their own configuration directories on Windows. Each executable
+# must receive the matching source-built SDL DLL, not just the main game binary.
+if(WIN32)
+    add_custom_target(stage_colony_windows_runtime)
+    add_dependencies(stage_colony_windows_runtime SDL2)
+    get_property(colony_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(target IN LISTS colony_targets)
+        get_target_property(type ${target} TYPE)
+        if(type STREQUAL "EXECUTABLE")
+            add_custom_command(TARGET stage_colony_windows_runtime POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${target}>"
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "$<TARGET_FILE:SDL2>" "$<TARGET_FILE_DIR:${target}>"
+                VERBATIM)
+            add_dependencies(${target} stage_colony_windows_runtime)
+        endif()
     endforeach()
 endif()

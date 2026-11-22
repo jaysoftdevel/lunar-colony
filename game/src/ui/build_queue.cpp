@@ -5,7 +5,7 @@
 #include <cmath>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 
 namespace {
@@ -25,7 +25,7 @@ int visible_rows(Rect panel){
     return std::max(0,static_cast<int>((panel.h-kHeaderHeight-kFooterHeight-2*kPadding)/kRowHeight));
 }
 
-bool arrow(Renderer& r,const InputState& input,Rect rect,int direction,const ui::Theme& theme,bool enabled){
+bool arrow(SceneRenderer& r,const InputState& input,Rect rect,int direction,const ui::Theme& theme,bool enabled){
     const bool clicked=ui::button(r,input,rect,"",theme,enabled);
     const float x=rect.x+rect.w*.5f,y=rect.y+rect.h*.5f;
     const Color ink=enabled?theme.text:theme.muted;
@@ -133,7 +133,7 @@ GameApp::BuildQueueView GameApp::prepare_build_queue_view(){
     return view;
 }
 
-void GameApp::render_build_queue(Renderer& r,const BuildQueueView& view){
+void GameApp::render_build_queue(SceneRenderer& r,const BuildQueueView& view){
     const Rect panel=view.panel;
     const auto& queue=view.jobs;
     const auto count=static_cast<int>(queue.size());

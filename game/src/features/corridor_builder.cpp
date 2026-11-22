@@ -11,7 +11,7 @@
 #include <vector>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 
@@ -99,7 +99,7 @@ std::vector<Vec3> scaled_blueprint_vertices(const std::vector<Vec3>& vertices,co
     return out;
 }
 
-void draw_compact_corridor_blueprint(Renderer& r,const CorridorConnection& preview,bool affordable){
+void draw_compact_corridor_blueprint(SceneRenderer& r,const CorridorConnection& preview,bool affordable){
     // The blueprint is deliberately smaller than the final pressure tube. It
     // keeps dense connection nodes readable and leaves the exact endpoint
     // highlights visible while still following the final routed centerline.
@@ -114,7 +114,7 @@ void draw_compact_corridor_blueprint(Renderer& r,const CorridorConnection& previ
     r.draw_lines_3d(edge_vertices,shell,1.65f);
 }
 
-void render_endpoint_highlight(Renderer& r,const CorridorEndpoint& ep,Color color,float width){
+void render_endpoint_highlight(SceneRenderer& r,const CorridorEndpoint& ep,Color color,float width){
     std::vector<Vec3> lines;
     if(ep.kind==CorridorEndpointKind::Habitat || ep.kind==CorridorEndpointKind::Resource){
         const Vec3 n=flat_dir(ep.door.normal);
@@ -178,7 +178,7 @@ CorridorEndpoint compact_structure_start_endpoint(CorridorEndpoint endpoint){
     return endpoint;
 }
 
-void draw_corridor_start_sample(Renderer& r,Vec3 origin,Vec3 tangent,bool valid){
+void draw_corridor_start_sample(SceneRenderer& r,Vec3 origin,Vec3 tangent,bool valid){
     tangent=flat_dir(tangent);
     const Vec3 side=side_of(tangent);
     const float length_m=initial_corridor_preview_run();
@@ -199,7 +199,7 @@ void draw_corridor_start_sample(Renderer& r,Vec3 origin,Vec3 tangent,bool valid)
 }
 } // namespace
 
-void GameApp::render_corridor_link_preview(Renderer& r){
+void GameApp::render_corridor_link_preview(SceneRenderer& r){
     if(corridor_link_source_<0 || build_catalog_.selected()!=nullptr) return;
     const float logical_y=(float)input_.mouse_y/ui_scale_;
     if(logical_y<STATUS_BAR_H || logical_y>=ui_height(r)-BUILD_BAR_H) return;
@@ -249,7 +249,7 @@ void GameApp::render_corridor_link_preview(Renderer& r){
     }
 }
 
-void GameApp::render_corridor_placement(Renderer& r){
+void GameApp::render_corridor_placement(SceneRenderer& r){
     const BuildObjectDefinition* selected=build_catalog_.selected();
     if(!selected || selected->kind!=BuildObjectKind::Corridor) return;
 
@@ -444,7 +444,7 @@ void GameApp::set_placement_cost(const ConstructionResourcePlan& plan,const Stru
     }
 }
 
-void GameApp::render_placement_tooltip(Renderer& r){
+void GameApp::render_placement_tooltip(SceneRenderer& r){
     const bool blocked=!placement_tip_detail_.empty();
     const bool has_cost=!placement_tip_cost_.empty();
     if(placement_tip_title_.empty() && !has_cost) return;

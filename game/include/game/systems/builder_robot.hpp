@@ -1,5 +1,5 @@
 #pragma once
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include "game/world/ore.hpp"
 #include "game/systems/resource_management.hpp"
 #include "game/robots/safety_coordinator.hpp"
@@ -134,20 +134,20 @@ struct RobotOperationRetry {
     BuilderRobotMode mode{BuilderRobotMode::Idle};
     std::uint64_t task{0};
     std::uint8_t failures{0};
-    eng::Vec3 origin{}, goal{};
+    game::runtime::Vec3 origin{}, goal{};
     bool replan_pending() const { return failures>=kRobotReplanFailures; }
 };
 
 struct BuilderRobotState {
     ore::Haul ore_haul{};
     RobotRole role{RobotRole::Constructor};
-    eng::Vec3 position{};               // wheel contact / local floor position
+    game::runtime::Vec3 position{};               // wheel contact / local floor position
     float heading_degrees{0.0f};
     robots::RoverWheels wheels{};
     BuilderRobotMode mode{BuilderRobotMode::Idle};
     ConstructionTargetRef target{};
     bool debug_move_active{false}; // transient, real assignments always preempt
-    eng::Vec3 debug_move_destination{};
+    game::runtime::Vec3 debug_move_destination{};
     ResourceBundle cargo{};
     ResourceBundle site_buffer{};       // legacy save field; blueprint site_buffer is authoritative since 0.40.12
 
@@ -197,15 +197,15 @@ struct BuilderRobotState {
     // none of them authorizes motion or performs collision avoidance.
     float avoidance_offset_degrees{0.0f};
 
-    eng::Vec3 visual_position{};
+    game::runtime::Vec3 visual_position{};
     float visual_heading_degrees{0.0f};
-    eng::Vec3 visual_velocity{};
+    game::runtime::Vec3 visual_velocity{};
     bool visual_initialized{false};
 
-    std::vector<eng::Vec3> planned_route{};
+    std::vector<game::runtime::Vec3> planned_route{};
     std::vector<float> planned_route_distances{};
     std::size_t route_cursor{0};
-    eng::Vec3 route_destination{};
+    game::runtime::Vec3 route_destination{};
     float route_stop_radius{0.0f};
     float route_replan_cooldown{0.0f};
     std::uint8_t route_search_tier{0};
@@ -220,22 +220,22 @@ struct BuilderRobotState {
     float route_structure_clearance_margin_m{1.0f};
     float route_priority_age{0.0f};
     float route_segment_elapsed{0.0f};
-    eng::Vec3 route_segment_origin{};
+    game::runtime::Vec3 route_segment_origin{};
     bool route_segment_origin_valid{false};
     bool route_active{false};
     bool route_waiting_for_clearance{false};
     float route_wait_elapsed{0.0f};
     std::size_t traffic_blocker_index{kNoRobotIndex};
-    eng::Vec3 traffic_wait_position{};
+    game::runtime::Vec3 traffic_wait_position{};
     bool traffic_wait_position_valid{false};
     bool traffic_detour_active{false};
     std::size_t traffic_detour_avoid_index{kNoRobotIndex};
     float traffic_clear_elapsed{0.0f};
-    std::vector<eng::Vec3> traffic_motion_history{};
+    std::vector<game::runtime::Vec3> traffic_motion_history{};
     float route_resolution_elapsed{0.0f};
     bool route_force_full_replan{false};
     std::uint16_t route_full_replan_count{0};
-    eng::Vec3 traffic_escape_position{};
+    game::runtime::Vec3 traffic_escape_position{};
     bool traffic_escape_active{false};
 
     // Stable operation station for pickup / delivery / construction work.
@@ -243,8 +243,8 @@ struct BuilderRobotState {
     // position every frame: doing so makes a robot orbit a pallet or worksite
     // forever. The station is transient and can be invalidated/reselected when
     // world geometry changes.
-    eng::Vec3 interaction_position{};
-    eng::Vec3 interaction_focus_position{};
+    game::runtime::Vec3 interaction_position{};
+    game::runtime::Vec3 interaction_focus_position{};
     MaterialResource interaction_material{MaterialResource::Iron};
     bool interaction_position_valid{false};
 
@@ -276,7 +276,7 @@ struct BuilderRobotState {
     // sufficient to detect an operation deadlock (for example a valid route to
     // an interaction point whose source disappeared). Each robot monitors its
     // own progress and recovers without stopping or locking the rest of fleet.
-    eng::Vec3 watchdog_position{};
+    game::runtime::Vec3 watchdog_position{};
     BuilderRobotMode watchdog_mode{BuilderRobotMode::Idle};
     BuilderRobotAction watchdog_action{BuilderRobotAction::None};
     float watchdog_elapsed{0.0f};
@@ -296,7 +296,7 @@ struct BuilderRobotState {
     // that the next construction step is about to create. These values are
     // transient and intentionally need no save-schema change.
     bool stage_commit_pending{false};
-    eng::Vec3 stage_commit_safe_position{};
+    game::runtime::Vec3 stage_commit_safe_position{};
     // Latched evacuation destination for the current stage transition. Reusing
     // one validated point prevents the destination from hopping between nearby
     // perimeter samples while the rover is moving, which otherwise invalidates
@@ -325,7 +325,7 @@ struct BuilderRobotState {
     float action_duration{0.0f};
     MaterialResource action_material{MaterialResource::Iron};
     std::int64_t action_amount{0};
-    eng::Vec3 action_focus_position{};
+    game::runtime::Vec3 action_focus_position{};
 
     // Constructors prioritize assembly; CR-01 carriers trade arm reach for a
     // larger logistics deck and slightly higher transit speed.

@@ -1,5 +1,5 @@
 #include "game/game_app.hpp"
-#include "engine/ui_metrics.hpp"
+#include "game/runtime/ui_metrics.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -9,7 +9,7 @@
 #include <vector>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 namespace {
 using F=GraphicsFeature;
 
@@ -41,112 +41,48 @@ constexpr std::array display{
     Row{"APPLY DISPLAY RESOLUTION","Resize the game to the selected display size.",Control::ApplyResolution},
     Row{"VERTICAL SYNC","Sync presentation to the display refresh to reduce tearing.",Control::Vsync},
     Row{"3D RENDER SCALE","Set internal 3D resolution independently of the interface.",Control::Scale},
-    Row{"ANTI-ALIASING","Choose the method used to smooth edges in the 3D image.",Control::AA},
-#ifdef _WIN32
-    Row{"ANTI-ALIASING QUALITY","Set the amount of spatial edge smoothing.",Control::AAQuality},
-#else
-    Row{"ANTI-ALIASING QUALITY","Set the spatial filter. High adds edge cleanup after temporal AA.",Control::AAQuality},
-#endif
-#ifndef _WIN32
-    toggle("LEARNED UPSCALING","Reconstructs detail at reduced scale with temporal AA.",F::LearnedUpscale,Requirement::Temporal),
-#endif
+    Row{"ANTI-ALIASING","Choose temporal AA, FXAA or unfiltered edges.",Control::AA}
 };
 constexpr std::array textures{
-#ifndef _WIN32
-    Row{"SURFACE TEXTURE RESOLUTION","Finest sampled mip of lunar terrain and structure maps.",Control::SurfaceResolution},
-    Row{"TEXTURE FILTERING","Choose mip filtering or GPU-supported anisotropy for angled surfaces.",Control::TextureFilter},
-    toggle("VIRTUAL TEXTURES","Adjusts near-field ground texture detail and page uploads.",F::VirtualTextures,Requirement::Pages),
-    toggle("HAIR SHADING","Adds directional highlights and strand detail.",F::Hair),
-    toggle("CLOTH DETAIL","Scales fabric texture detail.",F::Cloth),
-    toggle("SKIN SHADING","Adjusts the sample count for skin diffusion.",F::Skin),
-#endif
-    toggle("MATERIAL DETAIL","Scales lunar textures above the basic material detail.",F::MaterialDetail),
-    toggle("PROJECTED SURFACE DETAIL","Controls landing-pad markings, wear and dust layers.",F::Decals)
+    Row{"SURFACE TEXTURE RESOLUTION","Set texture detail for the external renderer.",Control::SurfaceResolution},
+    Row{"TEXTURE FILTERING","Filter angled surfaces within the GPU's supported limit.",Control::TextureFilter},
+    toggle("MATERIAL DETAIL","Adjust procedural detail on structure materials.",F::MaterialDetail),
+    toggle("PROJECTED SURFACE DETAIL","Show landing-pad markings, wear and dust layers.",F::Decals)
 };
 constexpr std::array environment{
-    toggle("TERRAIN RELIEF","Scales the detail of cratered terrain around the build area.",F::TerrainRelief),
-#ifndef _WIN32
-    Row{"GROUND CLUTTER","Sets the density of decorative boulders outside the build area.",Control::GroundClutter},
-    Row{"GROUND CLUTTER RANGE","Controls how far the boulder field extends beyond the build area.",Control::ClutterRange},
-    toggle("STREAMED TERRAIN DETAIL","Sets the number of fine boulder pages resident near the camera.",F::StreamedGeometry,Requirement::Streamed),
-    toggle("EARTH ATMOSPHERE","Draws the scattering sky above the Earth campus.",F::EarthAtmosphere),
-    toggle("VOLUMETRIC CLOUDS","Adjusts ray-march steps in the Earth cloud layer.",F::Clouds,Requirement::Atmosphere),
-    toggle("DISTANCE HAZE","Adjusts the density of Earth campus haze.",F::Haze),
-#endif
+    toggle("TERRAIN RELIEF","Set crater and mountain detail around the build area.",F::TerrainRelief),
+    Row{"GROUND CLUTTER","Set decorative boulder density outside the build area.",Control::GroundClutter},
+    Row{"GROUND CLUTTER RANGE","Set the extent of the boulder field.",Control::ClutterRange},
+    toggle("EARTH ATMOSPHERE","Draw the scattering sky above the Earth campus.",F::EarthAtmosphere),
+    toggle("VOLUMETRIC CLOUDS","Show the Earth cloud layer.",F::Clouds,Requirement::Atmosphere),
+    toggle("DISTANCE HAZE","Show haze at the Earth campus.",F::Haze)
 };
 constexpr std::array lights{
-    toggle("PHYSICALLY BASED LIGHTING","Uses material roughness and metalness in the lighting model.",F::Pbr),
-    toggle("LOCAL LIGHTS","Scales the number of powered fixtures that illuminate surfaces.",F::LocalLights),
-#ifndef _WIN32
-    Row{"SUN SHADOW MAPS","Near shadow pages with cascades, cascades alone, or off.",Control::Shadows},
-    Row{"SHADOW FILTER QUALITY","Scales filter samples and near-shadow page updates.",Control::ShadowQuality},
-    Row{"CASCADE SHADOW RESOLUTION","Sets the pixel size of each directional shadow map.",Control::ShadowResolution},
-    toggle("RESTIR DIRECT LIGHTING","Adjusts fixture candidates and nearby samples.",F::ReservoirLights,Requirement::Reservoir),
-    toggle("SCREEN-SPACE AO","Adjusts the number of contact occlusion samples.",F::ScreenOcclusion),
-    toggle("SCREEN-SPACE GI","Adjusts diffuse bounce samples when ray GI is inactive.",F::ScreenIndirect),
-    toggle("SCREEN-SPACE REFLECTIONS","Adjusts steps and refinement for screen reflections.",F::ScreenReflections),
-#endif
+    toggle("LOCAL LIGHTS","Illuminate surfaces with powered fixtures.",F::LocalLights),
+    Row{"SUN SHADOW MAPS","Cascaded sunlight shadows with close detail in first person.",Control::Shadows},
+    Row{"SHADOW FILTER QUALITY","Set the renderer's directional shadow quality.",Control::ShadowQuality},
+    toggle("SCREEN-SPACE AO","Set contact occlusion quality.",F::ScreenOcclusion),
+    toggle("SCREEN-SPACE GI","Set diffuse bounce quality.",F::ScreenIndirect),
+    toggle("SCREEN-SPACE REFLECTIONS","Set screen reflection quality.",F::ScreenReflections)
 };
 constexpr std::array effects{
-    Row{"PARTICLE DENSITY","Controls airborne lander dust and rover welding sparks.",Control::Particles},
-    Row{"BLOOM INTENSITY","Glow from bright surfaces and lights. Set to 0% to disable.",Control::Bloom},
-    Row{"BLOOM QUALITY","Scales the resolution of the glow buffer.",Control::BloomQuality},
-    Row{"EXPOSURE","Adjusts world brightness in stops.",Control::Exposure},
-    toggle("FILMIC TONE MAPPING","Smooths the transition into bright highlights.",F::Filmic),
-    toggle("VIGNETTE","Adjusts shading at the edges of the 3D image.",F::Vignette),
-#ifndef _WIN32
-    toggle("VOLUMETRIC EXHAUST","Adjusts integration steps for engine plumes.",F::VolumetricPlumes),
-    toggle("VOLUMETRIC LUNAR DUST","Adjusts integration steps for the lander dust cloud.",F::VolumetricDust),
-    Row{"TRANSPARENCY","Weighted order-independent blending or sorted mesh blending.",Control::Transparency},
-#endif
+    Row{"PARTICLE DENSITY","Control lander dust and welding sparks.",Control::Particles},
+    Row{"BLOOM INTENSITY","Glow from bright surfaces. Zero disables bloom.",Control::Bloom},
+    Row{"BLOOM QUALITY","Set glow-buffer quality.",Control::BloomQuality},
+    Row{"EXPOSURE","Adjust world brightness in stops.",Control::Exposure},
+    toggle("FILMIC TONE MAPPING","Smooth bright highlights.",F::Filmic),
+    toggle("VIGNETTE","Shade the edge of the 3D image.",F::Vignette),
+    toggle("VOLUMETRIC EXHAUST","Draw engine plumes through JSD particles.",F::VolumetricPlumes),
+    toggle("VOLUMETRIC LUNAR DUST","Draw lander dust through JSD particles.",F::VolumetricDust)
 };
 constexpr std::array advanced{
-#ifdef _WIN32
-    Row{"RENDERER","Enhanced Direct3D 12 lunar lighting or Classic with basic textures.",Control::Path},
-    Row{"TERRAIN VRS","Use 2x2 shading on terrain outside the build area.",Control::TerrainVrs},
-#else
-    Row{"RENDERER","Auto uses available compute features. Classic uses basic textures.",Control::Path},
-    toggle("VISIBILITY BUFFER","Reconstructs materials from triangle IDs on the compute path.",F::VisibilityBuffer,Requirement::Visibility),
-    toggle("GPU TERRAIN CULLING","Uses GPU culling and indirect draws for terrain clusters.",F::GpuTerrain,Requirement::Terrain),
-#endif
+    Row{"RENDERER","Choose the external engine's quality or performance profile.",Control::Path}
 };
+struct Tab {const char* name;const Row* rows;int count;};
+template<std::size_t N>constexpr Tab tab(const char* name,const std::array<Row,N>& rows){return {name,rows.data(),int(N)};}
+constexpr std::array tabs{tab("DISPLAY",display),tab("TEXTURES",textures),tab("ENVIRONMENT",environment),
+    tab("LIGHTING",lights),tab("EFFECTS",effects),tab("ADVANCED",advanced)};
 #ifndef _WIN32
-constexpr std::array rays{
-    toggle("SOFTWARE RAY TRACING","Traces scene triangles using OpenGL compute.",F::RayTracing,Requirement::Compute),
-    toggle("RAY-TRACED SHADOWS","Adjusts sunlight ray reach and enables fixture visibility.",F::RayShadows,Requirement::Ray),
-    toggle("RAY-TRACED REFLECTIONS","Scales the maximum reflection ray distance.",F::RayReflections,Requirement::Ray),
-    toggle("RAY-TRACED AO","Scales the contact occlusion radius.",F::RayOcclusion,Requirement::Ray),
-    toggle("RAY-TRACED GI","Scales the diffuse bounce ray distance.",F::RayIndirect,Requirement::Ray),
-    Row{"COMPUTE LIGHTING SCALE","Ray and reservoir buffer resolution relative to the 3D image.",Control::RayScale,F::Count,Requirement::Compute},
-    toggle("RAY DENOISING","Scales spatial filter samples for compute lighting.",F::RayDenoise,Requirement::Compute),
-    toggle("LEARNED DENOISING","Uses learned confidence weights in the ray filter.",F::LearnedDenoise,Requirement::Denoise),
-    toggle("NEURAL RADIANCE CACHE","Learns a local diffuse lighting estimate from ray samples.",F::NeuralRadiance,Requirement::Neural)
-};
-#endif
-struct Tab { const char* name; const Row* rows; int count; };
-template<std::size_t N> constexpr Tab tab(const char* name,const std::array<Row,N>& rows){
-    return {name,rows.data(),int(N)};
-}
-constexpr std::array tabs{
-    tab("DISPLAY",display),tab("TEXTURES",textures),tab("ENVIRONMENT",environment),tab("LIGHTING",lights),
-    tab("EFFECTS",effects),tab("ADVANCED",advanced),
-#ifndef _WIN32
-    tab("RAY TRACING",rays),
-#endif
-};
-#ifndef _WIN32
-static_assert([]{
-    std::uint32_t mask{};
-    for(const auto& t:tabs)
-        for(int i=0;i<t.count;++i){
-            if(t.rows[i].control!=Control::Feature) continue;
-            const auto bit=graphics_bit(t.rows[i].feature);
-            if(mask&bit) return false;
-            mask|=bit;
-        }
-    return mask==all_graphics_features;
-}());
-
 constexpr std::array path_names{"AUTO","DEFERRED","CLASSIC"};
 constexpr std::array aa_names{"TEMPORAL","FXAA","OFF"};
 #endif
@@ -171,6 +107,13 @@ struct Popup {
 constexpr float popup_row=26.f;
 
 const char* restriction(const Row& row,const GraphicsSettings& s,const GraphicsCapabilities& caps){
+    if(caps.external_jsd){
+        if(row.control==Control::Feature && !(caps.supported_features&graphics_bit(row.feature)))
+            return "NOT AN ADJUSTABLE JSD FEATURE";
+        if(row.control==Control::Transparency)return "JSD USES SORTED TRANSPARENCY";
+        if(row.control==Control::AAQuality)return "JSD CONTROLS ANTI-ALIASING QUALITY";
+        if(row.control==Control::ShadowResolution)return "JSD SETS RESOLUTION FROM SHADOW QUALITY";
+    }
     switch(row.control){
         case Control::DisplayMode:
         case Control::Resolution:
@@ -180,7 +123,7 @@ const char* restriction(const Row& row,const GraphicsSettings& s,const GraphicsC
         default: break;
     }
 #ifdef _WIN32
-    if(!caps.enhanced) return "ENHANCED DIRECT3D 12 RENDERER UNAVAILABLE";
+    if(!caps.enhanced) return "JSD RENDERER UNAVAILABLE";
     if(row.control==Control::Path) return nullptr;
     if(s.path==GraphicsPath::Classic) return "SWITCH TO ENHANCED TO ADJUST";
     if(row.control==Control::TerrainVrs && !caps.variable_rate_shading) return "GPU TERRAIN VRS UNAVAILABLE";
@@ -241,7 +184,7 @@ const char* restriction(const Row& row,const GraphicsSettings& s,const GraphicsC
 }
 } // namespace
 
-void GameApp::render_graphics_settings(Renderer& r){
+void GameApp::render_graphics_settings(SceneRenderer& r){
     ensure_display_modes();
     const float width=std::min(1400.f,ui_width(r)-40.f);
     const float height=std::min(690.f,ui_height(r)-82.f);
@@ -260,6 +203,8 @@ void GameApp::render_graphics_settings(Renderer& r){
         graphics_.path==GraphicsPath::Auto && (caps.ray_lighting || caps.visibility_buffer || caps.pages)?
             "OPENGL AUTO / COMPUTE AVAILABLE":"OPENGL DEFERRED RASTER";
 #endif
+    if(caps.external_jsd)status=mesh_layout_active()?"JSD 0.5.12 / DEBUG MESH":
+        graphics_.path==GraphicsPath::Classic?"JSD 0.5.12 / PERFORMANCE":"JSD 0.5.12 / DEFERRED PBR / SHARP FIRST PERSON";
     const float bottom=panel.y+panel.h;
     const float footer=bottom-45.f;
     constexpr int benchmark_tab=static_cast<int>(tabs.size());
@@ -339,8 +284,10 @@ void GameApp::render_graphics_settings(Renderer& r){
         const float label_width=column_width-control_width-10.f;
         const char* blocked=restriction(row,graphics_,caps);
         const bool paged=row.control==Control::Shadows && graphics_.shadows==GraphicsShadows::Paged;
-        const char* description=paged && (!caps.pages || graphics_.path!=GraphicsPath::Auto)
+        const char* description=!caps.external_jsd && paged && (!caps.pages || graphics_.path!=GraphicsPath::Auto)
             ?"USING CASCADES. SHADOW PAGES REQUIRE AUTO AND PAGE CACHE.":row.description;
+        if(caps.external_jsd && row.control==Control::Shadows)
+            description="Cascaded sunlight shadows with a close range in first person.";
         r.draw_rect({left,y+row_height-1,column_width,1.f},theme_.border);
         ui::label_fitted(r,{left+2,y+12,label_width,17},row.label,1.24f,theme_,blocked);
         ui::label_fitted(r,{left+2,y+37,column_width-4,15},blocked?blocked:description,1.03f,theme_,true);
@@ -409,6 +356,11 @@ void GameApp::render_graphics_settings(Renderer& r){
                 cycle(next.vertical_sync,enabled_names);
                 break;
             case Control::Path:
+                if(caps.external_jsd){
+                    choose(next.path==GraphicsPath::Classic,std::array{"QUALITY","PERFORMANCE"},
+                           [&](int index){next.path=index==0?GraphicsPath::Auto:GraphicsPath::Classic;});
+                    break;
+                }
 #ifdef _WIN32
                 choose(next.path==GraphicsPath::Classic,std::array{"ENHANCED","CLASSIC"},
                        [&](int index){next.path=index==0?GraphicsPath::Auto:GraphicsPath::Classic;});
@@ -417,6 +369,11 @@ void GameApp::render_graphics_settings(Renderer& r){
 #endif
                 break;
             case Control::AA:
+                if(caps.external_jsd){
+                    choose(static_cast<int>(next.aa),std::array{"TEMPORAL","FXAA","OFF"},
+                           [&](int index){next.aa=static_cast<GraphicsAA>(index);});
+                    break;
+                }
 #ifdef _WIN32
                 choose(next.aa==GraphicsAA::Off,std::array{"FXAA","OFF"},
                        [&](int index){next.aa=index==0?GraphicsAA::Fxaa:GraphicsAA::Off;});
@@ -427,7 +384,12 @@ void GameApp::render_graphics_settings(Renderer& r){
 #ifdef _WIN32
             case Control::TerrainVrs: cycle(next.terrain_vrs,enabled_names); break;
 #endif
-            case Control::Shadows: cycle(next.shadows,shadow_names); break;
+            case Control::Shadows:
+                if(caps.external_jsd){
+                    choose(next.shadows==GraphicsShadows::Off,std::array{"CASCADES","OFF"},
+                           [&](int index){next.shadows=index==0?GraphicsShadows::Cascades:GraphicsShadows::Off;});
+                }else cycle(next.shadows,shadow_names);
+                break;
             case Control::AAQuality: quality(next.aa_quality); break;
             case Control::ShadowQuality: quality(next.shadow_quality); break;
             case Control::ShadowResolution:

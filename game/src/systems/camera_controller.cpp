@@ -3,7 +3,7 @@
 #include <cmath>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 
 namespace {
 float wrap_degrees(float value) {

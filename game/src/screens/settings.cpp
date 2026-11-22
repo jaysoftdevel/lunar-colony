@@ -10,7 +10,7 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
@@ -46,7 +46,7 @@ void GameApp::ensure_display_modes(){
     }
 }
 
-void GameApp::render_settings(Renderer& r){
+void GameApp::render_settings(SceneRenderer& r){
     ensure_display_modes();
     ui::title(r,{32,24},"SETTINGS",theme_);
 
@@ -104,7 +104,12 @@ void GameApp::render_settings(Renderer& r){
         app_.set_display_mode(mode.width,mode.height);
     }
     ui::label(r,{left_x,inner_y+158},"COMMON SUPPORTED MODES",0.72f,theme_,true);
-    if(ui::button(r,ui_input_,{left_x,inner_y+202,column_w,34},"GRAPHICS",theme_)){
+    ui::label_fitted(r,{left_x,inner_y+202,std::max(10.f,column_w-160.f),18},"FIRST PERSON FOV",.92f,theme_);
+    const auto set_fov=[&](float degrees){first_person_.set_fov(degrees);persist_preferences();};
+    if(ui::button(r,ui_input_,{control_right-150,inner_y+190,38,34},"<",theme_,first_person_.fov()>50))set_fov(first_person_.fov()-2);
+    ui::label_fitted(r,{control_right-105,inner_y+202,62,18},std::to_string(int(first_person_.fov()))+" DEG",.9f,theme_);
+    if(ui::button(r,ui_input_,{control_right-38,inner_y+190,38,34},">",theme_,first_person_.fov()<110))set_fov(first_person_.fov()+2);
+    if(ui::button(r,ui_input_,{left_x,inner_y+238,column_w,34},"GRAPHICS",theme_)){
         screen_=Screen::GraphicsSettings;
         graphics_tab_=graphics_page_=0;
         graphics_dropdown_=-1;

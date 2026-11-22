@@ -25,7 +25,9 @@ build_variants() {
 }
 
 configure_variant() {
-    cmake -S "$GAME_ROOT" -B "$GAME_BUILD_DIR/$1" \
+    local engine_flags=()
+    if [[ -n "${JSD_GAME_ENGINE_DIR:-}" ]]; then engine_flags=("-DJSD_GAME_ENGINE_DIR=$JSD_GAME_ENGINE_DIR"); fi
+    cmake -S "$GAME_ROOT" -B "$GAME_BUILD_DIR/$1" "${engine_flags[@]}" \
         -DCMAKE_BUILD_TYPE="$1" -DGAME_BIN_DIR="$GAME_BUILD_DIR/bin" \
         -DGAME_BUILD_NAVIGATION_TESTS="$2"
 }
@@ -39,6 +41,13 @@ cpu_jobs() {
     n="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 2)"
     [[ "$n" =~ ^[0-9]+$ ]] || n=2
     (( n < 1 )) && n=1
+    # Bound concurrent C++ compiler memory; GAME_BUILD_JOBS explicitly overrides it.
+    local mem_kb mem_jobs
+    mem_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+    if [[ "$mem_kb" =~ ^[0-9]+$ ]] && ((mem_kb>0)); then
+        mem_jobs=$((mem_kb/1000000)); ((mem_jobs<1)) && mem_jobs=1
+        ((n>mem_jobs)) && n=$mem_jobs
+    fi
     echo "$n"
 }
 

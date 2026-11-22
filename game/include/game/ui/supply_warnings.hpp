@@ -1,6 +1,6 @@
 #pragma once
 #include "game/world/resource_mesh.hpp"
-#include "engine/ui_metrics.hpp"
+#include "game/runtime/ui_metrics.hpp"
 #include <array>
 
 namespace game {
@@ -19,7 +19,7 @@ inline std::vector<std::string> supply_warning_lines(const SupplyState& supply,f
         text+=reason.text;
     }
     if(text.empty())return {};
-    return eng::ui::wrap_text("WARNING: "+text,width,font_scale);
+    return game::runtime::ui::wrap_text("WARNING: "+text,width,font_scale);
 }
 inline float supply_warning_extra_height(const std::vector<std::string>& lines){return lines.empty()?0.0f:12.0f*(float)(lines.size()-1);}
 }

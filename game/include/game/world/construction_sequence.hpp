@@ -1,5 +1,5 @@
 #pragma once
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -24,7 +24,7 @@ struct ResourceVisibility {
 
 HabitatVisibility habitat_visibility(float step);
 ResourceVisibility resource_visibility(float step);
-std::vector<eng::Vec3> reveal_triangles(const std::vector<eng::Vec3>& triangles,float fraction);
-std::vector<eng::Vec3> reveal_lines(const std::vector<eng::Vec3>& lines,float fraction);
+std::vector<game::runtime::Vec3> reveal_triangles(const std::vector<game::runtime::Vec3>& triangles,float fraction);
+std::vector<game::runtime::Vec3> reveal_lines(const std::vector<game::runtime::Vec3>& lines,float fraction);
 
 } // namespace game::construction_sequence

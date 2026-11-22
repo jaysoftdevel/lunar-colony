@@ -1,16 +1,16 @@
 #include "game/game_app.hpp"
-#include "engine/ui_metrics.hpp"
+#include "game/runtime/ui_metrics.hpp"
 #include <cmath>
 #include <initializer_list>
 
 namespace game {
-using eng::Color;
-using eng::Rect;
-using eng::Renderer;
-using eng::Vec2;
+using game::runtime::Color;
+using game::runtime::Rect;
+using game::runtime::SceneRenderer;
+using game::runtime::Vec2;
 
-void GameApp::render_build_icon(Renderer& renderer,BuildIcon icon,Rect bounds,Color ink) const {
-    const eng::ui::IconCanvas canvas(renderer,bounds,{24,24});
+void GameApp::render_build_icon(SceneRenderer& renderer,BuildIcon icon,Rect bounds,Color ink) const {
+    const game::runtime::ui::IconCanvas canvas(renderer,bounds,{24,24});
     const Color fill{ink.r,ink.g,ink.b,ink.a*.15f};
     const auto stroke=[&](std::initializer_list<Vec2> points,float width=1.65f){
         auto point=points.begin();

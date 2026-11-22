@@ -2,14 +2,8 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
 
-CONFIG=Release
-TESTS="${GAME_BUILD_TESTS:-OFF}"
-for arg in "$@"; do
-    case "$arg" in
-        --tests) TESTS=ON ;;
-        *) CONFIG="$(normalize_config "$arg")" ;;
-    esac
-done
+source "$GAME_ROOT/scripts/build-arguments.sh"
+parse_build_arguments "$@"
 
 require_tool cmake
 mapfile -t variants < <(build_variants "$CONFIG")

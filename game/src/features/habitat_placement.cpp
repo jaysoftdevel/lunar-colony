@@ -16,7 +16,7 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
@@ -239,7 +239,7 @@ std::optional<GameApp::StructureAttachment> GameApp::preview_structure_attachmen
     return std::nullopt;
 }
 
-void GameApp::render_structure_attachment(Renderer& r,const StructureAttachment& attachment) const {
+void GameApp::render_structure_attachment(SceneRenderer& r,const StructureAttachment& attachment) const {
     const auto& edges=attachment.corridor?attachment.corridor->mesh.edges:attachment.utility->mesh.edges;
     r.draw_lines_3d(edges,theme_.accent,2.0f);
     const auto& path=attachment.corridor?attachment.corridor->path:attachment.utility->path;
@@ -312,7 +312,7 @@ bool GameApp::placement_valid(HabitatKind kind,HabitatSizeTier size,Vec3 positio
     return true;
 }
 
-void GameApp::render_habitat_placement(Renderer& r){
+void GameApp::render_habitat_placement(SceneRenderer& r){
     const BuildObjectDefinition* selected=build_catalog_.selected();
     if(!selected || selected->kind!=BuildObjectKind::Habitat) return;
 

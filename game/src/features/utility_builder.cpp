@@ -6,7 +6,7 @@
 #include <optional>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 
 namespace {
@@ -15,7 +15,7 @@ ConstructionResourcePlan connection_plan(const UtilityConnection& c){
         construction_costs::supply_channel(c.path,c.junctions.size());
 }
 
-void marker(Renderer& r,Vec3 p,Color c,float size=0.62f){
+void marker(SceneRenderer& r,Vec3 p,Color c,float size=0.62f){
     p.y=0.10f;
     r.draw_lines_3d({
         p+Vec3{-size,0,0},p+Vec3{size,0,0},
@@ -23,7 +23,7 @@ void marker(Renderer& r,Vec3 p,Color c,float size=0.62f){
     },c,2.8f);
 }
 
-void endpoint_marker(Renderer& r,const UtilityEndpoint& ep,Color c){
+void endpoint_marker(SceneRenderer& r,const UtilityEndpoint& ep,Color c){
     const Vec3 p=ep.position;
     const Vec3 n=ep.normal;
     const Vec3 side{-n.z,0,n.x};
@@ -34,7 +34,7 @@ void endpoint_marker(Renderer& r,const UtilityEndpoint& ep,Color c){
     },c,3.0f);
 }
 
-void draw_supply_start_sample(Renderer& r,Vec3 origin,Vec3 tangent,bool valid){
+void draw_supply_start_sample(SceneRenderer& r,Vec3 origin,Vec3 tangent,bool valid){
     tangent.y=0.0f;
     if(length(tangent)<0.001f) tangent={1,0,0};
     tangent=normalize(tangent);
@@ -54,7 +54,7 @@ void draw_supply_start_sample(Renderer& r,Vec3 origin,Vec3 tangent,bool valid){
 }
 }
 
-void GameApp::render_utility_placement(Renderer& r){
+void GameApp::render_utility_placement(SceneRenderer& r){
     const BuildObjectDefinition* selected=build_catalog_.selected();
     if(!selected || selected->kind!=BuildObjectKind::Utility) return;
 

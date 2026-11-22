@@ -12,7 +12,7 @@
 namespace game::robots {
 namespace {
 
-using eng::Vec3;
+using game::runtime::Vec3;
 
 float dist_xz(Vec3 a,Vec3 b){
     const float dx=a.x-b.x;

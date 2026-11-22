@@ -13,8 +13,8 @@ public:
     const char* module_id() const override { return "corridor"; }
     game::StructureAccessProfile access_profile() const override;
 
-    void build_outer(CorridorMesh& mesh,const std::vector<eng::Vec3>& path) const;
-    void build_inner(CorridorMesh& mesh,const std::vector<eng::Vec3>& path) const;
+    void build_outer(CorridorMesh& mesh,const std::vector<game::runtime::Vec3>& path) const;
+    void build_inner(CorridorMesh& mesh,const std::vector<game::runtime::Vec3>& path) const;
 };
 
 const CorridorModule& corridor_module();

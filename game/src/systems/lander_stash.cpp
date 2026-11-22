@@ -7,7 +7,7 @@
 
 namespace game {
 namespace {
-using eng::Vec3;
+using game::runtime::Vec3;
 using world_math::distance_xz;
 using world_math::footprint;
 using world_math::overlaps;
@@ -149,7 +149,7 @@ std::optional<std::vector<GroundResourcePile>> GameApp::plan_stash_boxes(const R
     constexpr int rows=(int)(kStashSearchRadius/kStackPitch);
     for(int x=-pairs;x<=pairs;++x) for(int z=-rows;z<=rows;++z) for(float side:{-1.f,1.f}){
         const Vec3 offset{x*kPairPitch+side*kHalfPair,0,z*kStackPitch};
-        const float distance=eng::length(offset);
+        const float distance=game::runtime::length(offset);
         if(distance>=kStashMarkerRadius+.40f&&distance<=kStashSearchRadius)
             sites.push_back({marker+offset,side});
     }
@@ -282,9 +282,9 @@ bool GameApp::complete_lander_salvage(){
     return true;
 }
 
-void GameApp::render_stash(eng::Renderer& r){
+void GameApp::render_stash(game::runtime::SceneRenderer& r){
     if(!lander_.has_depot()) return;
-    const auto rectangle=[&](Vec3 center,float x,float z,eng::Color color){
+    const auto rectangle=[&](Vec3 center,float x,float z,game::runtime::Color color){
         constexpr float y=.045f;
         const Vec3 a=center+Vec3{-x,y,-z},b=center+Vec3{x,y,-z},c=center+Vec3{x,y,z},d=center+Vec3{-x,y,z};
         r.draw_lines_3d({a,b,b,c,c,d,d,a},color,1.5f);
@@ -294,13 +294,13 @@ void GameApp::render_stash(eng::Renderer& r){
     if(lander_.awaiting_site||lander_.awaiting_stash){
         if(!pick_lander_placement_ground(marker)) return;
         if(lander_.awaiting_site){
-            rectangle(marker+Vec3{0,0,2.6f},6.1f,8.7f,lander_site_valid(marker)?eng::Color{.2f,.95f,.65f,1}:eng::Color{1,.2f,.15f,1});
+            rectangle(marker+Vec3{0,0,2.6f},6.1f,8.7f,lander_site_valid(marker)?game::runtime::Color{.2f,.95f,.65f,1}:game::runtime::Color{1,.2f,.15f,1});
             return;
         }
         valid=stash_site_valid(marker);
     }else if(!lander_.boxed || lander_.phase<LanderPhase::Landed) return;
-    const eng::Color color=!valid?eng::Color{1,.2f,.15f,1}:
-        lander_.awaiting_stash||selection_kind_==SelectionKind::Stash?eng::Color{.2f,.95f,.65f,1}:eng::Color{.95f,.72f,.26f,1};
+    const game::runtime::Color color=!valid?game::runtime::Color{1,.2f,.15f,1}:
+        lander_.awaiting_stash||selection_kind_==SelectionKind::Stash?game::runtime::Color{.2f,.95f,.65f,1}:game::runtime::Color{.95f,.72f,.26f,1};
     const float h=kStashMarkerRadius;
     marker.y=.045f;
     const Vec3 a=marker+Vec3{-h,0,0},b=marker+Vec3{0,0,-h},c=marker+Vec3{h,0,0},d=marker+Vec3{0,0,h};
@@ -308,7 +308,7 @@ void GameApp::render_stash(eng::Renderer& r){
     r.draw_lines_3d({a,b,b,c,c,d,d,a,a,c,b,d,marker,tip,tip,tip+Vec3{.55f,-.3f,0},tip+Vec3{.55f,-.3f,0},tip+Vec3{0,-.60f,0}},color,2);
 }
 
-void GameApp::render_stash_panel(eng::Renderer& r){
+void GameApp::render_stash_panel(game::runtime::SceneRenderer& r){
     using namespace layout;
     sync_selection_panel_scroll();
     const auto panel=selection_panel_rect();

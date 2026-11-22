@@ -1,5 +1,5 @@
 #include "game/systems/sound_assets.hpp"
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 
 #include <algorithm>
 #include <array>
@@ -275,7 +275,7 @@ std::vector<std::int16_t> synthesize_theme(){
         return static_cast<float>(std::sin(turn*phase));
     };
 
-    auto& pool=eng::TaskPool::shared();
+    auto& pool=game::runtime::GameJobs::shared();
     // Each job owns its samples, including the portions that wrap at the seam.
     // Mix chords in their original order within each range.
     pool.parallel_for_ranges(dry.size(),8192,[&](std::size_t first,std::size_t last){

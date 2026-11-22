@@ -7,11 +7,11 @@
 #include <limits>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 
 namespace {
-void marker(Renderer& r,Vec3 p,Color c,float size=0.68f){
+void marker(SceneRenderer& r,Vec3 p,Color c,float size=0.68f){
     p.y=0.12f;
     r.draw_lines_3d({p+Vec3{-size,0,0},p+Vec3{size,0,0},p+Vec3{0,0,-size},p+Vec3{0,0,size}},c,2.8f);
 }
@@ -24,7 +24,7 @@ bool same_anchor(const WalkwayBuildAnchor& a,const WalkwayBuildAnchor& b){
     return a.kind==b.kind && a.index==b.index;
 }
 
-void draw_start_section(Renderer& r,Vec3 p,Vec3 tangent,bool valid){
+void draw_start_section(SceneRenderer& r,Vec3 p,Vec3 tangent,bool valid){
     // A real one-section strip follows the pointer before the first click. This
     // is directional (unlike the old square tile), so intersections and branch
     // orientation are readable before the source is committed.
@@ -53,7 +53,7 @@ float preview_length(const WalkwayConnection& c){
     return total;
 }
 
-void draw_blueprint(Renderer& r,const WalkwayConnection& preview,const eng::ui::Theme& theme,bool valid){
+void draw_blueprint(SceneRenderer& r,const WalkwayConnection& preview,const game::runtime::ui::Theme& theme,bool valid){
     const Color deck=valid?Color{0.22f,0.66f,1.00f,0.88f}:Color{1.00f,0.18f,0.14f,0.82f};
     const Color supply=valid?Color{0.30f,0.84f,1.00f,0.82f}:Color{1.00f,0.32f,0.22f,0.86f};
     const Color edge=valid?theme.accent:Color{1.00f,0.12f,0.10f,1.00f};
@@ -63,7 +63,7 @@ void draw_blueprint(Renderer& r,const WalkwayConnection& preview,const eng::ui::
 }
 }
 
-void GameApp::render_walkway_placement(Renderer& r){
+void GameApp::render_walkway_placement(SceneRenderer& r){
     const BuildObjectDefinition* selected=build_catalog_.selected();
     if(!selected || selected->kind!=BuildObjectKind::Walkway) return;
 

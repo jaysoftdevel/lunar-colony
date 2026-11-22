@@ -1,11 +1,12 @@
 #pragma once
-#include "engine/graphics_settings.hpp"
+#include "game/runtime/graphics_preferences.hpp"
 
 namespace game {
 struct Preferences {
-    eng::GraphicsSettings graphics;
+    game::runtime::GraphicsSettings graphics;
     bool mesh_layout{};
     bool music_enabled{true};
+    int first_person_fov{68};
 };
 
 Preferences load_preferences();

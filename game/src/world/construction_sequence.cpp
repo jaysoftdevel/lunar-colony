@@ -51,7 +51,7 @@ ResourceVisibility resource_visibility(float step){
     return v;
 }
 
-std::vector<eng::Vec3> reveal_triangles(const std::vector<eng::Vec3>& triangles,float fraction){
+std::vector<game::runtime::Vec3> reveal_triangles(const std::vector<game::runtime::Vec3>& triangles,float fraction){
     if(triangles.empty() || fraction<=0.0f) return {};
     if(fraction>=1.0f) return triangles;
     const std::size_t tri_count=triangles.size()/3;
@@ -59,7 +59,7 @@ std::vector<eng::Vec3> reveal_triangles(const std::vector<eng::Vec3>& triangles,
     return {triangles.begin(),triangles.begin()+static_cast<std::ptrdiff_t>(visible*3)};
 }
 
-std::vector<eng::Vec3> reveal_lines(const std::vector<eng::Vec3>& lines,float fraction){
+std::vector<game::runtime::Vec3> reveal_lines(const std::vector<game::runtime::Vec3>& lines,float fraction){
     if(lines.empty() || fraction<=0.0f) return {};
     if(fraction>=1.0f) return lines;
     const std::size_t segment_count=lines.size()/2;

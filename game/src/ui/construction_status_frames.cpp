@@ -11,7 +11,7 @@
 #include <vector>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_labels;
 
@@ -119,7 +119,7 @@ bool overlaps(const Rect& a,const Rect& b,float pad=4.0f){
 }
 }
 
-void GameApp::render_astronaut_status(Renderer& r,const Mat4& view_projection) const {
+void GameApp::render_astronaut_status(SceneRenderer& r,const Mat4& view_projection) const {
     if(selected_astronaut_<0)return;
     const auto& actor=test_astronauts_[selected_astronaut_];
     const auto pose=astronaut_rest_pose(actor);
@@ -173,7 +173,7 @@ void GameApp::render_astronaut_status(Renderer& r,const Mat4& view_projection) c
     game_label_fitted(r,{panel.x+11,panel.y+103,width-22,15},std::string("ACTIVITY  ")+activity,.42f,theme_);
 }
 
-void GameApp::render_construction_status_frames(Renderer& r){
+void GameApp::render_construction_status_frames(SceneRenderer& r){
     // Construction frames explicitly use the same global 2D transform as the
     // rest of the HUD. World projection is converted back to logical UI units,
     // so panel geometry, progress bars, text and spacing all follow UI SCALE.
@@ -373,7 +373,7 @@ void GameApp::render_construction_status_frames(Renderer& r){
     }
 }
 
-void GameApp::render_supply_indicators(Renderer& r){
+void GameApp::render_supply_indicators(SceneRenderer& r){
     const float aspect=(float)r.width()/std::max(1,r.height());
     const Mat4 vp=first_person_mode_==FirstPersonMode::Active?first_person_.view_projection(aspect):camera_.view_projection(aspect);
     const float pulse=0.48f+0.52f*(0.5f+0.5f*std::sin(ui_time_seconds_*2.0943951f));

@@ -1,18 +1,18 @@
 #pragma once
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include <vector>
 
 namespace game {
 class Playfield {
 public:
     void rebuild(int size);
-    void draw_surface(eng::Renderer& renderer,float daylight) const;
+    void draw_surface(game::runtime::SceneRenderer& renderer,float daylight) const;
     int size() const { return size_; }
-    const std::vector<eng::Vec3>& floor_triangles() const { return floor_tris_; }
-    const std::vector<eng::Vec3>& grid_lines() const { return grid_lines_; }
+    const std::vector<game::runtime::Vec3>& floor_triangles() const { return floor_tris_; }
+    const std::vector<game::runtime::Vec3>& grid_lines() const { return grid_lines_; }
 private:
     int size_=64;
-    std::vector<eng::Vec3> floor_tris_;
-    std::vector<eng::Vec3> grid_lines_;
+    std::vector<game::runtime::Vec3> floor_tris_;
+    std::vector<game::runtime::Vec3> grid_lines_;
 };
 }

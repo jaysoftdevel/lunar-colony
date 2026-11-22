@@ -2,7 +2,7 @@
 #include "game/world/habitats/habitat_interior_builder.hpp"
 
 namespace game::habitats {
-using namespace eng;
+using namespace game::runtime;
 using namespace interior_detail;
 
 void build_crew_quarters_inner(Builder& b){

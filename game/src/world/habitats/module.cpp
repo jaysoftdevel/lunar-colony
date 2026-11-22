@@ -1,5 +1,6 @@
 #include "game/world/habitats/habitat_module.hpp"
 #include <stdexcept>
+#include "game/world/habitats/station_interiors.hpp"
 
 namespace game::habitats {
 
@@ -9,6 +10,7 @@ HabitatMesh HabitatModule::instantiate() const {
     b.mesh.walkable_floor_y=access_.walkable_floor_y;
     if(inner_) inner_(b);
     b.future_detail_pass(access_.walkable_floor_y);
+    interior_detail::finish_station_interior(b,kind_);
     b.mesh.crew_accessible=access_.crew_accessible;
     return std::move(b.mesh);
 }

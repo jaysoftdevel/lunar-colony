@@ -21,13 +21,6 @@ if(DEBUG_TEMPLATE)
     stage_file("${DEBUG_TEMPLATE}" "debug/${template_name}")
 endif()
 
-if(OPENAL_LIBRARY AND EXISTS "${OPENAL_LIBRARY}")
-    stage_file("${OPENAL_LIBRARY}" "${OPENAL_DESTINATION}")
-    if(OPENAL_NOTICE AND EXISTS "${OPENAL_NOTICE}")
-        stage_file("${OPENAL_NOTICE}" "licenses/OpenAL-Soft.txt")
-    endif()
-endif()
-
 if(UI_FONT_NOTICE)
     stage_file("${UI_FONT_NOTICE}" "licenses/HUD-Font.txt")
 endif()

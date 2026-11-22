@@ -10,12 +10,12 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
-void GameApp::render_debug_frame(Renderer& r){
+void GameApp::render_debug_frame(SceneRenderer& r){
     const Rect frame=debug_frame_rect();
 
     r.draw_rect(frame,kHudFill);
@@ -25,7 +25,7 @@ void GameApp::render_debug_frame(Renderer& r){
     r.draw_line({frame.x,frame.y+frame.h},{frame.x,frame.y},theme_.border,1.0f);
 
 
-    const auto game_label=[&](Renderer& renderer,Vec2 pos,const std::string& text,float scale,const ui::Theme& theme,bool muted=false){
+    const auto game_label=[&](SceneRenderer& renderer,Vec2 pos,const std::string& text,float scale,const ui::Theme& theme,bool muted=false){
         layout::game_label_fitted(renderer,{pos.x,pos.y,std::max(0.0f,frame.x+frame.w-pos.x-12.0f),14.0f},text,scale,theme,muted);
     };
     std::ostringstream fps,playfield,camera_a,camera_b,cpu;
@@ -34,8 +34,8 @@ void GameApp::render_debug_frame(Renderer& r){
     camera_a<<"TILT "<<(int)camera_.elevation_degrees()<<"  ROT "<<(int)camera_.azimuth_degrees();
     camera_b<<"ZOOM "<<(int)camera_.distance()<<"  CENTER "
             <<std::fixed<<std::setprecision(1)<<camera_.target().x<<" / "<<camera_.target().z;
-    const auto workers=eng::TaskPool::shared().cpu_info();
-    cpu<<"CPU LANES "<<workers.lanes<<"/"<<workers.available<<"  AFFINITY "<<workers.assigned_workers;
+    const auto workers=game::runtime::GameJobs::shared().cpu_info();
+    cpu<<"CPU LANES "<<workers.lanes<<"/"<<workers.available<<"  JSD WORKERS "<<workers.lanes-1;
     std::string gpu=r.gpu_renderer();
     if(gpu.size()>42) gpu=gpu.substr(0,39)+"...";
 

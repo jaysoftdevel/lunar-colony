@@ -15,9 +15,9 @@ void Playfield::rebuild(int size){
         grid_lines_.push_back({v,0.01f,-h}); grid_lines_.push_back({v,0.01f,h});
     }
 }
-void Playfield::draw_surface(eng::Renderer& renderer,float daylight) const {
+void Playfield::draw_surface(game::runtime::SceneRenderer& renderer,float daylight) const {
     // Retain enough ambient contrast to read the surface on the night side.
     const float light=.52f+.48f*std::sqrt(std::clamp(daylight,0.f,1.f));
-    renderer.draw_lunar_surface(floor_tris_,eng::LunarMaterial::Regolith,{.40f*light,.39f*light,.37f*light,1.f});
+    renderer.draw_lunar_surface(floor_tris_,game::runtime::LunarMaterial::Regolith,{.40f*light,.39f*light,.37f*light,1.f});
 }
 }

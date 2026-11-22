@@ -18,7 +18,7 @@
 
 namespace game {
 namespace {
-using eng::Vec3;
+using game::runtime::Vec3;
 
 constexpr float PI=3.14159265358979323846f;
 
@@ -248,7 +248,7 @@ struct NavRect {
 };
 
 NavRect make_nav_rect(Vec3 center,float rotation_degrees,float footprint_x,float footprint_z,std::uint64_t sequence=0){
-    const float a=eng::radians(-rotation_degrees);
+    const float a=game::runtime::radians(-rotation_degrees);
     return {center,std::cos(a),std::sin(a),footprint_x*0.5f,footprint_z*0.5f,sequence};
 }
 
@@ -2259,7 +2259,7 @@ void GameApp::update_builder_robot(float dt){
             nav.walkway_geo[i]={{},&entry.partial,&entry.next};
         }
         if(!rebuild_walls.empty()){
-            eng::TaskPool::shared().parallel_for(rebuild_walls.size(),[&](std::size_t job){
+            game::runtime::GameJobs::shared().parallel_for(rebuild_walls.size(),[&](std::size_t job){
                 rebuild_walls[job]();
             });
         }

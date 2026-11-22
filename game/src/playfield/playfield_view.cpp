@@ -11,12 +11,12 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
-void GameApp::render_playfield(Renderer& r){
+void GameApp::render_playfield(SceneRenderer& r){
     const float aspect=(float)r.width()/std::max(1,r.height());
     const bool fpv=first_person_mode_==FirstPersonMode::Active;
     const Mat4 view=fpv?first_person_.view_projection(aspect):
@@ -32,6 +32,7 @@ void GameApp::render_playfield(Renderer& r){
         focus.y=0;
         LunarScene scene{view,eye,focus,sun.direction,sun.irradiance_fraction,playfield_.size()*0.5f};
         scene.seconds=static_cast<float>(ui_time_seconds_);
+        scene.first_person=fpv;
         for(const auto& corridor:corridor_network_.connections())
             lunar_look::append_corridor_fixtures(corridor_fixtures,corridor);
         if(graphics_.enabled(GraphicsFeature::LocalLights)){
@@ -39,7 +40,11 @@ void GameApp::render_playfield(Renderer& r){
             for(const auto& fixture:corridor_fixtures)lights.push_back(fixture.light());
             for(const auto& habitat:placed_habitats_){
                 if(habitat.construction.complete() && lunar_look::powered(habitat.supply,habitat.power_enabled))
-                    lights.push_back(lunar_look::habitat_fixture(habitat,habitat_models_.mesh(habitat)).light());
+                {
+                    const auto& mesh=habitat_models_.mesh(habitat);
+                    lights.push_back(lunar_look::habitat_fixture(habitat,mesh).light());
+                    lights.push_back({habitat.position+Vec3{0,mesh.walkable_floor_y+2.05f,0},{.80f,.89f,1.f,1},9.f,25.f});
+                }
             }
             for(const auto& pad:placed_resources_){
                 if(pad.kind!=ResourceKind::LandingPad || !pad.construction.complete() ||
@@ -202,7 +207,7 @@ void GameApp::render_playfield(Renderer& r){
     render_placement_tooltip(r);
 }
 
-void GameApp::render_selection_marquee(Renderer& r){
+void GameApp::render_selection_marquee(SceneRenderer& r){
     if(!selection_marquee_active_ || !selection_marquee_dragged_ || build_catalog_.selected()!=nullptr || corridor_link_source_>=0) return;
     const float x0=(float)selection_marquee_start_x_/ui_scale_;
     const float y0=(float)selection_marquee_start_y_/ui_scale_;
@@ -222,7 +227,7 @@ void GameApp::render_selection_marquee(Renderer& r){
     r.draw_line({box.x,box.y+box.h},{box.x,box.y},c,1.6f);
 }
 
-void GameApp::render_first_person_hud(Renderer& r){
+void GameApp::render_first_person_hud(SceneRenderer& r){
     if(first_person_mode_==FirstPersonMode::Active){
         const float cx=ui_width(r)*0.5f,cy=ui_height(r)*0.5f;
         const Color cross{0.82f,0.94f,0.96f,0.90f};
@@ -304,7 +309,7 @@ void GameApp::render_first_person_hud(Renderer& r){
     }
 }
 
-void GameApp::render_playfield_crosshair(Renderer& r){
+void GameApp::render_playfield_crosshair(SceneRenderer& r){
     const float top_px=STATUS_BAR_H*ui_scale_;
     const float bottom_px=(ui_height(r)-BUILD_BAR_H)*ui_scale_;
     if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px ||

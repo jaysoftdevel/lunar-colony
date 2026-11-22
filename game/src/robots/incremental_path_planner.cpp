@@ -11,7 +11,7 @@
 namespace game::robots {
 namespace {
 
-using eng::Vec3;
+using game::runtime::Vec3;
 using State=IncrementalPathPlannerState;
 constexpr float kInf=std::numeric_limits<float>::infinity();
 constexpr float kKeyEpsilon=1.0e-5f;
@@ -398,7 +398,7 @@ void refresh_known_nodes(State& s,std::uint64_t epoch,const PathPlannerCallbacks
         }
     };
     if(callbacks.parallel_samples && known.size()>=2*cells_per_job)
-        eng::TaskPool::shared().parallel_for_ranges(known.size(),cells_per_job,sample_range);
+        game::runtime::GameJobs::shared().parallel_for_ranges(known.size(),cells_per_job,sample_range);
     else sample_range(0,known.size());
     std::vector<int> repairs;
     for(std::size_t i=0;i<known.size();++i)

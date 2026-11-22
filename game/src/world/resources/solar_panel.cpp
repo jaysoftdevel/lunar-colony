@@ -16,7 +16,7 @@ ResourceMesh make_solar_panel(){
     b.cylinder_y(b.mesh.details,{0,3.15f,0},0.45f,0.78f,14,true);
     b.box(b.mesh.details,{0.85f,1.55f,0.55f},{1.1f,1.2f,0.75f});
 
-    const float pitch=eng::radians(24.0f);
+    const float pitch=game::runtime::radians(24.0f);
     const Vec3 ax{1,0,0};
     const Vec3 ay{0,std::cos(pitch),-std::sin(pitch)};
     const Vec3 az{0,std::sin(pitch),std::cos(pitch)};

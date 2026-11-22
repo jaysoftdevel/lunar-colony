@@ -14,7 +14,7 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
@@ -138,7 +138,7 @@ float GameApp::selection_panel_content_height() const {
     if(selection_kind_==SelectionKind::Lander)return 435.0f;
     if(selection_kind_==SelectionKind::Stash)return landing_message_.empty()?245.f:267.f;
     float extra=0;
-    const float warning_font=eng::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_);
+    const float warning_font=game::runtime::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_);
     if(selection_kind_==SelectionKind::Robot) return 484.0f;
     if(selection_kind_==SelectionKind::Habitat){
         HabitatKind kind=HabitatKind::CrewQuarters;

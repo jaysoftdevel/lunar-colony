@@ -16,8 +16,12 @@
 #include <unordered_map>
 #include <unordered_set>
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <fcntl.h>
@@ -28,6 +32,7 @@
 namespace game {
 namespace {
 namespace fs=std::filesystem;
+std::string path_utf8(const fs::path& path){const auto text=path.u8string();return {text.begin(),text.end()};}
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
 constexpr std::uint32_t kCompactSaveSchema=48;
 constexpr std::uint32_t kSaveSchema=kCompactSaveSchema;
@@ -59,14 +64,18 @@ fs::path game_root_directory(){
     for(auto dir=runtime;!dir.empty();dir=dir.parent_path()){
         std::error_code ec;
         if(fs::is_regular_file(dir/"VERSION",ec) && fs::is_regular_file(dir/"game"/"CMakeLists.txt",ec) &&
-           fs::is_regular_file(dir/"engine"/"CMakeLists.txt",ec)) return dir;
+           fs::is_regular_file(dir/"cmake"/"ExternalEngine.cmake",ec)) return dir;
         if(dir==dir.root_path()) break;
     }
     return runtime;
 }
 
 fs::path save_directory_override(){
+    #ifdef _WIN32
+    const wchar_t* value=_wgetenv(L"GAME_SAVE_DIR");
+#else
     const char* value=std::getenv("GAME_SAVE_DIR");
+#endif
     return value && *value?fs::path(value):fs::path{};
 }
 
@@ -158,7 +167,7 @@ bool migrate_save_file(const fs::path& source,const fs::path& directory){
             fs::remove(source,ec);
             return true;
         }
-        destination=directory/(source.stem().string()+"-"+std::to_string(suffix)+".gmsave");
+        destination=directory/fs::u8path(path_utf8(source.stem())+"-"+std::to_string(suffix)+".gmsave");
     }
 }
 
@@ -246,16 +255,16 @@ bool read_power_enabled(Reader& in){
     return enabled!=0;
 }
 
-void write_vec3(Writer& w,const eng::Vec3& v){ w.pod(v.x); w.pod(v.y); w.pod(v.z); }
-eng::Vec3 read_vec3(Reader& r){ return {r.pod<float>(),r.pod<float>(),r.pod<float>()}; }
+void write_vec3(Writer& w,const game::runtime::Vec3& v){ w.pod(v.x); w.pod(v.y); w.pod(v.z); }
+game::runtime::Vec3 read_vec3(Reader& r){ return {r.pod<float>(),r.pod<float>(),r.pod<float>()}; }
 
-void write_vec3s(Writer& w,const std::vector<eng::Vec3>& values){
+void write_vec3s(Writer& w,const std::vector<game::runtime::Vec3>& values){
     const std::uint64_t n=values.size(); w.pod(n); for(const auto& v:values) write_vec3(w,v);
 }
-std::vector<eng::Vec3> read_vec3s(Reader& r){
+std::vector<game::runtime::Vec3> read_vec3s(Reader& r){
     const auto n=r.pod<std::uint64_t>();
     if(!r.ok() || n>kMaxVectorItems){ r.valid=false; return {}; }
-    std::vector<eng::Vec3> values; values.reserve((std::size_t)n);
+    std::vector<game::runtime::Vec3> values; values.reserve((std::size_t)n);
     for(std::uint64_t i=0;i<n && r.valid;++i) values.push_back(read_vec3(r));
     return values;
 }
@@ -753,9 +762,9 @@ void write_object_vector(Writer& w,const std::vector<T>& values,WriteFn&& fn){
 
 } // namespace
 
-std::string GameApp::save_game_directory() const {
+std::filesystem::path GameApp::save_game_directory() const {
     const auto override=save_directory_override();
-    return (override.empty()?game_root_directory()/"savegames":override).string();
+    return override.empty()?game_root_directory()/"savegames":override;
 }
 
 void GameApp::refresh_save_games(){
@@ -768,7 +777,7 @@ void GameApp::refresh_save_games(){
         if(!read_metadata(path,name,version,phase) || phase<static_cast<std::uint8_t>(GamePhase::Planning) ||
            phase>static_cast<std::uint8_t>(GamePhase::Debug)) return;
         const auto modified=fs::last_write_time(path,entry_error);
-        save_games_.push_back({std::move(name),path.string(),std::move(version),
+        save_games_.push_back({std::move(name),path_utf8(path),std::move(version),
                                entry_error?fs::file_time_type::min():modified,
                                phase==static_cast<std::uint8_t>(GamePhase::Debug)});
     };
@@ -810,12 +819,12 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     // receive a separate slot, including case collisions on Windows.
     refresh_save_games();
     const auto existing=std::find_if(save_games_.begin(),save_games_.end(),
-        [&](const SaveGameEntry& entry){return entry.name==name && fs::path(entry.path).parent_path()==dir;});
-    const fs::path preferred=dir/filename_for_name(name);
-    fs::path final_path=existing!=save_games_.end()?fs::path(existing->path):preferred;
+        [&](const SaveGameEntry& entry){return entry.name==name && fs::u8path(entry.path).parent_path()==dir;});
+    const fs::path preferred=dir/fs::u8path(filename_for_name(name));
+    fs::path final_path=existing!=save_games_.end()?fs::u8path(existing->path):preferred;
     if(existing==save_games_.end()){
         for(unsigned suffix=2;fs::exists(final_path,ec) && !ec;++suffix)
-            final_path=dir/(preferred.stem().string()+"-"+std::to_string(suffix)+".gmsave");
+            final_path=dir/fs::u8path(path_utf8(preferred.stem())+"-"+std::to_string(suffix)+".gmsave");
         if(ec){ error="Unable to choose a savegame filename."; return false; }
     }
     const auto temp_path=temporary_save_path(final_path);
@@ -828,7 +837,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     w.string(name);
 
     w.pod((std::int32_t)playfield_.size());
-    const eng::DisplayMode display_mode=app_.current_display_mode();
+    const game::runtime::DisplayMode display_mode=app_.current_display_mode();
     w.pod((std::int32_t)display_mode.width);
     w.pod((std::int32_t)display_mode.height);
     w.boolean(app_.fullscreen());
@@ -1048,7 +1057,12 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     if(!w.ok()){ fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
     // The closed temporary file and its destination share a directory, so
     // replacing the destination is one rename, even when overwriting a save.
+#ifdef _WIN32
+    if(!MoveFileExW(temp_path.c_str(),final_path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
+        ec=std::error_code(static_cast<int>(GetLastError()),std::system_category());
+#else
     fs::rename(temp_path,final_path,ec);
+#endif
     if(ec){ fs::remove(temp_path,ec); error="Unable to finalize the savegame file."; return false; }
     refresh_save_games();
     error.clear();
@@ -1057,7 +1071,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
 
 
 std::string GameApp::debug_blueprint_template_path() const {
-    return (runtime_directory()/"debug"/"0-54-0-debug-start.gmsave").string();
+    return path_utf8(runtime_directory()/"debug"/"0-54-0-debug-start.gmsave");
 }
 
 bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool completed){
@@ -1065,7 +1079,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
         error="Blueprint templates require the Debug build.";
         return false;
     }
-    Reader r{fs::path(path)};
+    Reader r{fs::u8path(path)};
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Template file is missing or invalid."; return false; }
     const auto source_schema=r.schema=r.pod<std::uint32_t>();
@@ -1183,7 +1197,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
 }
 
 bool GameApp::load_game_from_file(const std::string& path,std::string& error){
-    Reader r{fs::path(path)};
+    Reader r{fs::u8path(path)};
     std::array<char,8> magic{};
     if(!r.in.read(magic.data(),magic.size()) || magic!=kSaveMagic){ error="Invalid savegame file."; return false; }
     const auto source_schema=r.schema=r.pod<std::uint32_t>();
@@ -1290,7 +1304,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         constexpr float kLegacyBuriedSupplyChannelY=-0.24f;
         const float old_y=source_schema<8?kLegacyRaisedSupplyChannelY:kLegacyBuriedSupplyChannelY;
         const float dy=geometry::kSupplyChannelY-old_y;
-        auto shift_y=[&](eng::Vec3& v){ v.y+=dy; };
+        auto shift_y=[&](game::runtime::Vec3& v){ v.y+=dy; };
         for(auto& c:utilities){
             shift_y(c.endpoint_a.position);
             shift_y(c.endpoint_b.position);
@@ -1303,7 +1317,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     }
 
     std::vector<BuilderRobotState> saved_robots;
-    eng::Vec3 saved_stash{};
+    game::runtime::Vec3 saved_stash{};
     std::array<double,kMaterialResourceCount> saved_production{};
     double saved_life_fraction=0.0;
     if(source_schema>=5){
@@ -1455,7 +1469,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         }else if(saved_game_phase==GamePhase::RobotPreparation && saved_robots.empty())r.valid=false;
     }
     if(source_schema>=33){
-        const auto valid_position=[](eng::Vec3 p){return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&std::abs(p.x)<100000&&std::abs(p.y)<100000&&std::abs(p.z)<100000;};
+        const auto valid_position=[](game::runtime::Vec3 p){return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&std::abs(p.x)<100000&&std::abs(p.y)<100000&&std::abs(p.z)<100000;};
         saved_trader.phase=(TradePhase)r.pod<std::uint8_t>();saved_trader.elapsed=r.pod<float>();saved_trader.pad_sequence=r.pod<std::uint64_t>();saved_trader.dock=read_vec3(r);
         // Schema 45 adds four raw ores and resumable belt parcels.
         const std::size_t trade_good_count=source_schema>=45?kTradeGoodCount:kLegacyTradeGoodCount;
@@ -1522,7 +1536,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
            (saved_lander.salvaged&&(saved_lander.phase!=LanderPhase::Ready||!saved_lander.remaining.empty())) ||
            (saved_lander.awaiting_site&&saved_lander.phase!=LanderPhase::Approach))r.valid=false;
     }else if(saved_lander.has_depot()){
-        saved_lander.stash_center=saved_lander.site+eng::Vec3{-10.9f,0,0};saved_lander.awaiting_stash=true;
+        saved_lander.stash_center=saved_lander.site+game::runtime::Vec3{-10.9f,0,0};saved_lander.awaiting_stash=true;
     }
     // Older saves could be waiting for a stash before descent. Resume flight
     // and prompt after touchdown, preserving any marker already confirmed.
@@ -1634,7 +1648,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     AstronautCache saved_cache{};
     if(source_schema>=42 && stage3_mode==Stage3Mode::AstronautTest){
         const float half=saved_playfield*.5f-kAstronautFieldMargin;
-        const auto valid_ground=[&](eng::Vec3 p){
+        const auto valid_ground=[&](game::runtime::Vec3 p){
             return std::isfinite(p.y) && p.y>=0.f && p.y<=30.f && std::isfinite(p.x) && std::isfinite(p.z) &&
                    std::abs(p.x)<=half && std::abs(p.z)<=half;
         };
@@ -1887,13 +1901,13 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     {
         const float half=(float)playfield_.size()*0.5f;
         auto legacy_spawn=[&](int ordinal){
-            eng::Vec3 p{};
+            game::runtime::Vec3 p{};
             if(half>=12.0f){
-                const eng::Vec3 center=starter_stash_center_+eng::Vec3{4.60f,0.0f,11.60f};
+                const game::runtime::Vec3 center=starter_stash_center_+game::runtime::Vec3{4.60f,0.0f,11.60f};
                 const int column=ordinal%3,row=ordinal/3;
                 p={center.x+((float)column-1.0f)*2.20f,0.0f,center.z+((float)row-1.5f)*2.20f};
             }else{
-                const eng::Vec3 center=starter_stash_center_+eng::Vec3{7.00f,0.0f,0.0f};
+                const game::runtime::Vec3 center=starter_stash_center_+game::runtime::Vec3{7.00f,0.0f,0.0f};
                 const int column=ordinal%2,row=ordinal/2;
                 p={center.x+((float)column-0.5f)*2.30f,0.0f,center.z+((float)row-2.5f)*2.05f};
             }
@@ -1902,13 +1916,13 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
             return p;
         };
         auto safe_spawn=[&](int ordinal){
-            eng::Vec3 p{};
+            game::runtime::Vec3 p{};
             if(half>=12.0f){
-                const eng::Vec3 center=starter_stash_center_+eng::Vec3{4.60f,0.0f,11.60f};
+                const game::runtime::Vec3 center=starter_stash_center_+game::runtime::Vec3{4.60f,0.0f,11.60f};
                 const int column=ordinal%3,row=ordinal/3;
                 p={center.x+((float)column-1.0f)*3.00f,0.0f,center.z+((float)row-1.5f)*3.00f};
             }else{
-                const eng::Vec3 center=starter_stash_center_+eng::Vec3{7.00f,0.0f,0.0f};
+                const game::runtime::Vec3 center=starter_stash_center_+game::runtime::Vec3{7.00f,0.0f,0.0f};
                 const int column=ordinal%2,row=ordinal/2;
                 p={center.x+((float)column-0.5f)*2.40f,0.0f,center.z+((float)row-2.5f)*2.40f};
             }
@@ -1979,12 +1993,12 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
                 pile.radius=0.36f;
                 pile.condition=1.0f;
                 const float half=(float)playfield_.size()*0.5f;
-                const eng::Vec3 preferred{starter_stash_center_.x-2.15f,0.0f,starter_stash_center_.z+8.20f};
+                const game::runtime::Vec3 preferred{starter_stash_center_.x-2.15f,0.0f,starter_stash_center_.z+8.20f};
                 pile.position={std::clamp(preferred.x,-half+0.50f,half-0.50f),0.0f,
                                std::clamp(preferred.z,-half+0.50f,half-0.50f)};
                 // If the long row would hit the boundary or another pallet, use
                 // a second depot column rather than overlapping the old seven.
-                auto occupied=[&](eng::Vec3 p){
+                auto occupied=[&](game::runtime::Vec3 p){
                     for(const auto& existing:ground_resource_piles_){
                         const float dx=existing.position.x-p.x,dz=existing.position.z-p.z;
                         if(dx*dx+dz*dz<1.10f*1.10f) return true;
@@ -1992,7 +2006,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
                     return false;
                 };
                 if(occupied(pile.position)){
-                    const eng::Vec3 alt{starter_stash_center_.x+0.15f,0.0f,starter_stash_center_.z};
+                    const game::runtime::Vec3 alt{starter_stash_center_.x+0.15f,0.0f,starter_stash_center_.z};
                     pile.position={std::clamp(alt.x,-half+0.50f,half-0.50f),0.0f,
                                    std::clamp(alt.z,-half+0.50f,half-0.50f)};
                 }
@@ -2174,7 +2188,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
                 bool airlock=false;
                 const auto* room=astronaut_air_at(actor.position,airlock);
                 if(!room || first_person_move_allowed(actor.position,actor.position,CrewTraversal::Plan))continue;
-                const auto clearance=[&]() -> std::optional<eng::Vec3> {
+                const auto clearance=[&]() -> std::optional<game::runtime::Vec3> {
                     for(int ring=1;ring<=12;++ring)for(int angle=0;angle<16;++angle){
                         auto p=actor.position+world_math::rotate_y({ring*.25f,0,0},angle*22.5f);
                         p.y=first_person_floor_height(p);

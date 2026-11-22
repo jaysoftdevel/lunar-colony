@@ -1,7 +1,7 @@
 #pragma once
 #include "game/world/ore.hpp"
 #include "game/world/supply_state.hpp"
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
 #include <array>
@@ -171,10 +171,10 @@ inline constexpr std::int64_t storage_dome_capacity_kg(StorageDomeSize size){
 }
 
 struct ResourceMesh {
-    std::vector<eng::Vec3> body;
-    std::vector<eng::Vec3> foundation;
-    std::vector<eng::Vec3> details;
-    std::vector<eng::Vec3> edges;
+    std::vector<game::runtime::Vec3> body;
+    std::vector<game::runtime::Vec3> foundation;
+    std::vector<game::runtime::Vec3> details;
+    std::vector<game::runtime::Vec3> edges;
     float footprint_x{1.0f};
     float footprint_z{1.0f};
     float height{1.0f};
@@ -201,7 +201,7 @@ struct PlacedResource {
     std::uint32_t instance_serial{0};
     // Global FIFO blueprint order across every construction kind.
     std::uint64_t placement_sequence{0};
-    eng::Vec3 position{};
+    game::runtime::Vec3 position{};
     float rotation_degrees{0.0f};
     ConstructionState construction{};
     ConstructionResourcePlan resource_plan{};
@@ -237,7 +237,7 @@ struct PlacedResource {
     // Transient visual tracker pose. The simulation output may react instantly,
     // but the physical collector slews continuously toward its target so neither
     // time progression nor toggling tracking can make the panel jump.
-    eng::Vec3 solar_visual_normal{};
+    game::runtime::Vec3 solar_visual_normal{};
     bool solar_visual_initialized{false};
     // Non-storage outdoor structures support STANDARD + SMALL. Storage domes
     // retain their dedicated SMALL/MID/BIG/HUGE tiers.

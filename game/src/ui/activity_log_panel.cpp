@@ -4,7 +4,7 @@
 #include <cmath>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 
 namespace {
@@ -69,7 +69,7 @@ bool GameApp::mouse_over_playfield_overlay(const InputState& input) const {
            (progress_tree_visible() && first_person_mode_==FirstPersonMode::Off && progress_tree_panel_rect().contains(x,y));
 }
 
-void GameApp::render_activity_log(Renderer& r){
+void GameApp::render_activity_log(SceneRenderer& r){
     const Rect panel=activity_log_panel_rect();
     const int rows=std::max(0,(int)((panel.h-kLogHeader-kLogFooter)/kLogRow));
     const auto& entries=activity_log_.entries();

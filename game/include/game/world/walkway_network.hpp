@@ -1,5 +1,5 @@
 #pragma once
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include "game/world/corridor_network.hpp"
 #include "game/world/utility_network.hpp"
 #include "game/world/habitat_mesh.hpp"
@@ -17,22 +17,22 @@ enum class WalkwayEndpointKind { Habitat = 0, Resource, Corridor, Walkway, Open 
 struct WalkwayBuildAnchor {
     WalkwayEndpointKind kind{WalkwayEndpointKind::Open};
     std::size_t index{0};
-    eng::Vec3 hit{};
+    game::runtime::Vec3 hit{};
 };
 
 struct WalkwayEndpoint {
     WalkwayEndpointKind kind{WalkwayEndpointKind::Open};
     std::size_t index{0};
-    eng::Vec3 position{};
-    eng::Vec3 normal{1.0f,0.0f,0.0f};
+    game::runtime::Vec3 position{};
+    game::runtime::Vec3 normal{1.0f,0.0f,0.0f};
     CorridorDoor door{}; // populated for habitat endpoints
     bool landing_pad{false};
     bool generated_access{false}; // exterior/generated access gate; never pressurized
 };
 
 struct WalkwayJunction {
-    eng::Vec3 position{};
-    std::vector<eng::Vec3> arms{}; // outward centerline directions participating in the merge
+    game::runtime::Vec3 position{};
+    std::vector<game::runtime::Vec3> arms{}; // outward centerline directions participating in the merge
     float radius{1.55f};            // centerline trim radius used by every participating segment
     bool owns_patch{false};        // exactly one connection renders the shared junction deck
 };
@@ -40,31 +40,31 @@ struct WalkwayJunction {
 
 struct WalkwayCorridorCrossing {
     std::size_t corridor_index{0};
-    eng::Vec3 center{};
-    eng::Vec3 walkway_tangent{1.0f,0.0f,0.0f};
-    eng::Vec3 corridor_tangent{0.0f,0.0f,1.0f};
-    eng::Vec3 entrance_a{};
-    eng::Vec3 entrance_b{};
+    game::runtime::Vec3 center{};
+    game::runtime::Vec3 walkway_tangent{1.0f,0.0f,0.0f};
+    game::runtime::Vec3 corridor_tangent{0.0f,0.0f,1.0f};
+    game::runtime::Vec3 entrance_a{};
+    game::runtime::Vec3 entrance_b{};
 };
 
 struct WalkwaySupplyBridge {
     std::size_t utility_index{0};
-    eng::Vec3 center{};
-    eng::Vec3 tangent{1.0f,0.0f,0.0f};
+    game::runtime::Vec3 center{};
+    game::runtime::Vec3 tangent{1.0f,0.0f,0.0f};
     float path_distance{0.0f};
 };
 
 struct WalkwayMesh {
-    std::vector<eng::Vec3> deck;
-    std::vector<eng::Vec3> details;
-    std::vector<eng::Vec3> edges;
+    std::vector<game::runtime::Vec3> deck;
+    std::vector<game::runtime::Vec3> details;
+    std::vector<game::runtime::Vec3> edges;
 };
 
 struct WalkwayConnection {
     WalkwayEndpoint endpoint_a{};
     std::uint64_t placement_sequence{0};
     WalkwayEndpoint endpoint_b{};
-    std::vector<eng::Vec3> path{};
+    std::vector<game::runtime::Vec3> path{};
     std::vector<WalkwayJunction> junctions{};
     std::vector<WalkwayCorridorCrossing> corridor_crossings{};
     std::vector<WalkwaySupplyBridge> supply_bridges{};

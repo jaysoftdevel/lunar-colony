@@ -1,7 +1,6 @@
 #include "game/world/airlock_connections.hpp"
 #include "game/world/robot_workshop.hpp"
 #include "game/game_app.hpp"
-#include "engine/geometry_stream.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/robots/safety_coordinator.hpp"
 #include "game/util/world_math.hpp"
@@ -17,47 +16,47 @@
 #include <numeric>
 #include <stdexcept>
 
-using eng::Vec3;
+using game::runtime::Vec3;
 using namespace game::robots;
 namespace {
 void require(bool ok,const std::string& what){ if(!ok) throw std::runtime_error(what); }
-float distance(Vec3 a,Vec3 b){ a.y=b.y=0; return eng::length(a-b); }
+float ground_distance(Vec3 a,Vec3 b){ a.y=b.y=0; return game::runtime::length(a-b); }
 struct Box { float x0,x1,z0,z1; };
 bool segment_hits_mesh(Vec3 from,Vec3 to,const std::vector<Vec3>& mesh){
     const Vec3 direction=to-from;
     for(std::size_t i=0;i+2<mesh.size();i+=3){
         const Vec3 a=mesh[i],e1=mesh[i+1]-a,e2=mesh[i+2]-a;
-        const Vec3 p=eng::cross(direction,e2);const float det=eng::dot(e1,p);
+        const Vec3 p=game::runtime::cross(direction,e2);const float det=game::runtime::dot(e1,p);
         if(std::abs(det)<1.0e-7f) continue;
-        const Vec3 q0=from-a;const float u=eng::dot(q0,p)/det;
+        const Vec3 q0=from-a;const float u=game::runtime::dot(q0,p)/det;
         if(u<0 || u>1) continue;
-        const Vec3 q=eng::cross(q0,e1);const float v=eng::dot(direction,q)/det;
+        const Vec3 q=game::runtime::cross(q0,e1);const float v=game::runtime::dot(direction,q)/det;
         if(v<0 || u+v>1) continue;
-        const float t=eng::dot(e2,q)/det;
+        const float t=game::runtime::dot(e2,q)/det;
         if(t>0.0001f && t<0.9999f) return true;
     }
     return false;
 }
 
-struct GeometryRecorder final:eng::Renderer {
+struct GeometryRecorder final:game::runtime::SceneRenderer {
     std::vector<Vec3> triangles;
     bool initialize(void*,std::uintptr_t,int,int) override{return true;}
-    void resize(int,int) override{} void begin_frame(eng::Color) override{} void end_frame() override{}
-    void set_3d(const eng::Mat4&) override{} void set_2d(float) override{}
+    void resize(int,int) override{} void begin_frame(game::runtime::Color) override{} void end_frame() override{}
+    void set_3d(const game::runtime::Mat4&) override{} void set_2d(float) override{}
     std::size_t wire_vertices{0},filled_vertices{0};
     bool blue{false},yellow{false},green{false};
-    void draw_lines_3d(const std::vector<Vec3>& vertices,eng::Color color,float) override{
+    void draw_lines_3d(const std::vector<Vec3>& vertices,game::runtime::Color color,float) override{
         blue=blue || (color.b>0.8f && color.r<0.3f);
         yellow=yellow || (color.r>0.9f && color.g>0.45f && color.b<0.4f);
         green=green || (color.g>0.8f && color.r<0.4f && color.b>0.2f);
         wire_vertices+=vertices.size();
         for(std::size_t i=0;i+5<vertices.size();i+=6)
-            if(eng::length(vertices[i+1]-vertices[i+2])<0.00001f && eng::length(vertices[i+3]-vertices[i+4])<0.00001f && eng::length(vertices[i+5]-vertices[i])<0.00001f)
+            if(game::runtime::length(vertices[i+1]-vertices[i+2])<0.00001f && game::runtime::length(vertices[i+3]-vertices[i+4])<0.00001f && game::runtime::length(vertices[i+5]-vertices[i])<0.00001f)
                 triangles.insert(triangles.end(),{vertices[i],vertices[i+1],vertices[i+3]});
     }
-    void draw_triangles_3d(const std::vector<Vec3>& vertices,eng::Color) override{filled_vertices+=vertices.size();triangles.insert(triangles.end(),vertices.begin(),vertices.end());}
-    void draw_rect(eng::Rect,eng::Color) override{} void draw_line(eng::Vec2,eng::Vec2,eng::Color,float) override{}
-    void draw_text(eng::Vec2,const std::string&,float,eng::Color) override{}
+    void draw_triangles_3d(const std::vector<Vec3>& vertices,game::runtime::Color) override{filled_vertices+=vertices.size();triangles.insert(triangles.end(),vertices.begin(),vertices.end());}
+    void draw_rect(game::runtime::Rect,game::runtime::Color) override{} void draw_line(game::runtime::Vec2,game::runtime::Vec2,game::runtime::Color,float) override{}
+    void draw_text(game::runtime::Vec2,const std::string&,float,game::runtime::Color) override{}
     int width() const override{return 1600;} int height() const override{return 900;}
     bool hardware_accelerated() const override{return false;}
     std::string gpu_vendor() const override{return {};}
@@ -79,7 +78,7 @@ void fleet_case(const std::string& name,std::vector<Vec3> starts,std::vector<Vec
         return true;
     };
     world.segment_clear=[&](std::size_t id,Vec3 a,Vec3 b){
-        const int n=std::max(1,(int)std::ceil(distance(a,b)/0.04f));
+        const int n=std::max(1,(int)std::ceil(ground_distance(a,b)/0.04f));
         for(int i=0;i<=n;++i) if(!world.point_clear(id,a+(b-a)*((float)i/n))) return false;
         return true;
     };
@@ -91,7 +90,7 @@ void fleet_case(const std::string& name,std::vector<Vec3> starts,std::vector<Vec
             if(fleet) for(const auto& other:agents){
                 if(other.id==id) continue;
                 const float r=agents[id].radius_m+other.radius_m+0.70f;
-                if(distance(p,other.position)<r && distance(p,other.position)+0.001f<distance(agents[id].position,other.position)) return false;
+                if(ground_distance(p,other.position)<r && ground_distance(p,other.position)+0.001f<ground_distance(agents[id].position,other.position)) return false;
             }
             return true;
         };
@@ -101,9 +100,9 @@ void fleet_case(const std::string& name,std::vector<Vec3> starts,std::vector<Vec
                 if(other.id==id) continue;
                 const Vec3 d=b-a;
                 const float l=d.x*d.x+d.z*d.z;
-                const float t=l>0.0001f?std::clamp(eng::dot(other.position-a,d)/l,0.0f,1.0f):0.0f;
-                const float closest=distance(a+d*t,other.position);
-                if(closest<agents[id].radius_m+other.radius_m+0.70f && closest+0.001f<distance(agents[id].position,other.position)) return false;
+                const float t=l>0.0001f?std::clamp(game::runtime::dot(other.position-a,d)/l,0.0f,1.0f):0.0f;
+                const float closest=ground_distance(a+d*t,other.position);
+                if(closest<agents[id].radius_m+other.radius_m+0.70f && closest+0.001f<ground_distance(agents[id].position,other.position)) return false;
             }
             return true;
         };
@@ -129,9 +128,9 @@ void fleet_case(const std::string& name,std::vector<Vec3> starts,std::vector<Vec
     world.stationary_segment_clear=[&](std::size_t id,Vec3 a,Vec3 b){
         for(const auto& other:agents){
             if(other.id==id || requests[other.id].active) continue;
-            const Vec3 d=b-a;const float len2=eng::dot(d,d);
-            const float t=len2>0.001f?std::clamp(eng::dot(other.position-a,d)/len2,0.0f,1.0f):0.0f;
-            if(distance(a+d*t,other.position)<agents[id].radius_m+other.radius_m+0.06f) return false;
+            const Vec3 d=b-a;const float len2=game::runtime::dot(d,d);
+            const float t=len2>0.001f?std::clamp(game::runtime::dot(other.position-a,d)/len2,0.0f,1.0f):0.0f;
+            if(ground_distance(a+d*t,other.position)<agents[id].radius_m+other.radius_m+0.06f) return false;
         }
         return true;
     };
@@ -150,12 +149,12 @@ void fleet_case(const std::string& name,std::vector<Vec3> starts,std::vector<Vec
         bool done=true;
         for(std::size_t i=0;i<agents.size();++i){
             require(world.segment_clear(i,previous[i].position,agents[i].position),name+": static collision");
-            require(distance(previous[i].position,agents[i].position)<=agents[i].max_speed_mps*0.01f+0.002f,name+": pose jump");
+            require(ground_distance(previous[i].position,agents[i].position)<=agents[i].max_speed_mps*0.01f+0.002f,name+": pose jump");
             require(std::abs(agents[i].speed_mps-previous[i].speed_mps)<=agents[i].braking_mps2*0.01f+0.002f,name+": speed pulse");
             require(runtime[i].mode!=SafetyMode::Fault,name+": safety fault "+block_reason_name(runtime[i].block_reason));
             if(name=="open straight" && t>1.8f && t<3.5f)
                 require(agents[i].speed_mps>5.9f,"open travel contains stop/start pulses");
-            if(distance(agents[i].position,goals[i])<0.22f && std::abs(agents[i].speed_mps)<0.06f) requests[i].active=false;
+            if(ground_distance(agents[i].position,goals[i])<0.22f && std::abs(agents[i].speed_mps)<0.06f) requests[i].active=false;
             done=done && !requests[i].active;
             for(std::size_t j=i+1;j<agents.size();++j){
                 TubePiece a{0,0.01f,previous[i].position,agents[i].position,agents[i].radius_m};
@@ -166,7 +165,7 @@ void fleet_case(const std::string& name,std::vector<Vec3> starts,std::vector<Vec
         if(done) break;
     }
     for(std::size_t i=0;i<agents.size();++i){
-        if(requests[i].active) std::cerr<<name<<" robot "<<i<<" at "<<agents[i].position.x<<","<<agents[i].position.z<<" distance "<<distance(agents[i].position,goals[i])<<" mode "<<safety_mode_name(runtime[i].mode)<<" reason "<<block_reason_name(runtime[i].block_reason)<<" replans "<<runtime[i].local_replans<<"\n";
+        if(requests[i].active) std::cerr<<name<<" robot "<<i<<" at "<<agents[i].position.x<<","<<agents[i].position.z<<" distance "<<ground_distance(agents[i].position,goals[i])<<" mode "<<safety_mode_name(runtime[i].mode)<<" reason "<<block_reason_name(runtime[i].block_reason)<<" replans "<<runtime[i].local_replans<<"\n";
 
     }
     for(const auto& request:requests) require(!request.active,name+": did not finish");
@@ -221,12 +220,12 @@ void collision_radius_case(){
         const auto before=agents;
         const auto stats=safety_tick(0.01f,frame*0.01f,2,agents,requests,world);
         require(!stats.invariant_fault,"crossing circles caused a safety fault");
-        const bool overlapping=distance(agents[0].position,agents[1].position)<10.f;
+        const bool overlapping=ground_distance(agents[0].position,agents[1].position)<10.f;
         for(std::size_t i=0;i<agents.size();++i){
             require(runtime[i].nearby_robot_ids.size()==static_cast<std::size_t>(overlapping),
                     "detection did not track the current 5 m circles");
             require(overlapping || !runtime[i].avoidance_velocity_valid,"avoidance survived separation");
-            if(distance(agents[i].position,requests[i].goal)<.22f && std::abs(agents[i].speed_mps)<.06f)
+            if(ground_distance(agents[i].position,requests[i].goal)<.22f && std::abs(agents[i].speed_mps)<.06f)
                 requests[i].active=false;
         }
         const TubePiece first{0,.01f,before[0].position,agents[0].position,agents[0].radius_m};
@@ -296,9 +295,9 @@ void rover_steering_case(){
         require(std::abs(sideways)<.00008f,"chassis moved sideways instead of following its rolling arc");
         require(std::max(std::abs(before.speed_mps),std::abs(after.speed_mps))*std::abs(turn)*radians/dt
                 <=kRoverLateralAccelerationMps2+.025f,"curve exceeded the lateral grip limit");
-        require(distance(before.position,after.position)<=before.max_speed_mps*dt+.0001f,
+        require(ground_distance(before.position,after.position)<=before.max_speed_mps*dt+.0001f,
                 "steering moved farther than the driving limit");
-        turning|=std::abs(turn)>.15f&&eng::length(moved)>.001f;
+        turning|=std::abs(turn)>.15f&&game::runtime::length(moved)>.001f;
         braking|=stats.brake_fallbacks>0;
     };
     for(int i=0;i<250;++i)step();
@@ -306,7 +305,7 @@ void rover_steering_case(){
     const Vec3 restart_pose=agents.front().position;
     const float expiry=runtime.active_contract.command_expiry;
     restart_rover_route(runtime);
-    require(distance(restart_pose,agents.front().position)<.001f && runtime.cached_route.empty() &&
+    require(ground_distance(restart_pose,agents.front().position)<.001f && runtime.cached_route.empty() &&
             runtime.active_contract.valid && runtime.active_contract.command_expiry==expiry,
             "fresh route displaced the rover or discarded certified braking");
     requests[0].goal=restart_pose+Vec3{21,0,2};
@@ -316,8 +315,8 @@ void rover_steering_case(){
     for(int i=0;i<100;++i)step();
     require(braking && std::abs(agents.front().speed_mps)<.01f,"rover failed to stop through certified braking");
     requests[0].active=true;
-    for(int i=0;i<2600&&distance(agents.front().position,requests[0].goal)>.23f;++i)step();
-    require(distance(agents.front().position,requests[0].goal)<.24f,"rover did not complete the revised route");
+    for(int i=0;i<2600&&ground_distance(agents.front().position,requests[0].goal)>.23f;++i)step();
+    require(ground_distance(agents.front().position,requests[0].goal)<.24f,"rover did not complete the revised route");
 
     RoverWheels pivot{};
     roll_rover_wheels(pivot,0,.18f);
@@ -372,13 +371,13 @@ void fault_recovery_case(const std::string& name,std::size_t count,bool unsafe_o
             if(rt.fault_recovery_attempts && first_attempt_frame==0)first_attempt_frame=(unsigned)frame;
             if(frame<298){require(rt.mode==SafetyMode::Fault,name+": fault was cleared before its scheduled retry");require(calls[i]==0,name+": expensive search repeated during fault wait");}
             if(rt.mode==SafetyMode::Fault){
-                require(distance(agents[i].position,starts[i].position)<1e-6f,name+": fault hold moved");
+                require(ground_distance(agents[i].position,starts[i].position)<1e-6f,name+": fault hold moved");
                 require(agents[i].speed_mps==0,name+": fault retained motion");
             }
-            if(blocked){require(rt.mode==SafetyMode::Fault,name+": unsafe origin was admitted");require(distance(agents[i].position,starts[i].position)<1e-6f,name+": positional repair bypassed collision checks");}
+            if(blocked){require(rt.mode==SafetyMode::Fault,name+": unsafe origin was admitted");require(ground_distance(agents[i].position,starts[i].position)<1e-6f,name+": positional repair bypassed collision checks");}
             else require(world.segment_clear(i,previous[i].position,agents[i].position),name+": static collision");
-            require(distance(previous[i].position,agents[i].position)<=agents[i].max_speed_mps*0.01f+0.002f,name+": pose jump");
-            if(calls[i])require(distance(planned_goal[i],requests[i].goal)<0.001f,name+": recovery used stale/temporary destination");
+            require(ground_distance(previous[i].position,agents[i].position)<=agents[i].max_speed_mps*0.01f+0.002f,name+": pose jump");
+            if(calls[i])require(ground_distance(planned_goal[i],requests[i].goal)<0.001f,name+": recovery used stale/temporary destination");
             for(std::size_t j=i+1;j<count;++j){
                 TubePiece a{0,0.01f,previous[i].position,agents[i].position,agents[i].radius_m};
                 TubePiece b{0,0.01f,previous[j].position,agents[j].position,agents[j].radius_m};
@@ -390,11 +389,11 @@ void fault_recovery_case(const std::string& name,std::size_t count,bool unsafe_o
     for(std::size_t i=0;i<count;++i){
         const auto& rt=runtime[i];require(rt.mode!=SafetyMode::Fault,name+": never recovered");
         require(!rt.temporary_goal_valid && !rt.stationary_detour_active,name+": stale detour survived recovery");
-        if(idle){require(calls[i]==0,name+": invented an idle destination");require(distance(agents[i].position,starts[i].position)<1e-6f,name+": idle robot moved");}
+        if(idle){require(calls[i]==0,name+": invented an idle destination");require(ground_distance(agents[i].position,starts[i].position)<1e-6f,name+": idle robot moved");}
         else {
             require(calls[i]>0 && fresh[i]>0,name+": search state was reused instead of starting from scratch");
-            require(distance(planned_start[i],starts[i].position)<0.001f,name+": search started from stale route origin");
-            require(distance(agents[i].position,starts[i].position)>0.5f,name+": no certified progress after recovery");
+            require(ground_distance(planned_start[i],starts[i].position)<0.001f,name+": search started from stale route origin");
+            require(ground_distance(agents[i].position,starts[i].position)>0.5f,name+": no certified progress after recovery");
         }
         if(unsafe_origin)require(rt.fault_recovery_attempts==3 && fresh[i]==3,name+": persistent geometry reset/starved retry deadline");
         if(pending)require(calls[i]>=6 && fresh[i]==1,name+": bounded search was discarded instead of continued");
@@ -421,24 +420,24 @@ void fault_bounds_case(){
 }
 
 namespace game {
-struct Recorder:eng::Renderer {
+struct Recorder:game::runtime::SceneRenderer {
     int w=1920,h=1080;float scale=1;bool hud=false;std::size_t vertices=0,calls=0;
     bool initialize(void*,std::uintptr_t,int,int)override{return true;}
     void resize(int width,int height)override{w=width;h=height;}
-    void begin_frame(eng::Color)override{vertices=0;calls=0;hud=false;}void end_frame()override{}
-    void set_3d(const eng::Mat4&)override{hud=false;}void set_2d(float s)override{scale=s;hud=true;}
-    void draw_lines_3d(const std::vector<eng::Vec3>& v,eng::Color,float)override{vertices+=v.size();++calls;}
-    void draw_triangles_3d(const std::vector<eng::Vec3>& v,eng::Color)override{vertices+=v.size();++calls;}
-    void draw_rect(eng::Rect,eng::Color)override{} void draw_line(eng::Vec2,eng::Vec2,eng::Color,float)override{}
-    void draw_text(eng::Vec2,const std::string&,float,eng::Color)override{}
+    void begin_frame(game::runtime::Color)override{vertices=0;calls=0;hud=false;}void end_frame()override{}
+    void set_3d(const game::runtime::Mat4&)override{hud=false;}void set_2d(float s)override{scale=s;hud=true;}
+    void draw_lines_3d(const std::vector<game::runtime::Vec3>& v,game::runtime::Color,float)override{vertices+=v.size();++calls;}
+    void draw_triangles_3d(const std::vector<game::runtime::Vec3>& v,game::runtime::Color)override{vertices+=v.size();++calls;}
+    void draw_rect(game::runtime::Rect,game::runtime::Color)override{} void draw_line(game::runtime::Vec2,game::runtime::Vec2,game::runtime::Color,float)override{}
+    void draw_text(game::runtime::Vec2,const std::string&,float,game::runtime::Color)override{}
     int width()const override{return w;}int height()const override{return h;}bool hardware_accelerated()const override{return false;}
     std::string gpu_vendor()const override{return "TEST";}std::string gpu_renderer()const override{return "SCALING RECORDER";}std::string gpu_version()const override{return "TEST";}
 };
 struct NavigationRegression {
     static void profile(const std::string& path){
-        eng::Application engine;GameApp app(engine);std::string error;require(app.load_game_from_file(path,error),error);
+        game::runtime::GameHost engine;GameApp app(engine);std::string error;require(app.load_game_from_file(path,error),error);
         Recorder r;app.screen_=GameApp::Screen::Playfield;
-        std::cout<<"SAVE h="<<app.placed_habitats_.size()<<" r="<<app.placed_resources_.size()<<" c="<<app.corridor_network_.connections().size()<<" u="<<app.utility_network_.connections().size()<<" robots="<<app.builder_robots_.size()<<" lanes="<<eng::cpu_parallel_lanes()<<"\n";
+        std::cout<<"SAVE h="<<app.placed_habitats_.size()<<" r="<<app.placed_resources_.size()<<" c="<<app.corridor_network_.connections().size()<<" u="<<app.utility_network_.connections().size()<<" robots="<<app.builder_robots_.size()<<" lanes="<<game::runtime::cpu_parallel_lanes()<<"\n";
         auto bench=[&](const char* name,auto fn,int n){auto start=std::chrono::steady_clock::now();for(int i=0;i<n;++i)fn();std::cout<<name<<" ms="<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/n<<std::endl;};
         bench("supply",[&]{app.update_supply_simulation(1.f/60);},120);
         bench("doors",[&]{app.update_pressure_doors(1.f/60);},120);
@@ -452,7 +451,7 @@ struct NavigationRegression {
     }
 
     static void operation_replan(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp stuck(engine);
         stuck.playfield_.rebuild(64);
         PlacedResource blocker;
@@ -471,13 +470,13 @@ struct NavigationRegression {
         auto& trapped=stuck.builder_robots_[0];
         for(int frame=0;frame<16*90&&trapped.operation_retry.failures<4;++frame)
             stuck.update_builder_robot(1.f/90);
-        require(trapped.operation_retry.failures==4&&distance(trapped.position,{})<.01f,
+        require(trapped.operation_retry.failures==4&&ground_distance(trapped.position,{})<.01f,
                 "rover moved in blocked geometry or failed to count four retries");
         require(trapped.blocking_structure==41&&trapped.blocker_display_seconds>0,
                 "blocked rover did not identify the actual battery footprint");
         struct BlockerCapture:Recorder {
             bool red=false,unrelated=false;
-            void draw_lines_3d(const std::vector<eng::Vec3>& vertices,eng::Color color,float) override {
+            void draw_lines_3d(const std::vector<game::runtime::Vec3>& vertices,game::runtime::Color color,float) override {
                 red|=!vertices.empty()&&color.r>.95f&&color.g<.15f&&color.b<.15f;
                 for(const auto point:vertices) unrelated|=point.x>15||point.z>15;
             }
@@ -486,7 +485,7 @@ struct NavigationRegression {
         require(capture.red&&!capture.unrelated,"wrong structure received the red outline");
         for(int frame=0;frame<5*90&&trapped.operation_retry.failures!=0;++frame)
             stuck.update_builder_robot(1.f/90);
-        require(distance(trapped.position,{})<.01f && trapped.operation_retry.failures==0 &&
+        require(ground_distance(trapped.position,{})<.01f && trapped.operation_retry.failures==0 &&
                 trapped.safety.route_replan_required && trapped.safety.cached_route.empty() && trapped.cargo.iron==200,
                 "fifth blocked attempt did not restart the path from the rover's held pose");
 
@@ -526,13 +525,13 @@ struct NavigationRegression {
                 " operation="+builder_robot_action_name(carrier.operation_retry.action)+
                 " cargo="+std::to_string(carrier.cargo.iron)+
                 " deposited="+std::to_string(delivery.placed_resources_[0].site_buffer.iron)+
-                " movement="+std::to_string(distance(carrier.position,dock))+
-                " obstruction="+std::to_string(distance(delivery.builder_robots_[1].position,obstruction.position)));
-        require(distance(carrier.position,dock)<.3f&&carrier.cargo.iron==200,
+                " movement="+std::to_string(ground_distance(carrier.position,dock))+
+                " obstruction="+std::to_string(ground_distance(delivery.builder_robots_[1].position,obstruction.position)));
+        require(ground_distance(carrier.position,dock)<.3f&&carrier.cargo.iron==200,
                 "four failed drops moved the rover or changed cargo");
         for(int frame=0;frame<10*90&&carrier.operation_retry.failures!=0;++frame)
             tick_blocked_drop();
-        require(distance(carrier.position,dock)<.3f && carrier.operation_retry.failures==0 &&
+        require(ground_distance(carrier.position,dock)<.3f && carrier.operation_retry.failures==0 &&
                 carrier.safety.route_replan_required && carrier.target.same_as(target) &&
                 carrier.cargo.iron==200&&carrier.logistics_reservation.iron==200&&
                 delivery.placed_resources_[0].site_buffer.empty(),
@@ -557,7 +556,7 @@ struct NavigationRegression {
         };cb.neighbor_clear=cb.segment_clear;
         const auto solve=[&](PathPlanRequest request,std::uint64_t epoch,IncrementalPathPlannerState& state){std::vector<Vec3> route;auto status=IncrementalPathResult::Pending;
             for(int i=0;i<200 && status==IncrementalPathResult::Pending;++i)status=plan_incremental_path(request,epoch,cb,state,route);
-            require(status==IncrementalPathResult::Success && !route.empty(),"global planner rejected reachable exact goal");Vec3 previous=request.start;for(const auto p:route){require(cb.segment_clear(previous,p),"global detour crosses an obstacle");previous=p;}require(distance(previous,request.goal)<0.001f,"route misses exact destination");return route;};
+            require(status==IncrementalPathResult::Success && !route.empty(),"global planner rejected reachable exact goal");Vec3 previous=request.start;for(const auto p:route){require(cb.segment_clear(previous,p),"global detour crosses an obstacle");previous=p;}require(ground_distance(previous,request.goal)<0.001f,"route misses exact destination");return route;};
         PathPlanRequest request;request.start={-16,0,-10};request.goal={0,0,0.2f};request.cell_size=1.28f;request.corridor_half_width=10;request.max_expansions=90;request.world_half_extent=40;
         boxes={{-7,7,-7,-0.15f},{-7,7,0.45f,7}};IncrementalPathPlannerState state;solve(request,1,state);
         require(state.initialization_count>=1 && state.expanded_node_count>0,"narrow approach failed to enter bounded search");
@@ -581,11 +580,11 @@ struct NavigationRegression {
                 state.expanded_node_count==serial.expanded_node_count && parallel_route.size()==serial_route.size(),
                 "parallel route sampling changed persistent search results");
         for(std::size_t i=0;i<serial_route.size();++i)
-            require(distance(parallel_route[i],serial_route[i])<1e-6f,"parallel route sampling changed the route");
+            require(ground_distance(parallel_route[i],serial_route[i])<1e-6f,"parallel route sampling changed the route");
         std::cout<<"Exact-goal narrow approach, full-map detour, map-edge reuse and deterministic route repair passed\n";
     }
     static void saved_route(const std::string& path){
-        eng::Application engine;GameApp app(engine);std::string error;require(app.load_game_from_file(path,error),error);
+        game::runtime::GameHost engine;GameApp app(engine);std::string error;require(app.load_game_from_file(path,error),error);
         require(app.builder_robots_.size()>1,"saved route fixture needs carrier");
         const auto original=app.builder_robots_[1].target;const auto start=app.builder_robots_[1].position;
         const auto initial_step=app.construction_target_step(original);const auto buffer=app.construction_site_buffer(original);const auto initial_buffer=buffer?buffer->total_amount():0;
@@ -595,14 +594,14 @@ struct NavigationRegression {
             auto tick_start=std::chrono::steady_clock::now();app.update_pressure_doors(1.f/60);app.update_construction(1.f/60);
             worst=std::max(worst,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-tick_start).count());
             for(const auto& r:app.builder_robots_)require(r.safety.mode!=SafetyMode::Fault,"saved route entered safety fault");
-            max_travel=std::max(max_travel,distance(start,app.builder_robots_[1].position));
+            max_travel=std::max(max_travel,ground_distance(start,app.builder_robots_[1].position));
             const auto now=app.construction_site_buffer(original);const bool progress=(now && now->total_amount()>initial_buffer) || app.construction_target_step(original)>initial_step;if(!delivered && progress)first_delivery=(float)frame/60;delivered=delivered || progress;
         }
         require(delivered,"saved carrier did not deliver its original cargo within 900 s");require(app.construction_target_complete(original),"original saved delivery task never completed after continued trips");require(max_travel>10,"saved carrier never left the blocked location");
         std::cout<<"Saved carrier delivery resumed; original target progressed, first delivery s="<<first_delivery<<" final step="<<(int)app.construction_target_step(original)<<" total ms="<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-began).count()<<" worst tick ms="<<worst<<"\n";
     }
     static void clearance_save(const std::string& path){
-        eng::Application engine;GameApp app(engine);std::string error;
+        game::runtime::GameHost engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
         require(!app.builder_robots_.empty(),"clearance fixture needs a builder");
         const Vec3 start=app.builder_robots_[0].position;
@@ -615,7 +614,7 @@ struct NavigationRegression {
             const auto& robot=app.builder_robots_[0];
             require(robot.safety.mode!=SafetyMode::Fault,
                     std::string("clearance save entered safety fault: ")+block_reason_name(robot.safety.block_reason));
-            max_travel=std::max(max_travel,distance(start,robot.position));
+            max_travel=std::max(max_travel,ground_distance(start,robot.position));
             route_published=route_published || !robot.safety.cached_route.empty() || robot.route_active;
             max_replans=std::max(max_replans,robot.safety.local_replans);
             if(max_travel>8.0f) break;
@@ -628,7 +627,7 @@ struct NavigationRegression {
     }
 
     static void stuck_carrier_save(const std::string& path){
-        eng::Application engine;GameApp app(engine);std::string error;
+        game::runtime::GameHost engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
         std::size_t carrier_index=app.builder_robots_.size();
         for(std::size_t i=0;i<app.builder_robots_.size();++i)
@@ -648,7 +647,7 @@ struct NavigationRegression {
             total_ms+=elapsed;worst_ms=std::max(worst_ms,elapsed);
             const auto& carrier=app.builder_robots_[carrier_index];
             require(carrier.safety.mode!=SafetyMode::Fault,"stuck carrier entered safety fault");
-            moved=moved || distance(start,carrier.position)>8.0f;
+            moved=moved || ground_distance(start,carrier.position)>8.0f;
             parked=parked || carrier.workshop_parked;
             max_initializations=std::max(max_initializations,carrier.safety.incremental_path.initialization_count);
             max_expansions=std::max(max_expansions,carrier.safety.incremental_path.expanded_node_count);
@@ -667,7 +666,7 @@ struct NavigationRegression {
     }
 
     static void carrier_depot_replay(const std::string& path){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         std::string error;
         require(app.load_game_from_file(path,error),error);
@@ -678,7 +677,7 @@ struct NavigationRegression {
         const auto start=carrier.position;
         require(carrier.cargo.total_amount()==40 && delivery.valid(),"saved delivery is missing its 40 kg load");
         app.screen_=GameApp::Screen::Playfield;
-        eng::InputState input;
+        game::runtime::InputState input;
         input.key_number_pressed=3;
         constexpr float dt=1.0f/60.0f;
         constexpr float sim_dt=4.0f*dt;
@@ -691,14 +690,14 @@ struct NavigationRegression {
         for(int frame=1;frame<900*15;++frame){
             const auto previous=carrier.position;
             app.update_simulation(dt,input);
-            require(distance(previous,carrier.position)<=carrier.move_speed_mps*sim_dt+0.01f,
+            require(ground_distance(previous,carrier.position)<=carrier.move_speed_mps*sim_dt+0.01f,
                     "carrier recovery moved the rover outside its driving range");
             for(const auto& robot:app.builder_robots_)
                 require(robot.safety.mode!=SafetyMode::Fault,"depot replay entered a safety fault");
-            require(distance(carrier.position,app.builder_robots_[0].position)>1.88f,"depot replay had a fleet overlap");
+            require(ground_distance(carrier.position,app.builder_robots_[0].position)>1.88f,"depot replay had a fleet overlap");
             const float seconds=(frame+1)*sim_dt;
             if(!delivered_at && carrier.cargo.empty() && carrier.target.same_as(delivery) &&
-               distance(start,carrier.position)>15.0f) delivered_at=seconds;
+               ground_distance(start,carrier.position)>15.0f) delivered_at=seconds;
             if(app.placed_resources_[2].construction.complete() && app.placed_resources_[3].construction.complete()){
                 finished_at=seconds;
                 break;
@@ -711,7 +710,7 @@ struct NavigationRegression {
     }
 
     static void construction_package_clearance(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         app.playfield_.rebuild(128);
         app.starting_robot_count_=app.starting_carrier_count_=1;
@@ -746,15 +745,15 @@ struct NavigationRegression {
             const auto before=carrier.position;
             app.update_construction(dt);
             require(carrier.safety.mode!=SafetyMode::Fault,"material stack repositioning triggered a safety fault");
-            require(distance(before,carrier.position)<=carrier.move_speed_mps*dt+0.01f,"material clearance relocated the carrier");
+            require(ground_distance(before,carrier.position)<=carrier.move_speed_mps*dt+0.01f,"material clearance relocated the carrier");
         }
-        require(app.construction_target_step(target)>0 && distance(package,carrier.position)>1.20f,
+        require(app.construction_target_step(target)>0 && ground_distance(package,carrier.position)>1.20f,
                 "carrier did not clear the next material stack before construction resumed");
         std::cout<<"Construction reserved the next material stack and drove the carrier clear before advancing\n";
     }
 
     static void pending_enclosure_save(const std::string& path){
-        eng::Application engine;GameApp app(engine);std::string error;
+        game::runtime::GameHost engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
         require(!app.builder_robots_.empty(),"pending-enclosure fixture needs a builder");
         require(app.corridor_network_.connections().size()>5,"pending-enclosure fixture needs corridor 5");
@@ -772,13 +771,13 @@ struct NavigationRegression {
             }
         }
         require(committed,"pending enclosure corridor never committed after evacuation");
-        require(distance(start,at_commit)>4.5f,"builder did not leave the future enclosure before corridor commit");
+        require(ground_distance(start,at_commit)>4.5f,"builder did not leave the future enclosure before corridor commit");
         require(at_commit.z>17.0f,"builder remained on the enclosed side when corridor committed");
         std::cout<<"Pending enclosure evacuated builder from "<<start.x<<","<<start.z
                  <<" to "<<at_commit.x<<","<<at_commit.z<<" before corridor commit\n";
     }
     static void enclosure_save(const std::string& path){
-        eng::Application engine;GameApp app(engine);std::string error;
+        game::runtime::GameHost engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
         require(!app.builder_robots_.empty(),"enclosure fixture needs a robot");
         for(int frame=0;frame<60*20;++frame){
@@ -786,14 +785,14 @@ struct NavigationRegression {
             app.update_pressure_doors(1.0f/60.0f);
             app.update_construction(1.0f/60.0f);
             const auto& rover=app.builder_robots_[0];
-            require(distance(before,rover.position)<=rover.move_speed_mps/60.0f+.02f,
+            require(ground_distance(before,rover.position)<=rover.move_speed_mps/60.0f+.02f,
                     "legacy enclosure moved a rover beyond its driving range");
         }
         std::cout<<"Legacy enclosed rover retained its saved pose and driving limits\n";
     }
 
     static void airlock_supply_save(const std::string& path){
-        eng::Application engine;GameApp app(engine);std::string error;
+        game::runtime::GameHost engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
         std::size_t checked=0;
         for(std::size_t i=0;i<app.placed_habitats_.size();++i){
@@ -806,7 +805,7 @@ struct NavigationRegression {
                 const Vec3 cursor=h.position+world_math::rotate_y(local_cursor,h.rotation_degrees);
                 const auto anchor=app.utility_anchor_at(cursor,UtilityKind::SupplyChannel);
                 require(anchor && anchor->kind==UtilityEndpointKind::Habitat && anchor->index==i,"save Air Lock side not selectable");
-                const Vec3 away=cursor+world_math::rotate_y(eng::normalize(local_cursor)*14.0f,h.rotation_degrees);
+                const Vec3 away=cursor+world_math::rotate_y(game::runtime::normalize(local_cursor)*14.0f,h.rotation_degrees);
                 const auto port=app.utility_network_.preview_anchor(UtilityKind::SupplyChannel,*anchor,away,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
                 require(port.has_value(),"save Air Lock side did not resolve to supply port");
                 const Vec3 lp=world_math::rotate_y(port->position-h.position,-h.rotation_degrees);
@@ -820,7 +819,7 @@ struct NavigationRegression {
     }
 
     static void inspect(const std::string& path){
-        eng::Application engine;GameApp app(engine);std::string error;
+        game::runtime::GameHost engine;GameApp app(engine);std::string error;
         require(app.load_game_from_file(path,error),error);
         for(std::size_t i=0;i<app.placed_habitats_.size();++i){const auto& h=app.placed_habitats_[i];const auto& m=app.habitat_models_.mesh(h);
             std::cout<<"habitat "<<i<<" "<<h.position.x<<","<<h.position.z<<" size="<<m.footprint_x<<","<<m.footprint_z<<" rot="<<h.rotation_degrees<<" step="<<(int)h.construction.step<<"\n";
@@ -842,7 +841,7 @@ struct NavigationRegression {
         std::cout<<"saved scene continued 20 s\n";
     }
     static void construction(const std::string& path,bool late_corridor=false,bool inject_fault=false){
-        eng::Application engine;GameApp app(engine);
+        game::runtime::GameHost engine;GameApp app(engine);
         app.playfield_.rebuild(GameApp::kDebugTemplatePlayfieldSize);app.starting_robot_count_=3;app.starting_carrier_count_=3;
         app.reset_builder_robot_and_starter_stash();
         std::string error;
@@ -876,7 +875,7 @@ struct NavigationRegression {
             app.update_construction(1.0f/60);
             if(inject_fault && injected==game::kNoRobotIndex && t>(late_corridor?0.5f:5.0f)){
                 for(std::size_t i=3;i<app.builder_robots_.size();++i){auto& r=app.builder_robots_[i];
-                    if(r.mode!=BuilderRobotMode::Delivering || r.cargo.empty() || !r.safety.goal_valid || distance(r.position,r.safety.goal)<3)continue;
+                    if(r.mode!=BuilderRobotMode::Delivering || r.cargo.empty() || !r.safety.goal_valid || ground_distance(r.position,r.safety.goal)<3)continue;
                     injected=i;injected_at=t;held_cargo=r.cargo.total_amount();
                     r.safety.mode=SafetyMode::Fault;r.safety.block_reason=BlockReason::ContractViolation;r.safety.fault_phase=1;r.safety.fault_recovery_deadline=-1;
                     r.current_speed_mps=0;break;
@@ -907,7 +906,7 @@ struct NavigationRegression {
                 }
                 require(expected_fault || r.safety.mode!=SafetyMode::Fault,"construction robot "+std::to_string(i)+": "+block_reason_name(r.safety.block_reason)+" phase "+std::to_string(r.safety.fault_phase));
                 for(std::size_t j=i+1;j<app.builder_robots_.size();++j)
-                    require(distance(r.position,app.builder_robots_[j].position)>1.88f,"construction fleet overlap");
+                    require(ground_distance(r.position,app.builder_robots_[j].position)>1.88f,"construction fleet overlap");
             }
             if(completed()==expected) break;
             if(late_corridor && t>240) break;
@@ -922,7 +921,7 @@ struct NavigationRegression {
         if(inject_fault)require(injected!=game::kNoRobotIndex && app.builder_robots_[injected].safety.fault_recovery_attempts>0,"fault was not injected/recovered during construction");
     }
     static void storage_extensions(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
 
         // A newly placed dome is only the dome. It has no implicit gate and
         // selecting PLACE GATE enters extension-placement mode without creating
@@ -1000,6 +999,8 @@ struct NavigationRegression {
         app.placed_resources_[1].construction.step=kConstructionSteps;app.synchronize_storage_gates();
         ready=0;for(int face:storage_loading::faces(app.placed_resources_[0],true)) ready+=face>=0;
         require(ready==3,"completed gate task did not become operational");
+        // These assertions specifically validate the debug wire representation.
+        app.world_layout_mode_=GameApp::WorldLayoutMode::Mesh;
         GeometryRecorder rendered;app.render_resources(rendered);
         require(rendered.green && rendered.filled_vertices==0,"completed storage gate extension mesh is missing");
         app.placed_resources_[1].construction.step=0;app.synchronize_storage_gates();
@@ -1034,7 +1035,7 @@ struct NavigationRegression {
         std::cout<<"Optional 0-3 storage gates, independent build tasks, placement clearance, persistence and legacy migration passed\n";
     }
     static void workshops(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         auto tick=[](GameApp& app){app.update_pressure_doors(1.0f/60);app.update_construction(1.0f/60);};
         auto connect_supply=[](GameApp& app,std::size_t resource_index){
             UtilityConnection link;link.kind=UtilityKind::SupplyChannel;
@@ -1068,7 +1069,7 @@ struct NavigationRegression {
                 for(const auto& w:app.placed_resources_) if(w.kind==ResourceKind::RobotWorkshop && w.construction.complete())
                     require(workshop::clear(w,r.position,r.position,0.98f),"workshop wall/gate collision");
                 for(std::size_t j=i+1;j<app.builder_robots_.size();++j)
-                    require(distance(r.position,app.builder_robots_[j].position)>1.88f,"workshop fleet collision");
+                    require(ground_distance(r.position,app.builder_robots_[j].position)>1.88f,"workshop fleet collision");
             }
         };
         auto wait_parking=[&](GameApp& app,const std::string& label){
@@ -1116,7 +1117,7 @@ struct NavigationRegression {
             }
             const auto poses=app.builder_robots_;
             for(int i=0;i<240;++i) tick(app);
-            for(std::size_t i=0;i<4;++i) require(distance(poses[i].position,app.builder_robots_[i].position)<0.02f,"parked rover wanders");
+            for(std::size_t i=0;i<4;++i) require(ground_distance(poses[i].position,app.builder_robots_[i].position)<0.02f,"parked rover wanders");
             // A new real job must preempt parking and open the gate for exit.
             PlacedResource target;target.kind=ResourceKind::SolarPanel;target.position={27,0,15};target.placement_sequence=1;
             target.resource_plan.total_steps=kConstructionSteps;
@@ -1219,7 +1220,7 @@ struct NavigationRegression {
         std::cout<<"Workshop supply gating, compact parking, task dispatch, ramp clearance, reachability, save/load and multi-workshop allocation passed\n";
     }
     static void ore_carrier(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         for(const bool use_dome:{false,true}){
             GameApp app(engine);
             app.playfield_.rebuild(128);
@@ -1309,7 +1310,7 @@ struct NavigationRegression {
     }
 
     static void conveyor_ore(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         app.playfield_.rebuild(128);
         app.active_game_phase_=GameApp::GamePhase::Debug;
@@ -1403,7 +1404,7 @@ struct NavigationRegression {
     }
 
     static void structure_routes(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         app.playfield_.rebuild(128);
         auto& corridors=app.corridor_network_;
@@ -1484,7 +1485,7 @@ struct NavigationRegression {
     }
 
     static void interaction(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(128);
         // Every angle and every dome tier uses an identical rigid local mesh.
         const auto& reference=app.resource_models_.mesh(ResourceKind::StorageGate,StorageDomeSize::Small);
         for(int size=0;size<4;++size)for(int angle=0;angle<360;angle+=3){
@@ -1493,11 +1494,11 @@ struct NavigationRegression {
             PlacedResource gate;gate.kind=ResourceKind::StorageGate;gate.storage_size=dome.storage_size;gate.storage_loading_face=8;gate.storage_gate_angle_degrees=(float)angle;
             const auto& mesh=app.resource_models_.mesh(gate);
             require(mesh.body.size()==reference.body.size() && mesh.footprint_x==reference.footprint_x && mesh.footprint_z==reference.footprint_z,"gate mesh changes with angle/tier");
-            for(std::size_t i=0;i<mesh.body.size();++i)require(distance(mesh.body[i],reference.body[i])<1e-6,"cargo module squeezed or stretched");
-            require(std::abs(distance(storage_loading::mouth(dome,8),storage_loading::wall(dome,8))-storage_loading::kDepth)<1e-5,"gate depth changes around dome");
+            for(std::size_t i=0;i<mesh.body.size();++i)require(ground_distance(mesh.body[i],reference.body[i])<1e-6,"cargo module squeezed or stretched");
+            require(std::abs(ground_distance(storage_loading::mouth(dome,8),storage_loading::wall(dome,8))-storage_loading::kDepth)<1e-5,"gate depth changes around dome");
             const auto n=storage_loading::normal(dome,8),side=Vec3{-n.z,0,n.x};const auto service=storage_loading::service(dome,8);
             require(storage_loading::reserved_face(dome,service+n*1.20f,0,8) && storage_loading::reserved_face(dome,storage_loading::mouth(dome,8)+side*2.48f,0,8),"minimum robot/shutter clearance missing");
-            require(distance(service,dome.position)>storage_loading::body_radius(dome)+1.2f,"compact gate pickup is inside rover dome envelope");
+            require(ground_distance(service,dome.position)>storage_loading::body_radius(dome)+1.2f,"compact gate pickup is inside rover dome envelope");
             const auto& body=app.resource_models_.mesh(dome);
             for(const auto* layer:{&body.body,&body.foundation,&body.details})for(const auto& v:*layer)require(std::hypot(v.x,v.z)<=storage_loading::body_radius(dome)+0.001f,"round rover envelope clips dome geometry");
         }
@@ -1516,14 +1517,14 @@ struct NavigationRegression {
             if(size==0 && angle>50)require(!route.add_storage_gate_at(0,100.0f),"overlapping cargo approaches were accepted");
         }
         app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({-20,0,-20});
-        eng::InputState jump;jump.key_j_pressed=true;jump.key_j_down=true;app.update_first_person(1.0f/120,jump);
+        game::runtime::InputState jump;jump.key_j_pressed=true;jump.key_j_down=true;app.update_first_person(1.0f/120,jump);
         require(app.first_person_.feet_position().y>0 && !app.first_person_.grounded(),"Space did not launch POV jump");
         jump.key_j_pressed=false;float peak=0;
         for(int i=0;i<360;++i){app.update_first_person(1.0f/120,jump);peak=std::max(peak,app.first_person_.feet_position().y);}
         require(peak>0.97f && peak<1.02f && app.first_person_.grounded() && std::abs(app.first_person_.feet_position().y)<1e-5,"lunar jump arc/landing or held-key behavior is wrong");
         // A second press in mid-air cannot launch another jump.
         FirstPersonController single,double_press;single.spawn({0,0,0});double_press.spawn({0,0,0});
-        for(int i=0;i<360;++i){single.advance_vertical(i==0,1.0f/120,0,100);double_press.advance_vertical(i==0 || i==60,1.0f/120,0,100);require(distance(single.feet_position(),double_press.feet_position())<1e-6,"airborne jump reset vertical speed");}
+        for(int i=0;i<360;++i){single.advance_vertical(i==0,1.0f/120,0,100);double_press.advance_vertical(i==0 || i==60,1.0f/120,0,100);require(ground_distance(single.feet_position(),double_press.feet_position())<1e-6,"airborne jump reset vertical speed");}
         // Controller and actual rendered corridor roof both stop the head.
         FirstPersonController low;low.spawn({0,0,0});
         for(int i=0;i<360;++i){low.advance_vertical(i==0,1.0f/120,0,low.body_height()+0.30f);require(low.feet_position().y<=0.281f,"jump passed ceiling");}
@@ -1546,7 +1547,7 @@ struct NavigationRegression {
     }
 
     static void oxygen(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(192);
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(192);
         app.status_.reset();auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
         const auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
         app.placed_resources_={resource(ResourceKind::SolarPanel,{-40,0,-20}),resource(ResourceKind::WaterStorage,{-20,0,-20}),resource(ResourceKind::WaterStorage,{60,0,60}),resource(ResourceKind::StorageDome,{0,0,20})};
@@ -1594,7 +1595,7 @@ struct NavigationRegression {
     }
 
     static void hydrogen_refueling(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(192);app.status_.reset();
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(192);app.status_.reset();
         app.builder_robots_.resize(1);app.builder_robots_[0].position={60,0,60};
         auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
         auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
@@ -1662,12 +1663,12 @@ struct NavigationRegression {
         const auto morning=solar_tracking::pose(6.25f),noon=solar_tracking::pose(12.0f),evening=solar_tracking::pose(17.75f),night=solar_tracking::pose(20.0f);
         require(morning.above_horizon && morning.direction.x>0.95f && morning.elevation_degrees>0,"star does not rise in the east above the horizon");
         require(noon.above_horizon && noon.direction.z<-0.45f && noon.elevation_degrees>59.0f && noon.elevation_degrees<61.0f,"noon star is not on the southern 60-degree reference arc");
-        require(std::abs(eng::length(noon.position)-solar_tracking::kStarReferenceDistanceMetres)<0.05f,"nonvisualized star has no stable future render position");
+        require(std::abs(game::runtime::length(noon.position)-solar_tracking::kStarReferenceDistanceMetres)<0.05f,"nonvisualized star has no stable future render position");
         require(evening.above_horizon && evening.direction.x<-0.95f,"star does not cross toward the western horizon");
         require(!night.above_horizon && night.irradiance_fraction==0,"night star still produces photovoltaic irradiance");
         require(noon.irradiance_fraction>0.99f && morning.irradiance_fraction>0.99f,"two-axis tracking failed to retain near-normal incidence away from the horizon ramp");
 
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(160);app.status_.reset();
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(160);app.status_.reset();
         auto clock=app.status_.state();clock.hour=0;clock.crew_current=0;app.status_.restore(clock);
         auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
         auto habitat=[](HabitatKind kind,Vec3 p){PlacedHabitat h;h.kind=kind;h.position=p;h.construction.step=kConstructionSteps;return h;};
@@ -1699,19 +1700,19 @@ struct NavigationRegression {
         auto solar_clock=solar.status_.state();solar_clock.hour=8;solar.status_.restore(solar_clock);solar.update_supply_simulation(2.0f);GeometryRecorder east_view;solar.render_resources(east_view);
         solar_clock.hour=12;solar.status_.restore(solar_clock);GeometryRecorder unchanged_view;solar.render_resources(unchanged_view);
         require(east_view.triangles.size()==unchanged_view.triangles.size() && !east_view.triangles.empty(),"tracked solar renderer emitted inconsistent geometry");
-        float instant_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)instant_shift=std::max(instant_shift,eng::length(east_view.triangles[i]-unchanged_view.triangles[i]));
+        float instant_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)instant_shift=std::max(instant_shift,game::runtime::length(east_view.triangles[i]-unchanged_view.triangles[i]));
         require(instant_shift<0.001f,"solar collector jumped when the target sun position changed");
         solar.update_supply_simulation(0.1f);GeometryRecorder transition_view;solar.render_resources(transition_view);
-        float transition_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)transition_shift=std::max(transition_shift,eng::length(east_view.triangles[i]-transition_view.triangles[i]));
+        float transition_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)transition_shift=std::max(transition_shift,game::runtime::length(east_view.triangles[i]-transition_view.triangles[i]));
         require(transition_shift>0.01f && transition_shift<0.75f,"solar collector did not begin a smooth slew toward the new sun position");
         solar.update_supply_simulation(2.0f);GeometryRecorder noon_view;solar.render_resources(noon_view);
-        float max_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)max_shift=std::max(max_shift,eng::length(east_view.triangles[i]-noon_view.triangles[i]));
+        float max_shift=0;for(std::size_t i=0;i<east_view.triangles.size();++i)max_shift=std::max(max_shift,game::runtime::length(east_view.triangles[i]-noon_view.triangles[i]));
         require(max_shift>0.25f,"solar collector head did not follow the star across the playfield");
         std::cout<<"Hydrogen electrolysis/fuel-cell energy cycle, network isolation, realistic star arc and two-axis solar tracking passed\n";
     }
 
     static void battery_bootstrap(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
 
         // A colony without an operational workshop must never become a permanent
         // energy deadlock. Reproduce the failure mode from 0-43-28(1).gmsave:
@@ -1835,7 +1836,7 @@ struct NavigationRegression {
     }
 
     static void progression(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);app.debug_frame_enabled_=false;app.status_.reset();
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(128);app.debug_frame_enabled_=false;app.status_.reset();
         require(app.status_.crew_current()==0 && app.status_.crew_capacity()==0,"fresh colony already contains human crew");
         auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
         auto habitat=[](HabitatKind kind,HabitatSizeTier size,Vec3 p){PlacedHabitat h;h.kind=kind;h.size=size;h.position=p;h.construction.step=kConstructionSteps;return h;};
@@ -1860,17 +1861,17 @@ struct NavigationRegression {
     }
 
     static void debug_orders(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();app.ground_resource_piles_.clear();
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();app.ground_resource_piles_.clear();
         app.builder_robots_[0].position={-20,0,-12};app.builder_robots_[1].position={-20,0,12};
         app.debug_frame_enabled_=false;require(!app.issue_debug_robot_move(0,{20,0,-12}),"manual robot order admitted outside debug mode");app.debug_frame_enabled_=true;
         require(!app.issue_debug_robot_move(0,{1000,0,0}),"off-map manual robot order admitted");
         PlacedResource obstacle;obstacle.kind=ResourceKind::PowerStorage;obstacle.construction.step=kConstructionSteps;obstacle.position={0,0,-12};obstacle.placement_sequence=1;app.placed_resources_={obstacle};
         require(app.issue_debug_robot_move(0,{20,0,-12}) && app.issue_debug_robot_move(1,{20,0,12}),"idle robots refused debug orders");
-        for(int frame=0;frame<2400;++frame){app.update_construction(1.f/60);for(const auto& r:app.builder_robots_)require(r.safety.mode!=SafetyMode::Fault,"manual move bypassed safety or faulted");require(distance(app.builder_robots_[0].position,app.builder_robots_[1].position)>2.0f,"manual robots collided");}
-        for(std::size_t i=0;i<2;++i){const auto& r=app.builder_robots_[i];require(r.debug_move_active && distance(r.position,r.debug_move_destination)<0.30f,"debug robot failed to reach/hold destination "+std::to_string(i)+" at "+std::to_string(r.position.x)+","+std::to_string(r.position.z));}
+        for(int frame=0;frame<2400;++frame){app.update_construction(1.f/60);for(const auto& r:app.builder_robots_)require(r.safety.mode!=SafetyMode::Fault,"manual move bypassed safety or faulted");require(ground_distance(app.builder_robots_[0].position,app.builder_robots_[1].position)>2.0f,"manual robots collided");}
+        for(std::size_t i=0;i<2;++i){const auto& r=app.builder_robots_[i];require(r.debug_move_active && ground_distance(r.position,r.debug_move_destination)<0.30f,"debug robot failed to reach/hold destination "+std::to_string(i)+" at "+std::to_string(r.position.x)+","+std::to_string(r.position.z));}
         std::array<Vec3,2> held{{app.builder_robots_[0].position,app.builder_robots_[1].position}};
         for(int frame=0;frame<180;++frame)app.update_construction(1.f/60);
-        for(std::size_t i=0;i<2;++i)require(distance(held[i],app.builder_robots_[i].position)<0.05f,"custom placement did not hold");
+        for(std::size_t i=0;i<2;++i)require(ground_distance(held[i],app.builder_robots_[i].position)<0.05f,"custom placement did not hold");
         require(app.issue_debug_robot_move(0,{40,0,-12}) && app.issue_debug_robot_move(1,{40,0,12}),"idle robots could not retarget their custom orders");
         for(int frame=0;frame<20;++frame)app.update_construction(1.f/60);
         require(app.builder_robots_[0].current_speed_mps>0.1f && app.builder_robots_[1].current_speed_mps>0.1f,"manual preemption fixture never started moving");
@@ -1885,7 +1886,7 @@ struct NavigationRegression {
         std::cout<<"Two debug robots route around obstacles, hold destination, reject busy/off-map orders and yield to real builder/carrier work\n";
     }
     static void build_priority(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();app.ground_resource_piles_={{MaterialResource::Iron,1000,{-30,0,30},0.4f,1}};
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();app.ground_resource_piles_={{MaterialResource::Iron,1000,{-30,0,30},0.4f,1}};
         for(int i=0;i<3;++i){PlacedResource job;job.kind=ResourceKind::SolarPanel;job.position={(float)(i-1)*24,0,-20};job.placement_sequence=i+1;job.resource_plan.total_steps=kConstructionSteps;for(auto& step:job.resource_plan.steps)step.iron=10;app.placed_resources_.push_back(job);}
         app.builder_robots_[0].position={24,0,20};app.builder_robots_[1].position={-24,0,20};
         app.toggle_construction_priority({ConstructionTargetKind::Resource,2});app.toggle_construction_priority({ConstructionTargetKind::Resource,1});
@@ -1904,7 +1905,7 @@ struct NavigationRegression {
         std::cout<<"Builder/carrier priority dispatch, restore-normal ordering, stable IDs, schema-19 roundtrip passed\n";
     }
     static void airlock_cycle(){
-        eng::Application engine;int cases=0;
+        game::runtime::GameHost engine;int cases=0;
         for(auto size:{HabitatSizeTier::Small,HabitatSizeTier::Standard})for(float rotation:{0.f,37.f,90.f,180.f})for(int inside:{-1,1}){
             GameApp app(engine);app.playfield_.rebuild(128);app.corridor_network_.set_playfield_half_extent(64);
             PlacedHabitat air;air.kind=HabitatKind::AirLock;air.size=size;air.rotation_degrees=rotation;air.construction.step=kConstructionSteps;air.placement_sequence=1;air.supply.power_fraction=1.0;app.placed_habitats_={air};
@@ -1964,7 +1965,7 @@ struct NavigationRegression {
                 for(auto& state:app.pressure_doors_)state.open_fraction=0;
                 const auto point=d.wall_position+Vec3{0,1.1f,0};GeometryRecorder draw;app.render_habitats(draw);
                 require(segment_hits_mesh(point-d.normal*0.35f,point+d.normal*0.35f,draw.triangles),"rendered internal door does not seal");
-                for(auto& state:app.pressure_doors_)if(distance(state.door.wall_position,d.wall_position)<0.01f)state.open_fraction=1;
+                for(auto& state:app.pressure_doors_)if(ground_distance(state.door.wall_position,d.wall_position)<0.01f)state.open_fraction=1;
                 draw.triangles.clear();app.render_habitats(draw);
                 require(!segment_hits_mesh(point-d.normal*0.35f,point+d.normal*0.35f,draw.triangles),"rendered internal door does not retract");
                 const Vec3 side{-d.normal.z,0,d.normal.x};
@@ -1978,7 +1979,7 @@ struct NavigationRegression {
     }
 
     static void astronaut_waypoints(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         app.new_game_phase_selection_=GameApp::GamePhase::Debug;
         app.start_new_game(GameApp::Stage3Mode::AstronautTest);
@@ -1996,13 +1997,13 @@ struct NavigationRegression {
         }
         require(passed && first_corner_speed>.9f*astronaut_walk_speed(true),
                 "crew brakes at a gentle intermediate waypoint");
-        require(!actor.destination && distance(actor.position,destination)<.001f &&
+        require(!actor.destination && ground_distance(actor.position,destination)<.001f &&
                 actor.speed<.65f*astronaut_walk_speed(true),"crew did not brake and arrive at the destination");
         std::cout<<"Crew carries speed through a gentle bend and brakes at the destination\n";
     }
 
     static void astronaut_access(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         app.new_game_phase_selection_=GameApp::GamePhase::Debug;
         app.start_new_game(GameApp::Stage3Mode::AstronautTest);
@@ -2070,7 +2071,7 @@ struct NavigationRegression {
         lunar_look::append_corridor_fixtures(guide_lights,app.corridor_network_.connections().front());
         require(guide_lights.size()>1,"powered corridor omitted its guide lights");
         travel(1300);
-        require(!crew.destination && distance(crew.position,goal)<.04f && crew.suited,
+        require(!crew.destination && ground_distance(crew.position,goal)<.04f && crew.suited,
                 "crew did not walk through the air lock to the unpressurized habitat");
         auto& supply=app.placed_habitats_[1].supply;
         supply.oxygen_kg=.999*supply.volume_m3*kOxygenKgPerM3;
@@ -2083,15 +2084,15 @@ struct NavigationRegression {
         crew.activity=AstronautActivity::Manual;
         crew.destination=outside;
         travel(1400);
-        require(!crew.destination && crew.suited && distance(crew.position,outside)<.04f,
+        require(!crew.destination && crew.suited && ground_distance(crew.position,outside)<.04f,
                 "crew did not re-suit and exit through the air lock");
         std::cout<<"Stage 3 crew waited for a powered air lock, traversed to a habitat, changed suits at full air and exited suited\n";
     }
 
     static void astronaut_autonomy(){
-        using eng::Vec3;
+        using game::runtime::Vec3;
         using world_math::distance_xz;
-        eng::Application platform;
+        game::runtime::GameHost platform;
         GameApp app(platform);
         app.new_game_phase_selection_=GameApp::GamePhase::Debug;
         app.start_new_game(GameApp::Stage3Mode::AstronautTest);
@@ -2211,7 +2212,7 @@ struct NavigationRegression {
     }
 
     static void airlock_connections(){
-        eng::Application engine;int cases=0;
+        game::runtime::GameHost engine;int cases=0;
         for(auto size:{HabitatSizeTier::Small,HabitatSizeTier::Standard})for(float rotation:{0.f,37.f,90.f,180.f})for(int end:{-1,1}){
             GameApp app(engine);app.playfield_.rebuild(128);app.corridor_network_.set_playfield_half_extent(64);app.utility_network_.set_playfield_half_extent(64);
             PlacedHabitat air;air.kind=HabitatKind::AirLock;air.size=size;air.position={3,0,4};air.rotation_degrees=rotation;air.construction.step=kConstructionSteps;air.placement_sequence=1;app.placed_habitats_={air};
@@ -2233,7 +2234,7 @@ struct NavigationRegression {
             app.corridor_network_.mutable_connections()[0].construction.step=kCorridorConstructionSteps;
             require(!app.habitat_exterior_access_enabled(0,0),"air lock exposed legacy authored surface access");
             const auto air_doors=app.habitat_doors(0);require(air_doors.size()==4,"air lock no longer has four generated/structural pressure doors");
-            bool mirrored=false;for(const auto& d:air_doors)mirrored=mirrored || eng::dot(d.normal,outer_normal)>0.95f;
+            bool mirrored=false;for(const auto& d:air_doors)mirrored=mirrored || game::runtime::dot(d.normal,outer_normal)>0.95f;
             require(mirrored,"inside connection did not create the opposite exterior air-lock seal");
             WalkwayBuildAnchor w{WalkwayEndpointKind::Habitat,0,outer},wo{WalkwayEndpointKind::Open,0,outer+outer_normal*14};
             require(!app.walkway_network_.preview_connection(w,wo,app.corridor_network_,app.utility_network_,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"walkway occupied the reserved exterior hatch");
@@ -2262,7 +2263,7 @@ struct NavigationRegression {
                 const Vec3 cursor=air.position+world_math::rotate_y(local_cursor,rotation);
                 const auto selected=app.utility_anchor_at(cursor,UtilityKind::SupplyChannel);
                 require(selected && selected->kind==UtilityEndpointKind::Habitat && selected->index==0,"Air Lock side was not selectable through player supply-channel snapping");
-                const Vec3 away=cursor+world_math::rotate_y(eng::normalize(local_cursor)*14.0f,rotation);
+                const Vec3 away=cursor+world_math::rotate_y(game::runtime::normalize(local_cursor)*14.0f,rotation);
                 const auto port=app.utility_network_.preview_anchor(UtilityKind::SupplyChannel,*selected,away,app.placed_habitats_,app.habitat_models_,{},app.resource_models_);
                 require(port.has_value(),"Air Lock cursor-selected side did not resolve to a physical supply port");
                 const Vec3 lp=world_math::rotate_y(port->position-air.position,-rotation);
@@ -2281,7 +2282,7 @@ struct NavigationRegression {
     }
 
     static void hydroponics(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();
         auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
         PlacedResource solar;solar.kind=ResourceKind::SolarPanel;solar.position={-20,0,0};solar.construction.step=kConstructionSteps;
         PlacedResource battery;battery.kind=ResourceKind::PowerStorage;battery.position={-10,0,0};battery.construction.step=kConstructionSteps;battery.supply.energy_kwh=power_storage_capacity_kwh(ResourceSizeTier::Standard);
@@ -2343,7 +2344,7 @@ struct NavigationRegression {
     }
 
     static void reordered_builds(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         app.playfield_.rebuild(128);
         app.starting_robot_count_=1;
@@ -2413,7 +2414,7 @@ struct NavigationRegression {
     }
 
     static void queue_and_flow(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();app.ground_resource_piles_={{MaterialResource::Iron,1000,{-30,0,30},0.4f,1}};
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(128);app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();app.ground_resource_piles_={{MaterialResource::Iron,1000,{-30,0,30},0.4f,1}};
         for(int i=0;i<3;++i){PlacedResource r;r.kind=ResourceKind::SolarPanel;r.position={(float)(i-1)*20,0,-20};r.placement_sequence=i+1;r.resource_plan.total_steps=kConstructionSteps;for(auto& cost:r.resource_plan.steps)cost.iron=10;app.placed_resources_.push_back(r);}
         app.builder_robots_[0].position={-20,0,20};app.builder_robots_[1].position={20,0,20};
         app.toggle_construction_priority({ConstructionTargetKind::Resource,1});app.toggle_construction_priority({ConstructionTargetKind::Resource,2});
@@ -2454,7 +2455,7 @@ struct NavigationRegression {
         std::cout<<"FIFO until completion/removal, ready corridor/pipe precedence, prerequisite escape, save roundtrip and measured charge/fill/drain/load rates passed\n";
     }
     static void power_switches(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         app.active_game_phase_=GameApp::GamePhase::Debug;
         app.playfield_.rebuild(128);
@@ -2594,14 +2595,7 @@ struct NavigationRegression {
             require(snapshot().air_link_lengths!=original,"structure height change reused stale air distances");
         }
 
-        // Pass uploads must retain draw order, style and nonoverlapping ranges.
-        eng::GeometryStream stream;float a[]{1,2,3,4,5,6},b[]{7,8,9,10,11,12};
-        stream.append(a,6,1,{1,0,0,1},2);stream.append(b,6,1,{1,0,0,1},2);
-        require(stream.commands.size()==1 && stream.commands[0].count==4,"adjacent compatible draws did not merge");
-        stream.append(a,6,4,{0,1,0,0.5f},1);
-        require(stream.commands.size()==2 && stream.commands[1].first==4 && stream.commands[1].count==2 && stream.vertices[6]==7,"stream lost ordering or overwrote an earlier draw");
-        stream.clear();require(stream.commands.empty() && stream.vertices.empty(),"projection boundary retained stale geometry");
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(192);
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(192);
         auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
         for(int k=0;k<(int)HabitatKind::Count;++k){PlacedHabitat h;h.kind=(HabitatKind)k;h.size=HabitatSizeTier::Small;h.position={(float)k*12,0,20};h.construction.step=kConstructionSteps;app.placed_habitats_.push_back(h);}
         for(auto kind:{ResourceKind::SolarPanel,ResourceKind::PowerStorage,ResourceKind::WaterStorage,ResourceKind::StorageDome}){PlacedResource r;r.kind=kind;r.position={(float)app.placed_resources_.size()*12,0,-20};r.construction.step=kConstructionSteps;app.placed_resources_.push_back(r);}
@@ -2634,7 +2628,7 @@ struct NavigationRegression {
         std::cout<<"All indoor types fill via mixed pipes/corridors and external manifolds; blueprint completion, solar doubling and ordered geometry streaming passed\n";
     }
     static void supply(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(192);app.builder_robots_.resize(1);app.builder_robots_[0].position={-80,0,80};
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(192);app.builder_robots_.resize(1);app.builder_robots_[0].position={-80,0,80};
         auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
         app.status_.reset();auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
         require(std::abs(power_storage_capacity_kwh(ResourceSizeTier::Standard)-135.0)<1e-9 && std::abs(power_storage_capacity_kwh(ResourceSizeTier::Small)-67.5)<1e-9,"power storage capacity increase missing");
@@ -2703,7 +2697,7 @@ struct NavigationRegression {
         require(gate.add_storage_gate_at(0,53.25f),"free-angle gate rejected");
         const auto& owner=gate.placed_resources_[0];const auto n=storage_loading::normal(owner);
         require(std::abs(std::atan2(n.x,n.z)*180.0/3.141592653589793-53.25)<1e-4,"continuous gate angle quantized");
-        const auto service=storage_loading::service(owner);require(distance(service,storage_loading::mouth(owner))<1.6f,"cargo placing area remains too far from gate");
+        const auto service=storage_loading::service(owner);require(ground_distance(service,storage_loading::mouth(owner))<1.6f,"cargo placing area remains too far from gate");
         UtilityConnection blocked;blocked.path={service-Vec3{4,0,0},service+Vec3{4,0,0}};gate.utility_network_.mutable_connections().push_back(blocked);
         require(!gate.gate_route_clear(blocked.path,0.35f),"pipe crosses reserved placing pad");
         require(!gate.resource_placement_valid(ResourceKind::Antenna,ResourceSizeTier::Small,StorageDomeSize::Small,service,0),"structure overlaps gate pad");
@@ -2717,7 +2711,7 @@ struct NavigationRegression {
     }
 
     static void utilities(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);app.playfield_.rebuild(192);
         auto complete_resource=[](ResourceKind kind,Vec3 p){
             PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;
@@ -2808,7 +2802,7 @@ struct NavigationRegression {
         CorridorBuildAnchor corridor_anchor{CorridorEndpointKind::Resource,0,hit};
         auto corridor_ep=storage.corridor_network_.preview_anchor(corridor_anchor,hit+dir*18.0f,{},storage.habitat_models_,storage.placed_resources_,storage.resource_models_);
         require(corridor_ep.has_value(),"free-angle storage corridor anchor rejected");
-        require(eng::dot(corridor_ep->door.normal,dir)>0.995f,"storage corridor anchor snapped away from cursor-selected hull angle");
+        require(game::runtime::dot(corridor_ep->door.normal,dir)>0.995f,"storage corridor anchor snapped away from cursor-selected hull angle");
         require(std::abs(corridor_ep->door.normal.x)>0.12f && std::abs(corridor_ep->door.normal.z)>0.12f,
                 "storage corridor anchor quantized to a cardinal axis");
 
@@ -2816,7 +2810,7 @@ struct NavigationRegression {
         auto utility_ep=storage.utility_network_.preview_anchor(UtilityKind::SupplyChannel,utility_anchor,hit+dir*18.0f,
             {},storage.habitat_models_,storage.placed_resources_,storage.resource_models_);
         require(utility_ep.has_value(),"free-angle storage supply anchor rejected");
-        require(eng::dot(utility_ep->normal,dir)>0.995f,"storage supply anchor snapped away from cursor-selected hull angle");
+        require(game::runtime::dot(utility_ep->normal,dir)>0.995f,"storage supply anchor snapped away from cursor-selected hull angle");
         UtilityBuildAnchor open{UtilityEndpointKind::Open,0,hit+dir*18.0f+Vec3{5,0,4}};
         auto route=storage.utility_network_.preview_connection(UtilityKind::SupplyChannel,utility_anchor,open,
             {},storage.habitat_models_,storage.placed_resources_,storage.resource_models_);
@@ -2824,9 +2818,9 @@ struct NavigationRegression {
         Vec3 first{};bool found_first=false;
         for(std::size_t i=1;i<route->path.size();++i){
             Vec3 step=route->path[i]-route->path[0];step.y=0;
-            if(eng::length(step)>0.15f){first=eng::normalize(step);found_first=true;break;}
+            if(game::runtime::length(step)>0.15f){first=game::runtime::normalize(step);found_first=true;break;}
         }
-        require(found_first && eng::dot(first,dir)>0.70f,"storage supply route did not leave the dome smoothly along its selected tangent");
+        require(found_first && game::runtime::dot(first,dir)>0.70f,"storage supply route did not leave the dome smoothly along its selected tangent");
         UtilityBuildAnchor cargo{UtilityEndpointKind::Resource,0,storage_loading::wall(dome)};
         require(!storage.utility_network_.preview_anchor(UtilityKind::SupplyChannel,cargo,storage_loading::service(dome),
             {},storage.habitat_models_,storage.placed_resources_,storage.resource_models_),"supply channel occupied a storage cargo gate sector");
@@ -2835,7 +2829,7 @@ struct NavigationRegression {
     }
 
     static void gates(){
-        eng::Application engine;GameApp app(engine);app.playfield_.rebuild(256);
+        game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(256);
         for(float rotation:{0.0f,37.0f,90.0f,135.0f,270.0f}){
             CorridorDoor d;d.normal=world_math::rotate_y({1,0,0},rotation);
             d.position=d.wall_position={0,0.5f,0};
@@ -2961,7 +2955,7 @@ struct NavigationRegression {
         for(int frame=0;frame<7200 && app.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)<60;++frame){
             app.update_construction(1.0f/60);
             for(const auto& bot:app.builder_robots_) require(bot.safety.mode!=SafetyMode::Fault,"cargo fleet safety fault");
-            require(distance(app.builder_robots_[1].position,app.builder_robots_[2].position)>1.88f,"cargo fleet collision");
+            require(ground_distance(app.builder_robots_[1].position,app.builder_robots_[2].position)>1.88f,"cargo fleet collision");
         }
         require(app.placed_resources_[0].stored_resources.amount(MaterialResource::Iron)==60,"shared gate deposits did not finish");
         std::string error;require(app.save_game_to_name("gate-regression",error),error);
@@ -2991,11 +2985,11 @@ struct NavigationRegression {
         std::cout<<"Pressure seals, swept door collision, 20 rotated loading gates, reserved routing, shared deposits/withdrawals, construction and save round trip passed\n";
     }
     static void interior_aisles(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         app.playfield_.rebuild(128);
         const auto walk=[&](Vec3 a,Vec3 b,GameApp::CrewTraversal traversal,const std::string& label){
-            const int slices=std::max(1,(int)std::ceil(distance(a,b)/.08f));
+            const int slices=std::max(1,(int)std::ceil(ground_distance(a,b)/.08f));
             for(int i=1;i<=slices;++i){
                 const Vec3 from=a+(b-a)*((float)(i-1)/slices);
                 const Vec3 to=a+(b-a)*((float)i/slices);
@@ -3046,10 +3040,10 @@ struct NavigationRegression {
     }
 
     static void geometry(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);app.playfield_.rebuild(256);
         const auto check_walk=[&](Vec3 a,Vec3 b,const std::string& label){
-            const int n=std::max(1,(int)std::ceil(distance(a,b)/0.04f));
+            const int n=std::max(1,(int)std::ceil(ground_distance(a,b)/0.04f));
             a.y=app.first_person_floor_height(a);
             for(int j=1;j<=n;++j){
                 Vec3 p=a+(b-a)*((float)j/n);p.y=app.first_person_floor_height(p);
@@ -3065,7 +3059,7 @@ struct NavigationRegression {
         };
         const std::vector<Vec3> wall{{0,0,-5},{0,4,5},{0,0,5},{0,0,-5},{0,4,-5},{0,4,5}};
         const auto carved=mesh_portals::subtract(wall,{{0,0,0},{1,0,0},0.5f,0.7f,0.5f,2.95f});
-        float area=0;for(std::size_t i=0;i+2<carved.size();i+=3) area+=eng::length(eng::cross(carved[i+1]-carved[i],carved[i+2]-carved[i]))*0.5f;
+        float area=0;for(std::size_t i=0;i+2<carved.size();i+=3) area+=game::runtime::length(game::runtime::cross(carved[i+1]-carved[i],carved[i+2]-carved[i]))*0.5f;
         require(std::abs(area-(40.0f-1.4f*2.45f))<0.001f,"exact portal aperture area");
         for(int kind=1;kind<(int)HabitatKind::Count;++kind) for(int tier=0;tier<(int)HabitatSizeTier::Count;++tier) for(float rotation:{180.0f,135.0f,90.0f}){
             app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
@@ -3077,7 +3071,7 @@ struct NavigationRegression {
             app.placed_habitats_={a,b};
             const auto& mesh=app.habitat_models_.mesh(b);
             require(mesh.entrances.empty() && mesh.entrance_access.empty(),"habitat retained a predefined entrance");
-            const auto toward_hull=[&](const PlacedHabitat& h,Vec3 toward){const auto& hm=app.habitat_models_.mesh(h);Vec3 d=toward-h.position;d.y=0;if(eng::length(d)<0.01f)d={1,0,0};d=eng::normalize(d);return h.position+d*(std::max(hm.footprint_x,hm.footprint_z)*0.55f);};
+            const auto toward_hull=[&](const PlacedHabitat& h,Vec3 toward){const auto& hm=app.habitat_models_.mesh(h);Vec3 d=toward-h.position;d.y=0;if(game::runtime::length(d)<0.01f)d={1,0,0};d=game::runtime::normalize(d);return h.position+d*(std::max(hm.footprint_x,hm.footprint_z)*0.55f);};
             const CorridorBuildAnchor ca{CorridorEndpointKind::Habitat,0,toward_hull(a,b.position)};
             const CorridorBuildAnchor cb{CorridorEndpointKind::Habitat,1,toward_hull(b,a.position)};
             auto c=app.corridor_network_.preview_built_corridor(ca,cb,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
@@ -3113,8 +3107,8 @@ struct NavigationRegression {
                 const CorridorBuildAnchor anchor{CorridorEndpointKind::Habitat,0,h.position+dir*(std::max(hm.footprint_x,hm.footprint_z)+4.0f)};
                 const auto ep=app.corridor_network_.preview_anchor(anchor,h.position+dir*100.0f,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
                 require(ep.has_value(),"360-degree corridor attachment missing at "+std::to_string(degree));
-                const Vec3 selected=eng::normalize(Vec3{ep->door.wall_position.x-h.position.x,0,ep->door.wall_position.z-h.position.z});
-                require(eng::dot(selected,dir)>0.9995f,"corridor attachment position snapped away from cursor angle at "+std::to_string(degree));
+                const Vec3 selected=game::runtime::normalize(Vec3{ep->door.wall_position.x-h.position.x,0,ep->door.wall_position.z-h.position.z});
+                require(game::runtime::dot(selected,dir)>0.9995f,"corridor attachment position snapped away from cursor angle at "+std::to_string(degree));
                 walls.push_back(ep->door.wall_position);
             }
             for(std::size_t i=0;i<walls.size();++i){
@@ -3141,7 +3135,7 @@ struct NavigationRegression {
                     const auto endpoint=app.corridor_network_.preview_anchor(source,open.position,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
                     require(endpoint.has_value(),"Bio Dome front/back corridor anchor missing tier "+std::to_string(tier)+" rot "+std::to_string((int)rotation));
                     require(endpoint->door.wall_profile.size()>=10,"Bio Dome end hatch lacks conformal pressure profile");
-                    require(eng::dot(endpoint->door.normal,direction)>0.94f,"Bio Dome end hatch normal points away from selected end");
+                    require(game::runtime::dot(endpoint->door.normal,direction)>0.94f,"Bio Dome end hatch normal points away from selected end");
                     auto connection=app.corridor_network_.preview_built_corridor(source,open,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
                     require(connection.has_value(),"Bio Dome front/back corridor build preview rejected");
                 }
@@ -3178,7 +3172,7 @@ struct NavigationRegression {
             const auto c=app.corridor_network_.preview_built_corridor(a,b,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
             require(c.has_value(),"nearest legal structure spacing could not create corridor");
             require(c->path.size()==2,"nearest legal structure spacing did not create a straight corridor");
-            require(distance(c->path.front(),c->path.back())>=0.30f,"ground reservation left a degenerate corridor gap");
+            require(ground_distance(c->path.front(),c->path.back())>=0.30f,"ground reservation left a degenerate corridor gap");
         }
 
         // A close, unobstructed structure pair gets one straight corridor
@@ -3197,7 +3191,7 @@ struct NavigationRegression {
             const auto c=app.corridor_network_.preview_built_corridor(a,b,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
             require(c.has_value(),"close structure corridor unavailable");
             require(c->path.size()==2,"close structure corridor was bent/twisted instead of straight");
-            const Vec3 direct=eng::normalize(c->path.back()-c->path.front());
+            const Vec3 direct=game::runtime::normalize(c->path.back()-c->path.front());
             require(std::abs(direct.y)<0.01f,"close straight corridor changed elevation across the short gap");
         }
 

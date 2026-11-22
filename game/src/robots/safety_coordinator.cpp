@@ -13,7 +13,7 @@
 
 namespace game::robots {
 namespace {
-using eng::Vec3;
+using game::runtime::Vec3;
 constexpr float PI=3.14159265358979323846f;
 
 float dist_xz(Vec3 a,Vec3 b){
@@ -664,7 +664,7 @@ void recover_faulted_agents(float dt,float now,std::uint64_t world_epoch,
     }
     // Due fault recovery is not queued behind ordinary work/traffic replans.
     // Each search is still expansion-bounded and all read the same frozen world.
-    eng::TaskPool::shared().parallel_for(due.size(),[&](std::size_t job){
+    game::runtime::GameJobs::shared().parallel_for(due.size(),[&](std::size_t job){
         ensure_route(agents[due[job]],world_epoch,world,true);
     });
     for(const auto i:due){
@@ -1172,11 +1172,11 @@ Vec3 find_pullout(const SafetyAgent& a,const SafetyWorldCallbacks& world,const s
     // across the worker pool, but results are consumed strictly in candidate
     // order: the chosen pull-out is identical to the serial scan.
     std::vector<Vec3> pending;
-    const std::size_t batch=std::max<std::size_t>(1,std::min<std::size_t>(8,eng::cpu_parallel_lanes()));
+    const std::size_t batch=std::max<std::size_t>(1,std::min<std::size_t>(8,game::runtime::cpu_parallel_lanes()));
     auto resolve_pending=[&](Vec3& chosen){
         if(pending.empty()) return false;
         std::vector<std::uint8_t> reachable(pending.size(),0);
-        eng::TaskPool::shared().parallel_for(pending.size(),[&](std::size_t k){
+        game::runtime::GameJobs::shared().parallel_for(pending.size(),[&](std::size_t k){
             std::vector<Vec3> route;
             reachable[k]=world.coarse_route(a.id,a.position,pending[k],0.12f,route)?1:0;
         });
@@ -1319,7 +1319,7 @@ bool find_stationary_detour(const SafetyAgent& a,std::size_t blocker_index,
     // the result identical to the serial search.
     std::vector<float> scores(candidates.size(),std::numeric_limits<float>::infinity());
     std::vector<std::uint8_t> reachable(candidates.size(),0);
-    eng::TaskPool::shared().parallel_for(candidates.size(),[&](std::size_t k){
+    game::runtime::GameJobs::shared().parallel_for(candidates.size(),[&](std::size_t k){
         std::vector<Vec3> route;
         if(!world.coarse_route(a.id,a.position,candidates[k].position,std::max(0.10f,stop_radius),route) || route.empty())
             return;
@@ -1828,7 +1828,7 @@ SafetyTickStats safety_tick(float dt,
     // host size, so fleet behaviour does not depend on core count); each
     // individual D* search is expansion-bounded/resumable, so no rover becomes
     // an unbounded frame-time task. Cheap proposal work still uses every lane.
-    const std::size_t visible_lanes=std::max<std::size_t>(1,eng::cpu_parallel_lanes());
+    const std::size_t visible_lanes=std::max<std::size_t>(1,game::runtime::cpu_parallel_lanes());
     const std::size_t route_search_lane_limit=std::min<std::size_t>(
         agents.size(),configured_route_search_lanes(visible_lanes));
     std::size_t remaining_route_search_budget=route_search_lane_limit;
@@ -1902,7 +1902,7 @@ SafetyTickStats safety_tick(float dt,
             if(rt.route_world_epoch==world_epoch) continue;
             revision_jobs.push_back(ai);
         }
-        eng::TaskPool::shared().parallel_for(revision_jobs.size(),[&](std::size_t job){
+        game::runtime::GameJobs::shared().parallel_for(revision_jobs.size(),[&](std::size_t job){
             refresh_route_world_revision(agents[revision_jobs[job]],world_epoch,world);
         });
 
@@ -1998,7 +1998,7 @@ SafetyTickStats safety_tick(float dt,
         // heavy route search is granted or the batch is large.
         bool heavy_batch=planner_jobs.size()>3;
         for(const std::size_t ai:planner_jobs) heavy_batch=heavy_batch || route_search_granted[ai]!=0;
-        if(heavy_batch) eng::TaskPool::shared().parallel_for(planner_jobs.size(),run_planner_job);
+        if(heavy_batch) game::runtime::GameJobs::shared().parallel_for(planner_jobs.size(),run_planner_job);
         else for(std::size_t job=0;job<planner_jobs.size();++job) run_planner_job(job);
 
         ReservationBoard board{};

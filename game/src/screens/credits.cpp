@@ -10,12 +10,12 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
 
-void GameApp::render_credits(Renderer& r){
+void GameApp::render_credits(SceneRenderer& r){
     ui::title(r,{32,26},"CREDITS",theme_);
     const float w=std::min(610.0f,ui_width(r)-2.0f*SCREEN_MARGIN);
     Rect p={(ui_width(r)-w)*0.5f,100,w,220};

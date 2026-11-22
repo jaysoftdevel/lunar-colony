@@ -1,5 +1,5 @@
 #pragma once
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include "game/systems/resource_management.hpp"
 #include <algorithm>
 #include <array>
@@ -10,7 +10,7 @@ namespace game::ore {
 inline constexpr std::array materials{MaterialResource::Iron,MaterialResource::Copper,
     MaterialResource::Silicon,MaterialResource::Aluminum};
 inline constexpr std::array<const char*,materials.size()> names{"IRON ORE","COPPER ORE","SILICON ORE","ALUMINUM ORE"};
-inline constexpr std::array<eng::Color,materials.size()> colors{{
+inline constexpr std::array<game::runtime::Color,materials.size()> colors{{
     {0.93f,0.32f,0.27f,1},{0.97f,0.62f,0.22f,1},{0.42f,0.78f,1,1},{0.60f,0.88f,0.37f,1}}};
 inline constexpr auto no_cargo=static_cast<std::uint8_t>(materials.size());
 inline constexpr std::int64_t box_kg=5;
@@ -25,13 +25,13 @@ struct Haul {
     std::uint64_t source{0}, destination{0};
     std::uint8_t kind{no_cargo};
     bool loaded{false};
-    eng::Vec3 goal{};
+    game::runtime::Vec3 goal{};
     bool goal_valid{false};
     bool active() const { return kind<no_cargo; }
 };
 
 using Mix=std::array<double,materials.size()>;
-inline Mix deposit(eng::Vec3 p){
+inline Mix deposit(game::runtime::Vec3 p){
     // Continuous deposits sampled in world space. The same location yields
     // the same mix regardless of playfield size, orientation or save/load.
     Mix result{};

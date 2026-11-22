@@ -1,12 +1,23 @@
 param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
     [string]$Configuration = "Release",
+    [string]$EnginePath = "",
     [switch]$Tests,
-    [switch]$Clean
+    [switch]$RenderTests,
+    [switch]$Clean,
+    [int]$Jobs = 0
 )
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$argsList = @($Configuration)
+$ErrorActionPreference = 'Stop'
+$argsList = @("build", $Configuration)
+if ($EnginePath) { $argsList += @("--engine", $EnginePath) }
 if ($Tests) { $argsList += "--tests" }
+if ($RenderTests) { $argsList += "--render-tests" }
 if ($Clean) { $argsList += "--clean" }
-& (Join-Path $Root "build.bat") @argsList
+if ($Jobs) { $argsList += @("--jobs", "$Jobs") }
+$Driver = Join-Path $PSScriptRoot "scripts/windows-build.py"
+if (Get-Command py -ErrorAction SilentlyContinue) {
+    & py -3 $Driver @argsList
+} else {
+    & python $Driver @argsList
+}
 exit $LASTEXITCODE

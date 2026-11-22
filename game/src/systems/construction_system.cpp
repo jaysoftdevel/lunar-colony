@@ -249,7 +249,7 @@ bool GameApp::debug_robot_move_available(std::size_t index) const {
     return r.mode==BuilderRobotMode::Idle && !r.target.valid() && r.cargo.empty() && r.logistics_reservation.empty() &&
         r.action==BuilderRobotAction::None && !r.drop_exit_pending;
 }
-bool GameApp::issue_debug_robot_move(std::size_t index,eng::Vec3 destination){
+bool GameApp::issue_debug_robot_move(std::size_t index,game::runtime::Vec3 destination){
     const float limit=(float)playfield_.size()*0.5f-1.5f;
     if(!debug_robot_move_available(index) || !std::isfinite(destination.x) || !std::isfinite(destination.z) ||
         std::abs(destination.x)>limit || std::abs(destination.z)>limit)return false;

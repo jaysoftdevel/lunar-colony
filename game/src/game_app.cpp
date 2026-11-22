@@ -11,7 +11,7 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
@@ -38,13 +38,14 @@ const char* GameApp::game_phase_short_name(GamePhase phase){
 void GameApp::on_start(){
     const auto preferences=load_preferences();
     graphics_=preferences.graphics;
+    first_person_.set_fov(float(preferences.first_person_fov));
     world_layout_mode_=preferences.mesh_layout?WorldLayoutMode::Mesh:WorldLayoutMode::FullGraphics;
     soundscape_.set_music_enabled(preferences.music_enabled);
     refresh_save_games();
 }
 
 void GameApp::persist_preferences(){
-    preferences_save_failed_=!save_preferences({graphics_,world_layout_mode_==WorldLayoutMode::Mesh,soundscape_.music_enabled()});
+    preferences_save_failed_=!save_preferences({graphics_,world_layout_mode_==WorldLayoutMode::Mesh,soundscape_.music_enabled(),int(std::lround(first_person_.fov()))});
 }
 
 void GameApp::toggle_world_layout(){
@@ -58,11 +59,11 @@ void GameApp::on_resize(int width,int height){
     ui_scale_=resolution_scale(viewport_width_,viewport_height_,UI_SCALES[std::clamp(ui_scale_index_,0,UI_SCALE_COUNT-1)]);
 }
 
-Rect GameApp::centered_button(Renderer& r,float y,float w,float h) const {
+Rect GameApp::centered_button(SceneRenderer& r,float y,float w,float h) const {
     return {(ui_width(r)-w)*0.5f,y,w,h};
 }
 
-void GameApp::render(Renderer& r){
+void GameApp::render(SceneRenderer& r){
     on_resize(r.width(),r.height());
     ui_input_=input_;
     ui_input_.mouse_x=(int)std::lround((float)input_.mouse_x/ui_scale_);
@@ -125,7 +126,7 @@ void GameApp::render(Renderer& r){
     r.end_frame();
 }
 
-void GameApp::render_pause_frame(Renderer& r) const {
+void GameApp::render_pause_frame(SceneRenderer& r) const {
     r.set_2d(ui_scale_);
     const float width=ui_width(r),height=ui_height(r);
     constexpr float thickness=3.5f;

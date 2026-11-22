@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include "game/robots/path_planner.hpp"
 #include "game/robots/rover_wheels.hpp"
 
@@ -97,14 +97,14 @@ inline const char* block_reason_name(BlockReason reason){
 struct TubePiece {
     float t0{0.0f};
     float t1{0.0f};
-    eng::Vec3 start{};
-    eng::Vec3 end{};
+    game::runtime::Vec3 start{};
+    game::runtime::Vec3 end{};
     float radius{0.0f};
 };
 
 struct TerminalHold {
     float start_time{0.0f};
-    eng::Vec3 position{};
+    game::runtime::Vec3 position{};
     float radius{0.0f};
 };
 
@@ -132,13 +132,13 @@ struct MotionContract {
 
 struct MotionProposal {
     MotionControl control{};
-    std::vector<eng::Vec3> preview{};
+    std::vector<game::runtime::Vec3> preview{};
     float cost{0.0f};
 };
 
 struct NavigationRequest {
     bool active{false};
-    eng::Vec3 goal{};
+    game::runtime::Vec3 goal{};
     float stop_radius{0.15f};
     float speed_scale{1.0f};
     bool work_target{false};
@@ -156,9 +156,9 @@ struct SafetyRuntime {
     BlockReason block_reason{BlockReason::None};
     std::size_t blocker_robot_id{kNoSafetyRobot};
 
-    eng::Vec3 goal{};
+    game::runtime::Vec3 goal{};
     bool goal_valid{false};
-    eng::Vec3 temporary_goal{};
+    game::runtime::Vec3 temporary_goal{};
     bool temporary_goal_valid{false};
     // A temporary waypoint selected specifically to route an active rover
     // around a stationary fleet obstacle.  The original goal stays intact and
@@ -169,7 +169,7 @@ struct SafetyRuntime {
     float speed_scale{1.0f};
     std::uint64_t goal_revision{0};
 
-    std::vector<eng::Vec3> cached_route{};
+    std::vector<game::runtime::Vec3> cached_route{};
     IncrementalPathPlannerState incremental_path{};
     std::size_t route_cursor{0};
     std::uint64_t route_world_epoch{0};
@@ -189,7 +189,7 @@ struct SafetyRuntime {
     float blocked_elapsed{0.0f};
     float wait_age{0.0f};
     float last_progress_time{0.0f};
-    eng::Vec3 last_progress_position{};
+    game::runtime::Vec3 last_progress_position{};
     std::uint32_t local_replans{0};
     std::uint32_t retreat_count{0};
     std::uint32_t stationary_detour_count{0};
@@ -205,8 +205,8 @@ struct SafetyRuntime {
     float predicted_robot_clearance_m{std::numeric_limits<float>::infinity()};
 
     bool route_replan_required{true};
-    eng::Vec3 route_origin{};
-    eng::Vec3 avoidance_velocity{};
+    game::runtime::Vec3 route_origin{};
+    game::runtime::Vec3 avoidance_velocity{};
     bool avoidance_velocity_valid{false};
     float avoidance_elapsed{0.0f};
     float recovery_cooldown{0.0f};
@@ -222,7 +222,7 @@ struct SafetyRuntime {
 
 struct SafetyAgent {
     std::size_t id{kNoSafetyRobot};
-    eng::Vec3 position{};
+    game::runtime::Vec3 position{};
     float heading_degrees{0.0f};
     float speed_mps{0.0f};
     float radius_m{0.8f};
@@ -235,16 +235,16 @@ struct SafetyAgent {
 };
 
 struct SafetyWorldCallbacks {
-    std::function<float(eng::Vec3)> floor_height;
-    std::function<bool(std::size_t,eng::Vec3)> point_clear;
-    std::function<bool(std::size_t,eng::Vec3,eng::Vec3)> segment_clear;
-    std::function<bool(std::size_t,eng::Vec3,eng::Vec3)> stationary_segment_clear;
-    std::function<bool(std::size_t,eng::Vec3,eng::Vec3,float,std::vector<eng::Vec3>&)> coarse_route;
+    std::function<float(game::runtime::Vec3)> floor_height;
+    std::function<bool(std::size_t,game::runtime::Vec3)> point_clear;
+    std::function<bool(std::size_t,game::runtime::Vec3,game::runtime::Vec3)> segment_clear;
+    std::function<bool(std::size_t,game::runtime::Vec3,game::runtime::Vec3)> stationary_segment_clear;
+    std::function<bool(std::size_t,game::runtime::Vec3,game::runtime::Vec3,float,std::vector<game::runtime::Vec3>&)> coarse_route;
     // Preferred stable-world route, including epoch-tagged parked actors. It
     // retains one D* Lite state per rover; moving fleet conflicts remain the
     // responsibility of reservations/local detours.
-    std::function<IncrementalPathResult(std::size_t,eng::Vec3,eng::Vec3,float,std::uint64_t,
-                                        IncrementalPathPlannerState&,std::vector<eng::Vec3>&)> incremental_route;
+    std::function<IncrementalPathResult(std::size_t,game::runtime::Vec3,game::runtime::Vec3,float,std::uint64_t,
+                                        IncrementalPathPlannerState&,std::vector<game::runtime::Vec3>&)> incremental_route;
 };
 
 struct SafetyTickStats {
@@ -272,6 +272,6 @@ SafetyTickStats safety_tick(float dt,
 // not admitted while it would intersect any currently certified motion, braking
 // branch, or terminal hold.
 bool contract_intersects_region(const MotionContract& contract,
-                                const std::function<bool(eng::Vec3,float)>& circle_intersects_region);
+                                const std::function<bool(game::runtime::Vec3,float)>& circle_intersects_region);
 
 } // namespace game::robots

@@ -30,11 +30,11 @@ inline void advance(PressureDoorState& state,float dt,bool requested,bool occupi
 }
 // Continuous body-vs-leaf slab test. Includes a body already straddling the
 // plane and long steps whose endpoints both lie beyond the panel thickness.
-inline bool blocks(const CorridorDoor& door,float fraction,eng::Vec3 from,eng::Vec3 to,float radius){
-    auto n=door.normal;n.y=0;n=eng::normalize(n);
-    const eng::Vec3 side{-n.z,0,n.x};
+inline bool blocks(const CorridorDoor& door,float fraction,game::runtime::Vec3 from,game::runtime::Vec3 to,float radius){
+    auto n=door.normal;n.y=0;n=game::runtime::normalize(n);
+    const game::runtime::Vec3 side{-n.z,0,n.x};
     const auto a=from-door.wall_position,b=to-door.wall_position;
-    const float da=eng::dot(a,n),db=eng::dot(b,n);
+    const float da=game::runtime::dot(a,n),db=game::runtime::dot(b,n);
     const float slab=radius+kThickness*0.5f;
     if(std::min(da,db)>slab || std::max(da,db)<-slab) return false;
     const float dv=db-da;
@@ -43,7 +43,7 @@ inline bool blocks(const CorridorDoor& door,float fraction,eng::Vec3 from,eng::V
         t0=std::max(0.0f,std::min((-slab-da)/dv,(slab-da)/dv));
         t1=std::min(1.0f,std::max((-slab-da)/dv,(slab-da)/dv));
     }
-    const float u0=eng::dot(a+(b-a)*t0,side),u1=eng::dot(a+(b-a)*t1,side);
+    const float u0=game::runtime::dot(a+(b-a)*t0,side),u1=game::runtime::dot(a+(b-a)*t1,side);
     const float aperture=geometry::kDoorClearWidth*0.5f;
     if(std::min(u0,u1)>aperture+radius || std::max(u0,u1)<-aperture-radius) return false;
     const float clear=clear_half_width(fraction);

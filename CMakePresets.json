@@ -1,6 +1,6 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
   "configurePresets": [
     {
       "name": "linux-base",
@@ -12,20 +12,20 @@
     {
       "name": "linux-release",
       "inherits": "linux-base",
-      "displayName": "Linux x64 - X11/OpenGL - Release",
+      "displayName": "Linux x64 - SDL/JSD OpenGL - Release",
       "binaryDir": "${sourceDir}/build/linux/Release",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "GAME_BUILD_NAVIGATION_TESTS": "ON" }
     },
     {
       "name": "linux-debug",
       "inherits": "linux-base",
-      "displayName": "Linux x64 - X11/OpenGL - Debug",
+      "displayName": "Linux x64 - SDL/JSD OpenGL - Debug",
       "binaryDir": "${sourceDir}/build/linux/Debug",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "GAME_BUILD_NAVIGATION_TESTS": "ON" }
     },
     {
       "name": "windows-x64",
-      "displayName": "Windows x64 - Win32/Direct3D 12",
+      "displayName": "Windows x64 - SDL/JSD OpenGL",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/windows",

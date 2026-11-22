@@ -1,6 +1,6 @@
 #pragma once
 #include "game/world/supply_state.hpp"
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include "game/world/habitat_mesh.hpp"
 #include "game/world/resource_mesh.hpp"
 #include "game/world/corridor_network.hpp"
@@ -36,16 +36,16 @@ enum class UtilityEndpointKind {
 struct UtilityBuildAnchor {
     UtilityEndpointKind kind{UtilityEndpointKind::Habitat};
     std::size_t index{0};
-    eng::Vec3 hit{};
+    game::runtime::Vec3 hit{};
     // Outward direction for network snaps or a conveyor start already picked.
-    eng::Vec3 normal_hint{};
+    game::runtime::Vec3 normal_hint{};
 };
 
 struct UtilityEndpoint {
     UtilityEndpointKind kind{UtilityEndpointKind::Habitat};
     std::size_t index{0};
-    eng::Vec3 position{};
-    eng::Vec3 normal{1.0f,0.0f,0.0f};
+    game::runtime::Vec3 position{};
+    game::runtime::Vec3 normal{1.0f,0.0f,0.0f};
 };
 
 enum class ConveyorRoute { Invalid, OreProcessor, OreStorage, Trade };
@@ -54,9 +54,9 @@ ConveyorRoute conveyor_route(const UtilityEndpoint& source,const UtilityEndpoint
                             const std::vector<PlacedHabitat>& habitats,const std::vector<PlacedResource>& resources);
 
 struct UtilityMesh {
-    std::vector<eng::Vec3> shell;
-    std::vector<eng::Vec3> details;
-    std::vector<eng::Vec3> edges;
+    std::vector<game::runtime::Vec3> shell;
+    std::vector<game::runtime::Vec3> details;
+    std::vector<game::runtime::Vec3> edges;
 };
 
 
@@ -85,17 +85,17 @@ struct UtilityConnection {
     std::uint8_t ore_cargo{ore::no_cargo};
     std::uint8_t ore_next{0};
     float ore_distance_m{0};
-    eng::Vec3 cargo_position(float distance) const;
-    eng::Vec3 ore_box_position() const { return cargo_position(ore_distance_m); }
+    game::runtime::Vec3 cargo_position(float distance) const;
+    game::runtime::Vec3 ore_box_position() const { return cargo_position(ore_distance_m); }
     SupplyState supply{};
     UtilityKind kind{UtilityKind::SupplyChannel};
     std::uint64_t placement_sequence{0};
     UtilityEndpoint endpoint_a{};
     UtilityEndpoint endpoint_b{};
-    std::vector<eng::Vec3> path{};
+    std::vector<game::runtime::Vec3> path{};
     // Supply channels form a shared manifold wherever two channel centerlines
     // cross. The junction is common to both power and water services.
-    std::vector<eng::Vec3> junctions{};
+    std::vector<game::runtime::Vec3> junctions{};
     UtilityMesh mesh{};
     StagedConstructionState construction{kSupplyConstructionSteps};
     ConstructionResourcePlan resource_plan{};
@@ -121,7 +121,7 @@ public:
     // port used by a connection. This is also used before the first click so
     // the source-port blueprint can float over the selected structure.
     std::optional<UtilityEndpoint> preview_anchor(
-        UtilityKind kind,const UtilityBuildAnchor& anchor,eng::Vec3 toward,
+        UtilityKind kind,const UtilityBuildAnchor& anchor,game::runtime::Vec3 toward,
         const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& habitat_library,
         const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library) const;
 

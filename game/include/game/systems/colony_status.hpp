@@ -20,7 +20,7 @@ public:
     int day() const { return day_; }
     float hour() const { return hour_; }
     solar_tracking::SolarPose sun_pose() const { return solar_tracking::pose(hour_); }
-    eng::Vec3 sun_direction() const { return sun_pose().direction; }
+    game::runtime::Vec3 sun_direction() const { return sun_pose().direction; }
     bool is_daylight() const { return sun_pose().above_horizon; }
     int power_current() const { return power_current_; }
     int power_capacity() const { return power_capacity_; }

@@ -3,8 +3,8 @@
 
 namespace game::habitats {
 namespace {
-void crane_arm(Builder& b,eng::Vec3 root,float side){
-    using namespace eng;
+void crane_arm(Builder& b,game::runtime::Vec3 root,float side){
+    using namespace game::runtime;
     Vec3 a=root;
     Vec3 c=a+Vec3{1.85f*side,0.25f,0};
     Vec3 d=c+Vec3{1.45f*side,-0.9f,0};

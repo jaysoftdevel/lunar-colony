@@ -8,7 +8,7 @@
 
 namespace game {
 namespace {
-using namespace eng;
+using namespace game::runtime;
 
 constexpr std::array profile_names{"HIGH","BALANCED","PERFORMANCE","CLASSIC"};
 constexpr std::array scene_names{"LUNAR ORBIT","LUNAR SURFACE","EARTH CAMPUS"};
@@ -60,7 +60,7 @@ struct TestColony {
         });
     }
 
-    bool draw(Renderer& r,BenchmarkScene test,bool enhanced) const {
+    bool draw(SceneRenderer& r,BenchmarkScene test,bool enhanced) const {
         const Vec3 eye=test==BenchmarkScene::Orbit?Vec3{75,79,94}:
             test==BenchmarkScene::Surface?Vec3{12,4,29}:Vec3{32,12,59};
         const Vec3 look=test==BenchmarkScene::Orbit?Vec3{0,1,-5}:
@@ -111,7 +111,7 @@ std::string number(double value,int precision){
 }
 }
 
-void GameApp::render_benchmark_settings(Renderer& r,Rect panel,const GraphicsCapabilities& caps){
+void GameApp::render_benchmark_settings(SceneRenderer& r,Rect panel,const GraphicsCapabilities& caps){
     const float x=panel.x+14.0f,inner=panel.w-28.0f,top=panel.y+77.0f;
     const auto line=[&](float y,const std::string& text,bool muted=true){
         ui::label_fitted(r,{x,y,inner,15},text,1.03f,theme_,muted);
@@ -178,7 +178,7 @@ void GameApp::render_benchmark_settings(Renderer& r,Rect panel,const GraphicsCap
         ui::label_fitted(r,{x,panel.y+panel.h-13,inner,11},"APPLIED FOR THIS SESSION. PREFERENCES COULD NOT BE SAVED.",0.78f,theme_);
 }
 
-bool GameApp::render_benchmark_scene(Renderer& r){
+bool GameApp::render_benchmark_scene(SceneRenderer& r){
     static const TestColony colony;
     const auto& trial=graphics_benchmark_.current();
     const auto scene=graphics_benchmark_.scene();

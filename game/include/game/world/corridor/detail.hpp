@@ -10,7 +10,7 @@
 namespace game::corridor_detail {
 CorridorDoor transformed_builtin_door(const PlacedHabitat& habitat,const HabitatMesh& mesh,std::size_t entrance_index);
 bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& habitat,const HabitatMesh& mesh);
-using namespace eng;
+using namespace game::runtime;
 
 constexpr float PI=3.14159265358979323846f;
 constexpr float CORRIDOR_HALF_WIDTH=geometry::kCorridorHalfWidth;
@@ -121,7 +121,7 @@ std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anch
                                                const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                                                const std::vector<CorridorConnection>& existing,float playfield_half_extent);
 std::optional<CorridorConnection> make_generic_via_waypoint(const CorridorBuildAnchor& a_anchor,const CorridorBuildAnchor& b_anchor,
-                                                            eng::Vec3 waypoint,CorridorConnectionKind kind,
+                                                            game::runtime::Vec3 waypoint,CorridorConnectionKind kind,
                                                             const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
                                                             const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                                                             const std::vector<CorridorConnection>& existing,float playfield_half_extent);

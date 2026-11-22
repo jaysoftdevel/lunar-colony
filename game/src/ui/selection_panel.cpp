@@ -14,7 +14,7 @@
 #include <sstream>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 using namespace world_labels;
@@ -80,7 +80,7 @@ std::string oxygen_net_text(const SupplyState& supply,bool paused){
 }
 }
 
-void GameApp::render_selection_panel(Renderer& r){
+void GameApp::render_selection_panel(SceneRenderer& r){
     if(selection_kind_==SelectionKind::Stash){render_stash_panel(r);return;}
     if(selection_kind_==SelectionKind::Lander){render_lunar_lander_panel(r);return;}
     sync_selection_panel_scroll();
@@ -103,7 +103,7 @@ void GameApp::render_selection_panel(Renderer& r){
     const float content_height=scrollable_panel?selection_panel_content_height():text_panel.h;
     float warning_extra=0;
     const auto row_visible=[&](float y,float h){return y>=text_panel.y+4.0f && y+h<=text_panel.y+text_panel.h-4.0f;};
-    const auto game_label=[&](Renderer& renderer,Vec2 pos,const std::string& text,float scale,const ui::Theme& theme,bool muted=false){
+    const auto game_label=[&](SceneRenderer& renderer,Vec2 pos,const std::string& text,float scale,const ui::Theme& theme,bool muted=false){
         if(pos.y>=text_panel.y+80.0f)pos.y+=warning_extra;
         pos.y-=panel_scroll;
         if(!row_visible(pos.y,14.0f))return;
@@ -139,7 +139,7 @@ void GameApp::render_selection_panel(Renderer& r){
 
     const auto warning_reasons=[&](const SupplyState& supply,bool complete,ResourceKind kind=ResourceKind::Count){
         if(!complete)return;
-        const auto lines=supply_warning_lines(supply,text_panel.w-28.0f,eng::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_),kind);
+        const auto lines=supply_warning_lines(supply,text_panel.w-28.0f,game::runtime::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_),kind);
         for(std::size_t i=0;i<lines.size();++i){
             const float y=text_panel.y+75.0f+(float)i*12.0f-panel_scroll;
             if(row_visible(y,11.0f))layout::game_label_fitted(r,{text_panel.x+14.0f,y,text_panel.w-28.0f,11.0f},lines[i],0.43f,theme_);

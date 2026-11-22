@@ -1,7 +1,7 @@
 #pragma once
 #include "game/world/supply_state.hpp"
 #include "game/world/hydroponics.hpp"
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
 #include <array>
@@ -66,13 +66,13 @@ inline const char* habitat_size_name(HabitatSizeTier size){
 }
 
 struct HabitatEntrance {
-    eng::Vec3 local_position{};
-    eng::Vec3 local_normal{1.0f,0.0f,0.0f};
+    game::runtime::Vec3 local_position{};
+    game::runtime::Vec3 local_normal{1.0f,0.0f,0.0f};
 };
 
 struct HabitatEntranceAccess {
-    std::vector<eng::Vec3> details;
-    std::vector<eng::Vec3> edges;
+    std::vector<game::runtime::Vec3> details;
+    std::vector<game::runtime::Vec3> edges;
 };
 
 inline constexpr int crew_quarters_bed_count(HabitatSizeTier size){
@@ -86,17 +86,18 @@ inline constexpr int crew_quarters_bed_count(HabitatSizeTier size){
 }
 
 struct CrewBunk {
-    eng::Vec3 access;
-    eng::Vec3 feet;
+    game::runtime::Vec3 access;
+    game::runtime::Vec3 feet;
 };
 
 struct HabitatMesh {
-    std::vector<eng::Vec3> shell;
-    std::vector<eng::Vec3> foundation;
-    std::vector<eng::Vec3> interior;
-    std::vector<eng::Vec3> details;
-    std::vector<eng::Vec3> glazing;
-    std::vector<eng::Vec3> edges;
+    std::vector<game::runtime::Vec3> shell;
+    std::vector<game::runtime::Vec3> foundation;
+    std::vector<game::runtime::Vec3> interior;
+    std::vector<game::runtime::Vec3> details;
+    std::vector<game::runtime::Vec3> glazing;
+    std::vector<game::runtime::Vec3> edges;
+    std::vector<game::runtime::Vec3> lining,deck,service_metal,fabric,displays,lamps,markings;
     float footprint_x{1.0f};
     float footprint_z{1.0f};
     float height{1.0f};
@@ -120,7 +121,7 @@ struct PlacedHabitat {
     std::uint32_t instance_serial{0};
     // Global FIFO blueprint order across every construction kind.
     std::uint64_t placement_sequence{0};
-    eng::Vec3 position{};
+    game::runtime::Vec3 position{};
     float rotation_degrees{0.0f};
     HabitatSizeTier size{HabitatSizeTier::Standard};
     ConstructionState construction{};

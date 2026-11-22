@@ -1,5 +1,5 @@
 #pragma once
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -13,8 +13,8 @@ inline constexpr float kHorizonTrackingRampDegrees=2.0f;
 inline constexpr float kStarReferenceDistanceMetres=1500.0f;
 
 struct SolarPose {
-    eng::Vec3 direction{};       // unit vector from the playfield toward the star
-    eng::Vec3 position{};        // future render position relative to playfield centre
+    game::runtime::Vec3 direction{};       // unit vector from the playfield toward the star
+    game::runtime::Vec3 position{};        // future render position relative to playfield centre
     float azimuth_degrees{0.0f}; // 0=N, 90=E, 180=S, 270=W
     float elevation_degrees{-90.0f};
     float irradiance_fraction{0.0f};
@@ -29,12 +29,12 @@ inline SolarPose pose(float hour){
 
     // Equinox declination = 0. This yields sunrise near 06:00, solar noon at
     // 12:00 and sunset near 18:00 while still providing a true 3D sky vector.
-    eng::Vec3 d{
+    game::runtime::Vec3 d{
         -std::sin(hour_angle),
         std::cos(latitude)*std::cos(hour_angle),
         -std::sin(latitude)*std::cos(hour_angle)
     };
-    d=eng::normalize(d);
+    d=game::runtime::normalize(d);
 
     SolarPose out{};
     out.direction=d;
@@ -53,21 +53,21 @@ inline SolarPose pose(float hour){
     return out;
 }
 
-inline eng::Vec3 fixed_panel_normal(float base_rotation_degrees){
+inline game::runtime::Vec3 fixed_panel_normal(float base_rotation_degrees){
     constexpr float pi=3.14159265358979323846f;
     constexpr float pitch=24.0f*pi/180.0f;
-    const eng::Vec3 authored_normal{0.0f,std::cos(pitch),-std::sin(pitch)};
+    const game::runtime::Vec3 authored_normal{0.0f,std::cos(pitch),-std::sin(pitch)};
     const float yaw=base_rotation_degrees*pi/180.0f;
-    return eng::normalize({
+    return game::runtime::normalize({
         authored_normal.x*std::cos(yaw)+authored_normal.z*std::sin(yaw),
         authored_normal.y,
        -authored_normal.x*std::sin(yaw)+authored_normal.z*std::cos(yaw)
     });
 }
 
-inline float fixed_panel_incidence_fraction(eng::Vec3 sun_direction,float base_rotation_degrees){
+inline float fixed_panel_incidence_fraction(game::runtime::Vec3 sun_direction,float base_rotation_degrees){
     if(sun_direction.y<=0.0f) return 0.0f;
-    return std::clamp(eng::dot(fixed_panel_normal(base_rotation_degrees),eng::normalize(sun_direction)),0.0f,1.0f);
+    return std::clamp(game::runtime::dot(fixed_panel_normal(base_rotation_degrees),game::runtime::normalize(sun_direction)),0.0f,1.0f);
 }
 
 } // namespace game::solar_tracking

@@ -1,12 +1,17 @@
-# JSD Lunar Base v0.54.2
+# JSD Lunar Base v0.61.1
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
-The game includes a Direct3D 12 lunar renderer on Windows and an OpenGL
-compute renderer with a deferred fallback on Linux. Use **Settings → Graphics** to adjust
-the active renderer and its effects. **Graphics → Benchmark** measures the
-current renderer and recommends a profile for your frame-rate target. See [RENDERING.md](RENDERING.md) for
-the feature breakdown and hardware requirements.
+The game renders through the external **JSD 3d-engine 0.5.12**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+
+Version 0.61.1 fixes Windows toolchain selection, DLL staging and Unicode save/settings paths.
+Windows uses the same external engine source and rendering features as Linux.
+See [WINDOWS-COMPATIBILITY.md](WINDOWS-COMPATIBILITY.md) for validation.
+
+Version 0.61.0 added seeded non-tiling terrain and surface materials, articulated robot armor,
+and fitted station interiors with deck plating, pressure liners, service runs,
+lockers, instrument screens, practical lighting and fabric bedding. Adjust
+**Settings → FIRST PERSON FOV** from 50° to 110° (vertical, default 68°).
 
 ## What you can do
 
@@ -30,14 +35,18 @@ Press **1–3** to select a simulation speed and **Space** to pause or resume. A
 
 ## Build and run
 
-The workspace separates the engine in `engine/` from the simulation and game in `game/`. The Linux and Windows build scripts each produce Release and Debug executables and stage their app-local runtime files under the platform's `build` directory. The default launcher starts Release. Pass `Debug` to start the developer build. The [cross-platform guide](CROSS-PLATFORM-DEVELOPMENT.md) lists the paired commands. The [dependency list](DEPENDENCIES.md), [architecture guide](ARCHITECTURE.md), and [Windows build guide](README-WINDOWS.md) cover the toolchains and source layout.
+The game uses the external JSD 3d-engine 0.5.12 for rendering, platform, math,
+workers and audio. Its former in-game engine directory is removed. Game-specific
+bindings live under `game/src/runtime/` alongside the game code.
 
-## CPU scheduling
+```bash
+./build.sh /absolute/path/to/3d-engine
+./run.sh
+./run.sh Debug
+```
 
-At startup the C++ task pool sizes itself to the available logical CPUs. The application thread can join a batch alongside the persistent workers. Linux reads the launcher's permitted CPU mask and gives each worker its own CPU. Windows 11 places workers with CPU Sets. The application thread keeps its original scheduling policy.
-
-Terrain generation, OpenGL mesh preparation, model generation, navigation, utility networks and music synthesis use the pool. The Stage 1 campus builds its geometry once and reuses it across frames. Simulation state and graphics commands are committed on the application thread.
-
-Run `./run.sh --cpu-info` or `run.bat --cpu-info` to see the detected CPUs, configured lanes and successful worker placements. `GAME_CPU_LANES=<n>` caps the pool, including the application lane. Set `GAME_CPU_PIN=0` to let the OS place workers while keeping the detected lane count. A Linux launch under `taskset` uses the subset supplied to the game.
+Both Release and Debug are built. On Windows use `build.bat --engine PATH`.
+See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for exact requirements,
+first-person rendering, runtime staging, audio/worker behavior and tests.
 
 See [UPDATE_HISTORY.log](UPDATE_HISTORY.log) for release notes and [README-HISTORY.md](README-HISTORY.md) for the archived README and earlier feature history.

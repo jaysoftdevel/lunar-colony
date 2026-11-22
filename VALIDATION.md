@@ -1,3 +1,32 @@
+# Version 0.61.1 — Windows compatibility
+
+Windows x64 Release and Debug game/engine archive/engine DLL cross-builds pass.
+Navigation, UI and native GL regression executables compile and link in both
+configurations. PE import inspection and SDL DLL staging hashes match each
+configuration. Linux Release: 19/19 CTest checks pass, including Unicode save/
+preferences roundtrip, save overwrite and root discovery. External engine
+portable tooling: 46/46 pass. Full details and native Windows execution limits
+are in WINDOWS-COMPATIBILITY.md. No native MSVC or Windows runtime test was
+available. Historical Debug navigation stress checks were not rerun.
+
+---
+
+# Version 0.61.0 — surface materials, station interiors and FOV
+
+Linux Release: 17/17 CTest checks pass. Linux Debug affected-feature suite:
+11/11 pass, including FOV persistence/projection, 40 interior variants, UI
+scaling, navigation geometry, colony interaction and native render checks.
+JSD 0.5.11 portable tooling: 46/46 tests pass. Two-root updater: 11/11 safety
+tests pass, including rollback after a second-root write failure.
+
+Native GL/EGL material tests cover seed/world variation, attached object UVs,
+static-frame stability and animated displays. Eleven real game scenes render;
+interior and settings captures were inspected. GCC 12, CMake 4.4.5, Mesa llvmpipe.
+Native Windows and hardware GPU performance are unverified. The full historical
+Debug navigation stress suite was not rerun. Saves retain their format.
+
+---
+
 ## v0.50.17 — Hydrolox lunar-return sizing
 
 - Nominal return delta-v: 1,920 m/s lunar ascent + 975 m/s trans-Earth injection/correction, rounded to 3,000 m/s with flight-design margin. Source: https://ntrs.nasa.gov/api/citations/19900016723/downloads/19900016723.pdf

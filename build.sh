@@ -2,16 +2,8 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
 
-CONFIG=Release
-TESTS="${GAME_BUILD_TESTS:-OFF}"
-build_flags=()
-for arg in "$@"; do
-    case "$arg" in
-        --tests) TESTS=ON ;;
-        --clean) build_flags=(--clean-first) ;;
-        *) CONFIG="$(normalize_config "$arg")" ;;
-    esac
-done
+source "$GAME_ROOT/scripts/build-arguments.sh"
+parse_build_arguments "$@"
 
 require_tool cmake
 build_start_ms="$(date +%s%3N)"

@@ -1,8 +1,8 @@
 #include "game/game_app.hpp"
 #include "game/config/preferences.hpp"
 #include "game/ui/layout.hpp"
-#include "engine/ui_metrics.hpp"
-#include "engine/ui_font.hpp"
+#include "game/runtime/ui_metrics.hpp"
+#include "game/runtime/ui_font.hpp"
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -18,30 +18,30 @@
 
 namespace {
 void require(bool pass,const std::string& message){if(!pass)throw std::runtime_error(message);}
-struct Draw {char type;std::array<float,6> v{};std::string text;eng::Color color;};
-struct Recorder:eng::Renderer {
+struct Draw {char type;std::array<float,6> v{};std::string text;game::runtime::Color color;};
+struct Recorder:game::runtime::SceneRenderer {
     int w=1920,h=1080;float scale=1;bool hud=false;std::vector<Draw> draws;
-    eng::GraphicsSettings graphics;
-    void set_graphics_settings(const eng::GraphicsSettings& settings) override { graphics=settings; }
-    std::vector<eng::Vec3> belt_preview_lines,queue_hover_lines;
+    game::runtime::GraphicsSettings graphics;
+    void set_graphics_settings(const game::runtime::GraphicsSettings& settings) override { graphics=settings; }
+    std::vector<game::runtime::Vec3> belt_preview_lines,queue_hover_lines;
     std::size_t mesh_triangles=0;
     bool initialize(void*,std::uintptr_t,int,int)override{return true;}
     void resize(int width,int height)override{w=width;h=height;}
-    void begin_frame(eng::Color)override{draws.clear();belt_preview_lines.clear();queue_hover_lines.clear();mesh_triangles=0;hud=false;}void end_frame()override{}
-    void set_3d(const eng::Mat4&)override{hud=false;}void set_2d(float s)override{scale=s;hud=true;}
-    void draw_lines_3d(const std::vector<eng::Vec3>& points,eng::Color color,float width)override{
+    void begin_frame(game::runtime::Color)override{draws.clear();belt_preview_lines.clear();queue_hover_lines.clear();mesh_triangles=0;hud=false;}void end_frame()override{}
+    void set_3d(const game::runtime::Mat4&)override{hud=false;}void set_2d(float s)override{scale=s;hud=true;}
+    void draw_lines_3d(const std::vector<game::runtime::Vec3>& points,game::runtime::Color color,float width)override{
         if(width==1.9f && color.r==.34f && color.g==.82f && color.b==1.0f)belt_preview_lines=points;
         if(color.r==.31f && color.g==.94f && color.b==1.f && color.a==1.f)
             queue_hover_lines.insert(queue_hover_lines.end(),points.begin(),points.end());
     }
-    void draw_triangles_3d(const std::vector<eng::Vec3>& points,eng::Color)override{mesh_triangles+=points.size()/3;}
-    void draw_rect(eng::Rect r,eng::Color c)override{if(hud)draws.push_back({'R',{r.x,r.y,r.w,r.h,scale,0},{},c});}
-    void draw_line(eng::Vec2 a,eng::Vec2 b,eng::Color c,float width)override{if(hud)draws.push_back({'L',{a.x,a.y,b.x,b.y,scale,width},{},c});}
-    void draw_text(eng::Vec2 p,const std::string& text,float s,eng::Color c)override{if(hud){auto e=eng::ui::text_extent(text,s);draws.push_back({'T',{p.x,p.y,e.x,e.y,scale,s},text,c});}}
+    void draw_triangles_3d(const std::vector<game::runtime::Vec3>& points,game::runtime::Color)override{mesh_triangles+=points.size()/3;}
+    void draw_rect(game::runtime::Rect r,game::runtime::Color c)override{if(hud)draws.push_back({'R',{r.x,r.y,r.w,r.h,scale,0},{},c});}
+    void draw_line(game::runtime::Vec2 a,game::runtime::Vec2 b,game::runtime::Color c,float width)override{if(hud)draws.push_back({'L',{a.x,a.y,b.x,b.y,scale,width},{},c});}
+    void draw_text(game::runtime::Vec2 p,const std::string& text,float s,game::runtime::Color c)override{if(hud){auto e=game::runtime::ui::text_extent(text,s);draws.push_back({'T',{p.x,p.y,e.x,e.y,scale,s},text,c});}}
     int width()const override{return w;}int height()const override{return h;}bool hardware_accelerated()const override{return false;}
     std::string gpu_vendor()const override{return "TEST";}std::string gpu_renderer()const override{return "SCALING RECORDER";}std::string gpu_version()const override{return "TEST";}
-    eng::Rect button(const std::string& caption)const{
-        eng::Rect last{};for(const auto& d:draws){if(d.type=='R')last={d.v[0],d.v[1],d.v[2],d.v[3]};if(d.type=='T' && d.text==caption)return last;}
+    game::runtime::Rect button(const std::string& caption)const{
+        game::runtime::Rect last{};for(const auto& d:draws){if(d.type=='R')last={d.v[0],d.v[1],d.v[2],d.v[3]};if(d.type=='T' && d.text==caption)return last;}
         throw std::runtime_error("button not found: "+caption);
     }
     void check_bounds(const std::string& label)const{
@@ -110,8 +110,8 @@ struct UiRegression {
         }
     }
     static void order_controls(){
-        eng::Application engine;GameApp defaults(engine);require(defaults.ui_scale_index_==0 && defaults.ui_scale_==1,"default UI scale is not 100%");require(defaults.playfield_size_==128,"default playfield is not 128 x 128");require(GameApp::kNewGamePlayfieldMin==32 && GameApp::kNewGamePlayfieldMax==1024 && GameApp::kNewGamePlayfieldStep==32,"new-game playfield range is not doubled");require(GameApp::kDebugTemplatePlayfieldSize==128,"debug template playfield is not doubled");Playfield maximum_field;maximum_field.rebuild(GameApp::kNewGamePlayfieldMax);require(maximum_field.size()==1024 && maximum_field.floor_triangles().size()==6,"1024 x 1024 playfield failed to build");int cases=0;
-        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:std::array<eng::Vec2,3>{{{1280,720},{1920,1080},{3840,2160}}})for(int domain=0;domain<5;++domain){
+        game::runtime::GameHost engine;GameApp defaults(engine);require(defaults.ui_scale_index_==0 && defaults.ui_scale_==1,"default UI scale is not 100%");require(defaults.playfield_size_==128,"default playfield is not 128 x 128");require(GameApp::kNewGamePlayfieldMin==32 && GameApp::kNewGamePlayfieldMax==1024 && GameApp::kNewGamePlayfieldStep==32,"new-game playfield range is not doubled");require(GameApp::kDebugTemplatePlayfieldSize==128,"debug template playfield is not doubled");Playfield maximum_field;maximum_field.rebuild(GameApp::kNewGamePlayfieldMax);require(maximum_field.size()==1024 && maximum_field.floor_triangles().size()==6,"1024 x 1024 playfield failed to build");int cases=0;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:std::array<game::runtime::Vec2,3>{{{1280,720},{1920,1080},{3840,2160}}})for(int domain=0;domain<5;++domain){
             GameApp app(engine);setup(app,7,zoom);app.placed_habitats_[0].placement_sequence=1;app.placed_resources_[0].placement_sequence=2;
             ConstructionTargetRef t;
             if(domain==0){t={ConstructionTargetKind::Habitat,0};app.selection_kind_=GameApp::SelectionKind::Habitat;app.selected_habitat_=0;}
@@ -129,20 +129,20 @@ struct UiRegression {
         {
             GameApp debug(engine);setup(debug,7,2);debug.debug_frame_enabled_=true;debug.selection_kind_=GameApp::SelectionKind::None;
             Recorder debug_r;debug_r.resize(1920,1080);debug.render(debug_r);debug_r.check_bounds("debug layout switch");
-            require(debug_r.graphics.path==eng::GraphicsPath::Auto,"enhanced graphics are not the default");
+            require(debug_r.graphics.path==game::runtime::GraphicsPath::Auto,"enhanced graphics are not the default");
             const auto layout_button=debug_r.button("FULL GRAPHICS");
             debug.input_.mouse_x=(int)((layout_button.x+layout_button.w/2)*debug_r.scale);
             debug.input_.mouse_y=(int)((layout_button.y+layout_button.h/2)*debug_r.scale);
             debug.input_.left_pressed=true;debug.render(debug_r);
             require(debug.world_layout_mode_==GameApp::WorldLayoutMode::Mesh,"debug layout switch did not select mesh mode");
             debug.input_.left_pressed=false;debug.render(debug_r);debug_r.button("MESHED");
-            require(debug_r.graphics.path==eng::GraphicsPath::Classic,"debug layout did not select the mesh renderer");
+            require(debug_r.graphics.path==game::runtime::GraphicsPath::Classic,"debug layout did not select the mesh renderer");
         }
         GameApp app(engine);setup(app,7,2);app.debug_frame_enabled_=true;app.selection_kind_=GameApp::SelectionKind::Robot;app.selected_robot_=0;
         Recorder r;app.render(r);r.check_bounds("debug robot inspector");const auto button=r.button("DEBUG MOVE / PICK DESTINATION");
         app.input_.mouse_x=(int)((button.x+button.w/2)*r.scale);app.input_.mouse_y=(int)((button.y+button.h/2)*r.scale);app.input_.left_pressed=true;app.render(r);require(app.debug_move_pick_robot_==0,"debug move button did not arm destination picker");
-        eng::InputState escape;escape.escape_pressed=true;app.update(0,escape);require(app.debug_move_pick_robot_==-1 && app.screen_==GameApp::Screen::Playfield,"escape from move picker left game");
-        app.debug_move_pick_robot_=0;eng::InputState click;click.mouse_x=r.w/2;click.mouse_y=r.h/2;click.left_pressed=true;click.left_down=true;
+        game::runtime::InputState escape;escape.escape_pressed=true;app.update(0,escape);require(app.debug_move_pick_robot_==-1 && app.screen_==GameApp::Screen::Playfield,"escape from move picker left game");
+        app.debug_move_pick_robot_=0;game::runtime::InputState click;click.mouse_x=r.w/2;click.mouse_y=r.h/2;click.left_pressed=true;click.left_down=true;
         app.update(0,click);require(app.debug_move_pick_robot_==-1 && app.builder_robots_[0].debug_move_active && app.selection_kind_==GameApp::SelectionKind::Robot,"destination click selected the world instead of issuing debug move");
         require(app.issue_debug_robot_move(0,{12,0,12}),"UI debug order rejected");app.input_={};app.render(r);r.button("CANCEL DEBUG MOVE");
         bool task=false;for(const auto& draw:r.draws)task|=draw.text=="TASK  DEBUG MOVE TO SELECTED PLACE";require(task,"debug destination missing from robot task panel");
@@ -150,8 +150,8 @@ struct UiRegression {
         std::cout<<cases<<" priority control/marker/resolution cases plus debug move/cancel inspector controls passed\n";
     }
     static void airlock_status(){
-        eng::Application engine;int cases=0;
-        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:std::array<eng::Vec2,3>{{{1280,720},{1920,1080},{3840,2160}}}){
+        game::runtime::GameHost engine;int cases=0;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:std::array<game::runtime::Vec2,3>{{{1280,720},{1920,1080},{3840,2160}}}){
             GameApp app(engine);setup(app,7,zoom);auto& h=app.placed_habitats_[0];h.kind=HabitatKind::AirLock;h.construction.step=kConstructionSteps;
             app.selection_kind_=GameApp::SelectionKind::Habitat;app.selected_habitat_=0;app.airlock_cycles_.resize(1);app.airlock_cycles_[0].pressure=0.4f;app.airlock_cycles_[0].target=1;app.airlock_cycles_[0].equalizing=true;
             Recorder r;r.resize((int)size.x,(int)size.y);app.render(r);r.check_bounds("airlock pressure inspector");
@@ -166,8 +166,8 @@ struct UiRegression {
         std::cout<<cases<<" airlock cabin/HUD/pressure/inspector resolution cases passed\n";
     }
     static void status_bars(const std::string& output){
-        eng::Application engine;int cases=0;
-        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:std::array<eng::Vec2,5>{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}})for(int state=0;state<3;++state){
+        game::runtime::GameHost engine;int cases=0;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:std::array<game::runtime::Vec2,5>{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}})for(int state=0;state<3;++state){
             GameApp app(engine);app.ui_scale_index_=zoom;app.on_resize((int)size.x,(int)size.y);app.ui_input_.mouse_x=app.ui_input_.mouse_y=-100;
             if(state){
                 PlacedHabitat room;room.kind=HabitatKind::CrewQuarters;room.construction.step=kConstructionSteps;room.supply.volume_m3=100;room.supply.oxygen_kg=100*kOxygenKgPerM3;
@@ -197,7 +197,7 @@ struct UiRegression {
         std::cout<<cases<<" status-bar cases: battery capacity/charge, combined indoor air, disconnected rooms, excluded blueprints/outdoor machinery, empty/full/clamped values and resolution scaling passed\n";
     }
     static void storage_and_rate_display(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         app.on_resize(1920,1080);
         Recorder r;
@@ -289,7 +289,7 @@ struct UiRegression {
         std::cout<<"Storage occupancy, per-dome 85 percent threshold and half-second rate displays passed\n";
     }
     static void grouped_build_menu(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom){
             GameApp app(engine);
             app.ui_scale_index_=zoom;
@@ -324,7 +324,7 @@ struct UiRegression {
     }
 
     static void resource_inventory(const std::string& output){
-        eng::Application engine;int cases=0;
+        game::runtime::GameHost engine;int cases=0;
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:layout::COMMON_RESOLUTIONS){
             GameApp app(engine);app.ui_scale_index_=zoom;app.on_resize(size.width,size.height);app.ui_input_.mouse_x=app.ui_input_.mouse_y=-100;
             ResourceBundle cargo;for(std::size_t i=0;i<kMaterialResourceCount;++i)cargo.amount((MaterialResource)i)=1234+(int)i;app.resources_.restore(cargo);
@@ -346,8 +346,8 @@ struct UiRegression {
         std::cout<<cases<<" full-inventory status layouts: all ten resources, exact cargo/gas counts, exclusion of cabin air/blueprints/allocated fuel, cash and tooltip hitboxes passed\n";
     }
     static void progress_tree(){
-        eng::Application engine;int cases=0;
-        constexpr std::array<eng::Vec2,5> sizes{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}};
+        game::runtime::GameHost engine;int cases=0;
+        constexpr std::array<game::runtime::Vec2,5> sizes{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}};
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:sizes){
             GameApp app(engine);setup(app,7,zoom);app.debug_frame_enabled_=false;Recorder r;r.resize((int)size.x,(int)size.y);app.render(r);r.check_bounds("progress tree");
             const auto has=[&](const std::string& text){
@@ -356,7 +356,7 @@ struct UiRegression {
             require(has("STAGE 1 / Build a solar collector") && !has("Build a battery"),
                     "collapsed progress did not show only the next target");
             const auto collapsed=r.button("+  COLONY PROGRESS");
-            eng::InputState input{};
+            game::runtime::InputState input{};
             input.mouse_x=(int)std::lround((collapsed.x+collapsed.w*.5f)*r.scale);
             input.mouse_y=(int)std::lround((collapsed.y+collapsed.h*.5f)*r.scale);
             input.left_pressed=true;
@@ -381,7 +381,7 @@ struct UiRegression {
     }
 
     static void scrollable_selection_panel(){
-        eng::Application engine;GameApp app(engine);setup(app,16,4);
+        game::runtime::GameHost engine;GameApp app(engine);setup(app,16,4);
         app.placed_resources_[0].supply.warnings=255;
         Recorder r;r.resize(1280,720);app.render(r);
         const auto panel=app.selection_panel_rect();
@@ -393,7 +393,7 @@ struct UiRegression {
         require(!bottom_before,"overflowing selection panel exposes bottom content before scrolling");
 
         const float distance=app.camera_.distance();
-        eng::InputState wheel{};
+        game::runtime::InputState wheel{};
         wheel.mouse_x=(int)std::lround((panel.x+panel.w*0.5f)*app.ui_scale_);
         wheel.mouse_y=(int)std::lround((panel.y+panel.h*0.5f)*app.ui_scale_);
         wheel.wheel=-1.0f;
@@ -417,7 +417,7 @@ struct UiRegression {
     }
 
     static void hydroponics_panel(){
-        eng::Application engine;GameApp app(engine);setup(app,19,4);
+        game::runtime::GameHost engine;GameApp app(engine);setup(app,19,4);
         app.placed_habitats_[0].size=HabitatSizeTier::Big;
         for(std::size_t bay=0;bay<hydroponics_bay_count(HabitatSizeTier::Big);++bay){app.placed_habitats_[0].hydroponics[bay].plant=(HydroponicPlant)(1+(int)(bay%((std::size_t)HydroponicPlant::Count-1)));app.placed_habitats_[0].hydroponics[bay].growth_fraction=0.1*(double)(bay+1);}
         Recorder r;r.resize(1280,720);app.on_resize(1280,720);app.render(r);
@@ -488,7 +488,7 @@ struct UiRegression {
     }
 
     static void structure_power_controls(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom){
             GameApp app(engine);
             app.ui_scale_index_=zoom;
@@ -563,8 +563,8 @@ struct UiRegression {
     }
 
     static void presentation_controls(){
-        using namespace eng;
-        Application engine;
+        using namespace game::runtime;
+        GameHost engine;
         GameApp app(engine);
         setup(app,3,layout::UI_SCALE_COUNT-1);
         Recorder r;
@@ -638,7 +638,7 @@ struct UiRegression {
     }
 
     static void playfield_surface(){
-        using namespace eng;
+        using namespace game::runtime;
         struct SurfaceRecorder : Recorder {
             bool accept_enhanced{},saw_grid{};
             int scene_attempts{},surface_batches{};
@@ -671,7 +671,7 @@ struct UiRegression {
                 saw_grid|=points.size()>32 && points.front().y==.01f;
             }
         };
-        Application engine;
+        GameHost engine;
         GameApp app(engine);
         setup(app,7,0);
         app.placed_habitats_.clear();
@@ -713,7 +713,7 @@ struct UiRegression {
     }
 
     static void hull_views(){
-        using namespace eng;
+        using namespace game::runtime;
         struct HullRecorder : Recorder {
             std::vector<Vec3> vertices;
             void draw_lunar_surface(const std::vector<Vec3>& points,LunarMaterial,Color) override {
@@ -727,7 +727,7 @@ struct UiRegression {
             }
         };
         const auto layer=[](float y){return std::vector<Vec3>{{0,y,0},{0,y,1},{1,y,0}};};
-        Application engine;
+        GameHost engine;
         GameApp app(engine);
         app.graphics_.path=GraphicsPath::Classic;
         require(app.habitat_view_mode_==GameApp::HabitatViewMode::FullHull,"new game did not start with Full Hull");
@@ -789,15 +789,97 @@ struct UiRegression {
         std::cout<<"Full Hull default, None selector and hull draw layers passed\n";
     }
 
+    static void runtime_paths(){
+        using namespace game::runtime;
+        namespace fs=std::filesystem;
+        const auto folder=fs::temp_directory_path()/fs::u8path("lunar-paths-ü-月-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+#ifdef _WIN32
+        const std::wstring save_before=_wgetenv(L"GAME_SAVE_DIR")?_wgetenv(L"GAME_SAVE_DIR"):L"";
+        const std::wstring config_before=_wgetenv(L"GAME_GRAPHICS_CONFIG")?_wgetenv(L"GAME_GRAPHICS_CONFIG"):L"";
+        _wputenv_s(L"GAME_SAVE_DIR",L"");
+#else
+        const std::string save_before=std::getenv("GAME_SAVE_DIR")?std::getenv("GAME_SAVE_DIR"):"";
+        const std::string config_before=std::getenv("GAME_GRAPHICS_CONFIG")?std::getenv("GAME_GRAPHICS_CONFIG"):"";
+        unsetenv("GAME_SAVE_DIR");
+#endif
+        GameHost host;GameApp app(host);
+        require(fs::weakly_canonical(app.save_game_directory())==fs::weakly_canonical(fs::u8path(GAME_SOURCE_ROOT)/"savegames"),"External-engine workspace saves did not resolve to game root");
+        fs::create_directories(folder);
+#ifdef _WIN32
+        _wputenv_s(L"GAME_SAVE_DIR",folder.c_str());
+        const auto config=folder/L"graphics.cfg";_wputenv_s(L"GAME_GRAPHICS_CONFIG",config.c_str());
+#else
+        setenv("GAME_SAVE_DIR",folder.c_str(),1);
+        const auto config=folder/"graphics.cfg";setenv("GAME_GRAPHICS_CONFIG",config.c_str(),1);
+#endif
+        auto preferences=load_preferences();preferences.first_person_fov=78;
+        require(save_preferences(preferences)&&load_preferences().first_person_fov==78,"Unicode-path preferences did not roundtrip");
+        require(app.save_game_directory()==folder,"Unicode save directory changed its encoding");
+        std::string error;
+        app.playfield_.rebuild(64);app.builder_robots_.resize(1);
+        require(app.save_game_to_name("path-roundtrip",error),error);
+        require(app.save_game_to_name("path-roundtrip",error),"Could not overwrite Unicode-path save: "+error);
+        app.refresh_save_games();require(!app.save_games_.empty(),"Unicode-path save did not appear in list");
+        GameApp loaded(host);require(loaded.load_game_from_file(app.save_games_.front().path,error),error);
+#ifdef _WIN32
+        _wputenv_s(L"GAME_SAVE_DIR",save_before.c_str());_wputenv_s(L"GAME_GRAPHICS_CONFIG",config_before.c_str());
+#else
+        if(save_before.empty())unsetenv("GAME_SAVE_DIR");else setenv("GAME_SAVE_DIR",save_before.c_str(),1);
+        if(config_before.empty())unsetenv("GAME_GRAPHICS_CONFIG");else setenv("GAME_GRAPHICS_CONFIG",config_before.c_str(),1);
+#endif
+        fs::remove_all(folder);
+        std::cout<<"Workspace-root save discovery and Unicode save/preferences roundtrip passed\n";
+    }
+
+    static void fov_and_station_interiors(){
+        using namespace game::runtime;
+        const auto previous=load_preferences();
+        GameHost host;GameApp app(host);Recorder recorder;
+        app.screen_=GameApp::Screen::Settings;app.render(recorder);
+        const auto click_fov=[&](const std::string& arrow){
+            app.render(recorder);float row_y=-1000;Rect control{},last{};
+            for(const auto& d:recorder.draws)if(d.type=='T' && d.text=="FIRST PERSON FOV")row_y=d.v[1];
+            require(row_y>0,"First-person FOV option is missing");
+            for(const auto& d:recorder.draws){
+                if(d.type=='R')last={d.v[0],d.v[1],d.v[2],d.v[3]};
+                if(d.type=='T' && d.text==arrow && std::abs(d.v[1]-row_y)<14)control=last;
+            }
+            require(control.w>0,"FOV arrow has no hitbox");
+            app.input_.mouse_x=int((control.x+control.w*.5f)*recorder.scale);
+            app.input_.mouse_y=int((control.y+control.h*.5f)*recorder.scale);
+            app.input_.left_pressed=true;app.render(recorder);app.input_={};
+        };
+        click_fov(">");require(app.first_person_.fov()==70 && load_preferences().first_person_fov==70,"FOV did not apply and persist");
+        GameApp restarted(host);restarted.on_start();require(restarted.first_person_.fov()==70,"FOV was lost at restart");
+        click_fov("<");require(app.first_person_.fov()==68,"FOV decrement did not apply");
+        const auto feet=app.first_person_.feet_position();const auto direction=app.first_person_.look_direction();
+        app.first_person_.set_fov(50);const auto narrow=app.first_person_.view_projection(16.f/9);
+        app.first_person_.set_fov(110);const auto wide=app.first_person_.view_projection(16.f/9);
+        require(std::abs(narrow.m[0])>std::abs(wide.m[0]) && length(app.first_person_.feet_position()-feet)==0 && length(app.first_person_.look_direction()-direction)==0,"FOV changed physical camera state or failed to change projection");
+        app.first_person_.set_fov(-99);require(app.first_person_.fov()==50,"FOV minimum was not enforced");
+        app.first_person_.set_fov(500);require(app.first_person_.fov()==110,"FOV maximum was not enforced");
+        for(int kind=0;kind<int(HabitatKind::Count);++kind)for(int tier=0;tier<int(HabitatSizeTier::Count);++tier){
+            const auto& mesh=app.habitat_models_.mesh(HabitatKind(kind),HabitatSizeTier(tier));
+            require(!mesh.lining.empty() && !mesh.deck.empty() && !mesh.service_metal.empty() && !mesh.lamps.empty() && !mesh.displays.empty(),"A room variant has missing station detail layers: "+std::to_string(kind)+"/"+std::to_string(tier));
+            for(const auto* layer:{&mesh.lining,&mesh.deck,&mesh.service_metal,&mesh.lamps,&mesh.displays}){
+                require(layer->size()%3==0,"Station detail layer is not a triangle list");
+                for(const auto& p:*layer)require(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z),"Station detail layer has invalid geometry");
+            }
+            if(HabitatKind(kind)==HabitatKind::CrewQuarters)require(!mesh.fabric.empty(),"Quarters have no fabric bedding");
+        }
+        require(save_preferences(previous),"Could not restore test preferences");
+        std::cout<<"FOV controls, persistence, projection and 40 station interior variants passed\n";
+    }
+
     static void graphics_quality(){
         playfield_surface();
         hull_views();
-        using namespace eng;
+        using namespace game::runtime;
         struct BenchmarkRecorder : Recorder {
             bool benchmarking{};
             GraphicsCapabilities graphics_capabilities() override {
                 GraphicsCapabilities caps{};
-                caps.enhanced=true;
+                caps.enhanced=true;caps.external_jsd=true;
                 caps.vertical_sync=true;
                 caps.texture_anisotropy=8;
                 caps.ray_lighting=caps.visibility_buffer=caps.gpu_terrain=caps.pages=true;
@@ -822,7 +904,7 @@ struct UiRegression {
         const auto migrated=load_preferences().graphics;
         require(migrated.quality(F::TerrainRelief)==3 && migrated.quality(F::MaterialDetail)==0,
                 "legacy on and off settings changed meaning");
-        Application engine;
+        GameHost engine;
         GameApp app(engine);
         BenchmarkRecorder r;
         app.screen_=GameApp::Screen::GraphicsSettings;
@@ -878,9 +960,9 @@ struct UiRegression {
                 "texture filtering advertised a level above the GPU limit");
         click("8X ANISOTROPIC");
         click("LIGHTING");
-        choose("CASCADE SHADOW RESOLUTION","768 PX");
-        require(app.graphics_.shadow_resolution==1 && app.graphics_.shadow_quality==2,
-                "shadow resolution changed the filter quality");
+        choose("SHADOW FILTER QUALITY","LOW");
+        require(app.graphics_.shadow_quality==1,
+                "external engine shadow quality did not apply");
         require(app.graphics_.surface_resolution==1 && app.graphics_.texture_filter==4,
                 "surface resolution and filtering did not save independently");
 #endif
@@ -941,8 +1023,8 @@ struct UiRegression {
     }
 
     static void build_mode(){
-        using namespace eng;
-        Application engine;
+        using namespace game::runtime;
+        GameHost engine;
         GameApp app(engine);
         require(app.debug_mode_active()==build::debug_features,"wrong default debug policy");
         auto preferences=load_preferences();
@@ -1007,7 +1089,7 @@ struct UiRegression {
     }
 
     static void build_order_panel(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         for(int zoom:{0,4}){
             GameApp app(engine);
             setup(app,7,zoom);
@@ -1029,7 +1111,7 @@ struct UiRegression {
             recorder.resize(1280,720);
             app.render(recorder);
             const auto click=[&](float x,float y){
-                eng::InputState input;
+                game::runtime::InputState input;
                 input.mouse_x=int(std::lround(x*recorder.scale));
                 input.mouse_y=int(std::lround(y*recorder.scale));
                 input.left_pressed=true;
@@ -1051,7 +1133,7 @@ struct UiRegression {
                     app.progress_tree_panel_rect().y+app.progress_tree_panel_rect().h<expanded.y,
                     "bottom build order overlaps the toolbar or progress panel");
             const auto hover=[&](float x,float y,float scroll=0.f){
-                eng::InputState input;
+                game::runtime::InputState input;
                 input.mouse_x=int(std::lround(x*recorder.scale));
                 input.mouse_y=int(std::lround(y*recorder.scale));
                 input.wheel=scroll;
@@ -1127,7 +1209,7 @@ struct UiRegression {
     }
 
     static void activity_log_and_blueprint_progress(){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp app(engine);
         setup(app,7,4);
         app.game_session_active_=true;
@@ -1161,8 +1243,8 @@ struct UiRegression {
         Recorder recorder;
         recorder.resize(1280,720);
         app.render(recorder);
-        const auto click=[&](eng::Rect button){
-            eng::InputState input;
+        const auto click=[&](game::runtime::Rect button){
+            game::runtime::InputState input;
             input.mouse_x=(int)std::lround((button.x+button.w*.5f)*recorder.scale);
             input.mouse_y=(int)std::lround((button.y+button.h*.5f)*recorder.scale);
             input.left_pressed=true;
@@ -1186,7 +1268,7 @@ struct UiRegression {
         app.input_={};
         app.render(recorder);
         const auto distance=app.camera_.distance();
-        eng::InputState wheel;
+        game::runtime::InputState wheel;
         const auto panel=app.activity_log_panel_rect();
         wheel.mouse_x=(int)std::lround((panel.x+30)*recorder.scale);
         wheel.mouse_y=(int)std::lround((panel.y+35)*recorder.scale);
@@ -1249,7 +1331,7 @@ struct UiRegression {
 
     static void recent_saves(){
         namespace fs=std::filesystem;
-        eng::Application engine;
+        game::runtime::GameHost engine;
         GameApp original(engine);
         original.builder_robots_.resize(1);
         const std::string prefix="resume-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -1315,8 +1397,8 @@ struct UiRegression {
         progress_tree();
         scrollable_selection_panel();
         hydroponics_panel();
-        eng::Application engine;
-        constexpr std::array<eng::Vec2,5> sizes{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}};
+        game::runtime::GameHost engine;
+        constexpr std::array<game::runtime::Vec2,5> sizes{{{1280,720},{1600,900},{1920,1080},{2560,1440},{3840,2160}}};
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(int scene=0;scene<20;++scene){
             Recorder reference;
             for(std::size_t n=0;n<sizes.size();++n){
@@ -1354,7 +1436,7 @@ struct UiRegression {
             GameApp app(engine);setup(app,0,2);Recorder r;r.resize((int)size.x,(int)size.y);app.render(r);
             const auto start=r.button("NEW GAME");app.input_.mouse_x=(int)std::lround((start.x+start.w*0.5f)*r.scale);app.input_.mouse_y=(int)std::lround((start.y+start.h*0.5f)*r.scale);app.input_.left_pressed=true;app.render(r);
             require(app.screen_==GameApp::Screen::NewGame,"menu hitbox missed after resolution scaling");
-            app.input_={};app.selection_kind_=GameApp::SelectionKind::Robot;app.on_resize(r.w,r.h);const auto pane=app.selection_panel_rect();eng::InputState pointer;
+            app.input_={};app.selection_kind_=GameApp::SelectionKind::Robot;app.on_resize(r.w,r.h);const auto pane=app.selection_panel_rect();game::runtime::InputState pointer;
             pointer.mouse_x=(int)std::lround((pane.x+pane.w/2)*app.ui_scale_);pointer.mouse_y=(int)std::lround((pane.y+pane.h/2)*app.ui_scale_);
             require(app.mouse_over_selection_panel(pointer),"selection hitbox differs from drawing");pointer.mouse_x=0;require(!app.mouse_over_selection_panel(pointer),"selection hitbox extends outside panel");
         }
@@ -1925,10 +2007,10 @@ struct UiRegression {
             }
             require(test_title && build_menu && stage_ui.mesh_triangles>80000,
                     "astronaut test did not render four meshes and the colony controls");
-            const auto click_astronaut_scene=[&](GameApp& scene,eng::Vec3 p){
+            const auto click_astronaut_scene=[&](GameApp& scene,game::runtime::Vec3 p){
                 const auto m=scene.camera_.view_projection((float)stage_ui.w/stage_ui.h).m;
                 const float w=m[3]*p.x+m[7]*p.y+m[11]*p.z+m[15];
-                eng::InputState mouse;
+                game::runtime::InputState mouse;
                 mouse.mouse_x=(int)std::lround((.5f+.5f*(m[0]*p.x+m[4]*p.y+m[8]*p.z+m[12])/w)*stage_ui.w);
                 mouse.mouse_y=(int)std::lround((.5f-.5f*(m[1]*p.x+m[5]*p.y+m[9]*p.z+m[13])/w)*stage_ui.h);
                 mouse.left_pressed=true;
@@ -1937,13 +2019,13 @@ struct UiRegression {
             const auto advance_crew=[&](GameApp& scene,int frames){
                 for(int i=0;i<frames;++i){
                     scene.update(.02f,{});
-                    require(eng::length(scene.test_astronauts_[0].position-scene.test_astronauts_[1].position)
+                    require(game::runtime::length(scene.test_astronauts_[0].position-scene.test_astronauts_[1].position)
                             >=kAstronautSeparation-.001f,"astronauts crossed their safety clearance");
                 }
             };
             const auto eva_start=sandbox.test_astronauts_[0].position;
             const auto coverall_start=sandbox.test_astronauts_[1].position;
-            click_astronaut_scene(sandbox,eva_start+eng::Vec3{0,.95f,0});
+            click_astronaut_scene(sandbox,eva_start+game::runtime::Vec3{0,.95f,0});
             require(sandbox.selected_astronaut_==0,"mouse did not select the EVA astronaut");
             sandbox.render(stage_ui);
             const auto shows_text=[&](const char* caption){
@@ -1957,31 +2039,31 @@ struct UiRegression {
             click_astronaut_scene(sandbox,{4.6f,0,-.55f});
             require(sandbox.test_astronauts_[0].destination.has_value(),"ground click did not give the EVA astronaut a waypoint");
             const auto eva_goal=*sandbox.test_astronauts_[0].destination;
-            eng::InputState right_click;
+            game::runtime::InputState right_click;
             right_click.right_pressed=true;
             sandbox.update(0.f,right_click);
             require(sandbox.selected_astronaut_==-1 && sandbox.test_astronauts_[0].destination &&
-                    eng::length(*sandbox.test_astronauts_[0].destination-eva_goal)<.001f,
+                    game::runtime::length(*sandbox.test_astronauts_[0].destination-eva_goal)<.001f,
                     "right click must deselect the astronaut and preserve its waypoint");
             advance_crew(sandbox,50);
             const auto eva_saved=sandbox.test_astronauts_[0].position;
-            require(eng::length(eva_saved-eva_start)>.2f && sandbox.test_astronauts_[0].stride_phase>.05f &&
-                    eng::length(sandbox.test_astronauts_[1].position-coverall_start)<.001f,
+            require(game::runtime::length(eva_saved-eva_start)>.2f && sandbox.test_astronauts_[0].stride_phase>.05f &&
+                    game::runtime::length(sandbox.test_astronauts_[1].position-coverall_start)<.001f,
                     "walking did not advance the selected mesh animation independently");
             require(sandbox.save_game_to_name("stage3-sandbox-regression",error),"astronaut field save failed: "+error);
             require(loaded.load_game_from_file(save.string(),error) && loaded.astronaut_test_active(),
                     "astronaut test mode did not survive save/load");
             loaded.screen_=GameApp::Screen::Playfield;
             loaded.render(stage_ui);
-            require(eng::length(loaded.test_astronauts_[0].position-eva_saved)<.001f &&
+            require(game::runtime::length(loaded.test_astronauts_[0].position-eva_saved)<.001f &&
                     loaded.test_astronauts_[0].destination.has_value(),
                     "save did not restore the astronaut position and pending waypoint");
             advance_crew(loaded,650);
-            require(!loaded.test_astronauts_[0].destination && eng::length(loaded.test_astronauts_[0].position-eva_goal)<.01f &&
-                    eng::length(loaded.test_astronauts_[1].position-coverall_start)<.001f,
+            require(!loaded.test_astronauts_[0].destination && game::runtime::length(loaded.test_astronauts_[0].position-eva_goal)<.01f &&
+                    game::runtime::length(loaded.test_astronauts_[1].position-coverall_start)<.001f,
                     "EVA astronaut did not resume and finish the saved detour");
 
-            click_astronaut_scene(loaded,coverall_start+eng::Vec3{0,.95f,0});
+            click_astronaut_scene(loaded,coverall_start+game::runtime::Vec3{0,.95f,0});
             require(loaded.selected_astronaut_==1,"mouse did not select the coverall astronaut");
             loaded.render(stage_ui);
             require(shows_text("LUCA REYES") && shows_text("ENGINEER / EVA SUIT"),
@@ -1989,15 +2071,15 @@ struct UiRegression {
             click_astronaut_scene(loaded,{6.5f,0,-.55f});
             require(loaded.test_astronauts_[1].destination.has_value(),"ground click did not give the coverall astronaut a waypoint");
             const auto coverall_goal=*loaded.test_astronauts_[1].destination;
-            click_astronaut_scene(loaded,loaded.test_astronauts_[0].position+eng::Vec3{0,.95f,0});
+            click_astronaut_scene(loaded,loaded.test_astronauts_[0].position+game::runtime::Vec3{0,.95f,0});
             click_astronaut_scene(loaded,{-2.5f,0,-.18f});
             require(loaded.selected_astronaut_==0 && loaded.test_astronauts_[0].destination,
                     "another astronaut's pending walk prevented selecting and ordering the EVA astronaut");
             const auto return_goal=*loaded.test_astronauts_[0].destination;
             advance_crew(loaded,1150);
             require(!loaded.test_astronauts_[0].destination && !loaded.test_astronauts_[1].destination &&
-                    eng::length(loaded.test_astronauts_[0].position-return_goal)<.01f &&
-                    eng::length(loaded.test_astronauts_[1].position-coverall_goal)<.01f,
+                    game::runtime::length(loaded.test_astronauts_[0].position-return_goal)<.01f &&
+                    game::runtime::length(loaded.test_astronauts_[1].position-coverall_goal)<.01f,
                     "astronauts did not finish both crossing waypoints");
             std::filesystem::remove(save);
             sandbox.camera_.restore({105.0f,75.0f,0.0f,{}});
@@ -2015,13 +2097,13 @@ struct UiRegression {
             auto right_press=right_click;
             right_press.right_down=true;
             sandbox.update(0.f,right_press);
-            eng::InputState right_drag;
+            game::runtime::InputState right_drag;
             right_drag.right_down=true;
             right_drag.mouse_dx=20;
             sandbox.update(0.f,right_drag);
             sandbox.update(0.f,{});
             require(sandbox.selection_kind_==GameApp::SelectionKind::Habitat &&
-                    eng::length(sandbox.camera_.state().target-before_pan)>.01f,
+                    game::runtime::length(sandbox.camera_.state().target-before_pan)>.01f,
                     "right drag must pan with the structure still selected");
             sandbox.update(0.f,right_press);
             sandbox.update(0.f,{});
@@ -2056,7 +2138,7 @@ struct UiRegression {
             bool attached=false;
             for(std::size_t i=0;i+1<stage_ui.belt_preview_lines.size();i+=2){
                 const auto midpoint=(stage_ui.belt_preview_lines[i]+stage_ui.belt_preview_lines[i+1])*.5f;
-                attached|=eng::length(midpoint-first_roller)<.01f;
+                attached|=game::runtime::length(midpoint-first_roller)<.01f;
             }
             require(attached,"first conveyor section floats away from the hull");
             click_world(22,0);
@@ -2064,7 +2146,7 @@ struct UiRegression {
                     sandbox.utility_network_.connections()[0].kind==UtilityKind::ConveyorBelt &&
                     sandbox.utility_network_.connections()[0].construction.complete(),
                     "conveyor build-menu placement did not create the route");
-            require(eng::length(sandbox.utility_network_.connections().front().endpoint_a.position-port->position)<.01f,
+            require(game::runtime::length(sandbox.utility_network_.connections().front().endpoint_a.position-port->position)<.01f,
                     "completed conveyor moved away from the selected source port");
             sandbox.clear_world_selection();
             sandbox.selection_kind_=GameApp::SelectionKind::Resource;
@@ -2128,17 +2210,17 @@ struct UiRegression {
                 for(float value:m.m)require(std::isfinite(value),"campus depth projection fails at extreme zoom");
             }
             scene_camera.restore(start);
-            eng::InputState zoom;zoom.wheel=2.0f;
+            game::runtime::InputState zoom;zoom.wheel=2.0f;
             scene_camera.update(zoom,GameApp::kCompanySitePlayfieldSize,1080,0.016f);
             require(scene_camera.state().distance<start.distance,"Stage-1 mouse wheel zoom is not functional");
-            eng::InputState orbit;orbit.middle_down=true;orbit.mouse_dx=36;orbit.mouse_dy=20;
+            game::runtime::InputState orbit;orbit.middle_down=true;orbit.mouse_dx=36;orbit.mouse_dy=20;
             scene_camera.update(orbit,GameApp::kCompanySitePlayfieldSize,1080,0.016f);
             require(scene_camera.state().azimuth_degrees!=start.azimuth_degrees &&
                     scene_camera.state().elevation_degrees!=start.elevation_degrees,"Stage-1 middle-button orbit failed");
             const auto old_target=scene_camera.state().target;
-            eng::InputState pan;pan.right_down=true;pan.mouse_dx=21;pan.mouse_dy=-8;
+            game::runtime::InputState pan;pan.right_down=true;pan.mouse_dx=21;pan.mouse_dy=-8;
             scene_camera.update(pan,GameApp::kCompanySitePlayfieldSize,1080,0.016f);
-            require(eng::length(scene_camera.state().target-old_target)>0.01f,"Stage-1 right-button pan failed");
+            require(game::runtime::length(scene_camera.state().target-old_target)>0.01f,"Stage-1 right-button pan failed");
         }
 
         // Contract Office: every scaling mode must expose the actionable
@@ -2332,20 +2414,20 @@ struct UiRegression {
             GameApp keyboard(engine);setup(keyboard,7,2);
             keyboard.screen_=GameApp::Screen::Playfield;
             const auto start=keyboard.camera_.target();
-            eng::InputState move_w;move_w.key_w_down=true;
+            game::runtime::InputState move_w;move_w.key_w_down=true;
             keyboard.update(0.5f,move_w);
             const auto after_w=keyboard.camera_.target();
-            require(eng::length(after_w-start)>0.1f,"W did not translate the top-down camera");
-            eng::InputState move_d;move_d.key_d_down=true;
+            require(game::runtime::length(after_w-start)>0.1f,"W did not translate the top-down camera");
+            game::runtime::InputState move_d;move_d.key_d_down=true;
             keyboard.update(0.5f,move_d);
             const auto after_d=keyboard.camera_.target();
-            require(eng::length(after_d-after_w)>0.1f,"D did not strafe the top-down camera");
+            require(game::runtime::length(after_d-after_w)>0.1f,"D did not strafe the top-down camera");
 
             GameApp coarse(engine);setup(coarse,7,2);coarse.screen_=GameApp::Screen::Playfield;
             GameApp fine(engine);setup(fine,7,2);fine.screen_=GameApp::Screen::Playfield;
             for(int i=0;i<20;++i)coarse.update(0.05f,move_w);
             for(int i=0;i<100;++i)fine.update(0.01f,move_w);
-            require(eng::length(coarse.camera_.target()-fine.camera_.target())<0.05f,"WASD camera movement depends on frame rate");
+            require(game::runtime::length(coarse.camera_.target()-fine.camera_.target())<0.05f,"WASD camera movement depends on frame rate");
         }
         // Invalid corridor placement renders a readable cursor tooltip above
         // the 3D preview. Keep this in the HUD bounds at common small screens.
@@ -2389,23 +2471,23 @@ struct UiRegression {
             GameApp menu(engine);setup(menu,0,2);
             menu.game_session_active_=true;
             menu.screen_=GameApp::Screen::MainMenu;
-            eng::InputState esc;esc.escape_pressed=true;
+            game::runtime::InputState esc;esc.escape_pressed=true;
             menu.update(0.0f,esc);
             require(menu.screen_==GameApp::Screen::Playfield,"ESC did not resume from the in-game menu");
             menu.screen_=GameApp::Screen::Settings;
             menu.update(0.0f,esc);
             require(menu.screen_==GameApp::Screen::MainMenu,"ESC from an in-game sub-menu did not return to the game menu");
         }
-        for(const auto size:std::array<eng::Vec2,3>{{{1280,1024},{3440,1440},{5120,1440}}}){GameApp app(engine);setup(app,10,2);r.resize((int)size.x,(int)size.y);app.render(r);r.check_bounds("non-16:9 HUD");}
+        for(const auto size:std::array<game::runtime::Vec2,3>{{{1280,1024},{3440,1440},{5120,1440}}}){GameApp app(engine);setup(app,10,2);r.resize((int)size.x,(int)size.y);app.render(r);r.check_bounds("non-16:9 HUD");}
         GameApp catalog(engine);setup(catalog,7,4);Recorder small;small.resize(1280,720);catalog.render(small);
         const auto next=small.button(">");catalog.input_.mouse_x=(int)std::lround((next.x+next.w/2)*small.scale);catalog.input_.mouse_y=(int)std::lround((next.y+next.h/2)*small.scale);catalog.input_.left_pressed=true;catalog.render(small);
         require(catalog.build_catalog_scroll_==1,"fixed-size icon catalog did not page");
-        eng::InputState wheel=catalog.input_;wheel.left_pressed=false;wheel.wheel=-1;const auto distance=catalog.camera_.distance();catalog.update(0,wheel);catalog.render(small);
+        game::runtime::InputState wheel=catalog.input_;wheel.left_pressed=false;wheel.wheel=-1;const auto distance=catalog.camera_.distance();catalog.update(0,wheel);catalog.render(small);
         require(catalog.build_catalog_scroll_==2 && catalog.camera_.distance()==distance,"catalog wheel also zoomed the world");
-        for(const auto& caption:{std::string("ON"),std::string(90,'W')}){Recorder button;button.set_2d(1);eng::ui::button(button,{}, {0,0,82,34},caption,{});const auto& text=button.draws.back();require(text.v[0]>=eng::ui::kControlPaddingX-0.01f && text.v[1]>=eng::ui::kControlPaddingY-0.01f && text.v[0]+text.v[2]<=82-eng::ui::kControlPaddingX+0.01f && text.v[1]+text.v[3]<=34-eng::ui::kControlPaddingY+0.01f,"button caption escaped its padding");}
-        const auto stroke=eng::ui::line_quad({0,0},{40,0},2);require(std::abs(stroke[1]-stroke[7]-2)<1e-6f,"logical stroke thickness changed");
-        const auto metric=eng::ui::text_extent("WW\nW",2);require(metric.x==24 && metric.y==30,"multiline font metrics differ from glyph grid");
-        for(char ch:std::string("[]_!?#|"))require(eng::ui::kBitmapFont.count(ch)==1,"UI punctuation glyph missing");
+        for(const auto& caption:{std::string("ON"),std::string(90,'W')}){Recorder button;button.set_2d(1);game::runtime::ui::button(button,{}, {0,0,82,34},caption,{});const auto& text=button.draws.back();require(text.v[0]>=game::runtime::ui::kControlPaddingX-0.01f && text.v[1]>=game::runtime::ui::kControlPaddingY-0.01f && text.v[0]+text.v[2]<=82-game::runtime::ui::kControlPaddingX+0.01f && text.v[1]+text.v[3]<=34-game::runtime::ui::kControlPaddingY+0.01f,"button caption escaped its padding");}
+        const auto stroke=game::runtime::ui::line_quad({0,0},{40,0},2);require(std::abs(stroke[1]-stroke[7]-2)<1e-6f,"logical stroke thickness changed");
+        const auto metric=game::runtime::ui::text_extent("WW\nW",2);require(metric.x==24 && metric.y==30,"multiline font metrics differ from glyph grid");
+        for(char ch:std::string("[]_!?#|"))require(game::runtime::ui::kBitmapFont.count(ch)==1,"UI punctuation glyph missing");
         std::cout<<"475 resolution/zoom/screen cases and "+std::to_string(structure_cases)+" structure warning cases, HD-to-4K proportions, hitboxes, frame-boundary zoom, aspect ratios, button text and shared font/stroke metrics passed\n";
     }
 };
@@ -2414,7 +2496,7 @@ int main(int argc,char** argv){
     const auto preferences=std::filesystem::temp_directory_path()/
         ("lunar-ui-regression-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".cfg");
 #ifdef _WIN32
-    if(_putenv_s("GAME_GRAPHICS_CONFIG",preferences.string().c_str())!=0) return 1;
+    if(_wputenv_s(L"GAME_GRAPHICS_CONFIG",preferences.c_str())!=0) return 1;
 #else
     if(setenv("GAME_GRAPHICS_CONFIG",preferences.c_str(),1)!=0) return 1;
 #endif
@@ -2425,6 +2507,8 @@ int main(int argc,char** argv){
             game::UiRegression::build_mode();
             game::UiRegression::recent_saves();
         }
+        else if(out=="runtime-paths") game::UiRegression::runtime_paths();
+        else if(out=="fov-interiors") game::UiRegression::fov_and_station_interiors();
         else if(out=="graphics-quality") game::UiRegression::graphics_quality();
         else if(out=="build-order") game::UiRegression::build_order_panel();
         else if(out=="activity-log") game::UiRegression::activity_log_and_blueprint_progress();

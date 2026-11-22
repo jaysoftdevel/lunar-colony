@@ -9,7 +9,7 @@
 
 namespace game {
 
-using namespace eng;
+using namespace game::runtime;
 using namespace world_math;
 
 void GameApp::update_ore_logistics(float dt){
@@ -297,7 +297,7 @@ bool GameApp::ore_survey_location(Vec3& point) const {
     return true;
 }
 
-void GameApp::render_ore_deposits(Renderer& r) const {
+void GameApp::render_ore_deposits(SceneRenderer& r) const {
     Vec3 survey{};
     if(!ore_survey_location(survey))return;
     constexpr int cells=32;
@@ -318,7 +318,7 @@ void GameApp::render_ore_deposits(Renderer& r) const {
     }
 }
 
-void GameApp::render_ore_survey(Renderer& r) const {
+void GameApp::render_ore_survey(SceneRenderer& r) const {
     Vec3 survey{};
     if(!ore_survey_location(survey))return;
     const auto mix=ore::deposit(survey);

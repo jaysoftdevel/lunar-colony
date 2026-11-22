@@ -1,34 +1,14 @@
-# Build dependencies
+# Build dependencies — 0.61.1
 
-## Shared
-- CMake 3.20+
-- Git for applying update packages
-- C++20 compiler
-- RVO2: bundled in `third_party/rvo2`; no separate install needed
+CMake 3.21+, Python 3.10+, a C++20 compiler, and the external JSD 3d-engine 0.5.12
+source tree. That engine supplies source-built SDL2/Jolt and its runtime services.
+RVO2 remains bundled with the game. No downloads occur during CMake configuration.
 
-## Linux
-- GCC or Clang with C++20 support
-- X11 development headers (`libx11-dev` on Debian/Ubuntu)
-- OpenGL/Mesa development files (`libgl1-mesa-dev`, `mesa-common-dev` on Debian/Ubuntu)
-- POSIX threads / `dl` (provided by the system toolchain)
-- Make or Ninja
+Linux: GCC/Clang, Make/Ninja, X11 and OpenGL development headers. Use
+`./install-deps.sh` on Debian/Ubuntu. Audio uses the engine's SDL mixer/device.
 
-`./install-deps.sh` installs the Debian/Ubuntu package set.
+Windows 11 x64: Visual Studio 2022's Desktop development with C++ workload, MSVC
+v143, Windows SDK, and a desktop OpenGL 3.3 GPU driver. SDL DLLs are staged beside
+the game by the build. OpenAL, Direct3D 12 and the Agility SDK are not dependencies.
 
-## Windows 11 x64
-- Visual Studio 2022 with **Desktop development with C++**
-- MSVC v143 x64/x86 build tools
-- Windows 11 SDK (10.0.26100 or newer recommended)
-- CMake 3.20+
-- Direct3D 12, DXGI, D3DCompiler, User32, GDI32 and Shell32 libraries from the Windows SDK
-
-`install-deps.bat` can install CMake through `winget`; the Visual Studio C++ workload/SDK is best installed via Visual Studio Installer.
-
-
-The advanced Linux graphics path uses desktop OpenGL 4.3 compute shaders.
-The deferred raster fallback uses desktop OpenGL 3.3. OpenAL Soft supplies
-audio on both platforms. Linux builds stage the installed OpenAL library
-under `build/linux/bin/lib`. The Windows dependency script installs the
-Win64 runtime in `build/windows/bin`. The host provides the graphics and
-audio system libraries. The game can run silently when an audio device is
-unavailable.
+Build: `./build.sh /path/to/3d-engine` or `build.bat --engine PATH`.

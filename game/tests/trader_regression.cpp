@@ -2,7 +2,7 @@
 #include "game/ui/layout.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/world/storage_loading_gate.hpp"
-#include "engine/ui_metrics.hpp"
+#include "game/runtime/ui_metrics.hpp"
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -13,28 +13,28 @@
 
 namespace {
 void require(bool ok,const std::string& what){if(!ok)throw std::runtime_error(what);}
-struct Capture:eng::Renderer {
-    int w=1600,h=900;float scale=1;bool hud=false;eng::Mat4 matrix{};
-    struct Line {eng::Vec3 a,b;eng::Color color;};std::vector<Line> lines;
-    struct Tri {eng::Vec3 a,b,c;eng::Color color;};std::vector<Tri> triangles;
-    struct Text {std::string text;eng::Rect rect;};std::vector<Text> texts;eng::Rect last_rect{};
+struct Capture:game::runtime::SceneRenderer {
+    int w=1600,h=900;float scale=1;bool hud=false;game::runtime::Mat4 matrix{};
+    struct Line {game::runtime::Vec3 a,b;game::runtime::Color color;};std::vector<Line> lines;
+    struct Tri {game::runtime::Vec3 a,b,c;game::runtime::Color color;};std::vector<Tri> triangles;
+    struct Text {std::string text;game::runtime::Rect rect;};std::vector<Text> texts;game::runtime::Rect last_rect{};
     bool initialize(void*,std::uintptr_t,int,int)override{return true;}void resize(int x,int y)override{w=x;h=y;}
-    void begin_frame(eng::Color)override{triangles.clear();lines.clear();texts.clear();hud=false;}void end_frame()override{}
-    void set_3d(const eng::Mat4& m)override{matrix=m;hud=false;}void set_2d(float s)override{scale=s;hud=true;}
-    void draw_lines_3d(const std::vector<eng::Vec3>& v,eng::Color color,float)override{for(std::size_t i=0;i+1<v.size();i+=2)lines.push_back({v[i],v[i+1],color});}
-    void draw_triangles_3d(const std::vector<eng::Vec3>& v,eng::Color color)override{
+    void begin_frame(game::runtime::Color)override{triangles.clear();lines.clear();texts.clear();hud=false;}void end_frame()override{}
+    void set_3d(const game::runtime::Mat4& m)override{matrix=m;hud=false;}void set_2d(float s)override{scale=s;hud=true;}
+    void draw_lines_3d(const std::vector<game::runtime::Vec3>& v,game::runtime::Color color,float)override{for(std::size_t i=0;i+1<v.size();i+=2)lines.push_back({v[i],v[i+1],color});}
+    void draw_triangles_3d(const std::vector<game::runtime::Vec3>& v,game::runtime::Color color)override{
         for(std::size_t i=0;i+2<v.size();i+=3)triangles.push_back({v[i],v[i+1],v[i+2],color});
     }
-    void draw_rect(eng::Rect p,eng::Color)override{last_rect=p;}
-    void draw_line(eng::Vec2,eng::Vec2,eng::Color,float)override{}
-    void draw_text(eng::Vec2 p,const std::string& s,float size,eng::Color)override{
-        auto extent=eng::ui::text_extent(s,size);
+    void draw_rect(game::runtime::Rect p,game::runtime::Color)override{last_rect=p;}
+    void draw_line(game::runtime::Vec2,game::runtime::Vec2,game::runtime::Color,float)override{}
+    void draw_text(game::runtime::Vec2 p,const std::string& s,float size,game::runtime::Color)override{
+        auto extent=game::runtime::ui::text_extent(s,size);
         require(p.x>=-.5f&&p.y>=-.5f&&(p.x+extent.x)*scale<=w+1&&(p.y+extent.y)*scale<=h+1,"lander UI text outside viewport: "+s);
         texts.push_back({s,last_rect});
     }
     int width()const override{return w;}int height()const override{return h;}bool hardware_accelerated()const override{return false;}
     std::string gpu_vendor()const override{return "TEST";}std::string gpu_renderer()const override{return "GEOMETRY CAPTURE";}std::string gpu_version()const override{return "TEST";}
-    eng::Rect button(const std::string& s)const{for(const auto& t:texts)if(t.text==s)return t.rect;throw std::runtime_error("missing button "+s);}
+    game::runtime::Rect button(const std::string& s)const{for(const auto& t:texts)if(t.text==s)return t.rect;throw std::runtime_error("missing button "+s);}
     void write(const std::filesystem::path& p)const{
         std::ofstream f(p);f<<"{\"matrix\":[";for(int i=0;i<16;++i){if(i)f<<',';f<<matrix.m[i];}f<<"],\"triangles\":[";
         bool first=true;for(const auto& t:triangles){if(!first)f<<',';first=false;f<<'[';for(auto v:{t.a,t.b,t.c})f<<v.x<<','<<v.y<<','<<v.z<<',';f<<t.color.r<<','<<t.color.g<<','<<t.color.b<<','<<t.color.a<<']';}f<<"],\"lines\":[";first=true;for(const auto& l:lines){if(!first)f<<',';first=false;f<<'[';for(auto v:{l.a,l.b})f<<v.x<<','<<v.y<<','<<v.z<<',';f<<l.color.r<<','<<l.color.g<<','<<l.color.b<<','<<l.color.a<<']';}f<<"]}";
@@ -42,7 +42,7 @@ struct Capture:eng::Renderer {
 };
 }
 namespace game {
-using eng::Vec3;
+using game::runtime::Vec3;
 struct TraderRegression {
     static void connect(GameApp& a,UtilityEndpointKind ka,std::size_t ia,UtilityEndpointKind kb,std::size_t ib){
         auto pa=ka==UtilityEndpointKind::Resource?a.placed_resources_[ia].position:a.placed_habitats_[ia].position;
@@ -73,7 +73,7 @@ struct TraderRegression {
         require(b->trader_.phase==a.trader_.phase&&b->trader_.loaded==a.trader_.loaded&&b->trader_.requested==a.trader_.requested&&b->planning_.funds_eur==a.planning_.funds_eur,"resume changed trade/cash state");
         require(b->trader_.hauls.size()==a.trader_.hauls.size(),"resume dropped cargo carrier");return b;
     }
-    static void oxygen_storage(eng::Application& engine){
+    static void oxygen_storage(game::runtime::GameHost& engine){
         GameApp app(engine);
         setup(app);
         PlacedResource tank;
@@ -105,7 +105,7 @@ struct TraderRegression {
         require(loaded->start_trader_sale()&&std::abs(loaded->placed_resources_[index].stored_oxygen_kg-(stored-3))<1e-9,
                 "oxygen tank sale did not reserve exact stock");
     }
-    static void conveyor_trade(eng::Application& engine){
+    static void conveyor_trade(game::runtime::GameHost& engine){
         GameApp app(engine);
         setup(app);
         PlacedResource drill;
@@ -215,7 +215,7 @@ struct TraderRegression {
         std::cout<<"Conveyor trade PASS: raw storage, capacity backpressure, separate ore sale, cargo custody, power and belt removal\n";
     }
     static void run(){
-        eng::Application engine;oxygen_storage(engine);conveyor_trade(engine);auto a=std::make_unique<GameApp>(engine);setup(*a);
+        game::runtime::GameHost engine;oxygen_storage(engine);conveyor_trade(engine);auto a=std::make_unique<GameApp>(engine);setup(*a);
         a->placed_resources_[0].construction.step=0;require(!a->call_trader(0),"unfinished pad called trader");a->placed_resources_[0].construction.step=kConstructionSteps;
         a->placed_resources_[0].supply.power_fraction=0;require(!a->call_trader(0),"unpowered pad called trader");a->update_supply_simulation(0);
         a->placed_resources_.pop_back();
@@ -298,7 +298,7 @@ struct TraderRegression {
         for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom){GameApp p(engine);setup(p);p.ui_scale_index_=zoom;Capture c;c.resize(1280,720);p.render(c);p.selection_panel_scroll_=p.selection_panel_max_scroll();p.render(c);c.button("TRADE");p.call_trader(0);p.update_trader(24);p.render(c);p.selection_panel_scroll_=p.selection_panel_max_scroll();p.render(c);c.button("START LOADING");}
         for(auto phase:{TradePhase::Approach,TradePhase::Docked,TradePhase::Loading,TradePhase::Departing}){
             GameApp ship(engine);setup(ship);require(ship.call_trader(0),"ship fixture call");ship.trader_.phase=phase;ship.trader_.elapsed=phase==TradePhase::Approach?15:phase==TradePhase::Departing?5:0;
-            ship.graphics_.path=eng::GraphicsPath::Classic;
+            ship.graphics_.path=game::runtime::GraphicsPath::Classic;
             Capture c;ship.render_trader(c);
             require(!c.triangles.empty(),"Classic Full Graphics lost the filled trader mesh");
             if constexpr(build::debug_features){

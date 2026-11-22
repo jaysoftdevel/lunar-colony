@@ -3,7 +3,7 @@
 #include <cmath>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using F=GraphicsFeature;
 
 GraphicsSettings graphics_profile_settings(BenchmarkProfile profile,const GraphicsSettings& current,const GraphicsCapabilities& caps){
@@ -65,7 +65,7 @@ double BenchmarkTrial::worst_p90() const {
     return worst;
 }
 
-void GraphicsBenchmark::start(const eng::GraphicsSettings& current,const eng::GraphicsCapabilities& caps,
+void GraphicsBenchmark::start(const game::runtime::GraphicsSettings& current,const game::runtime::GraphicsCapabilities& caps,
                               int width,int height,int target){
     *this={};
     width_=width;

@@ -122,9 +122,9 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
     for(std::size_t i=0;i<placed_resources_.size();++i){
         auto& r=placed_resources_[i];
         if(r.kind==ResourceKind::SolarPanel){
-            const eng::Vec3 fixed=solar_tracking::fixed_panel_normal(r.rotation_degrees);
-            const eng::Vec3 target=(r.solar_tracking_enabled && sun.above_horizon)?sun.direction:fixed;
-            if(!r.solar_visual_initialized || eng::length(r.solar_visual_normal)<0.5f){
+            const game::runtime::Vec3 fixed=solar_tracking::fixed_panel_normal(r.rotation_degrees);
+            const game::runtime::Vec3 target=(r.solar_tracking_enabled && sun.above_horizon)?sun.direction:fixed;
+            if(!r.solar_visual_initialized || game::runtime::length(r.solar_visual_normal)<0.5f){
                 r.solar_visual_normal=fixed;
                 r.solar_visual_initialized=true;
             }
@@ -132,7 +132,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             // even when game speed changes or tracking is toggled.
             const float alpha=1.0f-std::exp(-0.8f*std::max(0.0f,dt));
             if(r.power_enabled && alpha>0.0f){
-                r.solar_visual_normal=eng::normalize(r.solar_visual_normal*(1.0f-alpha)+eng::normalize(target)*alpha);
+                r.solar_visual_normal=game::runtime::normalize(r.solar_visual_normal*(1.0f-alpha)+game::runtime::normalize(target)*alpha);
             }
         }
         // External equipment has a small sealed service manifold: its ports
@@ -552,7 +552,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             }
         };
         if(fluxes.size()>=512)
-            eng::TaskPool::shared().parallel_for_ranges(fluxes.size(),64,measure_fluxes);
+            game::runtime::GameJobs::shared().parallel_for_ranges(fluxes.size(),64,measure_fluxes);
         else measure_fluxes(0,fluxes.size());
         // Keep the accumulation in topology order for identical transfers
         // and donor limits across different worker counts.

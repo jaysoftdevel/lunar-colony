@@ -1,17 +1,10 @@
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include "game/game_app.hpp"
 #include "game/version.hpp"
 #include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
-
-#if defined(_WIN32) && defined(GAME_D3D12_AGILITY_VERSION)
-extern "C" {
-__declspec(dllexport) extern const unsigned int D3D12SDKVersion=GAME_D3D12_AGILITY_VERSION;
-__declspec(dllexport) const char* D3D12SDKPath=".\\D3D12\\";
-}
-#endif
 
 int main(int argc,char** argv){
     if(argc>1 && (std::string_view(argv[1])=="--version" || std::string_view(argv[1])=="-v")){
@@ -23,11 +16,11 @@ int main(int argc,char** argv){
         return 0;
     }
     if(argc>1 && std::string_view(argv[1])=="--cpu-info"){
-        std::cout<<eng::cpu_worker_summary()<<'\n';
+        std::cout<<game::runtime::cpu_worker_summary()<<'\n';
         return 0;
     }
-    eng::Application app;
-    eng::AppConfig cfg;
+    game::runtime::GameHost app;
+    game::runtime::WindowConfig cfg;
     cfg.width=1600;
     cfg.height=900;
     cfg.title="Game v"+std::string(game::version::current);

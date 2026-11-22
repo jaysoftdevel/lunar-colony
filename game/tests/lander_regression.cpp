@@ -2,7 +2,7 @@
 #include "game/ui/layout.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/util/world_math.hpp"
-#include "engine/ui_metrics.hpp"
+#include "game/runtime/ui_metrics.hpp"
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -13,35 +13,35 @@
 
 namespace {
 void require(bool ok,const std::string& what){if(!ok)throw std::runtime_error(what);}
-struct Capture:eng::Renderer {
-    int w=1600,h=900;float scale=1;bool hud=false;eng::Mat4 matrix{};
-    struct Line {eng::Vec3 a,b;eng::Color color;};std::vector<Line> lines;
-    struct Tri {eng::Vec3 a,b,c;eng::Color color;};std::vector<Tri> triangles;
-    struct Text {std::string text;eng::Rect rect;};std::vector<Text> texts;eng::Rect last_rect{};
+struct Capture:game::runtime::SceneRenderer {
+    int w=1600,h=900;float scale=1;bool hud=false;game::runtime::Mat4 matrix{};
+    struct Line {game::runtime::Vec3 a,b;game::runtime::Color color;};std::vector<Line> lines;
+    struct Tri {game::runtime::Vec3 a,b,c;game::runtime::Color color;};std::vector<Tri> triangles;
+    struct Text {std::string text;game::runtime::Rect rect;};std::vector<Text> texts;game::runtime::Rect last_rect{};
     bool accept_volumes=false;
-    std::vector<eng::LunarVolume> volumes;
+    std::vector<game::runtime::LunarVolume> volumes;
     bool initialize(void*,std::uintptr_t,int,int)override{return true;}void resize(int x,int y)override{w=x;h=y;}
-    void begin_frame(eng::Color)override{triangles.clear();lines.clear();texts.clear();volumes.clear();hud=false;}void end_frame()override{}
-    void set_3d(const eng::Mat4& m)override{matrix=m;hud=false;}void set_2d(float s)override{scale=s;hud=true;}
-    void draw_lines_3d(const std::vector<eng::Vec3>& v,eng::Color color,float)override{for(std::size_t i=0;i+1<v.size();i+=2)lines.push_back({v[i],v[i+1],color});}
-    void draw_triangles_3d(const std::vector<eng::Vec3>& v,eng::Color color)override{
+    void begin_frame(game::runtime::Color)override{triangles.clear();lines.clear();texts.clear();volumes.clear();hud=false;}void end_frame()override{}
+    void set_3d(const game::runtime::Mat4& m)override{matrix=m;hud=false;}void set_2d(float s)override{scale=s;hud=true;}
+    void draw_lines_3d(const std::vector<game::runtime::Vec3>& v,game::runtime::Color color,float)override{for(std::size_t i=0;i+1<v.size();i+=2)lines.push_back({v[i],v[i+1],color});}
+    void draw_triangles_3d(const std::vector<game::runtime::Vec3>& v,game::runtime::Color color)override{
         for(std::size_t i=0;i+2<v.size();i+=3)triangles.push_back({v[i],v[i+1],v[i+2],color});
     }
-    bool draw_lunar_volume(const eng::LunarVolume& volume)override{
+    bool draw_lunar_volume(const game::runtime::LunarVolume& volume)override{
         if(!accept_volumes)return false;
         volumes.push_back(volume);
         return true;
     }
-    void draw_rect(eng::Rect p,eng::Color)override{last_rect=p;}
-    void draw_line(eng::Vec2,eng::Vec2,eng::Color,float)override{}
-    void draw_text(eng::Vec2 p,const std::string& s,float size,eng::Color)override{
-        auto extent=eng::ui::text_extent(s,size);
+    void draw_rect(game::runtime::Rect p,game::runtime::Color)override{last_rect=p;}
+    void draw_line(game::runtime::Vec2,game::runtime::Vec2,game::runtime::Color,float)override{}
+    void draw_text(game::runtime::Vec2 p,const std::string& s,float size,game::runtime::Color)override{
+        auto extent=game::runtime::ui::text_extent(s,size);
         require(p.x>=-.5f&&p.y>=-.5f&&(p.x+extent.x)*scale<=w+1&&(p.y+extent.y)*scale<=h+1,"lander UI text outside viewport: "+s);
         texts.push_back({s,last_rect});
     }
     int width()const override{return w;}int height()const override{return h;}bool hardware_accelerated()const override{return false;}
     std::string gpu_vendor()const override{return "TEST";}std::string gpu_renderer()const override{return "GEOMETRY CAPTURE";}std::string gpu_version()const override{return "TEST";}
-    eng::Rect button(const std::string& s)const{for(const auto& t:texts)if(t.text==s)return t.rect;throw std::runtime_error("missing button "+s);}
+    game::runtime::Rect button(const std::string& s)const{for(const auto& t:texts)if(t.text==s)return t.rect;throw std::runtime_error("missing button "+s);}
     void write(const std::filesystem::path& p)const{
         std::ofstream f(p);f<<"{\"matrix\":[";for(int i=0;i<16;++i){if(i)f<<',';f<<matrix.m[i];}f<<"],\"triangles\":[";
         bool first=true;for(const auto& t:triangles){if(!first)f<<',';first=false;f<<'[';for(auto v:{t.a,t.b,t.c})f<<v.x<<','<<v.y<<','<<v.z<<',';f<<t.color.r<<','<<t.color.g<<','<<t.color.b<<','<<t.color.a<<']';}f<<"],\"lines\":[";first=true;for(const auto& l:lines){if(!first)f<<',';first=false;f<<'[';for(auto v:{l.a,l.b})f<<v.x<<','<<v.y<<','<<v.z<<',';f<<l.color.r<<','<<l.color.g<<','<<l.color.b<<','<<l.color.a<<']';}f<<"]}";
@@ -56,11 +56,11 @@ namespace game {
 struct LanderRegression {
     static ResourceBundle cargo(){ResourceBundle b;b.iron=1000;b.food=600;b.water=700;b.silicon=333;return b;}
     static void setup(GameApp& a){a.playfield_size_=128;a.playfield_.rebuild(128);a.on_resize(1600,900);a.screen_=GameApp::Screen::Playfield;a.active_game_phase_=GameApp::GamePhase::RobotPreparation;a.game_session_active_=true;a.status_.reset();a.begin_lunar_landing(cargo(),1,1);}
-    static eng::Vec2 screen(GameApp& a,eng::Vec3 p){auto m=a.camera_.view_projection(1600.f/900);float w=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];return {(m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12])/w*800+800,450-(m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13])/w*450};}
-    static void click(GameApp& a,eng::Vec3 p){auto s=screen(a,p);eng::InputState in;in.mouse_x=(int)s.x;in.mouse_y=(int)s.y;in.left_pressed=true;a.update(0,in);}
-    static void roundtrip(GameApp& a,const std::string& name,bool legacy_preflight_stash=false){std::string error;require(a.save_game_to_name(name,error),error);auto path=std::filesystem::path(a.save_game_directory())/(name+".gmsave");GameApp b(a.app_);require(b.load_game_from_file(path.string(),error),error);require(b.lander_.awaiting_site==a.lander_.awaiting_site&&b.lander_.awaiting_stash==(a.lander_.awaiting_stash && !legacy_preflight_stash)&&b.lander_.salvaged==a.lander_.salvaged&&b.lander_.boxed==a.lander_.boxed,"placement/salvage flags lost on load");require(eng::length(b.lander_.stash_center-a.lander_.stash_center)<.001f&&b.ground_resource_piles_.size()==a.ground_resource_piles_.size(),"stash/boxes lost on load");require(b.resources_.amounts().total_amount()==a.resources_.amounts().total_amount(),"inventory changed on resume");require(b.colony_seeds_==a.colony_seeds_&&b.lander_.seeds_aboard==a.lander_.seeds_aboard,"seed custody changed on resume");std::filesystem::remove(path);}
+    static game::runtime::Vec2 screen(GameApp& a,game::runtime::Vec3 p){auto m=a.camera_.view_projection(1600.f/900);float w=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];return {(m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12])/w*800+800,450-(m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13])/w*450};}
+    static void click(GameApp& a,game::runtime::Vec3 p){auto s=screen(a,p);game::runtime::InputState in;in.mouse_x=(int)s.x;in.mouse_y=(int)s.y;in.left_pressed=true;a.update(0,in);}
+    static void roundtrip(GameApp& a,const std::string& name,bool legacy_preflight_stash=false){std::string error;require(a.save_game_to_name(name,error),error);auto path=std::filesystem::path(a.save_game_directory())/(name+".gmsave");GameApp b(a.app_);require(b.load_game_from_file(path.string(),error),error);require(b.lander_.awaiting_site==a.lander_.awaiting_site&&b.lander_.awaiting_stash==(a.lander_.awaiting_stash && !legacy_preflight_stash)&&b.lander_.salvaged==a.lander_.salvaged&&b.lander_.boxed==a.lander_.boxed,"placement/salvage flags lost on load");require(game::runtime::length(b.lander_.stash_center-a.lander_.stash_center)<.001f&&b.ground_resource_piles_.size()==a.ground_resource_piles_.size(),"stash/boxes lost on load");require(b.resources_.amounts().total_amount()==a.resources_.amounts().total_amount(),"inventory changed on resume");require(b.colony_seeds_==a.colony_seeds_&&b.lander_.seeds_aboard==a.lander_.seeds_aboard,"seed custody changed on resume");std::filesystem::remove(path);}
     static void exhaust(GameApp& app){
-        using eng::Vec3;
+        using game::runtime::Vec3;
         const auto saved=app.lander_;
         app.lander_.phase=LanderPhase::Approach;
         app.lander_.elapsed=35.f;
@@ -80,14 +80,14 @@ struct LanderRegression {
             const auto& jet=volume.volumes[i];
             const float x=(static_cast<float>(i)-1)*1.48f;
             const Vec3 mouth=origin+Vec3{x*cosine-.40f*sine,x*sine+.40f*cosine,-1.48f};
-            require(jet.cone && eng::length(jet.origin-mouth)<.001f &&
-                    eng::length(jet.axis-axis)<.001f,"plume detached from its tilted nozzle");
+            require(jet.cone && game::runtime::length(jet.origin-mouth)<.001f &&
+                    game::runtime::length(jet.axis-axis)<.001f,"plume detached from its tilted nozzle");
             require(jet.nozzle_radius>.4f && jet.nozzle_radius<.59f && jet.radius>jet.nozzle_radius &&
                     jet.length<=jet.plume_length && jet.length>2.f,"invalid expanding jet profile");
             const auto on_aperture=[&](Vec3 p,float min_radius,float max_radius){
                 const Vec3 delta=p-mouth;
-                const float distance=eng::length(delta);
-                return std::abs(eng::dot(delta,axis))<.002f &&
+                const float distance=game::runtime::length(delta);
+                return std::abs(game::runtime::dot(delta,axis))<.002f &&
                     distance>=min_radius && distance<=max_radius;
             };
             const auto has_ring=[&](const Capture& capture,float min_radius,float max_radius){
@@ -108,7 +108,7 @@ struct LanderRegression {
             require(wire.volumes.empty() && wire.triangles.empty(),"meshed layout rendered solid exhaust");
             for(const auto& jet:volume.volumes)
                 require(std::any_of(wire.lines.begin(),wire.lines.end(),[&](const auto& l){
-                    return l.color.b>.85f && eng::length(l.a-jet.origin)<.50f;
+                    return l.color.b>.85f && game::runtime::length(l.a-jet.origin)<.50f;
                 }),"meshed layout lost a jet");
             app.world_layout_mode_=GameApp::WorldLayoutMode::FullGraphics;
         }
@@ -127,7 +127,7 @@ struct LanderRegression {
             }else{
                 ++dust_count;
                 const bool at_impact=std::any_of(volume.volumes.begin(),volume.volumes.end(),[&](const auto& jet){
-                    return jet.cone && eng::length(jet.origin+jet.axis*jet.length-v.origin)<.02f;
+                    return jet.cone && game::runtime::length(jet.origin+jet.axis*jet.length-v.origin)<.02f;
                 });
                 require(at_impact && v.length<v.radius,"dust missed the jet footprint");
             }
@@ -155,7 +155,7 @@ struct LanderRegression {
         require(volume.volumes.empty(),"landing dust did not clear");
         app.lander_=saved;
     }
-    static void unload_queue(eng::Application& engine){
+    static void unload_queue(game::runtime::GameHost& engine){
         using namespace world_math;
         // A full 12-rover cabin is the tightest case. Also sample each legacy
         // parked prefix against the new queue and the remaining parking bays.
@@ -189,7 +189,7 @@ struct LanderRegression {
         require(app.prepare_default_landing(),"fleet deployment site");
         app.update_lunar_lander(1);
         const auto view=app.camera_.state();
-        eng::InputState orbit;
+        game::runtime::InputState orbit;
         orbit.middle_down=true;
         orbit.mouse_dx=20;
         orbit.mouse_dy=12;
@@ -214,29 +214,29 @@ struct LanderRegression {
         const auto path=std::filesystem::path(app.save_game_directory())/"rover-queue-mid-ramp.gmsave";
         GameApp resumed(engine);
         require(resumed.load_game_from_file(path.string(),error),error);
-        require(eng::length(lunar_lander_robot_pose(resumed.lander_,2,0).position-expected.position)<.001f,
+        require(game::runtime::length(lunar_lander_robot_pose(resumed.lander_,2,0).position-expected.position)<.001f,
                 "unload queue moved on save/load");
         resumed.update_lunar_lander(100);
         require(resumed.lander_.phase==LanderPhase::Ready&&resumed.builder_robots_.size()==12,
                 "full fleet did not finish parking");
         for(int i=0;i<12;++i)
-            require(eng::length(resumed.builder_robots_[(std::size_t)i].position-lunar_lander_robot_bay(resumed.lander_,i))<.001f,
+            require(game::runtime::length(resumed.builder_robots_[(std::size_t)i].position-lunar_lander_robot_bay(resumed.lander_,i))<.001f,
                     "rover did not reach its assigned bay");
         // This file was produced by the schema-35 game while its second
         // rover was on the ramp. The parked prefix must survive migration.
         const auto old_path=std::filesystem::path(GAME_LEGACY_LANDER_FIXTURES)/"schema35-mid-ramp.gmsave";
         GameApp legacy(engine);
         require(legacy.load_game_from_file(old_path.string(),error),error);
-        const eng::Vec3 parked{11.6f,0.0f,-6.4f};
+        const game::runtime::Vec3 parked{11.6f,0.0f,-6.4f};
         require(legacy.builder_robots_.size()==1&&legacy.lander_.legacy_parking&&legacy.lander_.elapsed==0&&
-                eng::length(legacy.builder_robots_[0].position-parked)<.001f,
+                game::runtime::length(legacy.builder_robots_[0].position-parked)<.001f,
                 "legacy unload did not preserve its parked rover");
         legacy.update_lunar_lander(100);
         require(legacy.builder_robots_.size()==12,"legacy unload lost or duplicated a rover");
         std::filesystem::remove(path);
     }
     static void run(const char* attached_save){
-        eng::Application engine;
+        game::runtime::GameHost engine;
         unload_queue(engine);
         GameApp a(engine);setup(a);
         if(attached_save){
@@ -258,7 +258,7 @@ struct LanderRegression {
         click(a,{0,0,0});
         require(a.lander_.in_flight() && !a.lander_.awaiting_stash && !a.lander_.boxed,
                 "selecting a touchdown site did not begin the approach without a stash");
-        const auto marker=a.lander_.site+eng::Vec3{-12,0,0};
+        const auto marker=a.lander_.site+game::runtime::Vec3{-12,0,0};
         require(!a.confirm_stash_site(marker),"stash placement accepted during approach");
         Capture approach_marker;a.render_stash(approach_marker);
         require(approach_marker.lines.empty(),"stash marker appeared before landing");
@@ -283,7 +283,7 @@ struct LanderRegression {
                 a.lander_.seeds_aboard==kStarterCropSeeds,"failed unload credited or lost the seed cargo");
         click(a,marker);
         require(!a.lander_.awaiting_stash && a.lander_.boxed &&
-                eng::length(a.lander_.stash_center-marker)<.25f && a.ground_resource_piles_.empty(),
+                game::runtime::length(a.lander_.stash_center-marker)<.25f && a.ground_resource_piles_.empty(),
                 "post-touchdown mouse click did not confirm the stash before unload");
         require(a.unload_lunar_lander(),"unload failed");
         require(a.colony_seeds_==kStarterCropSeeds && seed_packet_total(a.lander_.seeds_aboard)==0 &&
@@ -298,7 +298,7 @@ struct LanderRegression {
             stacked|=b.amount>capacity;
         }
         require(physical==cargo().total_amount()&&stacked,"stacking changed box mass or did not stack");
-        for(std::size_t i=0;i<a.ground_resource_piles_.size();++i)for(std::size_t j=0;j<i;++j)require(eng::length(a.ground_resource_piles_[i].position-a.ground_resource_piles_[j].position)>a.ground_resource_piles_[i].radius+a.ground_resource_piles_[j].radius+.05f,"resource stacks overlap");
+        for(std::size_t i=0;i<a.ground_resource_piles_.size();++i)for(std::size_t j=0;j<i;++j)require(game::runtime::length(a.ground_resource_piles_[i].position-a.ground_resource_piles_[j].position)>a.ground_resource_piles_[i].radius+a.ground_resource_piles_[j].radius+.05f,"resource stacks overlap");
         a.update_lunar_lander(400);require(a.lander_.phase==LanderPhase::Ready&&a.builder_robots_.size()==2,"ramp robot deployment failed");
         const auto box=a.ground_resource_piles_.front();auto s=screen(a,box.position);a.select_world_at((int)s.x,(int)s.y);require(a.selection_kind_==GameApp::SelectionKind::GroundResource,"individual box not mouse selectable");
         s=screen(a,a.lander_.stash_center);a.select_world_at((int)s.x,(int)s.y);
@@ -308,7 +308,7 @@ struct LanderRegression {
             Capture c;a.render_lunar_lander(c);
             require(!c.triangles.empty() && c.lines.empty(),"classic full-graphics lander did not render its hull");
             if(phase==LanderPhase::Landed || phase==LanderPhase::Ready){
-                const auto nose=[&](eng::Vec3 p){return std::abs(p.z-a.lander_.site.z-3.59f)<.002f;};
+                const auto nose=[&](game::runtime::Vec3 p){return std::abs(p.z-a.lander_.site.z-3.59f)<.002f;};
                 const bool hatch=std::any_of(c.triangles.begin(),c.triangles.end(),[&](const auto& t){
                     return t.color.a==1.f && nose(t.a) && nose(t.b) && nose(t.c);
                 });

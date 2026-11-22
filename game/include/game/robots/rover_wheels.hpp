@@ -1,12 +1,12 @@
 #pragma once
-#include "engine/math.hpp"
+#include "game/runtime/types.hpp"
 #include <array>
 #include <cmath>
 
 namespace game::robots {
 
 inline constexpr float kRoverWheelRadiusM=0.22f;
-inline constexpr std::array<eng::Vec3,6> kRoverWheelCenters{{
+inline constexpr std::array<game::runtime::Vec3,6> kRoverWheelCenters{{
     {-.49f,kRoverWheelRadiusM,-.48f},{.49f,kRoverWheelRadiusM,-.48f},
     {-.49f,kRoverWheelRadiusM,0},{.49f,kRoverWheelRadiusM,0},
     {-.49f,kRoverWheelRadiusM,.48f},{.49f,kRoverWheelRadiusM,.48f}

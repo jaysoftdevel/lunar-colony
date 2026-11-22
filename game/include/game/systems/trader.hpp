@@ -1,5 +1,5 @@
 #pragma once
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -16,7 +16,7 @@ using TradeManifest=std::array<std::int64_t,kTradeGoodCount>;
 struct TradeLot {
     TradeGood good{TradeGood::Iron};
     std::int64_t remaining{0};
-    eng::Vec3 position{};
+    game::runtime::Vec3 position{};
     // A belt parcel stays in this lot's custody until it reaches the pad.
     std::uint64_t conveyor_sequence{};
     float conveyor_distance_m{};
@@ -24,12 +24,12 @@ struct TradeLot {
 struct TradeHaul {
     std::uint8_t robot{0},phase{0}; // 0 collect, 1 deliver, 2 clear receiving dock
     std::uint32_t lot{0};std::int64_t cargo{0};
-    eng::Vec3 service{},exit{};bool service_valid{false};
+    game::runtime::Vec3 service{},exit{};bool service_valid{false};
 };
 struct OxygenExportStock {std::uint64_t source_sequence{0};double kg{0};};
 struct TraderState {
     TradePhase phase{TradePhase::Idle};float elapsed{0};
-    std::uint64_t pad_sequence{0};eng::Vec3 dock{};
+    std::uint64_t pad_sequence{0};game::runtime::Vec3 dock{};
     TradeManifest requested{},loaded{};
     std::int64_t sale_value_eur{0},last_payment_eur{0};
     bool oxygen_packaging{false};

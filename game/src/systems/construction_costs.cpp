@@ -181,7 +181,7 @@ struct RouteMetrics {
     double quarter_turns{0.0}; // accumulated turn angle expressed as 90-degree bends
 };
 
-RouteMetrics route_metrics(const std::vector<eng::Vec3>& path){
+RouteMetrics route_metrics(const std::vector<game::runtime::Vec3>& path){
     RouteMetrics out{};
     if(path.size()<2) return out;
     for(std::size_t i=0;i+1<path.size();++i){
@@ -242,7 +242,7 @@ ConstructionResourcePlan corridor(float length_m){
     return corridor_from_metrics((double)length_m,0.0,0);
 }
 
-ConstructionResourcePlan corridor(const std::vector<eng::Vec3>& path,std::size_t network_junctions){
+ConstructionResourcePlan corridor(const std::vector<game::runtime::Vec3>& path,std::size_t network_junctions){
     const RouteMetrics metrics=route_metrics(path);
     return corridor_from_metrics(metrics.length_m,metrics.quarter_turns,network_junctions);
 }
@@ -251,12 +251,12 @@ ConstructionResourcePlan supply_channel(float length_m){
     return supply_from_metrics((double)length_m,0.0,0);
 }
 
-ConstructionResourcePlan supply_channel(const std::vector<eng::Vec3>& path,std::size_t junctions){
+ConstructionResourcePlan supply_channel(const std::vector<game::runtime::Vec3>& path,std::size_t junctions){
     const RouteMetrics metrics=route_metrics(path);
     return supply_from_metrics(metrics.length_m,metrics.quarter_turns,junctions);
 }
 
-ConstructionResourcePlan conveyor_belt(const std::vector<eng::Vec3>& path){
+ConstructionResourcePlan conveyor_belt(const std::vector<game::runtime::Vec3>& path){
     const auto metrics=route_metrics(path);
     const double m=std::max(.5,metrics.length_m);
     const ResourceBundle total{kg(m*7+14),kg(m*.6+4),kg(m*.12+1),kg(m*1.4+4)};

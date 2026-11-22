@@ -11,7 +11,7 @@
 #include <limits>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 using namespace layout;
 using namespace world_math;
 
@@ -140,7 +140,7 @@ Vec3 GameApp::snap_storage_dome(Vec3 hit,StorageDomeSize size,float& rotation_de
     return best_center;
 }
 
-void GameApp::render_resource_placement(Renderer& r){
+void GameApp::render_resource_placement(SceneRenderer& r){
     const float top_px=STATUS_BAR_H*ui_scale_;
     const float bottom_px=(ui_height(r)-BUILD_BAR_H)*ui_scale_;
 

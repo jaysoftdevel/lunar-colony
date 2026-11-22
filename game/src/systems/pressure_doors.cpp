@@ -21,14 +21,14 @@ bool GameApp::airlock_powered(std::size_t index) const {
 void GameApp::update_pressure_doors(float dt){
     const auto next_direction=[](const AstronautTestActor& actor){
         return !astronaut_resting(actor) && actor.destination && actor.route_step<actor.route.size()
-             ? eng::normalize(actor.route[actor.route_step]-actor.position):eng::Vec3{};
+             ? game::runtime::normalize(actor.route[actor.route_step]-actor.position):game::runtime::Vec3{};
     };
     update_workshop_gates(dt);
     for(auto& state:pressure_doors_) state.seen=false;
     airlock_cycles_.resize(placed_habitats_.size());
     const auto ensure_door=[&](const CorridorDoor& door){
         auto it=std::find_if(pressure_doors_.begin(),pressure_doors_.end(),[&](const auto& state){
-            return eng::length(state.door.wall_position-door.wall_position)<0.01f && eng::dot(state.door.normal,door.normal)>0.99f;
+            return game::runtime::length(state.door.wall_position-door.wall_position)<0.01f && game::runtime::dot(state.door.normal,door.normal)>0.99f;
         });
         if(it==pressure_doors_.end()){pressure_doors_.push_back({door});it=pressure_doors_.end()-1;}
         it->seen=true;it->door=door;return (std::size_t)(it-pressure_doors_.begin());
@@ -39,23 +39,23 @@ void GameApp::update_pressure_doors(float dt){
             const auto feet=first_person_.feet_position();auto d=feet-door.wall_position;d.y=0;
             const float vertical=feet.y-door.position.y;
             if(vertical>-1.0f && vertical<geometry::kDoorClearHeight){
-                requested=eng::length(d)<geometry::kDoorTriggerRadius;
-                const eng::Vec3 side{-door.normal.z,0,door.normal.x};
-                occupied=std::abs(eng::dot(d,door.normal))<first_person_.body_radius()+0.35f &&
-                    std::abs(eng::dot(d,side))<geometry::kDoorClearWidth*0.5f+first_person_.body_radius();
+                requested=game::runtime::length(d)<geometry::kDoorTriggerRadius;
+                const game::runtime::Vec3 side{-door.normal.z,0,door.normal.x};
+                occupied=std::abs(game::runtime::dot(d,door.normal))<first_person_.body_radius()+0.35f &&
+                    std::abs(game::runtime::dot(d,side))<geometry::kDoorClearWidth*0.5f+first_person_.body_radius();
             }
         }
         if(astronaut_test_active()){
-            const eng::Vec3 side{-door.normal.z,0,door.normal.x};
+            const game::runtime::Vec3 side{-door.normal.z,0,door.normal.x};
             for(const auto& actor:test_astronauts_){
                 auto delta=actor.position-door.wall_position;
                 delta.y=0.f;
                 const auto direction=next_direction(actor);
-                requested|=eng::length(delta)<geometry::kDoorTriggerRadius &&
-                           eng::dot(direction,delta)<-.05f;
+                requested|=game::runtime::length(delta)<geometry::kDoorTriggerRadius &&
+                           game::runtime::dot(direction,delta)<-.05f;
                 occupied|=!pressure_door::sealed(pressure_doors_[index].open_fraction) &&
-                          std::abs(eng::dot(delta,door.normal))<geometry::kHumanBodyRadius+.10f &&
-                          std::abs(eng::dot(delta,side))<geometry::kDoorClearWidth*.5f;
+                          std::abs(game::runtime::dot(delta,door.normal))<geometry::kHumanBodyRadius+.10f &&
+                          std::abs(game::runtime::dot(delta,side))<geometry::kDoorClearWidth*.5f;
             }
         }
         pressure_door::advance(pressure_doors_[index],dt,requested,occupied);
@@ -77,8 +77,8 @@ void GameApp::update_pressure_doors(float dt){
             std::abs(local.x)<mesh.footprint_x*0.5f+airlock::kApproach+0.5f &&
             std::abs(local.z)<geometry::kDoorClearWidth*0.5f+first_person_.body_radius()+0.2f &&
             local.y>=mesh.walkable_floor_y-0.2f && local.y<mesh.walkable_floor_y+geometry::kDoorClearHeight;
-        auto forward=first_person_.look_direction();forward.y=0;forward=eng::normalize(forward);
-        const eng::Vec3 right{-forward.z,0,forward.x};eng::Vec3 wish{};
+        auto forward=first_person_.look_direction();forward.y=0;forward=game::runtime::normalize(forward);
+        const game::runtime::Vec3 right{-forward.z,0,forward.x};game::runtime::Vec3 wish{};
         if(input_.key_w_down)wish+=forward;
         if(input_.key_s_down)wish+=forward*-1.f;
         if(input_.key_d_down)wish+=right;

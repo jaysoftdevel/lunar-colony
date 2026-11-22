@@ -10,7 +10,7 @@ namespace game::airlock_connections {
 // chosen end is then reserved for passenger connections (corridors/walkways).
 // Supply-channel service ports are independent hull penetrations and may attach
 // to any Air Lock side without reserving either passenger end.
-inline int side(const PlacedHabitat& habitat,eng::Vec3 point){
+inline int side(const PlacedHabitat& habitat,game::runtime::Vec3 point){
     const auto local=world_math::rotate_y(point-habitat.position,-habitat.rotation_degrees);
     const float scale=habitat.size==HabitatSizeTier::Small?0.76f:1.0f;
     const float end_zone=5.0f*scale*0.68f;
@@ -18,7 +18,7 @@ inline int side(const PlacedHabitat& habitat,eng::Vec3 point){
     return local.x>0.0f?1:-1;
 }
 
-inline bool allows(std::size_t index,eng::Vec3 point,const std::vector<PlacedHabitat>& habitats,
+inline bool allows(std::size_t index,game::runtime::Vec3 point,const std::vector<PlacedHabitat>& habitats,
                    const std::vector<CorridorConnection>& corridors={},
                    const std::vector<UtilityConnection>& utilities={},
                    const std::vector<WalkwayConnection>& walkways={}){

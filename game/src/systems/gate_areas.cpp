@@ -2,7 +2,7 @@
 #include "game/world/gate_area.hpp"
 #include "game/util/world_math.hpp"
 namespace game {
-bool GameApp::gate_route_clear(const std::vector<eng::Vec3>& path,float margin) const {
+bool GameApp::gate_route_clear(const std::vector<game::runtime::Vec3>& path,float margin) const {
     if(lander_.active())for(std::size_t i=1;i<path.size();++i){
         const auto a=path[i-1],b=path[i],d=b-a;
         const float angle=std::atan2(d.x,d.z)*180.0f/3.14159265359f;
@@ -24,7 +24,7 @@ bool GameApp::corridor_gate_layout_clear(const CorridorConnection& connection) c
         for(const auto& actor:test_astronauts_){
             bool airlock=false;
             if(astronaut_air_at(actor.position,airlock))continue;
-            const auto intersects=[&](eng::Vec3 a,eng::Vec3 b,float half_width){
+            const auto intersects=[&](game::runtime::Vec3 a,game::runtime::Vec3 b,float half_width){
                 return world_math::point_segment_distance_xz(actor.position,a,b)<
                        half_width+kAstronautFieldMargin;
             };
@@ -80,7 +80,7 @@ bool GameApp::gate_layout_clear(const PlacedHabitat* habitat,const PlacedResourc
     }
     return true;
 }
-void GameApp::render_gate_areas(eng::Renderer& r) const {
+void GameApp::render_gate_areas(game::runtime::SceneRenderer& r) const {
     // Clearances stay authoritative, but unused door candidates are not world
     // placements. Show only real cargo pads for the selected dome/gate.
     if(selection_kind_!=SelectionKind::Resource || selected_resource_<0 || (std::size_t)selected_resource_>=placed_resources_.size())return;

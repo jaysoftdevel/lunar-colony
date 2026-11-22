@@ -10,8 +10,8 @@
 
 namespace game {
 namespace {
-using eng::Vec3;
-float distance(Vec3 a,Vec3 b){a.y=b.y=0;return eng::length(a-b);}
+using game::runtime::Vec3;
+float ground_distance(Vec3 a,Vec3 b){a.y=b.y=0;return game::runtime::length(a-b);}
 std::int64_t mass(const TradeManifest& a){return std::accumulate(a.begin(),a.end(),std::int64_t{0});}
 }
 const char* trade_good_name(TradeGood good){
@@ -69,7 +69,7 @@ bool GameApp::trader_position_clear(Vec3 p,float radius,std::size_t ignore_resou
     const auto blocked=[&](Vec3 center,float rot,float sx,float sz){auto local=world_math::rotate_y(p-center,-rot);return std::abs(local.x)<sx*.5f+radius&&std::abs(local.z)<sz*.5f+radius;};
     for(std::size_t i=0;i<placed_habitats_.size();++i)if(i!=ignore_habitat){const auto& h=placed_habitats_[i];const auto& m=habitat_models_.mesh(h);if(blocked(h.position,h.rotation_degrees,m.footprint_x,m.footprint_z))return false;}
     for(std::size_t i=0;i<placed_resources_.size();++i)if(i!=ignore_resource){const auto& r=placed_resources_[i];const auto& m=resource_models_.mesh(r);if(blocked(r.position,r.rotation_degrees,m.footprint_x,m.footprint_z))return false;}
-    for(const auto& pile:ground_resource_piles_)if(pile.amount>0&&distance(p,pile.position)<radius+std::max(.36f,pile.radius))return false;
+    for(const auto& pile:ground_resource_piles_)if(pile.amount>0&&ground_distance(p,pile.position)<radius+std::max(.36f,pile.radius))return false;
     for(const auto& c:corridor_network_.connections())for(std::size_t j=1;j<c.path.size();++j)if(world_math::point_segment_distance_xz(p,c.path[j-1],c.path[j])<radius+geometry::kCorridorHalfWidth)return false;
     for(const auto& w:walkway_network_.connections())for(std::size_t j=1;j<w.path.size();++j)if(world_math::point_segment_distance_xz(p,w.path[j-1],w.path[j])<radius+geometry::kWalkwayHalfWidth)return false;
     return true;
@@ -79,7 +79,7 @@ bool GameApp::trader_placement_clear(Vec3 p,float rot,float width,float depth)co
     // Protect the receiving bay and its outward departure/queue aisle.
     if(trader_.phase==TradePhase::Loading)for(const auto& l:trader_.lots)if(l.remaining>0&&world_math::overlaps(world_math::footprint(p,rot,width,depth),world_math::footprint(l.position,0,2.4f,2.4f),.4f))return false;
     const auto pi=trader_pad_index();if(pi>=placed_resources_.size())return true;
-    Vec3 out=trader_.dock-placed_resources_[pi].position;out.y=0;out=eng::normalize(out);
+    Vec3 out=trader_.dock-placed_resources_[pi].position;out.y=0;out=game::runtime::normalize(out);
     const Vec3 center=trader_.dock+out*2.5f;
     return !world_math::overlaps(world_math::footprint(p,rot,width,depth),world_math::footprint(center,std::atan2(out.x,out.z)*180/3.14159265f,9,9),.5f);
 }
@@ -141,8 +141,8 @@ bool GameApp::start_trader_sale(){
         for(const auto local:std::array<Vec3,4>{{{0,0,-fz*.5f-2.8f},{fx*.5f+2.8f,0,0},{0,0,fz*.5f+2.8f},{-fx*.5f-2.8f,0,0}}}){
             const auto p=center+world_math::rotate_y(local,rot);if(!trader_position_clear(p,.5f,ri,hi))continue;
             bool occupied=false;for(const auto& r:builder_robots_){
-                if(r.safety.active_contract.valid){if(robots::contract_intersects_region(r.safety.active_contract,[&](Vec3 q,float radius){return distance(p,q)<radius+.6f;}))occupied=true;}
-                else if(distance(p,r.position)<1.6f)occupied=true;
+                if(r.safety.active_contract.valid){if(robots::contract_intersects_region(r.safety.active_contract,[&](Vec3 q,float radius){return ground_distance(p,q)<radius+.6f;}))occupied=true;}
+                else if(ground_distance(p,r.position)<1.6f)occupied=true;
             }
             if(!occupied){position=p;return true;}
         }return false;
@@ -176,7 +176,7 @@ bool GameApp::start_trader_sale(){
     for(std::size_t i=0;i<placed_resources_.size();++i){const auto& r=placed_resources_[i];if(!r.construction.complete())continue;
         if(r.kind==ResourceKind::StorageDome&&storage_loading::has_ready_gate(r)&&!trader_conveyor(i)){
             Vec3 pos{};bool has_pos=false;
-            for(int face:storage_loading::faces(r,true))if(face>=0){auto p=storage_loading::service(r,face);auto out=eng::normalize(p-r.position);p+=out*2.0f;if(trader_position_clear(p,.5f,i)){pos=p;has_pos=true;break;}}
+            for(int face:storage_loading::faces(r,true))if(face>=0){auto p=storage_loading::service(r,face);auto out=game::runtime::normalize(p-r.position);p+=out*2.0f;if(trader_position_clear(p,.5f,i)){pos=p;has_pos=true;break;}}
             if(has_pos)reserve_dome(i,pos,0);
         }else if(r.kind==ResourceKind::OxygenTank&&need[8]>0){
             Vec3 position;
@@ -272,7 +272,7 @@ void GameApp::update_trade_hauling(float dt,const std::function<bool(std::size_t
         auto& r=builder_robots_[ri];
         if((int)r.role!=role||lander_.salvage_uses_robot(ri)||r.operation_retry.replan_pending()||trader_robot_busy(ri)||r.ore_haul.active()||r.mode!=BuilderRobotMode::Idle||r.target.valid()||!r.cargo.empty()||r.action!=BuilderRobotAction::None||r.debug_move_active||r.drop_exit_pending||r.starter_charge_active||r.battery_charge_kwh<r.battery_capacity_kwh*.2f)continue;
         std::size_t pick=kNoRobotIndex;float best=std::numeric_limits<float>::max();
-        for(std::size_t i=0;i<trader_.lots.size();++i){if(trader_.lots[i].remaining<=0 || trader_.lots[i].conveyor_sequence)continue;bool leased=false;for(const auto& h:trader_.hauls)if(h.lot==i&&h.phase==0)leased=true;if(leased)continue;const float d=distance(r.position,trader_.lots[i].position);if(d<best){pick=i;best=d;}}
+        for(std::size_t i=0;i<trader_.lots.size();++i){if(trader_.lots[i].remaining<=0 || trader_.lots[i].conveyor_sequence)continue;bool leased=false;for(const auto& h:trader_.hauls)if(h.lot==i&&h.phase==0)leased=true;if(leased)continue;const float d=ground_distance(r.position,trader_.lots[i].position);if(d<best){pick=i;best=d;}}
         if(pick!=kNoRobotIndex){TradeHaul h;h.robot=(std::uint8_t)ri;h.lot=(std::uint32_t)pick;trader_.hauls.push_back(h);r.mode=BuilderRobotMode::Fetching;r.workshop_returning=false;r.workshop_parked=false;}
     }
     std::size_t owner=kNoRobotIndex;
@@ -280,7 +280,7 @@ void GameApp::update_trade_hauling(float dt,const std::function<bool(std::size_t
     for(const auto& h:trader_.hauls)if(h.phase==2){owner=h.robot;break;}
     if(owner==kNoRobotIndex)for(const auto& h:trader_.hauls)if(h.phase==1){owner=h.robot;break;}
     const auto pi=trader_pad_index();if(pi>=placed_resources_.size())return;
-    Vec3 out=trader_.dock-placed_resources_[pi].position;out.y=0;out=eng::normalize(out);const Vec3 side{-out.z,0,out.x};
+    Vec3 out=trader_.dock-placed_resources_[pi].position;out.y=0;out=game::runtime::normalize(out);const Vec3 side{-out.z,0,out.x};
     std::vector<std::uint8_t> finished;
     for(auto& h:trader_.hauls){
         auto& r=builder_robots_[h.robot];auto& lot=trader_.lots[h.lot];
@@ -304,11 +304,11 @@ void GameApp::update_trade_hauling(float dt,const std::function<bool(std::size_t
         }
         if(h.phase==2){
             r.action=BuilderRobotAction::None;
-            if(distance(r.position,goal)>.28f){move(h.robot,goal);continue;}
+            if(ground_distance(r.position,goal)>.28f){move(h.robot,goal);continue;}
             stop(h.robot);r.mode=BuilderRobotMode::Idle;r.action=BuilderRobotAction::None;r.interaction_position_valid=false;finished.push_back(h.robot);continue;
         }
         r.interaction_position=goal;r.interaction_focus_position=h.phase==0?lot.position:trader_.dock;r.interaction_position_valid=true;
-        if(distance(r.position,goal)>.30f){r.action=BuilderRobotAction::None;move(h.robot,goal);continue;}
+        if(ground_distance(r.position,goal)>.30f){r.action=BuilderRobotAction::None;move(h.robot,goal);continue;}
         stop(h.robot);
         const auto action=h.phase==0?BuilderRobotAction::Pickup:BuilderRobotAction::PutDown;
         if(r.action!=action){r.action=action;r.action_elapsed=0;r.action_duration=2;r.action_material=(std::size_t)lot.good>=kLegacyTradeGoodCount?
@@ -335,8 +335,8 @@ void GameApp::update_trade_hauling(float dt,const std::function<bool(std::size_t
     }
     std::erase_if(trader_.hauls,[&](const auto& h){return std::find(finished.begin(),finished.end(),h.robot)!=finished.end();});
 }
-void GameApp::render_pad_trade(eng::Renderer& r,std::size_t index,eng::Rect p,float scroll,float extra){
-    using namespace eng;using namespace layout;
+void GameApp::render_pad_trade(game::runtime::SceneRenderer& r,std::size_t index,game::runtime::Rect p,float scroll,float extra){
+    using namespace game::runtime;using namespace layout;
     if(active_game_phase_!=GamePhase::RobotPreparation||index>=placed_resources_.size())return;
     const auto& pad=placed_resources_[index];const bool own=trader_.active()&&pad.placement_sequence==trader_.pad_sequence;
     if(!own&&(!pad.construction.complete()||pad.supply.power_fraction<.5))return;

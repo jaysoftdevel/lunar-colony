@@ -16,7 +16,7 @@ float gate_rotation(const PlacedResource& owner,int face){
     const auto normal=storage_loading::normal(owner,face);
     return std::atan2(-normal.z,normal.x)*180.0f/3.14159265358979323846f;
 }
-eng::Vec3 gate_position(const PlacedResource& owner,int face){
+game::runtime::Vec3 gate_position(const PlacedResource& owner,int face){
     return (storage_loading::wall(owner,face)+storage_loading::mouth(owner,face))*0.5f;
 }
 }

@@ -1,6 +1,6 @@
 #include <chrono>
 #pragma once
-#include "engine/engine.hpp"
+#include "game/runtime/presentation.hpp"
 #include "game/build_mode.hpp"
 #include "game/config/graphics_benchmark.hpp"
 #include "game/features/build_catalog.hpp"
@@ -41,7 +41,7 @@ inline constexpr int kGroundStackLayers = 8;
 struct GroundResourcePile {
     MaterialResource resource{MaterialResource::Iron};
     std::int64_t amount{0};
-    eng::Vec3 position{};
+    game::runtime::Vec3 position{};
     float radius{0.45f};
     float condition{1.0f};
     GroundPileKind kind{GroundPileKind::Loose};
@@ -61,15 +61,16 @@ struct GroundResourcePile {
     }
 };
 
-class GameApp final : public eng::GameDelegate {
+class GameApp final : public game::runtime::GameLoop {
 public:
-    explicit GameApp(eng::Application& app):app_(app){}
+    explicit GameApp(game::runtime::GameHost& app):app_(app){}
     void on_start() override;
     void on_resize(int width,int height) override;
-    void update(float dt,const eng::InputState& input) override;
-    void render(eng::Renderer& r) override;
+    void update(float dt,const game::runtime::InputState& input) override;
+    void render(game::runtime::SceneRenderer& r) override;
 private:
     friend struct NavigationRegression;
+    friend struct EngineIntegrationRegression;
     friend struct UiRegression;
     friend struct LanderRegression;
     friend struct TraderRegression;
@@ -97,15 +98,15 @@ private:
         std::filesystem::file_time_type modified{};
         bool debug_only{};
     };
-    void update_simulation(float dt,const eng::InputState& input);
-    void update_soundscape(float dt,const eng::InputState& input);
-    eng::Application& app_;
+    void update_simulation(float dt,const game::runtime::InputState& input);
+    void update_soundscape(float dt,const game::runtime::InputState& input);
+    game::runtime::GameHost& app_;
     sound::Soundscape soundscape_;
     Screen screen_=Screen::MainMenu;
-    eng::InputState input_{};
-    eng::InputState ui_input_{};
-    eng::ui::Theme theme_{};
-    eng::GraphicsSettings graphics_;
+    game::runtime::InputState input_{};
+    game::runtime::InputState ui_input_{};
+    game::runtime::ui::Theme theme_{};
+    game::runtime::GraphicsSettings graphics_;
     int graphics_tab_{},graphics_page_{},graphics_dropdown_{-1};
     bool graphics_display_failed_{};
     GraphicsBenchmark graphics_benchmark_;
@@ -171,7 +172,7 @@ private:
     bool debug_start_template_enabled_=false;
     std::string new_game_status_message_{};
     int ui_scale_index_=0;
-    std::vector<eng::DisplayMode> display_modes_{};
+    std::vector<game::runtime::DisplayMode> display_modes_{};
     int display_mode_index_=-1;
     Playfield playfield_{};
     CameraController camera_{};
@@ -204,7 +205,7 @@ private:
     // of once per collision query. Purely derived data; rebuilt on demand.
     struct NavWallCache;
     std::shared_ptr<NavWallCache> nav_wall_cache_{};
-    eng::Vec3 starter_stash_center_{};
+    game::runtime::Vec3 starter_stash_center_{};
     std::array<double,kMaterialResourceCount> production_fraction_{};
     double life_support_fraction_seconds_{0.0};
     BuildCatalog build_catalog_{};
@@ -240,7 +241,7 @@ private:
     std::size_t activity_log_offset_{};
     std::size_t activity_log_seen_count_{};
     std::string activity_log_export_status_;
-    eng::Rect construction_priority_button_rect_{};
+    game::runtime::Rect construction_priority_button_rect_{};
     ConstructionTargetRef construction_priority_button_target_{};
     int debug_move_pick_robot_{-1};
     std::optional<GroundResourcePile> first_person_carried_resource_{};
@@ -304,49 +305,49 @@ private:
     std::vector<SaveGameEntry> save_games_{};
     int load_save_scroll_{0};
 
-    void render_menu(eng::Renderer& r);
-    void render_new_game(eng::Renderer& r);
-    void render_stage3_modes(eng::Renderer& r);
+    void render_menu(game::runtime::SceneRenderer& r);
+    void render_new_game(game::runtime::SceneRenderer& r);
+    void render_stage3_modes(game::runtime::SceneRenderer& r);
     void start_new_game(Stage3Mode stage3_mode=Stage3Mode::Sandbox);
-    void render_save_game(eng::Renderer& r);
-    void render_load_game(eng::Renderer& r);
-    void render_settings(eng::Renderer& r);
+    void render_save_game(game::runtime::SceneRenderer& r);
+    void render_load_game(game::runtime::SceneRenderer& r);
+    void render_settings(game::runtime::SceneRenderer& r);
     void persist_preferences();
     bool mesh_layout_active() const { return build::debug_features && world_layout_mode_==WorldLayoutMode::Mesh; }
     void toggle_world_layout();
-    void update_speed_shortcuts(const eng::InputState& input);
+    void update_speed_shortcuts(const game::runtime::InputState& input);
     bool simulation_paused() const;
-    void render_pause_frame(eng::Renderer& r) const;
-    void render_graphics_settings(eng::Renderer& r);
-    void render_benchmark_settings(eng::Renderer& r,eng::Rect panel,const eng::GraphicsCapabilities& caps);
-    bool render_benchmark_scene(eng::Renderer& r);
-    void render_credits(eng::Renderer& r);
-    void render_playfield(eng::Renderer& r);
-    eng::Rect build_queue_panel_rect() const;
-    bool mouse_over_build_queue(const eng::InputState& input) const;
+    void render_pause_frame(game::runtime::SceneRenderer& r) const;
+    void render_graphics_settings(game::runtime::SceneRenderer& r);
+    void render_benchmark_settings(game::runtime::SceneRenderer& r,game::runtime::Rect panel,const game::runtime::GraphicsCapabilities& caps);
+    bool render_benchmark_scene(game::runtime::SceneRenderer& r);
+    void render_credits(game::runtime::SceneRenderer& r);
+    void render_playfield(game::runtime::SceneRenderer& r);
+    game::runtime::Rect build_queue_panel_rect() const;
+    bool mouse_over_build_queue(const game::runtime::InputState& input) const;
     struct BuildQueueView {
-        eng::Rect panel{};
+        game::runtime::Rect panel{};
         std::vector<BuildQueueItem> jobs;
         int first{}, last{}, hovered_row{-1};
     };
     BuildQueueView prepare_build_queue_view();
-    void render_build_queue(eng::Renderer& r,const BuildQueueView& view);
-    void render_build_queue_highlight(eng::Renderer& r,const ConstructionTargetRef& target) const;
+    void render_build_queue(game::runtime::SceneRenderer& r,const BuildQueueView& view);
+    void render_build_queue_highlight(game::runtime::SceneRenderer& r,const ConstructionTargetRef& target) const;
     std::string construction_target_name(const ConstructionTargetRef& target) const;
-    eng::Rect debug_frame_rect() const;
+    game::runtime::Rect debug_frame_rect() const;
     bool debug_frame_visible() const;
-    bool mouse_over_playfield_overlay(const eng::InputState& input) const;
-    eng::Rect activity_log_button_rect() const;
-    eng::Rect activity_log_panel_rect() const;
-    bool keep_clear_of_activity_log(eng::Rect& panel) const;
+    bool mouse_over_playfield_overlay(const game::runtime::InputState& input) const;
+    game::runtime::Rect activity_log_button_rect() const;
+    game::runtime::Rect activity_log_panel_rect() const;
+    bool keep_clear_of_activity_log(game::runtime::Rect& panel) const;
     bool activity_log_visible() const;
-    bool mouse_over_activity_log(const eng::InputState& input) const;
-    void render_activity_log(eng::Renderer& r);
+    bool mouse_over_activity_log(const game::runtime::InputState& input) const;
+    void render_activity_log(game::runtime::SceneRenderer& r);
     void reset_activity_log(std::string message);
     void update_activity_log();
     void log_planning_activities();
     void export_activity_log();
-    bool handle_astronaut_click(const eng::InputState& input);
+    bool handle_astronaut_click(const game::runtime::InputState& input);
     void reset_astronaut_test();
     void update_astronaut_test(float dt);
     void update_astronaut_suits();
@@ -355,75 +356,75 @@ private:
     BuildQueueItem next_astronaut_construction() const;
     AstronautRestPose astronaut_rest_pose(const AstronautTestActor& actor) const;
     bool consume_colony_stock(MaterialResource material,std::int64_t amount);
-    const SupplyState* astronaut_air_at(eng::Vec3 p,bool& airlock) const;
-    bool astronaut_placement_clear(eng::Vec3 center,float rotation,float width,float depth) const;
-    void render_test_astronauts(eng::Renderer& r) const;
-    void render_astronaut_status(eng::Renderer& r,const eng::Mat4& view_projection) const;
-    void render_planning_game(eng::Renderer& r);
-    void render_planning_technology_tree(eng::Renderer& r,eng::Rect panel,bool compact);
-    void render_status_bar(eng::Renderer& r);
-    void render_progress_tree(eng::Renderer& r);
+    const SupplyState* astronaut_air_at(game::runtime::Vec3 p,bool& airlock) const;
+    bool astronaut_placement_clear(game::runtime::Vec3 center,float rotation,float width,float depth) const;
+    void render_test_astronauts(game::runtime::SceneRenderer& r) const;
+    void render_astronaut_status(game::runtime::SceneRenderer& r,const game::runtime::Mat4& view_projection) const;
+    void render_planning_game(game::runtime::SceneRenderer& r);
+    void render_planning_technology_tree(game::runtime::SceneRenderer& r,game::runtime::Rect panel,bool compact);
+    void render_status_bar(game::runtime::SceneRenderer& r);
+    void render_progress_tree(game::runtime::SceneRenderer& r);
     bool progress_tree_visible() const;
-    void render_build_bar(eng::Renderer& r);
-    void render_view_selector(eng::Renderer& r,float y,float logical_w);
-    void render_debug_frame(eng::Renderer& r);
-    void render_build_icon(eng::Renderer& r,BuildIcon icon,eng::Rect rect,eng::Color color) const;
-    void render_playfield_crosshair(eng::Renderer& r);
-    void render_first_person_hud(eng::Renderer& r);
-    void render_corridors(eng::Renderer& r);
-    void render_habitats(eng::Renderer& r);
-    void render_resources(eng::Renderer& r);
-    void render_storage_loading_gate(eng::Renderer& r,const PlacedResource& item,float opening,bool preview=false) const;
-    void render_ground_resources(eng::Renderer& r);
-    void render_builder_robot(eng::Renderer& r);
-    void render_utilities(eng::Renderer& r);
-    void render_walkways(eng::Renderer& r);
-    void render_selection_panel(eng::Renderer& r);
-    void render_selection_marquee(eng::Renderer& r);
-    void render_construction_status_frames(eng::Renderer& r);
-    void render_corridor_link_preview(eng::Renderer& r);
-    void render_habitat_placement(eng::Renderer& r);
-    void render_resource_placement(eng::Renderer& r);
-    void render_utility_placement(eng::Renderer& r);
-    void render_walkway_placement(eng::Renderer& r);
-    void render_corridor_placement(eng::Renderer& r);
-    void render_placement_tooltip(eng::Renderer& r);
-    void render_habitat_mesh(eng::Renderer& r,const HabitatMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false,HabitatKind kind=HabitatKind::AirLock) const;
-    void render_resource_mesh(eng::Renderer& r,const ResourceMesh& mesh,eng::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,ResourceKind kind=ResourceKind::Count) const;
+    void render_build_bar(game::runtime::SceneRenderer& r);
+    void render_view_selector(game::runtime::SceneRenderer& r,float y,float logical_w);
+    void render_debug_frame(game::runtime::SceneRenderer& r);
+    void render_build_icon(game::runtime::SceneRenderer& r,BuildIcon icon,game::runtime::Rect rect,game::runtime::Color color) const;
+    void render_playfield_crosshair(game::runtime::SceneRenderer& r);
+    void render_first_person_hud(game::runtime::SceneRenderer& r);
+    void render_corridors(game::runtime::SceneRenderer& r);
+    void render_habitats(game::runtime::SceneRenderer& r);
+    void render_resources(game::runtime::SceneRenderer& r);
+    void render_storage_loading_gate(game::runtime::SceneRenderer& r,const PlacedResource& item,float opening,bool preview=false) const;
+    void render_ground_resources(game::runtime::SceneRenderer& r);
+    void render_builder_robot(game::runtime::SceneRenderer& r);
+    void render_utilities(game::runtime::SceneRenderer& r);
+    void render_walkways(game::runtime::SceneRenderer& r);
+    void render_selection_panel(game::runtime::SceneRenderer& r);
+    void render_selection_marquee(game::runtime::SceneRenderer& r);
+    void render_construction_status_frames(game::runtime::SceneRenderer& r);
+    void render_corridor_link_preview(game::runtime::SceneRenderer& r);
+    void render_habitat_placement(game::runtime::SceneRenderer& r);
+    void render_resource_placement(game::runtime::SceneRenderer& r);
+    void render_utility_placement(game::runtime::SceneRenderer& r);
+    void render_walkway_placement(game::runtime::SceneRenderer& r);
+    void render_corridor_placement(game::runtime::SceneRenderer& r);
+    void render_placement_tooltip(game::runtime::SceneRenderer& r);
+    void render_habitat_mesh(game::runtime::SceneRenderer& r,const HabitatMesh& mesh,game::runtime::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false,HabitatKind kind=HabitatKind::AirLock,bool powered=true) const;
+    void render_resource_mesh(game::runtime::SceneRenderer& r,const ResourceMesh& mesh,game::runtime::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,ResourceKind kind=ResourceKind::Count) const;
     struct StructureAttachment {
-        eng::Vec3 position;
+        game::runtime::Vec3 position;
         std::optional<CorridorConnection> corridor;
         std::optional<UtilityConnection> utility;
     };
     std::optional<StructureAttachment> preview_structure_attachment(
-        eng::Vec3 hit,const PlacedHabitat* habitat,const PlacedResource* resource) const;
-    void render_structure_attachment(eng::Renderer& r,const StructureAttachment& attachment) const;
+        game::runtime::Vec3 hit,const PlacedHabitat* habitat,const PlacedResource* resource) const;
+    void render_structure_attachment(game::runtime::SceneRenderer& r,const StructureAttachment& attachment) const;
     void commit_structure_attachment(StructureAttachment attachment);
     void set_placement_cost(const ConstructionResourcePlan& plan,const StructureAttachment* attachment=nullptr);
-    bool structure_routes_clear(eng::Vec3 position,float rotation,float width,float depth) const;
-    bool placement_valid(HabitatKind kind,HabitatSizeTier size,eng::Vec3 position,float rotation_degrees,const char** reason=nullptr) const;
-    bool resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,eng::Vec3 position,float rotation_degrees,const char** reason=nullptr) const;
-    bool placement_preserves_robot_escape(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z) const;
-    eng::Vec3 snap_storage_dome(eng::Vec3 hit,StorageDomeSize size,float& rotation_degrees) const;
+    bool structure_routes_clear(game::runtime::Vec3 position,float rotation,float width,float depth) const;
+    bool placement_valid(HabitatKind kind,HabitatSizeTier size,game::runtime::Vec3 position,float rotation_degrees,const char** reason=nullptr) const;
+    bool resource_placement_valid(ResourceKind kind,ResourceSizeTier size,StorageDomeSize storage_size,game::runtime::Vec3 position,float rotation_degrees,const char** reason=nullptr) const;
+    bool placement_preserves_robot_escape(game::runtime::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z) const;
+    game::runtime::Vec3 snap_storage_dome(game::runtime::Vec3 hit,StorageDomeSize size,float& rotation_degrees) const;
     void select_world_at(int screen_x,int screen_y);
-    int pick_habitat(eng::Vec3 ground_hit) const;
-    int pick_corridor(eng::Vec3 ground_hit,float radius=geometry::kCorridorHalfWidth+0.18f) const;
-    int pick_resource(eng::Vec3 ground_hit) const;
-    int pick_ground_resource(eng::Vec3 ground_hit,float radius=0.45f) const;
-    int pick_utility(eng::Vec3 ground_hit,float radius=0.70f) const;
-    int pick_walkway(eng::Vec3 ground_hit,float radius=geometry::kWalkwayHalfWidth+0.16f) const;
-    int pick_robot(eng::Vec3 ground_hit,float radius=0.82f) const;
-    std::optional<UtilityBuildAnchor> utility_anchor_at(eng::Vec3 ground_hit,UtilityKind kind) const;
-    std::optional<WalkwayBuildAnchor> walkway_anchor_at(eng::Vec3 ground_hit,bool source_only) const;
-    CorridorBuildAnchor corridor_anchor_at(eng::Vec3 ground_hit) const;
-    eng::Rect selection_panel_rect() const;
+    int pick_habitat(game::runtime::Vec3 ground_hit) const;
+    int pick_corridor(game::runtime::Vec3 ground_hit,float radius=geometry::kCorridorHalfWidth+0.18f) const;
+    int pick_resource(game::runtime::Vec3 ground_hit) const;
+    int pick_ground_resource(game::runtime::Vec3 ground_hit,float radius=0.45f) const;
+    int pick_utility(game::runtime::Vec3 ground_hit,float radius=0.70f) const;
+    int pick_walkway(game::runtime::Vec3 ground_hit,float radius=geometry::kWalkwayHalfWidth+0.16f) const;
+    int pick_robot(game::runtime::Vec3 ground_hit,float radius=0.82f) const;
+    std::optional<UtilityBuildAnchor> utility_anchor_at(game::runtime::Vec3 ground_hit,UtilityKind kind) const;
+    std::optional<WalkwayBuildAnchor> walkway_anchor_at(game::runtime::Vec3 ground_hit,bool source_only) const;
+    CorridorBuildAnchor corridor_anchor_at(game::runtime::Vec3 ground_hit) const;
+    game::runtime::Rect selection_panel_rect() const;
     float selection_panel_content_height() const;
     float selection_panel_max_scroll() const;
     std::uint64_t current_selection_panel_scroll_key() const;
     void sync_selection_panel_scroll();
-    void update_selection_panel_scroll(const eng::InputState& input);
-    eng::Rect ground_resource_panel_rect() const;
-    bool mouse_over_selection_panel(const eng::InputState& input) const;
+    void update_selection_panel_scroll(const game::runtime::InputState& input);
+    game::runtime::Rect ground_resource_panel_rect() const;
+    bool mouse_over_selection_panel(const game::runtime::InputState& input) const;
     void clear_world_selection();
     void finish_selection_marquee();
     void delete_selected_world_object();
@@ -445,31 +446,31 @@ private:
     std::size_t construction_dispatch_rank(const ConstructionTargetRef& target) const;
     void prune_construction_priorities();
     bool debug_robot_move_available(std::size_t index) const;
-    bool issue_debug_robot_move(std::size_t index,eng::Vec3 destination);
+    bool issue_debug_robot_move(std::size_t index,game::runtime::Vec3 destination);
 
     void reset_builder_robot_and_starter_stash(const ResourceBundle* shipped_cargo=nullptr);
     void deploy_lunar_base_from_mission();
     void begin_lunar_landing(const ResourceBundle& manifest,int builders,int carriers,CropSeeds seeds=kStarterCropSeeds);
     void update_lunar_lander(float dt);
     bool unload_lunar_lander();
-    bool confirm_lander_site(eng::Vec3 p);
-    bool confirm_stash_site(eng::Vec3 p);
-    bool lander_site_valid(eng::Vec3 p) const;
-    bool stash_site_valid(eng::Vec3 p) const;
-    bool pick_lander_placement_ground(eng::Vec3& hit) const;
+    bool confirm_lander_site(game::runtime::Vec3 p);
+    bool confirm_stash_site(game::runtime::Vec3 p);
+    bool lander_site_valid(game::runtime::Vec3 p) const;
+    bool stash_site_valid(game::runtime::Vec3 p) const;
+    bool pick_lander_placement_ground(game::runtime::Vec3& hit) const;
     bool prepare_default_landing();
     bool salvage_lander();
     bool complete_lander_salvage();
-    bool stash_ground_clear(eng::Vec3 position,float width) const;
-    std::optional<std::vector<GroundResourcePile>> plan_stash_boxes(const ResourceBundle& cargo,eng::Vec3 marker) const;
+    bool stash_ground_clear(game::runtime::Vec3 position,float width) const;
+    std::optional<std::vector<GroundResourcePile>> plan_stash_boxes(const ResourceBundle& cargo,game::runtime::Vec3 marker) const;
     void migrate_boxed_lander_stash(bool legacy_grid);
     bool drop_lander_cargo();
     bool add_stash_boxes(const ResourceBundle& cargo,bool credit=true);
     bool repack_lander_stash();
-    void render_stash(eng::Renderer& r);
-    void render_stash_panel(eng::Renderer& r);
+    void render_stash(game::runtime::SceneRenderer& r);
+    void render_stash_panel(game::runtime::SceneRenderer& r);
     std::string landing_message_{};
-    void render_lunar_lander(eng::Renderer& r);
+    void render_lunar_lander(game::runtime::SceneRenderer& r);
     std::size_t trader_pad_index() const;
     const UtilityConnection* trader_conveyor(std::size_t dome) const;
     bool trader_powered() const;
@@ -481,19 +482,19 @@ private:
     double& trader_oxygen_stock(std::uint64_t sequence);
     double trader_oxygen_stock_amount(std::uint64_t sequence) const;
     bool trader_robot_busy(std::size_t robot) const;
-    bool trader_placement_clear(eng::Vec3 position,float rotation,float width,float depth) const;
-    bool trader_position_clear(eng::Vec3 position,float radius,std::size_t ignored_resource=kNoRobotIndex,std::size_t ignored_habitat=kNoRobotIndex) const;
+    bool trader_placement_clear(game::runtime::Vec3 position,float rotation,float width,float depth) const;
+    bool trader_position_clear(game::runtime::Vec3 position,float radius,std::size_t ignored_resource=kNoRobotIndex,std::size_t ignored_habitat=kNoRobotIndex) const;
     void record_robot_operation_result(BuilderRobotState& robot,bool success,std::uint64_t task=0);
-    void render_robot_blockers(eng::Renderer& r);
-    void update_ore_hauling(float dt,const std::function<bool(std::size_t,eng::Vec3)>& clear,
-        const std::function<void(std::size_t,eng::Vec3)>& move,const std::function<void(std::size_t)>& stop);
-    void update_trade_hauling(float dt,const std::function<bool(std::size_t,eng::Vec3)>& clear,
-        const std::function<void(std::size_t,eng::Vec3)>& move,const std::function<void(std::size_t)>& stop);
-    void render_trader(eng::Renderer& r);
-    void render_pad_trade(eng::Renderer& r,std::size_t pad,eng::Rect panel,float scroll,float warning_extra);
+    void render_robot_blockers(game::runtime::SceneRenderer& r);
+    void update_ore_hauling(float dt,const std::function<bool(std::size_t,game::runtime::Vec3)>& clear,
+        const std::function<void(std::size_t,game::runtime::Vec3)>& move,const std::function<void(std::size_t)>& stop);
+    void update_trade_hauling(float dt,const std::function<bool(std::size_t,game::runtime::Vec3)>& clear,
+        const std::function<void(std::size_t,game::runtime::Vec3)>& move,const std::function<void(std::size_t)>& stop);
+    void render_trader(game::runtime::SceneRenderer& r);
+    void render_pad_trade(game::runtime::SceneRenderer& r,std::size_t pad,game::runtime::Rect panel,float scroll,float warning_extra);
 
-    void render_lunar_lander_panel(eng::Renderer& r);
-    bool lander_placement_clear(eng::Vec3 position,float rotation,float width,float depth) const;
+    void render_lunar_lander_panel(game::runtime::SceneRenderer& r);
+    bool lander_placement_clear(game::runtime::Vec3 position,float rotation,float width,float depth) const;
     BuilderRobotState lander_robot(int ordinal) const;
     void update_builder_robot(float dt);
     float game_speed_multiplier() const;
@@ -519,25 +520,25 @@ private:
     bool complete_planning_mission_step();
     void update_resource_economy(float dt);
     void update_ore_logistics(float dt);
-    bool ore_survey_location(eng::Vec3& point) const;
-    void render_ore_deposits(eng::Renderer& r) const;
-    void render_ore_survey(eng::Renderer& r) const;
-    bool conveyor_route_clear(const std::vector<eng::Vec3>& path) const;
+    bool ore_survey_location(game::runtime::Vec3& point) const;
+    void render_ore_deposits(game::runtime::SceneRenderer& r) const;
+    void render_ore_survey(game::runtime::SceneRenderer& r) const;
+    bool conveyor_route_clear(const std::vector<game::runtime::Vec3>& path) const;
     GameProgressSnapshot game_progress_snapshot() const;
     int crew_quarters_capacity() const;
-    eng::Rect progress_tree_panel_rect() const;
+    game::runtime::Rect progress_tree_panel_rect() const;
     const UtilityServiceSnapshot& update_supply_simulation(float dt);
     double refuel_landing_pad(std::size_t pad_index,bool rocket);
-    void render_supply_indicators(eng::Renderer& r);
-    void render_gate_areas(eng::Renderer& r) const;
-    bool gate_route_clear(const std::vector<eng::Vec3>& path,float margin) const;
+    void render_supply_indicators(game::runtime::SceneRenderer& r);
+    void render_gate_areas(game::runtime::SceneRenderer& r) const;
+    bool gate_route_clear(const std::vector<game::runtime::Vec3>& path,float margin) const;
     bool corridor_gate_layout_clear(const CorridorConnection& connection) const;
     bool gate_layout_clear(const PlacedHabitat* habitat,const PlacedResource* resource) const;
     ResourceBundle starter_resource_reserve() const;
-    eng::Vec3 construction_target_position(const ConstructionTargetRef& target) const;
-    eng::Vec3 construction_drop_position(const ConstructionTargetRef& target) const;
-    eng::Vec3 construction_drop_package_position(const ConstructionTargetRef& target,int visual_slot) const;
-    eng::Vec3 construction_drop_package_position(const ConstructionTargetRef& target,int visual_slot,int stage) const;
+    game::runtime::Vec3 construction_target_position(const ConstructionTargetRef& target) const;
+    game::runtime::Vec3 construction_drop_position(const ConstructionTargetRef& target) const;
+    game::runtime::Vec3 construction_drop_package_position(const ConstructionTargetRef& target,int visual_slot) const;
+    game::runtime::Vec3 construction_drop_package_position(const ConstructionTargetRef& target,int visual_slot,int stage) const;
     bool construction_target_complete(const ConstructionTargetRef& target) const;
     bool construction_target_dependencies_ready(const ConstructionTargetRef& target) const;
     const ConstructionResourcePlan* construction_target_plan(const ConstructionTargetRef& target) const;
@@ -550,37 +551,37 @@ private:
     ResourceBundle construction_site_reserved(const ConstructionTargetRef& target,std::size_t exclude_robot=kNoRobotIndex) const;
     ResourceBundle construction_site_remaining(const ConstructionTargetRef& target,bool include_reservations=true,std::size_t exclude_robot=kNoRobotIndex) const;
     bool robot_load_needed_resources(BuilderRobotState& robot,const ResourceBundle& need);
-    bool spawn_produced_resource(MaterialResource resource,std::int64_t amount,eng::Vec3 source_position,bool defer_if_blocked=true);
+    bool spawn_produced_resource(MaterialResource resource,std::int64_t amount,game::runtime::Vec3 source_position,bool defer_if_blocked=true);
     void enter_first_person_drop_mode();
     void exit_first_person_mode();
-    void update_first_person(float dt,const eng::InputState& input);
+    void update_first_person(float dt,const game::runtime::InputState& input);
     void update_first_person_resource_hover();
     void first_person_grab_or_drop_resource();
     void drop_first_person_carried_resource();
     bool store_first_person_carried_resource();
-    void stored_resource_box_pose(const PlacedResource& structure,const ResourceMesh& mesh,std::size_t box_index,eng::Vec3& base,float& half_width,float& height) const;
-    bool first_person_spawn_valid(eng::Vec3 p) const;
+    void stored_resource_box_pose(const PlacedResource& structure,const ResourceMesh& mesh,std::size_t box_index,game::runtime::Vec3& base,float& half_width,float& height) const;
+    bool first_person_spawn_valid(game::runtime::Vec3 p) const;
     enum class CrewTraversal { Player, Astronaut, Plan };
-    bool first_person_move_allowed(eng::Vec3 from,eng::Vec3 to,CrewTraversal traversal=CrewTraversal::Player) const;
+    bool first_person_move_allowed(game::runtime::Vec3 from,game::runtime::Vec3 to,CrewTraversal traversal=CrewTraversal::Player) const;
     bool airlock_powered(std::size_t index) const;
-    float first_person_floor_height(eng::Vec3 p) const;
-    float first_person_ceiling_height(eng::Vec3 p) const;
+    float first_person_floor_height(game::runtime::Vec3 p) const;
+    float first_person_ceiling_height(game::runtime::Vec3 p) const;
     std::string first_person_environment_label() const;
-    float first_person_door_open_fraction(eng::Vec3 door_position) const;
+    float first_person_door_open_fraction(game::runtime::Vec3 door_position) const;
     void update_pressure_doors(float dt);
     int airlock_inside_sign(std::size_t habitat_index) const;
     void update_workshop_gates(float dt);
     bool workshop_accessible(const PlacedResource& candidate) const;
     bool workshop_supplied(std::size_t resource_index) const;
     bool workshop_operational(std::size_t resource_index) const;
-    void render_workshop_gate(eng::Renderer& r,const PlacedResource& item,bool preview=false,bool valid=true) const;
+    void render_workshop_gate(game::runtime::SceneRenderer& r,const PlacedResource& item,bool preview=false,bool valid=true) const;
     void assign_storage_loading_faces();
     void synchronize_storage_gates();
     bool add_storage_gate_at(std::size_t owner,float local_angle);
     bool storage_gate_face_clear(const PlacedResource& owner,int face,std::optional<std::size_t> owner_index=std::nullopt) const;
     int available_storage_gate_face(std::size_t owner,int requested_face=-1) const;
     bool add_storage_gate(std::size_t owner,int requested_face=-1);
-    void render_storage_gate_shutters(eng::Renderer& r,const PlacedResource& owner,int face,float opening,float progress,bool preview=false) const;
+    void render_storage_gate_shutters(game::runtime::SceneRenderer& r,const PlacedResource& owner,int face,float opening,float progress,bool preview=false) const;
     std::vector<CorridorDoor> habitat_doors(std::size_t habitat_index) const;
     std::vector<CorridorDoor> storage_dome_doors(std::size_t resource_index) const;
     bool habitat_has_complete_corridor_connection(std::size_t habitat_index) const;
@@ -595,22 +596,22 @@ private:
         }
     }
     bool can_start_construction(const ConstructionResourcePlan& plan) const;
-    void drop_structure_resources(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used);
-    void drop_path_resources(const std::vector<eng::Vec3>& path,float lateral_width,const ResourceBundle& used);
+    void drop_structure_resources(game::runtime::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used);
+    void drop_path_resources(const std::vector<game::runtime::Vec3>& path,float lateral_width,const ResourceBundle& used);
     ResourceBundle store_resource_bundle(const ResourceBundle& resources,float condition=1.0f);
-    void recover_removed_resources(eng::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used);
+    void recover_removed_resources(game::runtime::Vec3 position,float rotation_degrees,float footprint_x,float footprint_z,const ResourceBundle& used);
     bool move_ground_resource_to_storage(std::size_t pile_index);
     void consume_storage_inventory(const ResourceBundle& cost);
     void ensure_display_modes();
-    std::string save_game_directory() const;
+    std::filesystem::path save_game_directory() const;
     void refresh_save_games();
     bool resume_save(const SaveGameEntry& entry);
     bool save_game_to_name(const std::string& name,std::string& error);
     bool load_game_from_file(const std::string& path,std::string& error);
     bool load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool completed=false);
     std::string debug_blueprint_template_path() const;
-    float ui_width(const eng::Renderer& r) const { return (float)r.width()/ui_scale_; }
-    float ui_height(const eng::Renderer& r) const { return (float)r.height()/ui_scale_; }
-    eng::Rect centered_button(eng::Renderer& r,float y,float w=360,float h=52) const;
+    float ui_width(const game::runtime::SceneRenderer& r) const { return (float)r.width()/ui_scale_; }
+    float ui_height(const game::runtime::SceneRenderer& r) const { return (float)r.height()/ui_scale_; }
+    game::runtime::Rect centered_button(game::runtime::SceneRenderer& r,float y,float w=360,float h=52) const;
 };
 }

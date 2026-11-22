@@ -1,34 +1,48 @@
 #pragma once
 #include "game/world/habitat_builder.hpp"
-
 namespace game::habitats::interior_detail {
-using namespace eng;
-
+using namespace game::runtime;
 inline void bench(Builder& b,Vec3 feet,float width,float depth,float height=.78f){
     b.box(b.mesh.interior,feet+Vec3{0,height-.055f,0},{width,.11f,depth},false);
-    for(float end:{-.37f,.37f})
-        b.box(b.mesh.interior,feet+Vec3{width*end,(height-.11f)*.5f,0},
-              {.10f,height-.11f,depth*.82f},false);
+    for(float end:{-.37f,.37f}){
+        b.box(b.mesh.interior,feet+Vec3{width*end,(height-.11f)*.5f,0},{.10f,height-.11f,depth*.82f},false);
+        b.box(b.mesh.service_metal,feet+Vec3{width*end,.10f,0},{.16f,.07f,depth*.92f},false);
+    }
+    for(float sign:{-1.f,1.f})b.box(b.mesh.service_metal,feet+Vec3{0,height-.07f,sign*depth*.49f},{width,.065f,.035f},false);
+    b.box(b.mesh.service_metal,feet+Vec3{0,height-.19f,0},{width*.88f,.16f,depth*.74f},false);
 }
-
-inline void console(Builder& b,Vec3 c,float width=1.2f,float facing_z=-1.0f){
-    b.box(b.mesh.interior,c,{width,0.68f,0.46f},false);
-    b.box(b.mesh.interior,{c.x,c.y+0.48f,c.z+0.18f*facing_z},{width*0.82f,0.42f,0.10f},false);
+inline void console(Builder& b,Vec3 c,float width=1.2f,float facing_z=-1.f){
+    b.box(b.mesh.interior,c,{width,.68f,.46f},false);
+    b.box(b.mesh.interior,{c.x,c.y+.48f,c.z+.18f*facing_z},{width*.82f,.42f,.10f},false);
+    b.box(b.mesh.displays,{c.x,c.y+.48f,c.z+.239f*facing_z},{width*.73f,.31f,.016f},false);
+    b.box(b.mesh.service_metal,{c.x,c.y+.20f,c.z+.25f*facing_z},{width*.80f,.035f,.16f},false);
+    for(int key=0;key<5;++key)b.box(b.mesh.markings,{c.x+width*(key-2)*.10f,c.y+.222f,c.z+.26f*facing_z},{width*.055f,.006f,.045f},false);
 }
-inline void locker_bank(Builder& b,Vec3 c,int count,float spacing=0.62f){
+inline void locker_bank(Builder& b,Vec3 c,int count,float spacing=.62f){
     for(int i=0;i<count;++i){
-        const float x=c.x+((float)i-(float)(count-1)*0.5f)*spacing;
-        b.box(b.mesh.interior,{x,c.y,c.z},{0.52f,1.55f,0.50f},false);
-        b.box(b.mesh.interior,{x,c.y+0.18f,c.z-0.27f},{0.36f,0.05f,0.04f},false);
+        const float x=c.x+(i-(count-1)*.5f)*spacing;
+        b.box(b.mesh.interior,{x,c.y,c.z},{.52f,1.55f,.50f},false);
+        b.box(b.mesh.service_metal,{x,c.y,c.z-.258f},{.47f,1.46f,.025f},false);
+        b.box(b.mesh.service_metal,{x+.15f,c.y+.14f,c.z-.292f},{.038f,.25f,.045f},false);
+        for(int vent=0;vent<4;++vent)b.box(b.mesh.markings,{x,c.y-.50f+vent*.045f,c.z-.275f},{.32f,.014f,.008f},false);
+        b.box(b.mesh.markings,{x-.08f,c.y+.49f,c.z-.276f},{.19f,.075f,.008f},false);
     }
 }
-inline void ceiling_light(Builder& b,Vec3 a,Vec3 c){ b.cylinder_between(b.mesh.interior,a,c,0.035f,6,true,false); }
+inline void ceiling_light(Builder& b,Vec3 a,Vec3 c){
+    b.cylinder_between(b.mesh.service_metal,a,c,.052f,8,true,false);
+    b.cylinder_between(b.mesh.lamps,a+Vec3{0,-.038f,0},c+Vec3{0,-.038f,0},.024f,8,true,false);
+}
 inline void stool(Builder& b,Vec3 p){
-    b.cylinder_y(b.mesh.interior,{p.x,p.y+0.35f,p.z},0.70f,0.07f,6,false);
-    b.cylinder_y(b.mesh.interior,{p.x,p.y+0.72f,p.z},0.12f,0.26f,10,false);
+    b.cylinder_y(b.mesh.interior,p+Vec3{0,.35f,0},.70f,.07f,8,false);
+    b.box(b.mesh.interior,p+Vec3{0,.72f,0},{.43f,.10f,.43f},false);
+    b.box(b.mesh.fabric,p+Vec3{0,.778f,0},{.39f,.022f,.39f},false);
+    b.box(b.mesh.service_metal,p+Vec3{0,.93f,.22f},{.38f,.38f,.055f},false);
+    b.box(b.mesh.fabric,p+Vec3{0,.94f,.185f},{.34f,.30f,.025f},false);
 }
-inline void tank(Builder& b,Vec3 p,float h=1.9f,float r=0.32f){
-    b.cylinder_y(b.mesh.interior,{p.x,p.y+h*0.5f,p.z},h,r,12,false);
+inline void tank(Builder& b,Vec3 p,float h=1.9f,float r=.32f){
+    b.cylinder_y(b.mesh.interior,p+Vec3{0,h*.5f,0},h,r,16,false);
+    for(float f:{.12f,.87f})b.cylinder_y(b.mesh.service_metal,p+Vec3{0,h*f,0},.055f,r*1.06f,16,false);
+    b.cylinder_y(b.mesh.service_metal,p+Vec3{0,h+.045f,0},.09f,r*.27f,10,false);
+    b.box(b.mesh.markings,p+Vec3{0,h*.60f,-r-.008f},{r*1.05f,h*.21f,.012f},false);
 }
-
-} // namespace game::habitats::interior_detail
+}

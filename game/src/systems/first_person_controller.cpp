@@ -3,7 +3,7 @@
 #include <cmath>
 
 namespace game {
-using namespace eng;
+using namespace game::runtime;
 namespace {
 float wrap_degrees(float value){
     while(value>=360.0f) value-=360.0f;
@@ -88,7 +88,7 @@ Vec3 FirstPersonController::look_direction() const {
 Mat4 FirstPersonController::view_projection(float aspect) const {
     const Vec3 eye=eye_position();
     const Vec3 forward=look_direction();
-    return multiply(perspective(radians(68.0f),aspect,0.035f,5000.0f),
+    return multiply(perspective(radians(fov_degrees_),aspect,0.035f,5000.0f),
                     look_at(eye,eye+forward,{0.0f,1.0f,0.0f}));
 }
 
