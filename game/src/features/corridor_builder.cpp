@@ -205,7 +205,7 @@ void GameApp::render_corridor_link_preview(SceneRenderer& r){
     if(logical_y<STATUS_BAR_H || logical_y>=ui_height(r)-BUILD_BAR_H) return;
     if(mouse_over_selection_panel(input_)) return;
     Vec3 hit{};
-    if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
+    if(!pick_build_ground(hit)) return;
     const int target=pick_corridor(hit,geometry::kCorridorHalfWidth+0.28f);
     if(target<0 || target==corridor_link_source_) return;
     auto preview=corridor_network_.preview_corridor_link((size_t)corridor_link_source_,(size_t)target,placed_habitats_,habitat_models_,placed_resources_,resource_models_);
@@ -258,7 +258,7 @@ void GameApp::render_corridor_placement(SceneRenderer& r){
     if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px) return;
 
     Vec3 hit{};
-    if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
+    if(!pick_build_ground(hit)) return;
     const CorridorBuildAnchor hover=corridor_anchor_at(hit);
 
     // Like supply channels, a corridor snaps to the complete habitat while the

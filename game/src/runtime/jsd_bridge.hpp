@@ -74,5 +74,5 @@ inline rf::gfx::GraphicsSettings settings(GraphicsSettings s){
     }
     return out;
 }
-std::unique_ptr<SceneRenderer> create_renderer(rf::Platform& platform);
+std::unique_ptr<SceneRenderer> create_renderer(rf::Platform& platform, std::function<void(const rf::gfx::ShaderBuildProgress&)> progress = {});
 }

@@ -15,7 +15,7 @@ constexpr std::array<Recipe,cue_count> recipes{{
     {2.9f,.69f,true,1}, {3.7f,.70f,true,1}, {3.2f,.73f,true,1}, {3.6f,.74f,true,1},
     {2.9f,.80f,true,1}, {3.4f,.77f,true,1}, {2.7f,.69f,true,1}, {2.8f,.72f,true,2},
     {1.8f,.77f,true,1}, {4.1f,.86f,true,1},
-    {.33f,.78f,false,4}, {.39f,.79f,false,4}, {.61f,.83f,false,2},
+    {.28f,.78f,false,4}, {.30f,.79f,false,4}, {.61f,.83f,false,2},
     {.61f,.76f,false,2}, {.46f,.76f,false,2}, {1.46f,.74f,true,2},
     {.49f,.73f,false,2}, {.53f,.83f,false,3}, {.32f,.70f,false,3},
     {1.19f,.86f,false,2}, {.61f,.77f,false,1}, {.49f,.69f,false,3},
@@ -142,16 +142,22 @@ float synth(Cue cue,float t,float u,float variant,const Bands& n){
                 .074f*servo(t,33,2.2f)+.042f*sine(62,t);
         }
         case Cue::FootDust: {
-            const float crush=burst(t,.005f,.018f,13.8f)*grit(t,variant);
-            const float scuff=burst(t,.076f+.024f*variant,.028f,20);
-            return crush*(.37f*n.bass+.44f*n.body+.36f*n.mid+.25f*n.treble)+
-                scuff*(.29f*n.mid+.29f*n.treble+.08f*n.air)+.22f*resonance(t-.010f,68+11*variant,24);
+            // A heel impact followed by a rolling sole and short granular scuff.
+            const float heel=burst(t,.005f,.007f,37);
+            const float sole=burst(t,.032f+.008f*variant,.018f,25)*grit(t,variant);
+            const float toe=burst(t,.091f+.016f*variant,.016f,34);
+            return heel*(.65f*n.bass+.53f*n.body+.13f*n.mid)+
+                sole*(.23f*n.body+.44f*n.mid+.27f*n.treble)+
+                toe*(.19f*n.mid+.16f*n.treble+.035f*n.air)+.075f*resonance(t-.008f,64+9*variant,42);
         }
         case Cue::FootDeck: {
-            const float thump=burst(t,.009f,.007f,21);
-            const float scrape=burst(t,.042f,.023f,28);
-            return thump*(.47f*n.body+.19f*n.mid)+scrape*(.12f*n.mid+.19f*n.treble)+
-                .36f*resonance(t-.009f,101+14*variant,24)+.15f*resonance(t-.021f,412-19*variant,32);
+            const float heel=burst(t,.006f,.006f,42);
+            const float sole=burst(t,.034f+.008f*variant,.012f,31);
+            const float toe=burst(t,.087f+.014f*variant,.012f,40);
+            return heel*(.72f*n.bass+.60f*n.body+.17f*n.mid)+
+                sole*(.31f*n.body+.25f*n.mid+.09f*n.treble)+
+                toe*(.15f*n.body+.16f*n.mid+.08f*n.treble)+
+                .09f*resonance(t-.007f,86+12*variant,44)+.023f*resonance(t-.022f,285-15*variant,53);
         }
         case Cue::BodyLand: {
             const float hit=burst(t,.008f,.009f,17);
@@ -246,7 +252,7 @@ std::vector<std::int16_t> synthesize(Cue cue,std::uint32_t variant){
         if(!recipe.loop){
             const float t=float(i)/sample_rate;
             if(reflective){
-                for(const auto delay:{336u,887u,1661u}) if(i>=delay) v+=raw[i-delay]*(delay<400?.15f:delay<1000?.09f:.046f);
+                for(const auto delay:{336u,887u,1661u}) if(i>=delay) v+=raw[i-delay]*(delay<400?.15f:delay<1000?.09f:.046f)*(cue==Cue::FootDeck?.45f:1.f);
             }
             v*=attack(t,.0025f)*(1.0f-attack(t-recipe.seconds+.034f,.034f));
         }

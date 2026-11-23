@@ -41,11 +41,32 @@ bool resource_has_hull(ResourceKind kind){
 void draw_structure_ground_reservation(SceneRenderer& r,float physical_x,float physical_z,Vec3 position,float rotation_degrees,Color color,float width){
     const float hx=geometry::structure_ground_extent(physical_x)*0.5f;
     const float hz=geometry::structure_ground_extent(physical_z)*0.5f;
-    std::vector<Vec3> marker{{-hx,0.025f,-hz},{hx,0.025f,-hz},
-                             {hx,0.025f,-hz},{hx,0.025f,hz},
-                             {hx,0.025f,hz},{-hx,0.025f,hz},
-                             {-hx,0.025f,hz},{-hx,0.025f,-hz}};
-    r.draw_lines_3d(transformed_vertices(marker,position,rotation_degrees),color,width);
+    // Lift guides above regolith/deck edges and add corner posts for FPV.
+    const float y=.16f;
+    std::vector<Vec3> marker{{-hx,y,-hz},{hx,y,-hz},{hx,y,-hz},{hx,y,hz},
+        {hx,y,hz},{-hx,y,hz},{-hx,y,hz},{-hx,y,-hz}};
+    for(float x:{-hx,hx})for(float z:{-hz,hz}){
+        marker.push_back({x,y,z});marker.push_back({x,y+.65f,z});
+    }
+    const auto world=transformed_vertices(marker,position,rotation_degrees);
+    r.draw_lines_3d(world,{.015f,.025f,.035f,.95f},width+3.f);
+    color.a=1.f;
+    r.draw_lines_3d(world,color,std::max(2.5f,width));
+}
+
+void draw_faded_hull(SceneRenderer& r,const std::vector<Vec3>& shell,const std::vector<Vec3>& glass,
+                     const std::vector<Vec3>& edges,Vec3 position,float rotation,bool solid,
+                     float installed_fraction=1.f){
+    const Color tint{.15f,.78f,1.f,.12f};
+    const auto visible=construction_sequence::reveal_triangles(shell,installed_fraction);
+    if(solid){
+        const auto mapping=station_mapping(position,rotation,99);
+        r.draw_mapped_lunar_surface(transformed_vertices(visible,position,rotation),LunarMaterial::Hull,tint,mapping);
+        r.draw_mapped_lunar_surface(transformed_vertices(construction_sequence::reveal_triangles(glass,installed_fraction),position,rotation),LunarMaterial::Glass,tint,mapping);
+    }else mesh_wireframe::draw_layer(r,transformed_vertices(visible,position,rotation),{.15f,.78f,1.f,.60f},1.5f);
+    // Cyan always means a physical shell is faded. Unbuilt parts remain drafts.
+    const auto guides=transformed_vertices(edges,position,rotation);
+    r.draw_lines_3d(guides,{.18f,.82f,1.f,installed_fraction<1.f?.40f:.72f},1.6f);
 }
 
 void draw_pad_markings(SceneRenderer& r,const ResourceMesh& mesh,Vec3 position,float rotation){
@@ -236,8 +257,11 @@ const std::vector<Vec3>& portal_layer(const std::vector<Vec3>& triangles,Vec3 po
     static std::vector<Cache> cache;
     std::vector<mesh_portals::Aperture> openings;
     for(const auto& door:*doors){
-        const Vec3 center=rotate_y(door.wall_position-position,-rotation);
-        openings.push_back({center,rotate_y(door.normal,-rotation),0.90f,
+        Vec3 center=rotate_y(door.wall_position-position,-rotation);
+        const Vec3 normal=rotate_y(door.normal,-rotation);float low=-.90f,high=.90f;
+        for(auto p:door.wall_profile){const float axial=dot(rotate_y(p-position,-rotation)-center,normal);low=std::min(low,axial-.25f);high=std::max(high,axial+.25f);}
+        center=center+normal*((low+high)*.5f);
+        openings.push_back({center,normal,(high-low)*.5f,
             geometry::kDoorClearWidth*0.5f,foundation?geometry::kCorridorDeckY-position.y-0.15f:door.position.y-position.y+0.015f,
             door.position.y-position.y+geometry::kDoorClearHeight});
     }
@@ -247,7 +271,7 @@ const std::vector<Vec3>& portal_layer(const std::vector<Vec3>& triangles,Vec3 po
         for(std::size_t i=0;i<openings.size();++i){
             const auto& a=openings[i];const auto& b=entry.openings[i];
             same=same && length(a.center-b.center)<0.0001f && length(a.normal-b.normal)<0.0001f &&
-                std::abs(a.bottom-b.bottom)<0.0001f && std::abs(a.top-b.top)<0.0001f;
+                std::abs(a.bottom-b.bottom)<0.0001f && std::abs(a.top-b.top)<0.0001f && std::abs(a.half_depth-b.half_depth)<.0001f;
         }
         if(same) return entry.triangles;
     }
@@ -346,13 +370,18 @@ void draw_loading_gate(SceneRenderer& r,const PlacedResource& item,float opening
     auto box=[&](Vec3 center,Vec3 size){chamber.oriented_box(chamber.mesh.body,center,side,{0,1,0},n,size);};
     const Vec3 mid=(wall+mouth)*0.5f;
     box(mid+Vec3{0,0.14f,0},{2*w+0.18f,0.18f,depth+0.20f});
-    if(show_hull || preview){
-        box(mid+Vec3{0,h+0.18f,0},{2*w+0.18f,0.16f,depth+0.20f});
-        for(int sign:{-1,1}) box(mid+side*((float)sign*(w+0.05f))+Vec3{0,h*0.5f+0.15f,0},{0.12f,h,depth+0.20f});
-        box(wall+Vec3{0,h*0.5f+0.15f,0},{2*w,h,0.12f});
+    resources::Builder faded;
+    auto wall_box=[&](Vec3 center,Vec3 size){
+        if(show_hull || preview)box(center,size);else faded.oriented_box(faded.mesh.body,center,side,{0,1,0},n,size);
+    };
+    {
+        wall_box(mid+Vec3{0,h+0.18f,0},{2*w+0.18f,0.16f,depth+0.20f});
+        for(int sign:{-1,1}) wall_box(mid+side*((float)sign*(w+0.05f))+Vec3{0,h*0.5f+0.15f,0},{0.12f,h,depth+0.20f});
+        wall_box(wall+Vec3{0,h*0.5f+0.15f,0},{2*w,h,0.12f});
     }
     const float progress=item.construction.progress();
     draw_extension_mesh(r,chamber.mesh,progress,solid,preview);
+    if(!show_hull&&!preview)draw_faded_hull(r,faded.mesh.body,empty_mesh_layer,faded.mesh.edges,{},0,solid,progress);
     resources::Builder leaves;
     for(int sign:{-1,1}){
         const Vec3 c=mouth+side*((float)sign*(w*0.5f+opening*(w+0.06f)))+Vec3{0,h*0.5f+0.15f,0}+n*0.08f;
@@ -367,6 +396,19 @@ void draw_loading_gate(SceneRenderer& r,const PlacedResource& item,float opening
     r.draw_lines_3d({service+n*0.4f,tip,tip,tip+n*0.3f+side*0.28f,tip,tip+n*0.3f-side*0.28f},{1,0.70f,0.16f,1},2.5f);
 }
 
+}
+
+void GameApp::render_build_footprints(SceneRenderer& r) const {
+    for(const auto& item:placed_habitats_){
+        const auto& mesh=habitat_models_.mesh(item);
+        draw_structure_ground_reservation(r,mesh.footprint_x,mesh.footprint_z,item.position,item.rotation_degrees,
+            item.construction.complete()?Color{1.f,.73f,.18f,1}:Color{.12f,.8f,1.f,1},2.6f);
+    }
+    for(const auto& item:placed_resources_){
+        const auto& mesh=resource_models_.mesh(item);
+        draw_structure_ground_reservation(r,mesh.footprint_x,mesh.footprint_z,item.position,item.rotation_degrees,
+            item.construction.complete()?Color{1.f,.73f,.18f,1}:Color{.12f,.8f,1.f,1},2.6f);
+    }
 }
 
 void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 position,float rotation_degrees,bool preview,bool valid,bool selected,float construction_step,const std::vector<CorridorDoor>* fpv_doors,bool greenhouse_dark,HabitatKind kind,bool powered) const {
@@ -397,6 +439,12 @@ void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 
     }
 
     const bool show_hull=habitat_view_mode_==HabitatViewMode::FullHull;
+    if(!show_hull){
+        const float installed=construction_step<kConstructionSteps?construction_sequence::habitat_visibility(construction_step).shell:1.f;
+        draw_faded_hull(r,portal_layer(mesh.shell,position,rotation_degrees,fpv_doors),
+            portal_layer(mesh.glazing,position,rotation_degrees,fpv_doors),
+            portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees,!mesh_layout_active(),installed);
+    }
     const auto& shell_layer=show_hull?mesh.shell:empty_mesh_layer;
     const auto& glass_layer=show_hull?mesh.glazing:empty_mesh_layer;
     const auto& edge_layer=show_hull?mesh.edges:empty_mesh_layer;
@@ -525,6 +573,12 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
     }
 
     const bool show_hull=habitat_view_mode_==HabitatViewMode::FullHull || !resource_has_hull(kind);
+    if(!show_hull){
+        const float installed=construction_step<kConstructionSteps?construction_sequence::resource_visibility(construction_step).body:1.f;
+        draw_faded_hull(r,portal_layer(mesh.body,position,rotation_degrees,fpv_doors),
+            portal_layer(mesh.glazing,position,rotation_degrees,fpv_doors),
+            portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees,!mesh_layout_active(),installed);
+    }
     const auto& glass_layer=show_hull?mesh.glazing:empty_mesh_layer;
     const auto& body_layer=show_hull?mesh.body:empty_mesh_layer;
     const auto& edge_layer=show_hull?mesh.edges:empty_mesh_layer;
@@ -941,6 +995,7 @@ void GameApp::render_walkways(SceneRenderer& r){
 }
 
 void GameApp::render_corridors(SceneRenderer& r){
+    corridor_network_.refresh_pressure_shells();
     const bool solid=!mesh_layout_active();
     const bool show_hull=habitat_view_mode_==HabitatViewMode::FullHull;
     const auto& corridors=corridor_network_.connections();
@@ -950,6 +1005,7 @@ void GameApp::render_corridors(SceneRenderer& r){
         const bool link_source=corridor_link_source_==(int)i;
         const Color edge_color=(selected||link_source)?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f};
         const float boost=(selected||link_source)?1.55f:1.0f;
+        if(!show_hull)draw_faded_hull(r,connection.mesh.shell,empty_mesh_layer,connection.mesh.edges,{},0,solid,connection.construction.progress());
         const auto& shell_layer=show_hull?connection.mesh.shell:empty_mesh_layer;
         const auto& edge_layer=show_hull?connection.mesh.edges:empty_mesh_layer;
 

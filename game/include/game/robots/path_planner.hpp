@@ -61,8 +61,11 @@ struct IncrementalPathPlannerState {
     };
 
     bool initialized{false};
+    bool aisle_search{false}; // final fine lattice anchored at the real rover pose
+    bool precision_search{false}; // persistent finer lattice after a coarse full-map failure
     bool global_search{false}; // fallback after the established local graph fails
     float cell_size{1.25f};
+    game::runtime::Vec3 grid_x{1,0,0},grid_z{0,0,1};
     float origin_x{0.0f};
     float origin_z{0.0f};
     int nx{0};

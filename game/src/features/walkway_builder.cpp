@@ -72,7 +72,7 @@ void GameApp::render_walkway_placement(SceneRenderer& r){
     if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px) return;
 
     Vec3 hit{};
-    if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
+    if(!pick_build_ground(hit)) return;
     const auto hover=walkway_anchor_at(hit,!walkway_build_start_.has_value());
     if(!hover){
         if(walkway_build_start_){

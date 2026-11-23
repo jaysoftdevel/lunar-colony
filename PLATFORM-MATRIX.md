@@ -1,9 +1,9 @@
-# Platform matrix — 0.63.0
+# Platform matrix — 0.66.0
 
 | Capability | Linux | Windows 11 |
 | --- | --- | --- |
 | Gameplay, saves, collision and logistics | Shared C++20 | Shared C++20 |
-| Engine | External JSD 0.5.14 | External JSD 0.5.14 |
+| Engine | External JSD 0.5.16 | External JSD 0.5.16 |
 | World rendering | JSD desktop OpenGL 3.3 | JSD desktop OpenGL 3.3 |
 | Window/input | JSD Platform / SDL2 | JSD Platform / SDL2 |
 | Audio | JSD mixer/device / SDL2 | JSD mixer/device / SDL2 |

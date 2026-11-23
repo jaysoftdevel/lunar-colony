@@ -21,7 +21,8 @@ inline constexpr double kCrewOxygenKgPerDay=0.84;
 inline constexpr double kCrewWaterLitresPerDay=4.0;
 // Conservative sealed-habitat oxygen loss. This represents normal hatch/seal
 // leakage and small maintenance losses, not a catastrophic pressure breach.
-inline constexpr double kPressurizedOxygenLeakFractionPerDay=0.001;
+// Intact pressure hulls have no passive drain; intentional consumption remains.
+inline constexpr double kPressurizedOxygenLeakFractionPerDay=0.0;
 enum SupplyWarning : std::uint32_t { NoPower=1, NoWater=2, LowAir=4, LowStock=8, NoStorage=16, NoFood=32, NoMedical=64, NoHydrogen=128 };
 struct SupplyState {
     double oxygen_kg{0}, energy_kwh{0}, water_litres{0}, hydrogen_kg{0};

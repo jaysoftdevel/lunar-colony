@@ -409,7 +409,7 @@ void update_nearby_robot_awareness(std::vector<SafetyAgent>& agents,std::vector<
             rt.avoidance_elapsed=kPlannerReplanSeconds;
             rt.proposals.clear();
         }
-        if(rt.temporary_goal_valid && rt.traffic_detour_partner!=kNoSafetyRobot &&
+        if(rt.temporary_goal_valid && !rt.yielding_for_traffic && rt.traffic_detour_partner!=kNoSafetyRobot &&
            !std::binary_search(rt.nearby_robot_ids.begin(),rt.nearby_robot_ids.end(),rt.traffic_detour_partner))
             finish_traffic_maneuver(rt);
         if(rt.nearby_robot_ids.empty()){
@@ -1504,6 +1504,21 @@ void update_blocking_recovery(std::vector<SafetyAgent>& agents,const std::vector
         if(rt.blocked_elapsed<kBlockingWaitTimeoutSeconds || rt.recovery_cooldown>0.0f) continue;
         rt.recovery_cooldown=1.25f;
         if(i<requests.size() && requests[i].active){
+            // Communicate ownership of the destination as well as local body
+            // proximity. An idle rover on a delivery apron can make a global
+            // route fail while the requester is still outside its 10 m sensor
+            // radius. Ask that specific idle peer for a certified pull-out.
+            bool endpoint_yield=false;
+            for(std::size_t j=0;j<agents.size();++j){
+                if(j==i || requests[j].active || requests[j].work_target)continue;
+                const float clearance=agents[i].radius_m+agents[j].radius_m+kNeighborComfortClearanceM+.55f;
+                if(dist_xz(agents[j].position,rt.goal)>clearance)continue;
+                if(request_idle_yield(i,j)){
+                    rt.blocker_robot_id=j;rt.route_replan_required=true;
+                    rt.proposals.clear();rt.blocked_elapsed=0.f;endpoint_yield=true;break;
+                }
+            }
+            if(endpoint_yield)continue;
             if(rt.block_reason==BlockReason::NoRoute || rt.cached_route.empty()){
                 // A parked row can seal the only coarse-grid entrance to a
                 // wider route even when none of its members lies on the direct

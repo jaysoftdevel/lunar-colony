@@ -3,6 +3,8 @@
 #include "game/ui/layout.hpp"
 #include "game/runtime/ui_metrics.hpp"
 #include "game/runtime/ui_font.hpp"
+#include "game/systems/footstep_cadence.hpp"
+#include "game/systems/sound_assets.hpp"
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -716,7 +718,9 @@ struct UiRegression {
         using namespace game::runtime;
         struct HullRecorder : Recorder {
             std::vector<Vec3> vertices;
-            void draw_lunar_surface(const std::vector<Vec3>& points,LunarMaterial,Color) override {
+            bool faded{};
+            void draw_lunar_surface(const std::vector<Vec3>& points,LunarMaterial,Color c) override {
+                if(!points.empty()&&c.a>=.10f&&c.a<=.15f&&c.b>.9f&&c.r<.3f)faded=true;
                 vertices.insert(vertices.end(),points.begin(),points.end());
             }
             void draw_lines_3d(const std::vector<Vec3>& points,Color,float) override {
@@ -759,34 +763,94 @@ struct UiRegression {
                 "Classic Full Hull lost filled exterior or interior geometry");
         r.set_2d(1);
         app.render_view_selector(r,0,1280);
-        const auto none=r.button("NONE");
+        const auto none=r.button("FADED");
         require(r.button("FULL HULL").w>0,"Full Hull button missing");
         app.ui_input_.mouse_x=static_cast<int>(none.x+none.w*.5f);
         app.ui_input_.mouse_y=static_cast<int>(none.y+none.h*.5f);
         app.ui_input_.left_pressed=true;
         app.render_view_selector(r,0,1280);
-        require(app.habitat_view_mode_==GameApp::HabitatViewMode::None,"None button did not hide the hull");
+        require(app.habitat_view_mode_==GameApp::HabitatViewMode::None,"Faded button did not select the cutaway");
 
         for(const auto layout:{GameApp::WorldLayoutMode::FullGraphics,GameApp::WorldLayoutMode::Mesh}){
             app.world_layout_mode_=layout;
             for(const float step:{4.f,static_cast<float>(kConstructionSteps)}){
                 draw_room(step);
-                require(r.drew_at(1) && r.drew_at(2) && !r.drew_at(3) && !r.drew_at(4) && !r.drew_at(5),
-                        "None drew part of the habitat shell or lost the interior");
+                require(r.drew_at(1) && r.drew_at(2) && r.drew_at(5),
+                        "Faded habitat lost its cyan boundary or interior");
             }
             for(const auto kind:{ResourceKind::StorageDome,ResourceKind::StorageGate,ResourceKind::RobotWorkshop,ResourceKind::OreDriller}){
                 r.vertices.clear();
                 app.render_resource_mesh(r,resource,{},0,false,true,true,kConstructionSteps,nullptr,kind);
-                const bool driller=kind==ResourceKind::OreDriller;
-                require(r.drew_at(1) && r.drew_at(2) && r.drew_at(3)==driller && r.drew_at(5)==driller,
-                        "None hid exterior equipment or drew a resource hull");
+                require(r.drew_at(1) && r.drew_at(2) && r.drew_at(3) && r.drew_at(5),
+                        "Faded resource lost its shell cue or equipment");
             }
             r.vertices.clear();
             app.render_corridors(r);
-            require(r.drew_at(1) && r.drew_at(2) && !r.drew_at(3) && !r.drew_at(5),
-                    "None drew the corridor shell or lost its deck and selection marker");
+            require(r.drew_at(1) && r.drew_at(2) && r.drew_at(5),
+                    "Faded corridor lost its shell cue or deck");
         }
-        std::cout<<"Full Hull default, None selector and hull draw layers passed\n";
+        require(r.faded,"Faded hull did not submit a cyan shell with at least 10 percent opacity");
+        std::cout<<"Full Hull default, faded selector and tinted 12 percent hull layers passed\n";
+    }
+
+    static void fpv_building(){
+        using namespace game::runtime;
+        GameHost host;GameApp app(host);Recorder r;
+        app.playfield_.rebuild(128);app.camera_.reset(128);
+        app.screen_=GameApp::Screen::Playfield;app.active_game_phase_=GameApp::GamePhase::RobotPreparation;
+        app.game_session_active_=true;app.game_speed_=GameApp::GameSpeed::Pause;
+        app.graphics_.path=GraphicsPath::Classic;app.first_person_mode_=GameApp::FirstPersonMode::Active;
+        const auto select=[&](const char* id){
+            const auto& items=app.build_catalog_.items();
+            const auto it=std::find_if(items.begin(),items.end(),[&](const auto& item){return item.id==id;});
+            require(it!=items.end(),std::string("Missing FPV build tool ")+id);
+            app.build_catalog_.set_category(it->category);app.build_catalog_.select(int(it-items.begin()));
+        };
+        const auto aim=[&](Vec3 feet){
+            app.first_person_.spawn(feet,0);InputState look;look.mouse_dy=82;app.first_person_.update_look(look);
+            app.input_={};app.input_.mouse_x=r.w/2;app.input_.mouse_y=r.h/2;
+        };
+        aim({20,0,20});app.render(r);r.check_bounds("FPV bottom controls");
+        require(r.button("FULL HULL").y>r.h/r.scale-layout::BUILD_BAR_H && r.button("FADED").w>0,"FPV bottom configuration bar missing");
+        Vec3 hit;require(app.pick_build_ground(hit)&&hit.z<12,"FPV center aim did not intersect the ground");
+        select("crew_quarters");InputState rotation;rotation.key_m_pressed=true;
+        require(app.update_placement_controls(rotation)&&app.placement_rotation_degrees_==15,"FPV rotation did not use structure controls");
+        rotation={};rotation.wheel=1;const auto before=app.placement_habitat_size_;app.update_placement_controls(rotation);
+        require(app.placement_habitat_size_!=before,"FPV wheel did not change structure size");
+        app.input_.left_pressed=true;app.render(r);
+        require(app.placed_habitats_.size()==1,"FPV center-aim structure placement failed: "+app.placement_tip_detail_);
+        select("solar_panel");aim({-20,0,20});app.first_person_cursor_=true;
+        app.input_.mouse_x=4;app.input_.mouse_y=r.h-10;app.input_.left_pressed=true;app.render(r);
+        require(app.placed_resources_.empty()&&!app.pick_build_ground(hit),"HUD click leaked into FPV world placement");
+        app.input_.mouse_x=r.w/2;app.input_.mouse_y=r.h/2;app.render(r);
+        require(app.placed_resources_.size()==1,"FPV free-cursor resource placement failed: "+app.placement_tip_detail_);
+        InputState tab;tab.key_tab_pressed=true;app.update_simulation(1.f/60,tab);
+        require(!app.first_person_cursor_,"Tab did not return to FPV mouse look");
+        app.update_simulation(1.f/60,tab);require(app.first_person_cursor_,"Tab did not release the FPV cursor");
+        select("crew_quarters");InputState cancel;cancel.right_pressed=true;app.update_simulation(1.f/60,cancel);
+        require(!app.build_catalog_.selected()&&app.first_person_mode_==GameApp::FirstPersonMode::Active,"RMB did not cancel the FPV tool");
+        struct BorderRecorder:Recorder{
+            bool bright{},backing{},posts{};
+            void draw_lines_3d(const std::vector<Vec3>& v,Color c,float w) override {
+                bright=bright||(c.a==1&&w>=2.5f&&c.b>.8f);backing=backing||(c.r<.05f&&w>=5.f);
+                for(std::size_t i=1;i<v.size();i+=2)posts=posts||(std::abs(v[i].y-v[i-1].y)>.6f);
+            }
+        } borders;
+        app.render_build_footprints(borders);require(borders.bright&&borders.backing&&borders.posts,"Build boundaries lack bright strokes, dark backing or FPV corner posts");
+        const auto count=[](float speed,int fps){sound::FootstepCadence cadence;int n=0;for(int i=0;i<fps*10;++i)n+=cadence.advance(speed/fps,1.f/fps,true);return n;};
+        require(count(2,60)>=19&&count(2,60)<=20&&count(4.2f,60)>=26&&count(4.2f,60)<=27,"Walking or sprint cadence is unrealistic");
+        require(std::abs(count(2,30)-count(2,144))<=1,"Footstep cadence depends on render rate");
+        sound::FootstepCadence cadence;
+        for(int i=0;i<300;++i)require(!cadence.advance(0,1.f/60,true)&&!cadence.advance(.05f,1.f/60,false),"Footsteps play at rest or in the air");
+        require(!cadence.advance(10,1.f/60,true),"Teleport emitted a footstep burst");
+        for(auto cue:{sound::Cue::FootDust,sound::Cue::FootDeck}){
+            std::vector<std::int16_t> previous;
+            for(std::uint32_t variant=0;variant<4;++variant){const auto pcm=sound::synthesize(cue,variant);int peak=0;double energy=0;
+                for(auto value:pcm){peak=std::max(peak,std::abs(int(value)));energy+=double(value)*value;}
+                require(peak>1000&&peak<30000&&energy>1e6&&pcm!=previous,"Footstep clip is silent, clipped or lacks variants");previous=pcm;
+            }
+        }
+        std::cout<<"FPV bottom controls, ground-ray placement, HUD isolation, borders and footstep cadence passed\n";
     }
 
     static void runtime_paths(){
@@ -853,7 +917,7 @@ struct UiRegression {
         app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,0,0});app.render(draw);
         unsigned gold=0,outline=0;bool fps=false;
         for(const auto& d:draw.draws){
-            if(d.type=='T' && d.text=="FPS 60"){fps=true;require(d.v[0]<30 && d.v[1]>draw.h/draw.scale-40,"FPS counter is not lower left");}
+            if(d.type=='T' && d.text=="FPS 60"){fps=true;require(d.v[0]<30 && d.v[1]>draw.h/draw.scale-layout::BUILD_BAR_H-40 && d.v[1]<draw.h/draw.scale-layout::BUILD_BAR_H,"FPS counter is not lower left");}
             if(d.type=='L' && d.color.r==1.f && d.color.g==.90f && d.color.b==.12f)++gold;
             if(d.type=='L' && d.color.r==.015f && d.v[5]>=4)++outline;
         }
@@ -2540,6 +2604,7 @@ int main(int argc,char** argv){
             game::UiRegression::recent_saves();
         }
         else if(out=="gameplay-options") game::UiRegression::gameplay_options();
+        else if(out=="fpv-building") game::UiRegression::fpv_building();
         else if(out=="runtime-paths") game::UiRegression::runtime_paths();
         else if(out=="fov-interiors") game::UiRegression::fov_and_station_interiors();
         else if(out=="graphics-quality") game::UiRegression::graphics_quality();

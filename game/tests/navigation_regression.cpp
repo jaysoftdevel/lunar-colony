@@ -134,7 +134,7 @@ void fleet_case(const std::string& name,std::vector<Vec3> starts,std::vector<Vec
     world.incremental_route=[&](std::size_t id,Vec3 a,Vec3 b,float stop,std::uint64_t epoch,IncrementalPathPlannerState& state,std::vector<Vec3>& out){
         PathPlanRequest req;req.start=a;req.goal=b;req.stop_radius=stop;
         req.cell_size=0.75f;req.corridor_half_width=25;req.max_expansions=720;
-        return plan_incremental_path(req,epoch,callbacks(id,false),state,out);
+        return plan_incremental_path(req,epoch,callbacks(id,parked_goal),state,out);
     };
     world.stationary_segment_clear=[&](std::size_t id,Vec3 a,Vec3 b){
         for(const auto& other:agents){
@@ -594,19 +594,35 @@ struct NavigationRegression {
             require(ground_distance(parallel_route[i],serial_route[i])<1e-6f,"parallel route sampling changed the route");
         std::cout<<"Exact-goal narrow approach, full-map detour, map-edge reuse and deterministic route repair passed\n";
     }
-    static void saved_route(const std::string& path){
+    static void saved_route(const std::string& path,bool verify_fleet=false,bool cargo_aisle=false){
         game::runtime::GameHost engine;GameApp app(engine);std::string error;require(app.load_game_from_file(path,error),error);
         require(app.builder_robots_.size()>1,"saved route fixture needs carrier");
         const auto original=app.builder_robots_[1].target;const auto start=app.builder_robots_[1].position;
         const auto initial_step=app.construction_target_step(original);const auto buffer=app.construction_site_buffer(original);const auto initial_buffer=buffer?buffer->total_amount():0;
+        std::vector<Vec3> fleet_previous;std::vector<float> fleet_progress(app.builder_robots_.size(),0.f);
+        for(const auto& robot:app.builder_robots_)fleet_previous.push_back(robot.position);
         bool delivered=false;float first_delivery=-1,max_travel=0;double worst=0;auto began=std::chrono::steady_clock::now();
         for(int frame=0;frame<=60*900;++frame){
             if(frame%1800==0){std::cout<<"t="<<frame/60<<"\n";for(std::size_t i=0;i<app.builder_robots_.size();++i){const auto& r=app.builder_robots_[i];std::cout<<i<<" p="<<r.position.x<<","<<r.position.z<<" v="<<r.current_speed_mps<<" mode="<<(int)r.mode<<" task="<<(int)r.target.kind<<":"<<r.target.index<<" cargo="<<r.cargo.total_amount()<<" station="<<r.interaction_position_valid<<":"<<r.interaction_position.x<<","<<r.interaction_position.z<<" goal="<<r.safety.goal.x<<","<<r.safety.goal.z<<" state="<<safety_mode_name(r.safety.mode)<<" reason="<<block_reason_name(r.safety.block_reason)<<" cached="<<r.safety.cached_route.size()<<" cursor="<<r.safety.route_cursor<<" wait="<<r.safety.wait_age<<" temp="<<r.safety.temporary_goal_valid<<":"<<r.safety.temporary_goal.x<<","<<r.safety.temporary_goal.z<<" D*="<<r.safety.incremental_path.expanded_node_count<<" init="<<r.safety.incremental_path.initialization_count<<"\n";}std::cout<<std::flush;}
             auto tick_start=std::chrono::steady_clock::now();app.update_pressure_doors(1.f/60);app.update_construction(1.f/60);
             worst=std::max(worst,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-tick_start).count());
             for(const auto& r:app.builder_robots_)require(r.safety.mode!=SafetyMode::Fault,"saved route entered safety fault");
+            if(verify_fleet)for(std::size_t i=0;i<app.builder_robots_.size();++i){
+                const auto& robot=app.builder_robots_[i];
+                require(ground_distance(fleet_previous[i],robot.position)<=robot.move_speed_mps/60.f+.005f,"recovery relocated a rover");
+                if(ground_distance(fleet_previous[i],robot.position)>.001f || robot.action!=BuilderRobotAction::None)fleet_progress[i]=float(frame)/60.f;
+                fleet_previous[i]=robot.position;
+            }
             max_travel=std::max(max_travel,ground_distance(start,app.builder_robots_[1].position));
             const auto now=app.construction_site_buffer(original);const bool progress=(now && now->total_amount()>initial_buffer) || app.construction_target_step(original)>initial_step;if(!delivered && progress)first_delivery=(float)frame/60;delivered=delivered || progress;
+        }
+        if(verify_fleet){
+            if(!cargo_aisle)require(app.construction_target_complete({ConstructionTargetKind::Utility,2}),"saved narrow-aisle delivery never completed");
+            for(std::size_t i=0;i<app.builder_robots_.size();++i){
+                const auto& robot=app.builder_robots_[i];
+                require(robot.cargo.empty() || fleet_progress[i]>780.f,"loaded carrier remained stuck for over two minutes");
+                require(robot.safety.incremental_path.initialization_count<150,"planner resets thrashed during saved colony recovery");
+            }
         }
         require(delivered,"saved carrier did not deliver its original cargo within 900 s");require(app.construction_target_complete(original),"original saved delivery task never completed after continued trips");require(max_travel>10,"saved carrier never left the blocked location");
         std::cout<<"Saved carrier delivery resumed; original target progressed, first delivery s="<<first_delivery<<" final step="<<(int)app.construction_target_step(original)<<" total ms="<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-began).count()<<" worst tick ms="<<worst<<"\n";
@@ -1230,6 +1246,54 @@ struct NavigationRegression {
         wait_parking(offline,"supply-and-power-enabled workshop");
         std::cout<<"Workshop supply gating, compact parking, task dispatch, ramp clearance, reachability, save/load and multi-workshop allocation passed\n";
     }
+    static void sealed_atmosphere(){
+        game::runtime::GameHost host;GameApp app(host);app.playfield_.rebuild(64);
+        app.status_.reset();auto state=app.status_.state();state.crew_current=0;app.status_.restore(state);
+        PlacedHabitat room;room.kind=HabitatKind::CrewQuarters;room.construction.finish();app.placed_habitats_={room};
+        app.update_supply_simulation(0);auto& air=app.placed_habitats_[0].supply;
+        air.oxygen_kg=air.volume_m3*kOxygenKgPerM3;const double initial=air.oxygen_kg;
+        for(int step=0;step<480;++step)app.update_supply_simulation(1);
+        require(std::abs(air.oxygen_kg-initial)<1.e-8 && air.oxygen_demand_kg_per_day==0,
+            "Sealed hull lost atmosphere without consumption or vent cycling");
+        std::cout<<"Sealed unoccupied atmosphere retained mass over two simulation days\n";
+    }
+    static void pressure_collars(){
+        using namespace game::runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);std::size_t probes=0;
+        for(auto kind:{HabitatKind::AirLock,HabitatKind::BioDome,HabitatKind::CrewQuarters,HabitatKind::Laboratory,HabitatKind::Factory})
+        for(auto size:{HabitatSizeTier::Standard,HabitatSizeTier::Small})for(float yaw:{0.f,37.f}){
+            PlacedHabitat h;h.kind=kind;h.size=size;h.rotation_degrees=yaw;h.construction.finish();app.placed_habitats_={h};app.placed_resources_.clear();app.corridor_network_.clear();
+            const auto& mesh=app.habitat_models_.mesh(h);const auto outward=world_math::rotate_y({1,0,0},yaw);
+            const CorridorBuildAnchor anchor{CorridorEndpointKind::Habitat,0,outward*30};
+            auto ep=app.corridor_network_.preview_anchor(anchor,outward*40,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+            require(bool(ep),"Collar has no source hull contact");CorridorConnection c;c.endpoint_a=*ep;c.endpoint_b.kind=CorridorEndpointKind::OpenDoor;c.endpoint_b.position=ep->position+ep->tangent*8;c.path={ep->position,c.endpoint_b.position};c.construction.finish();
+            app.corridor_network_.restore_connections({c});app.corridor_network_.refresh_pressure_shells();
+            GeometryRecorder recorder;const std::vector<CorridorDoor> doors{ep->door};app.render_habitat_mesh(recorder,mesh,h.position,h.rotation_degrees,false,true,false,kConstructionSteps,&doors,false,kind,false);
+            const auto& shell=app.corridor_network_.connections()[0].mesh.shell;recorder.triangles.insert(recorder.triangles.end(),shell.begin(),shell.end());
+            for(float along:{-.65f,.65f}){Vec3 inside=ep->door.position+ep->door.normal*along;inside.y=h.position.y+mesh.walkable_floor_y+1.05f;
+                for(int ray=0;ray<256;++ray){const float y=1.f-2.f*(ray+.5f)/256.f,a=ray*2.39996323f,r=std::sqrt(1-y*y);const Vec3 d{r*std::cos(a),y,r*std::sin(a)};
+                    require(segment_hits_mesh(inside,inside+d*100,recorder.triangles),"Building/collar leaks: kind "+std::to_string(int(kind))+" size "+std::to_string(int(size))+" yaw "+std::to_string(yaw)+" ray "+std::to_string(ray));++probes;
+                }
+            }
+        }
+        for(int size=0;size<int(StorageDomeSize::Count);++size)for(float heading:{0.f,37.f}){
+            PlacedResource dome;dome.kind=ResourceKind::StorageDome;dome.storage_size=StorageDomeSize(size);dome.rotation_degrees=37;dome.construction.finish();
+            app.placed_habitats_.clear();app.placed_resources_={dome};app.corridor_network_.clear();const auto& mesh=app.resource_models_.mesh(dome);
+            const auto direction=world_math::rotate_y({1,0,0},heading);const CorridorBuildAnchor anchor{CorridorEndpointKind::Resource,0,direction*100};
+            const auto ep=app.corridor_network_.preview_anchor(anchor,direction*120,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+            require(ep && ep->door.wall_profile.size()==13,"Storage collar has no sampled pressure contact");
+            CorridorConnection c;c.endpoint_a=*ep;c.endpoint_b.kind=CorridorEndpointKind::OpenDoor;c.endpoint_b.position=ep->position+ep->tangent*8;c.path={ep->position,c.endpoint_b.position};c.construction.finish();
+            app.corridor_network_.restore_connections({c});app.corridor_network_.refresh_pressure_shells();GeometryRecorder recorder;const std::vector<CorridorDoor> doors{ep->door};
+            app.render_resource_mesh(recorder,mesh,{},dome.rotation_degrees,false,true,false,kConstructionSteps,&doors,ResourceKind::StorageDome);
+            const auto& shell=app.corridor_network_.connections()[0].mesh.shell;recorder.triangles.insert(recorder.triangles.end(),shell.begin(),shell.end());
+            for(float along:{-.65f,.65f}){Vec3 inside=ep->door.position+ep->door.normal*along;inside.y=mesh.walkable_floor_y+1.05f;
+                for(int ray=0;ray<256;++ray){const float y=1.f-2.f*(ray+.5f)/256.f,a=ray*2.39996323f,r=std::sqrt(1-y*y);const Vec3 d{r*std::cos(a),y,r*std::sin(a)};
+                    require(segment_hits_mesh(inside,inside+d*150,recorder.triangles),"Storage collar leaks: size "+std::to_string(size)+" heading "+std::to_string(heading)+" ray "+std::to_string(ray));++probes;
+                }
+            }
+        }
+        std::cout<<probes<<" pressure rays around habitat and all-size storage collars passed\n";
+    }
+
     static void workshop_service_stockyard_audio(){
         using namespace game::runtime;using namespace world_math;
         GameHost host;GameApp app(host);app.playfield_.rebuild(128);
@@ -1249,7 +1313,7 @@ struct NavigationRegression {
         require(full.glass.size()==mesh.glazing.size(),"Full hull does not submit transparent roof");
         app.habitat_view_mode_=GameApp::HabitatViewMode::None;
         app.render_resource_mesh(cut,mesh,{},0,false,true,false,kConstructionSteps,nullptr,home.kind);
-        require(cut.glass.empty() && !cut.triangles.empty(),"Hidden hull kept glass or removed frame/equipment");
+        require(cut.glass.size()==mesh.glazing.size() && !cut.triangles.empty(),"Faded hull lost roof tint or frame/equipment");
         app.first_person_.spawn({0,workshop::kDeck,0});
         require(app.first_person_ceiling_height({0,workshop::kDeck,0})<4.7f,"Transparent roof lost physical ceiling");
         app.builder_robots_.resize(4);
@@ -1736,7 +1800,9 @@ struct NavigationRegression {
         app.placed_resources_[1].supply.water_litres=100;app.placed_resources_[0].supply.energy_kwh=0;clock.hour=0;app.status_.restore(clock);const double before_unpowered=app.placed_resources_[1].supply.water_litres;app.update_supply_simulation(1);
         require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && (gen.warnings&NoPower) && app.placed_resources_[1].supply.water_litres==before_unpowered,"unpowered generator processed water");
         clock.hour=12;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=s.volume_m3*kOxygenKgPerM3;});app.update_supply_simulation(1);
-        require(gen.oxygen_produced_kg_per_day>0 && gen.oxygen_produced_kg_per_day<18 && gen.water_processed_litres_per_day>0 && app.placed_resources_[1].supply.water_litres<100,"nominal full-pressure leakage was not replenished by life support");
+        require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && app.placed_resources_[1].supply.water_litres==100,"Intact full-pressure rooms consumed leak-replacement oxygen/water");
+        clock.crew_current=6;app.status_.restore(clock);app.update_supply_simulation(1);
+        require(gen.oxygen_produced_kg_per_day>0 && gen.oxygen_produced_kg_per_day<18 && gen.water_processed_litres_per_day>0 && app.placed_resources_[1].supply.water_litres<100,"Life support failed to replace actual crew oxygen consumption");
         clock.hour=0;clock.crew_current=6;app.status_.restore(clock);app.update_supply_simulation(1);
         require(app.placed_habitats_[2].supply.air_change_percentage_points_per_day<0,"depleting isolated interior did not report falling air");
         clock.hour=12;clock.crew_current=0;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=0;});app.placed_resources_[1].supply.water_litres=0.01;app.update_supply_simulation(10);
@@ -3435,6 +3501,8 @@ int main(int argc,char** argv){
         if(argc>1 && std::string(argv[1])=="collision-radius") collision_radius_case();
         else if(argc>1 && std::string(argv[1])=="rover-steering") rover_steering_case();
         else if(argc>1 && std::string(argv[1])=="global-routes") game::NavigationRegression::global_routes();
+        else if(argc>2 && std::string(argv[1])=="saved-colony-recovery") game::NavigationRegression::saved_route(argv[2],true);
+        else if(argc>2 && std::string(argv[1])=="saved-aisle") game::NavigationRegression::saved_route(argv[2],true,true);
         else if(argc>2 && std::string(argv[1])=="saved-route") game::NavigationRegression::saved_route(argv[2]);
         else if(argc>2 && std::string(argv[1])=="profile") game::NavigationRegression::profile(argv[2]);
         else if(argc>1 && std::string(argv[1])=="operation-replan") game::NavigationRegression::operation_replan();
@@ -3446,6 +3514,8 @@ int main(int argc,char** argv){
             fault_recovery_case("bounded recovery search",1,false,false,true);
             fault_bounds_case();
         }
+        else if(argc>1 && std::string(argv[1])=="pressure-collars") game::NavigationRegression::pressure_collars();
+        else if(argc>1 && std::string(argv[1])=="sealed-atmosphere") game::NavigationRegression::sealed_atmosphere();
         else if(argc>1 && std::string(argv[1])=="workshop-service") game::NavigationRegression::workshop_service_stockyard_audio();
         else if(argc>1 && std::string(argv[1])=="fpv-controls") game::NavigationRegression::fpv_controls_and_gables();
         else if(argc>1 && std::string(argv[1])=="ore-dispatch") game::NavigationRegression::ore_storage_dispatch();
@@ -3494,6 +3564,7 @@ int main(int argc,char** argv){
             fleet_case("open straight",{{-14,0,0}},{{14,0,0}},{});
             fleet_case("structure corner",{{-12,0,-5}},{{12,0,5}},{{-5,5,-3,3}});
             fleet_case("appearing obstacle",{{-14,0,0}},{{14,0,0}},{},75,true);
+            fleet_case("remote occupied service point",{{-28,0,0},{0,0,0}},{{0,0,0},{0,0,0}},{},75,false,true);
             fleet_case("occupied service point",{{-10,0,0},{0,0,0}},{{0,0,0},{0,0,0}},{},75,false,true);
             fleet_case("opposing rovers",{{-14,0,0},{14,0,0}},{{14,0,0},{-14,0,0}},{});
             fleet_case("single-lane yielding",{{-16,0,0},{16,0,0}},{{16,0,0},{-16,0,0}},

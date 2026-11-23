@@ -82,7 +82,8 @@ struct CorridorConnection {
 
 class CorridorNetwork {
 public:
-    void clear(){ connections_.clear(); }
+    void clear(){ connections_.clear();pressure_revision_=0; }
+    void refresh_pressure_shells(); // Rebuild only when commissioning changes.
     void set_playfield_half_extent(float half_extent){ playfield_half_extent_=std::max(8.0f,half_extent); }
 
     std::optional<CorridorConnection> preview_corridor_link(
@@ -133,7 +134,7 @@ public:
     void update_construction(float dt,ResourceManagement& resources,bool allow_negative);
     const std::vector<CorridorConnection>& connections() const { return connections_; }
     std::vector<CorridorConnection>& mutable_connections() { return connections_; }
-    void restore_connections(std::vector<CorridorConnection> connections){ connections_=std::move(connections); }
+    void restore_connections(std::vector<CorridorConnection> connections){ connections_=std::move(connections);pressure_revision_=0; }
     void repair_invalid_topology(const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library);
     void synchronize_structure_interfaces(const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
                                           const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library);
@@ -141,6 +142,7 @@ public:
 private:
     std::vector<CorridorConnection> connections_{};
     float playfield_half_extent_{32.0f};
+    std::uint64_t pressure_revision_{};
 };
 
 } // namespace game

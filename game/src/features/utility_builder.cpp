@@ -63,7 +63,7 @@ void GameApp::render_utility_placement(SceneRenderer& r){
     if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px) return;
 
     Vec3 hit{};
-    if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
+    if(!pick_build_ground(hit)) return;
     const auto hover=utility_anchor_at(hit,selected->utility_kind);
 
     // Supply channels snap to whole structures while preserving the cursor hit

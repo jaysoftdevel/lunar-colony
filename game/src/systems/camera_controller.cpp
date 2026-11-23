@@ -73,6 +73,46 @@ void CameraController::update(const InputState& in,int playfield_size,int viewpo
     }
 }
 
+void CameraController::scroll_at_edge(const InputState& in,int size,int width,int height,Rect world,float dt){
+    if(!in.window_focused || !in.pointer_inside_window || in.left_down || in.middle_down || in.right_down ||
+       width<=0 || height<=0 || world.w<=0 || world.h<=0 || !world.contains(float(in.mouse_x),float(in.mouse_y)))return;
+    const float band=std::clamp(float(height)*.025f,14.f,32.f);
+    const auto axis=[&](float value,float lo,float hi){
+        return value<lo+band?-(lo+band-value)/band:value>hi-band?(value-hi+band)/band:0.f;
+    };
+    Vec2 edge{axis(float(in.mouse_x),world.x,world.x+world.w),axis(float(in.mouse_y),world.y,world.y+world.h)};
+    if(std::abs(edge.x)+std::abs(edge.y)<.001f)return;
+    const float norm=std::hypot(edge.x,edge.y);if(norm>1){edge.x/=norm;edge.y/=norm;}
+    Vec3 eye,forward,right,up;basis(eye,forward,right,up);
+    const float yaw=radians(azimuth_deg_);
+    const Vec3 ground_fwd{-std::sin(yaw),0,-std::cos(yaw)};
+    Vec3 move=(right*edge.x-ground_fwd*edge.y)*
+        (std::clamp(distance_*.70f,12.f,90.f)*std::clamp(dt,0.f,.05f));
+    // Bound the visible ground footprint, not just the orbit target. When the
+    // whole map fits on screen an axis has no scrolling range. Invalid horizon
+    // rays fall back to the finite playfield-centred range at low elevations.
+    Vec3 low{1.e20f,0,1.e20f},high{-1.e20f,0,-1.e20f};bool valid=true;
+    const float tangent=std::tan(radians(55.f)*.5f),aspect=float(width)/height;
+    for(float x:{world.x,world.x+world.w})for(float y:{world.y,world.y+world.h}){
+        const Vec3 direction=forward+right*((2*x/width-1)*aspect*tangent)+up*((1-2*y/height)*tangent);
+        if(direction.y>=-.00001f){valid=false;continue;}
+        const auto p=eye+direction*(-eye.y/direction.y)-target_;
+        low.x=std::min(low.x,p.x);low.z=std::min(low.z,p.z);high.x=std::max(high.x,p.x);high.z=std::max(high.z,p.z);
+    }
+    const float half=std::max(0.f,float(size)*.5f-.002f);
+    const auto bound=[&](float current,float delta,float a,float b){
+        float lo=valid?-half-a:-half,hi=valid?half-b:half;
+        if(lo>hi)lo=hi=(lo+hi)*.5f;
+        // An older save may already be beyond an edge. Allow a smooth return;
+        // never jump the camera to the newly bounded interval.
+        if(current<lo)return delta>0?std::min(delta,hi-current):0.f;
+        if(current>hi)return delta<0?std::max(delta,lo-current):0.f;
+        return std::clamp(current+delta,lo,hi)-current;
+    };
+    target_.x+=bound(target_.x,move.x,low.x,high.x);
+    target_.z+=bound(target_.z,move.z,low.z,high.z);
+}
+
 void CameraController::basis(Vec3& eye,Vec3& forward,Vec3& right,Vec3& up) const {
     const float elev=radians(elevation_deg_);
     const float yaw=radians(azimuth_deg_);

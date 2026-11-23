@@ -17,6 +17,9 @@ STAGE1-UI-CONTROLS.md
 SURFACES-0.61.0.md
 UPDATE-0.62.0.md
 UPDATE-0.63.0.md
+UPDATE-0.64.0.md
+UPDATE-0.65.0.md
+UPDATE-0.66.0.md
 UPDATE_HISTORY.log
 VALIDATION.md
 VERSION
@@ -38,6 +41,8 @@ game/CMakeLists.txt
 game/cmake/GameClusters.cmake
 game/cmake/Runtime.cmake
 game/cmake/StageRuntime.cmake
+game/debug-templates/0-40-32-debug-start.gmsave
+game/debug-templates/0-54-0-debug-start.gmsave
 game/include/game/build_mode.hpp
 game/include/game/config/graphics_benchmark.hpp
 game/include/game/config/preferences.hpp
@@ -81,6 +86,7 @@ game/include/game/world/construction.hpp
 game/include/game/world/construction_sequence.hpp
 game/include/game/world/corridor/corridor_module.hpp
 game/include/game/world/corridor/detail.hpp
+game/include/game/world/corridor/pressure_shell.hpp
 game/include/game/world/corridor_network.hpp
 game/include/game/world/gate_area.hpp
 game/include/game/world/geometry_standards.hpp
@@ -134,6 +140,7 @@ game/src/runtime/jsd_bridge.hpp
 game/src/runtime/jsd_lunar_terrain.hpp
 game/src/runtime/platform_jsd.cpp
 game/src/runtime/renderer_jsd.cpp
+game/src/runtime/startup_splash.hpp
 game/src/runtime/ui_batch.hpp
 game/src/runtime/ui_font_atlas.inc
 game/src/screens/credits.cpp
@@ -189,6 +196,7 @@ game/src/world/corridor/fan_optimizer.cpp
 game/src/world/corridor/fittings.cpp
 game/src/world/corridor/geometry.cpp
 game/src/world/corridor/module.cpp
+game/src/world/corridor/pressure_shell.cpp
 game/src/world/corridor/routing.cpp
 game/src/world/corridor_network.cpp
 game/src/world/habitat_mesh.cpp
@@ -231,13 +239,23 @@ game/src/world/resources/water_storage.cpp
 game/src/world/utility_network.cpp
 game/src/world/walkway_network.cpp
 game/tests/build_arguments_test.py
+game/tests/camera_scrolling_regression.cpp
+game/tests/corridor_pressure_regression.cpp
+game/tests/fixtures/colony-0.64-traffic.gmsave
+game/tests/fixtures/schema29-stage1-contracts.gmsave
+game/tests/fixtures/schema33-aggregate-depot.gmsave
+game/tests/fixtures/schema35-mid-ramp.gmsave
+game/tests/fixtures/schema48-lander-depot.gmsave
 game/tests/jsd_bridge_regression.cpp
+game/tests/jsd_lines_regression.cpp
 game/tests/jsd_runtime_regression.cpp
 game/tests/jsd_scene_regression.cpp
 game/tests/jsd_sky_regression.cpp
 game/tests/jsd_surface_regression.cpp
 game/tests/lander_regression.cpp
 game/tests/navigation_regression.cpp
+game/tests/shader_startup_regression.cpp
+game/tests/startup_sequence_regression.cpp
 game/tests/trader_regression.cpp
 game/tests/ui_regression.cpp
 game/tests/windows_build_test.py

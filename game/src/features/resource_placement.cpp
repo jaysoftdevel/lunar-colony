@@ -157,7 +157,7 @@ void GameApp::render_resource_placement(SceneRenderer& r){
         }
         if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px) return;
         Vec3 hit{};
-        if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
+        if(!pick_build_ground(hit)) return;
 
         auto owner=placed_resources_[storage_gate_placement_owner_];
         Vec3 local=rotate_y(hit-owner.position,-owner.rotation_degrees);local.y=0.0f;
@@ -213,7 +213,7 @@ void GameApp::render_resource_placement(SceneRenderer& r){
     if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px) return;
 
     Vec3 hit{};
-    if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)) return;
+    if(!pick_build_ground(hit)) return;
 
     const StorageDomeSize storage_size=selected->resource_kind==ResourceKind::StorageDome?placement_storage_size_:StorageDomeSize::Small;
     const ResourceSizeTier resource_size=(selected->resource_kind==ResourceKind::StorageDome || selected->resource_kind==ResourceKind::RobotWorkshop)?ResourceSizeTier::Standard:placement_resource_size_;

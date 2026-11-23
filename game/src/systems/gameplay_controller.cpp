@@ -42,6 +42,48 @@ void GameApp::update_speed_shortcuts(const InputState& in){
     else game_speed_=next>0?static_cast<GameSpeed>(next-1):GameSpeed::Pause;
 }
 
+bool GameApp::update_placement_controls(const InputState& in){
+    if(const BuildObjectDefinition* selected=build_catalog_.selected(); selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
+        constexpr float step=15.0f;
+        if(selected->kind==BuildObjectKind::Habitat){
+            auto cycle_habitat=[&](int delta){
+                if(habitat_has_extended_size_tiers(selected->habitat_kind)){
+                    constexpr HabitatSizeTier order[]{HabitatSizeTier::Small,HabitatSizeTier::Standard,HabitatSizeTier::Mid,HabitatSizeTier::Big};
+                    int idx=0; for(int i=0;i<4;++i) if(order[i]==placement_habitat_size_) idx=i;
+                    idx=(idx+delta+4)%4; placement_habitat_size_=order[idx];
+                }else{
+                    constexpr HabitatSizeTier order[]{HabitatSizeTier::Small,HabitatSizeTier::Standard};
+                    int idx=placement_habitat_size_==HabitatSizeTier::Small?0:1;
+                    idx=(idx+delta+2)%2; placement_habitat_size_=order[idx];
+                }
+            };
+            if(in.wheel>0.0f) cycle_habitat(+1);
+            if(in.wheel<0.0f) cycle_habitat(-1);
+        }else if(selected->resource_kind==ResourceKind::StorageDome){
+            auto cycle_storage=[&](int delta){
+                int v=(int)placement_storage_size_;
+                v=(v+delta+4)%4;
+                placement_storage_size_=(StorageDomeSize)v;
+            };
+            if(in.wheel>0.0f) cycle_storage(+1);
+            if(in.wheel<0.0f) cycle_storage(-1);
+        }else if(selected->resource_kind==ResourceKind::RobotWorkshop){
+            placement_resource_size_=ResourceSizeTier::Standard;
+        }else{
+            auto cycle_resource=[&](int){
+                placement_resource_size_=placement_resource_size_==ResourceSizeTier::Small?ResourceSizeTier::Standard:ResourceSizeTier::Small;
+            };
+            if(in.wheel!=0.0f) cycle_resource(in.wheel>0.0f?1:-1);
+        }
+        // Mouse wheel is exclusively a structure-size control while a
+        // structure is being placed. Rotation is keyboard-only (N/M).
+        if(in.key_n_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
+        if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
+        return true;
+    }
+    return false;
+}
+
 void GameApp::update(float dt,const InputState& in){
     update_simulation(dt,in);
     update_activity_log();
@@ -182,7 +224,14 @@ void GameApp::update_simulation(float dt,const InputState& in){
         }
 
         if(first_person_mode_==FirstPersonMode::Active){
-            if(in.escape_pressed){ exit_first_person_mode(); return; }
+            const bool tool=build_catalog_.selected()||storage_gate_placement_active_||corridor_link_source_>=0;
+            if(tool&&(in.escape_pressed||in.right_pressed)){cancel_placement_tool();return;}
+            if(in.escape_pressed){exit_first_person_mode();return;}
+            if(in.key_tab_pressed){
+                first_person_cursor_=!first_person_cursor_;
+                app_.set_relative_mouse_mode(!first_person_cursor_);app_.set_cursor_visible(first_person_cursor_);
+            }
+            if(!first_person_pointer_over_hud(in))update_placement_controls(in);
             advance_colony();
             update_first_person(dt,in);
             if(!paused && astronaut_test_active()) update_astronaut_test(sim_dt);
@@ -255,50 +304,13 @@ void GameApp::update_simulation(float dt,const InputState& in){
         const bool over_panel=over_overlay || mouse_over_selection_panel(in);
         if(!over_overlay) update_selection_panel_scroll(in);
         InputState camera_input=world_camera_input;
-        if(const BuildObjectDefinition* selected=build_catalog_.selected(); !over_panel && selected && (selected->kind==BuildObjectKind::Habitat || selected->kind==BuildObjectKind::Resource)){
-            constexpr float step=15.0f;
-            if(selected->kind==BuildObjectKind::Habitat){
-                auto cycle_habitat=[&](int delta){
-                    if(habitat_has_extended_size_tiers(selected->habitat_kind)){
-                        constexpr HabitatSizeTier order[]{HabitatSizeTier::Small,HabitatSizeTier::Standard,HabitatSizeTier::Mid,HabitatSizeTier::Big};
-                        int idx=0; for(int i=0;i<4;++i) if(order[i]==placement_habitat_size_) idx=i;
-                        idx=(idx+delta+4)%4; placement_habitat_size_=order[idx];
-                    }else{
-                        constexpr HabitatSizeTier order[]{HabitatSizeTier::Small,HabitatSizeTier::Standard};
-                        int idx=placement_habitat_size_==HabitatSizeTier::Small?0:1;
-                        idx=(idx+delta+2)%2; placement_habitat_size_=order[idx];
-                    }
-                };
-                if(in.wheel>0.0f) cycle_habitat(+1);
-                if(in.wheel<0.0f) cycle_habitat(-1);
-                camera_input.wheel=0.0f;
-            }else if(selected->resource_kind==ResourceKind::StorageDome){
-                auto cycle_storage=[&](int delta){
-                    int v=(int)placement_storage_size_;
-                    v=(v+delta+4)%4;
-                    placement_storage_size_=(StorageDomeSize)v;
-                };
-                if(in.wheel>0.0f) cycle_storage(+1);
-                if(in.wheel<0.0f) cycle_storage(-1);
-                camera_input.wheel=0.0f;
-            }else if(selected->resource_kind==ResourceKind::RobotWorkshop){
-                placement_resource_size_=ResourceSizeTier::Standard;
-                camera_input.wheel=0.0f;
-            }else{
-                auto cycle_resource=[&](int){
-                    placement_resource_size_=placement_resource_size_==ResourceSizeTier::Small?ResourceSizeTier::Standard:ResourceSizeTier::Small;
-                };
-                if(in.wheel!=0.0f) cycle_resource(in.wheel>0.0f?1:-1);
-                camera_input.wheel=0.0f;
-            }
-            // Mouse wheel is exclusively a structure-size control while a
-            // structure is being placed. Rotation is keyboard-only (N/M).
-            if(in.key_n_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_-step);
-            if(in.key_m_pressed) placement_rotation_degrees_=wrap_degrees(placement_rotation_degrees_+step);
-        }
+        if(!over_panel && update_placement_controls(in))camera_input.wheel=0.f;
         const float pointer_y=(float)in.mouse_y/ui_scale_;
         if(pointer_y<STATUS_BAR_H || pointer_y>=(float)viewport_height_/ui_scale_-BUILD_BAR_H || over_panel)camera_input.wheel=0;
         camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
+        if(!over_overlay && !over_panel && !selection_marquee_active_)
+            camera_.scroll_at_edge(in,playfield_.size(),viewport_width_,viewport_height_,
+                {0,STATUS_BAR_H*ui_scale_,float(viewport_width_),float(viewport_height_)-(STATUS_BAR_H+BUILD_BAR_H)*ui_scale_},dt);
         advance_colony();
 
         // World selection uses a click-or-drag marquee whenever no placement

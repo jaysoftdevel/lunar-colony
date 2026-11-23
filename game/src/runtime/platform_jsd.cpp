@@ -1,4 +1,5 @@
 #include "jsd_bridge.hpp"
+#include "startup_splash.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -15,17 +16,24 @@ int SDL_GetDisplayMode(int,int,SDL_DisplayMode*);
 int SDL_GetCurrentDisplayMode(int,SDL_DisplayMode*);
 int SDL_SetWindowDisplayMode(SDL_Window*,const SDL_DisplayMode*);
 void SDL_SetWindowSize(SDL_Window*,int,int);
+struct SDL_Cursor;
+SDL_Cursor* SDL_CreateSystemCursor(int);void SDL_FreeCursor(SDL_Cursor*);
+void SDL_SetCursor(SDL_Cursor*);SDL_Cursor* SDL_GetDefaultCursor();
+SDL_Window* SDL_GetMouseFocus();
 }
 namespace game::runtime {
 struct GameHost::Impl {
     std::unique_ptr<rf::Platform> platform;
     std::unique_ptr<SceneRenderer> renderer;
     InputState input;
-    bool quit{},cursor=true,relative{},focused=true,selected_mode{};
+    bool quit{},cursor=true,relative{},focused=true,selected_mode{},world_cursor{};
+    SDL_Cursor* crosshair{};
+    ~Impl(){if(crosshair)SDL_FreeCursor(crosshair);}
     int width{},height{};
     void capture(){
         if(platform && platform->window){
             platform->captureMouse(relative && focused);
+            SDL_SetCursor(world_cursor && focused && crosshair?crosshair:SDL_GetDefaultCursor());
             SDL_ShowCursor(cursor || !focused?1:0);
         }
     }
@@ -34,15 +42,32 @@ struct GameHost::Impl {
 GameHost::GameHost()=default;
 GameHost::~GameHost()=default;
 int GameHost::run(const WindowConfig& config,std::unique_ptr<GameLoop> game){
+    return run(config,[&game]{return std::move(game);});
+}
+int GameHost::run(const WindowConfig& config,const std::function<std::unique_ptr<GameLoop>()>& create_game){
+    std::unique_ptr<GameLoop> game;
     try{
         impl_=std::make_unique<Impl>();auto& p=*impl_;
-        p.platform=std::make_unique<rf::Platform>(false,config.width,config.height);
+        p.platform=std::make_unique<rf::Platform>(false,config.width,config.height,config.fullscreen,config.title);
         SDL_SetWindowTitle(p.platform->window,config.title.c_str());
         p.platform->dimensions();p.width=p.platform->width;p.height=p.platform->height;
-        p.renderer=jsd_bridge::create_renderer(*p.platform);
-        set_fullscreen(config.fullscreen);SDL_StartTextInput();
-        std::cout<<cpu_worker_summary()<<'\n';
-        game->on_start();auto previous=std::chrono::steady_clock::now();
+        {
+            // A minimal splash precedes both renderer/shader work and game assets.
+            StartupSplash splash(*p.platform);
+            p.renderer=jsd_bridge::create_renderer(*p.platform,[&](const rf::gfx::ShaderBuildProgress& progress){
+                const auto detail=std::to_string(progress.completed)+" shaders ready / "+std::to_string(progress.cached)+" cached";
+                splash.show(progress.phase,detail);
+            });
+            splash.show("Preparing game assets",{},true);
+            game=create_game();if(!game)throw std::runtime_error("Game factory returned no game");
+            splash.show("Starting colony systems",{},true);
+            p.platform->dimensions();p.width=p.platform->width;p.height=p.platform->height;p.renderer->resize(p.width,p.height);
+            game->on_resize(p.width,p.height);game->on_start();
+            splash.show("Preparing first frame",{},true);
+            game->render(*p.renderer); // Replace the splash only with a completed frame.
+        }
+        SDL_StartTextInput();std::cout<<cpu_worker_summary()<<'\n';
+        auto previous=std::chrono::steady_clock::now();
         int limit=0;
         if(const char* value=std::getenv("GAME_FRAME_LIMIT_FPS"))limit=std::clamp(std::atoi(value),0,1000);
         while(!p.quit){
@@ -69,6 +94,7 @@ int GameHost::run(const WindowConfig& config,std::unique_ptr<GameLoop> game){
                 if(event.type==vl::sdl::keyDown && !event.key.repeat){
                     const int key=event.key.keysym.scancode;
                     if(key==41)in.escape_pressed=true;
+                    if(key==43)in.key_tab_pressed=true;
                     if(key==40 || key==88)in.enter_pressed=true;
                     if(key==42)in.backspace_pressed=true;
                     if(key==76)in.delete_pressed=true;
@@ -87,6 +113,7 @@ int GameHost::run(const WindowConfig& config,std::unique_ptr<GameLoop> game){
             p.platform->dimensions();
             const int w=p.platform->width,h=p.platform->height;
             if(w!=p.width || h!=p.height){p.width=w;p.height=h;p.renderer->resize(w,h);}
+            in.window_focused=p.focused;in.pointer_inside_window=SDL_GetMouseFocus()==p.platform->window;
             if(p.focused){
                 const auto* keys=SDL_GetKeyboardState(nullptr);
                 in.key_w_down=keys[26];in.key_a_down=keys[4];in.key_s_down=keys[22];in.key_d_down=keys[7];
@@ -107,7 +134,8 @@ int GameHost::run(const WindowConfig& config,std::unique_ptr<GameLoop> game){
         }
         SDL_StopTextInput();p.platform->captureMouse(false);
         // GL objects must be released while the engine context is still live.
-        p.renderer.reset();game.reset();p.platform.reset();return 0;
+        p.renderer.reset();game.reset();if(p.crosshair){SDL_SetCursor(SDL_GetDefaultCursor());SDL_FreeCursor(p.crosshair);p.crosshair=nullptr;}p.platform.reset();return 0;
+    }catch(const StartupCancelled&){game.reset();impl_.reset();return 0;
     }catch(const std::exception& e){
         std::cerr<<"Could not run Lunar Colony with JSD: "<<e.what()<<'\n';game.reset();impl_.reset();return 3;
     }
@@ -150,6 +178,12 @@ bool GameHost::set_display_mode(int width,int height){
     if(fullscreen()){if(SDL_SetWindowFullscreen(p.platform->window,1)!=0)return false;}
     else SDL_SetWindowSize(p.platform->window,width,height);
     return true;
+}
+void GameHost::set_world_cursor(bool world){
+    if(!impl_ || !impl_->platform || !impl_->platform->window)return;
+    auto& p=*impl_;
+    if(world && !p.crosshair)p.crosshair=SDL_CreateSystemCursor(3);
+    if(p.world_cursor!=world){p.world_cursor=world;p.capture();}
 }
 void GameHost::set_cursor_visible(bool visible){if(impl_ && impl_->cursor!=visible){impl_->cursor=visible;impl_->capture();}}
 bool GameHost::cursor_visible() const{return !impl_ || impl_->cursor;}

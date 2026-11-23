@@ -17,7 +17,7 @@ class WindowsBuild(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='windows build with spaces ')
         self.parent = Path(self.temp.name)
         self.root, self.engine = self.parent/'lunar colony', self.parent/'3d engine'
-        for name, text in [('VERSION', '0.63.0'), ('game/include/game/game_app.hpp', '')]:
+        for name, text in [('VERSION', '0.67.0'), ('game/include/game/game_app.hpp', '')]:
             p = self.root/name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text)
         for name in ('include/frontier/renderer.hpp', 'src/renderer.cpp', 'tools/build_windows.py'):
             p = self.engine/name; p.parent.mkdir(parents=True, exist_ok=True); p.touch()
@@ -37,7 +37,7 @@ class WindowsBuild(unittest.TestCase):
         for name in ('game.exe', 'game-debug.exe'): (build/name).touch()
         with patch.object(driver, 'select_toolchain', return_value=(str(self.cmake), 'Visual Studio 18 2026', str(self.parent/'Visual Studio'))), \
              patch.object(driver, 'command', side_effect=lambda args, root: self.calls.append([str(x) for x in args])), \
-             patch.object(driver.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'game 0.63.0\n', '')):
+             patch.object(driver.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'game 0.67.0\n', '')):
             driver.run(args, self.root)
     def write_cache(self, text):
         p = self.root/'build/windows/CMakeCache.txt'; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text)

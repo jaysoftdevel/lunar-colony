@@ -2,6 +2,7 @@
 
 #include "game/runtime/audio.hpp"
 #include "game/systems/sound_assets.hpp"
+#include "game/systems/footstep_cadence.hpp"
 #include <array>
 #include <future>
 #include <optional>
@@ -23,7 +24,7 @@ public:
     std::optional<std::uint64_t> observe(std::uint64_t key,std::uint64_t value);
 
     game::runtime::Vec3 feet{};
-    float step_distance{};
+    FootstepCadence footsteps;
     bool tracking_feet{},grounded{};
     float warning_cooldown{};
     float completion_cooldown{};

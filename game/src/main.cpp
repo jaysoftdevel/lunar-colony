@@ -26,5 +26,5 @@ int main(int argc,char** argv){
     cfg.title="Game v"+std::string(game::version::current);
     if constexpr(game::build::debug_features) cfg.title+=" [Debug]";
     cfg.fullscreen=true;
-    return app.run(cfg,std::make_unique<game::GameApp>(app));
+    return app.run(cfg,[&]{return std::make_unique<game::GameApp>(app);});
 }

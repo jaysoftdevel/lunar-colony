@@ -2158,6 +2158,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     storage_gate_placement_owner_=kNoRobotIndex;
 
     first_person_mode_=FirstPersonMode::Off;
+    first_person_cursor_=false;
     app_.set_relative_mouse_mode(false);
     first_person_carried_resource_.reset();
     first_person_hover_ground_resource_=-1;

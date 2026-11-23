@@ -84,7 +84,7 @@ std::vector<Vec2> generated_door_profile(){
     std::vector<Vec2> out;
     out.reserve(13);
     constexpr float floor_y=0.05f;
-    const float side_y=std::min(0.72f,GENERATED_ENTRANCE_HEIGHT*0.30f);
+    const float side_y=GENERATED_ENTRANCE_HEIGHT-.02f;
     out.push_back({-GENERATED_ENTRANCE_HALF_WIDTH,floor_y});
     out.push_back({ GENERATED_ENTRANCE_HALF_WIDTH,floor_y});
     constexpr int ARC=10;
@@ -99,36 +99,49 @@ std::vector<Vec2> generated_door_profile(){
 void nearest_pressure_hit(const std::vector<Vec3>& triangles,Vec3 origin,Vec3 direction,
                           float& best_t,Vec3& best_normal,bool& found);
 
-bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& habitat,const HabitatMesh& mesh){
-    const Vec3 local_normal=flat_normal(rotate_y(door.normal,-habitat.rotation_degrees));
+bool attach_profile(CorridorDoor& door,Vec3 position,float rotation,float width,float depth,float floor,
+                    const std::vector<Vec3>& shell,const std::vector<Vec3>& glazing,const std::vector<Vec3>& foundation){
+    const Vec3 local_normal=flat_normal(rotate_y(door.normal,-rotation));
     const Vec3 local_tangent=perp_xz(local_normal);
-    const Vec3 local_center=rotate_y(door.wall_position-habitat.position,-habitat.rotation_degrees);
+    const Vec3 local_center=rotate_y(door.wall_position-position,-rotation);
     const float center_t=dot(flatten(local_center),local_tangent);
-    const float radius=std::max(mesh.footprint_x,mesh.footprint_z)*0.80f+5.0f;
+    const float radius=std::max(width,depth)*0.80f+5.0f;
     const auto profile=generated_door_profile();
     std::vector<Vec3> world;
     world.reserve(profile.size());
     for(const Vec2 q:profile){
-        const Vec3 origin=local_normal*radius+local_tangent*(center_t+q.x)+Vec3{0,q.y+mesh.walkable_floor_y-geometry::kCorridorDeckY,0};
+        const Vec3 origin=local_normal*radius+local_tangent*(center_t+q.x)+Vec3{0,q.y+floor-geometry::kCorridorDeckY,0};
         const Vec3 direction=local_normal*-1.0f;
         float best_t=std::numeric_limits<float>::max();
         Vec3 surface_normal{};
         bool found=false;
-        nearest_pressure_hit(mesh.shell,origin,direction,best_t,surface_normal,found);
-        nearest_pressure_hit(mesh.glazing,origin,direction,best_t,surface_normal,found);
-        nearest_pressure_hit(mesh.foundation,origin,direction,best_t,surface_normal,found);
+        nearest_pressure_hit(shell,origin,direction,best_t,surface_normal,found);
+        nearest_pressure_hit(glazing,origin,direction,best_t,surface_normal,found);
+        nearest_pressure_hit(foundation,origin,direction,best_t,surface_normal,found);
         if(found){
-            world.push_back(habitat.position+rotate_y(origin+direction*best_t,habitat.rotation_degrees));
+            world.push_back(position+rotate_y(origin+direction*best_t,rotation));
             continue;
         }
-        // Faceted/open sections can miss a ray exactly along a triangle seam;
-        // fall back to the horizontal slice solver at the same profile vertex.
-        auto local=local_hull_wall_point(mesh,local_normal,center_t+q.x,q.y+mesh.walkable_floor_y-geometry::kCorridorDeckY);
-        if(!local) return false;
-        world.push_back(habitat.position+rotate_y(*local,habitat.rotation_degrees));
+        // A ray exactly on a facet seam can miss numerically. Intersect the
+        // same hull at this height/lateral coordinate before rejecting it.
+        const float extent=std::abs(local_normal.x)>.5f?depth*.5f:width*.5f;
+        const float band=std::max(.28f,extent*.1f),y=q.y+floor-geometry::kCorridorDeckY;
+        float best_n=-std::numeric_limits<float>::max(),best_diff=std::numeric_limits<float>::max();bool sliced=false;
+        consider_triangle_slice(shell,local_normal,local_tangent,center_t+q.x,band,y,best_n,best_diff,sliced);
+        consider_triangle_slice(glazing,local_normal,local_tangent,center_t+q.x,band,y,best_n,best_diff,sliced);
+        consider_triangle_slice(foundation,local_normal,local_tangent,center_t+q.x,band,y,best_n,best_diff,sliced);
+        if(!sliced)return false;
+        world.push_back(position+rotate_y(local_normal*best_n+local_tangent*(center_t+q.x)+Vec3{0,y,0},rotation));
     }
     door.wall_profile=std::move(world);
     return true;
+}
+
+bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& h,const HabitatMesh& m){
+    return attach_profile(door,h.position,h.rotation_degrees,m.footprint_x,m.footprint_z,m.walkable_floor_y,m.shell,m.glazing,m.foundation);
+}
+bool attach_surface_profile(CorridorDoor& door,const PlacedResource& r,const ResourceMesh& m){
+    return attach_profile(door,r.position,r.rotation_degrees,m.footprint_x,m.footprint_z,m.walkable_floor_y,m.body,m.glazing,m.foundation);
 }
 
 CorridorDoor transformed_builtin_door(const PlacedHabitat& habitat,const HabitatMesh& mesh,std::size_t entrance_index){
@@ -540,6 +553,7 @@ std::optional<CorridorEndpoint> resolve_storage_dome(const CorridorBuildAnchor& 
     out.door.normal=normal;
     out.door.wall_position=wall+Vec3{0,mesh.walkable_floor_y,0};
     out.door.position=out.door.wall_position;
+    if(!attach_surface_profile(out.door,placed,mesh))return std::nullopt;
     out.tangent=normal;
     const float dock_run=std::max(DOCK_RUN,(out.door.position.y-geometry::kCorridorDeckY)/0.60f+0.30f);
     out.position=wall+normal*dock_run;

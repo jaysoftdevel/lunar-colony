@@ -1,6 +1,6 @@
-Lunar Colony 0.63.0: Windows 11 x64
+Lunar Colony 0.66.0: Windows 11 x64
 Visual Studio Desktop development with C++ and Windows SDK (2022 or 2026).
 CMake 3.21+ (standalone or bundled Visual Studio component), Python 3.10+.
-External JSD engine source 0.5.14. Desktop OpenGL 3.3 driver.
+External JSD engine source 0.5.16. Desktop OpenGL 3.3 driver.
 SDL2 and Jolt are source-built; no Direct3D/OpenAL dependencies.
 Build: build.bat --engine "C:\3D\3d-engine"

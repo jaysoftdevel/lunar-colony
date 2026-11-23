@@ -21,7 +21,8 @@ struct Batch {
     gfx::MeshId mesh{};
     std::vector<gfx::Vertex> vertices;
     gfx::Material material;
-    std::uint64_t hash{},last_frame{};
+    std::uint64_t last_frame{};
+    std::vector<gfx::Vertex> previous_vertices;
     std::size_t uploaded{};
 };
 class JsdRenderer final: public SceneRenderer {
@@ -33,6 +34,7 @@ class JsdRenderer final: public SceneRenderer {
     View view_{};
     gfx::Environment environment_{};
     std::vector<gfx::Light> lights_;
+    std::vector<gfx::LineSegment> lines_;
     std::vector<gfx::ParticleSprite> particles_;
     std::map<Key,Batch> batches_;
     ui::Batch ui_;
@@ -129,7 +131,7 @@ color=vec4(vColor.rgb,vColor.a*coverage);})GLSL");
                 kind==int(LunarMaterial::Emissive)?(int(tint.r*255)<<16)|(int(tint.g*255)<<8)|int(tint.b*255):0,
                 mapping!=nullptr,mapping?mapping->seed:0};
             auto& batch=batches_[key];
-            if(batch.last_frame!=frame_){batch.vertices.clear();batch.last_frame=frame_;batch.material=material(kind,tint);batch.material.surfaceUV=mapping!=nullptr;
+            if(batch.last_frame!=frame_){batch.previous_vertices.swap(batch.vertices);batch.vertices.clear();batch.last_frame=frame_;batch.material=material(kind,tint);batch.material.surfaceUV=mapping!=nullptr;
                 batch.material.surfaceSeed=(key.seed?key.seed:unsigned(kind*8191+17))&0x7fffffffu;}
             const auto face=cross(vertices[i+1]-vertices[i],vertices[i+2]-vertices[i]);
             const float area=length(face);
@@ -167,7 +169,7 @@ color=vec4(vColor.rgb,vColor.a*coverage);})GLSL");
         }
     }
 public:
-    explicit JsdRenderer(rf::Platform& platform):platform_(platform),renderer_(platform,jsd_bridge::settings(graphics_)){
+    explicit JsdRenderer(rf::Platform& platform,std::function<void(const gfx::ShaderBuildProgress&)> progress):platform_(platform),renderer_(platform,jsd_bridge::settings(graphics_),gfx::RendererStartup{true,{},std::move(progress)}){
         width_=std::max(1,platform.width);height_=std::max(1,platform.height);
         effective_=jsd_bridge::settings(graphics_);
         gl_.load([&](const char* n){return platform.resolve(n);});
@@ -177,7 +179,9 @@ public:
         hardware_=name.find("llvmpipe")==std::string::npos && name.find("softpipe")==std::string::npos && name.find("swrast")==std::string::npos;
         vsync_supported_=platform_.setVSync(graphics_.vertical_sync);
         initialize_ui();
-        std::cout<<"JSD 0.5.14 colony renderer: "<<gpu_renderer()<<" | "<<gpu_version()<<'\n';
+        const auto& cache=renderer_.shaderCacheStatistics();
+        std::cout<<"Shader cache: "<<cache.loaded<<" restored, "<<cache.compiled<<" compiled, "<<cache.stored<<" stored"<<(cache.supported?"":" (driver binaries unavailable)")<<'\n';
+        std::cout<<"JSD 0.5.16 colony renderer: "<<gpu_renderer()<<" | "<<gpu_version()<<'\n';
     }
     ~JsdRenderer() override {
         gl_.DeleteProgram(ui_program_);gl_.DeleteVertexArrays(1,&ui_vao_);gl_.DeleteBuffers(1,&ui_vbo_);gl_.DeleteTextures(1,&ui_atlas_);
@@ -185,11 +189,13 @@ public:
     bool initialize(void*,std::uintptr_t,int w,int h) override{resize(w,h);return true;}
     void resize(int w,int h) override{width_=std::max(1,w);height_=std::max(1,h);}
     void begin_frame(Color clear) override{
-        ++frame_;clear_=clear;world_=false;lunar_=false;ui_mode_=false;ui_scale_=1;ui_.vertices.clear();lights_.clear();particles_.clear();
+        ++frame_;clear_=clear;world_=false;lunar_=false;ui_mode_=false;ui_scale_=1;ui_.vertices.clear();lights_.clear();particles_.clear();lines_.clear();
         environment_={};environment_.fogDensity=0;
         begin_=std::chrono::steady_clock::now();
     }
     void end_frame() override{
+        const auto submitted=std::chrono::steady_clock::now();
+        std::size_t vertex_count=0;for(const auto& [key,b]:batches_)if(b.last_frame==frame_)vertex_count+=b.vertices.size();
         if(world_){
             renderer_.begin(view_.camera,environment_);
             if(lunar_)for(auto draw:terrain_){draw.modelMatrix=view_.correction;renderer_.submit(draw);}
@@ -200,17 +206,23 @@ public:
                 auto& b=it->second;
                 if(b.last_frame+120<frame_){if(b.mesh.value)renderer_.destroyMesh(b.mesh);it=batches_.erase(it);continue;}
                 if(b.last_frame==frame_ && !b.vertices.empty()){
-                    std::uint64_t hash=1469598103934665603ull;
-                    const auto* bytes=reinterpret_cast<const unsigned char*>(b.vertices.data());
-                    for(std::size_t k=0;k<b.vertices.size()*sizeof(gfx::Vertex);++k){hash^=bytes[k];hash*=1099511628211ull;}
                     if(!b.mesh.value)b.mesh=renderer_.createMesh(b.vertices);
-                    else if(b.hash!=hash || b.uploaded!=b.vertices.size())renderer_.updateMesh(b.mesh,b.vertices);
-                    b.hash=hash;b.uploaded=b.vertices.size();
+                    else if(b.previous_vertices.size()!=b.vertices.size() || std::memcmp(b.previous_vertices.data(),b.vertices.data(),b.vertices.size()*sizeof(gfx::Vertex)))renderer_.updateMesh(b.mesh,b.vertices);
+                    b.uploaded=b.vertices.size();
                     gfx::Draw draw;draw.mesh=b.mesh;draw.material=b.material;draw.objectId=b.mesh.value;draw.modelMatrix=view_.correction;renderer_.submit(draw);
                 }
                 ++it;
             }
+            renderer_.lines(lines_,view_.correction);
+            const auto prepared=std::chrono::steady_clock::now();
             renderer_.render();
+            if(std::getenv("GAME_RENDER_PROFILE")){
+                const auto& stats=renderer_.statistics();
+                std::cout<<"render profile submit="<<std::chrono::duration<double,std::milli>(submitted-begin_).count()
+                    <<" upload="<<std::chrono::duration<double,std::milli>(prepared-submitted).count()
+                    <<" engine="<<stats.cpuMilliseconds<<" gpu="<<stats.gpuMilliseconds
+                    <<" lines="<<stats.lineSegments<<" line_bytes="<<stats.lineUploadBytes<<" vertices="<<vertex_count<<" batches="<<batches_.size()<<std::endl;
+            }
         }else{
             renderer_.resetHistory();gl_.BindFramebuffer(vl::GL_FRAMEBUFFER,0);gl_.Viewport(0,0,width_,height_);
             gl_.Disable(vl::GL_SCISSOR_TEST);gl_.ClearColor(clear_.r,clear_.g,clear_.b,clear_.a);gl_.Clear(vl::GL_COLOR_BUFFER_BIT);
@@ -300,14 +312,11 @@ public:
             for(std::size_t i=0;i+1<v.size();i+=2)draw_line({v[i].x,v[i].y},{v[i+1].x,v[i+1].y},c,pixels);
             return;
         }
-        const auto eye=view_.camera.position;
+        if(c.a<=0 || pixels<=0)return;
+        world_=true;
         for(std::size_t i=0;i+1<v.size();i+=2){
-            const auto a=v[i],b=v[i+1],middle=(a+b)*.5f;
-            const Vec3 toward{eye.x-middle.x,eye.y-middle.y,eye.z-middle.z};
-            const auto side=normalize(cross(b-a,toward));
-            const float distance=std::max(view_.camera.nearPlane,length(toward));
-            const auto offset=side*(distance*std::tan(radians(view_.camera.fovDegrees)*.5f)*pixels/std::max(1,height_));
-            queue({a+offset,b+offset,b-offset,a+offset,b-offset,a-offset},int(LunarMaterial::Marking),c);
+            if(length(v[i+1]-v[i])<1.e-7f)continue;
+            lines_.push_back({vector(v[i]),vector(v[i+1]),color(c),std::clamp(pixels,.25f,128.f)});
         }
     }
     void draw_rect(Rect r,Color c) override{draw_gradient_rect(r,c,c);}
@@ -321,5 +330,5 @@ public:
     std::string gpu_version() const override{return renderer_.capabilities().version;}
 };
 }
-std::unique_ptr<SceneRenderer> create_renderer(rf::Platform& platform){return std::make_unique<JsdRenderer>(platform);}
+std::unique_ptr<SceneRenderer> create_renderer(rf::Platform& platform,std::function<void(const rf::gfx::ShaderBuildProgress&)> progress){return std::make_unique<JsdRenderer>(platform,std::move(progress));}
 }

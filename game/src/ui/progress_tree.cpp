@@ -29,7 +29,7 @@ void GameApp::render_progress_tree(SceneRenderer& r){
     hud_panel(r,panel,theme_);
     auto header_theme=theme_;
     header_theme.panel2={0,0,0,0};
-    const bool can_toggle=first_person_mode_==FirstPersonMode::Off;
+    const bool can_toggle=first_person_mode_==FirstPersonMode::Off || first_person_cursor_;
     if(ui::button(r,ui_input_,{panel.x,panel.y,panel.w,header_height},
                   progress_tree_expanded_?"-  COLONY PROGRESS":"+  COLONY PROGRESS",header_theme,can_toggle)){
         progress_tree_expanded_=!progress_tree_expanded_;

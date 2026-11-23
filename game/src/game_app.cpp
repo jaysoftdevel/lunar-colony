@@ -110,6 +110,7 @@ void GameApp::render(SceneRenderer& r){
     } else {
         // Menus always use the normal desktop pointer. The crosshair is reserved
         // for the actual 3D playfield surface only.
+        app_.set_world_cursor(false);
         app_.set_cursor_visible(true);
         r.set_2d(ui_scale_);
         switch(screen_){
@@ -126,7 +127,7 @@ void GameApp::render(SceneRenderer& r){
     }
     if(show_fps_ && screen_==Screen::Playfield){
         r.set_2d(ui_scale_);
-        float y=ui_height(r)-(first_person_mode_==FirstPersonMode::Active?30.f:BUILD_BAR_H+29.f);
+        float y=ui_height(r)-BUILD_BAR_H-29.f;
         if(first_person_mode_!=FirstPersonMode::Active && activity_log_visible()){
             const auto dock=activity_log_panel_rect();if(dock.h>0)y=std::min(y,dock.y-29.f);
         }

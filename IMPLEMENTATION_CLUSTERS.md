@@ -1,4 +1,4 @@
-# Implementation ownership — 0.63.0
+# Implementation ownership — 0.66.0
 
 Explicit CMake object clusters live in game/cmake/GameClusters.cmake. Consult the
 smallest relevant group before changing shared game logic.

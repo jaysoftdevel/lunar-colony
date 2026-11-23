@@ -59,6 +59,7 @@ double hydroponics_water_litres_per_day(const PlacedHabitat& h,bool light_phase)
 }
 
 const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
+    corridor_network_.refresh_pressure_shells();
     const auto& topology=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
     auto& services=live_supply_services_;
     services=topology;
@@ -252,10 +253,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
         h.supply.oxygen_demand_kg_per_day+=crew_per_occupied*kCrewOxygenKgPerDay;
         h.supply.water_demand_litres_per_day+=crew_per_occupied*kCrewWaterLitresPerDay;
     }
-    // Every pressurized volume has a small continuous seal/hatch leakage loss.
-    // The loss is proportional to the oxygen actually present, so an empty
-    // structure does not consume a full-pressure leak budget while filling.
-    for(auto* s:nodes)if(s->volume_m3>0.05 && s->breathability()>=99.0)s->oxygen_demand_kg_per_day+=s->oxygen_kg*kPressurizedOxygenLeakFractionPerDay;
+    // Intact pressure hulls are hermetic. Crew use and air-lock cycling remain explicit.
     const auto root=[&](std::size_t i){return topology.node_components[i];};
     struct CrewIntake {SupplyState* air{};Component* service{};bool at_cache{};};
     std::array<CrewIntake,kAstronautRoles.size()> intake{};
@@ -532,11 +530,6 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             const double damage=48.0*std::max(0.0,1.0-air/air_need) +
                 (actor.thirst>=1.f?1.0:0.0)+(actor.hunger>=1.f?.35:0.0);
             actor.health=std::max(0.f,actor.health-(float)(damage*days));
-        }
-        for(auto* s:nodes){
-            if(s->volume_m3<=0.05 || s->oxygen_kg<=0 || s->breathability()<99.0)continue;
-            const double leaked=s->oxygen_kg*kPressurizedOxygenLeakFractionPerDay*days;
-            s->oxygen_kg=std::max(0.0,s->oxygen_kg-leaked);
         }
         fluxes.resize(topology.links.size());
         const auto measure_fluxes=[&](std::size_t first,std::size_t last){

@@ -19,7 +19,7 @@ void GameApp::render_view_selector(SceneRenderer& r,float y,float logical_w){
     constexpr float margin=10.0f;
     constexpr float gap=5.0f;
     constexpr float full_w=82.0f;
-    constexpr float none_w=50.0f;
+    constexpr float none_w=60.0f;
     constexpr float button_h=31.0f;
     constexpr float speed_group_w=176.0f;
     constexpr float between_groups=12.0f;
@@ -69,7 +69,7 @@ void GameApp::render_view_selector(SceneRenderer& r,float y,float logical_w){
     struct ViewButton { HabitatViewMode mode; const char* label; float width; };
     const ViewButton buttons[]={
         {HabitatViewMode::FullHull,"FULL HULL",full_w},
-        {HabitatViewMode::None,"NONE",none_w}
+        {HabitatViewMode::None,"FADED",none_w}
     };
 
     float bx=view_x;

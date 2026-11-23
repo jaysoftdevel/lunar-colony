@@ -181,6 +181,7 @@ private:
     CameraController camera_{};
     FirstPersonController first_person_{};
     FirstPersonMode first_person_mode_{FirstPersonMode::Off};
+    bool first_person_cursor_{};
     ColonyStatus status_{};
     // Derived live telemetry; never serialized as stored resources.
     double battery_net_kw_{0},water_net_litres_per_day_{0};
@@ -386,6 +387,7 @@ private:
     void render_selection_marquee(game::runtime::SceneRenderer& r);
     void render_construction_status_frames(game::runtime::SceneRenderer& r);
     void render_corridor_link_preview(game::runtime::SceneRenderer& r);
+    void render_build_footprints(game::runtime::SceneRenderer&) const;
     void render_habitat_placement(game::runtime::SceneRenderer& r);
     void render_resource_placement(game::runtime::SceneRenderer& r);
     void render_utility_placement(game::runtime::SceneRenderer& r);
@@ -560,6 +562,10 @@ private:
     void enter_first_person_drop_mode();
     void exit_first_person_mode();
     void update_first_person(float dt,const game::runtime::InputState& input);
+    bool pick_build_ground(game::runtime::Vec3& hit) const;
+    bool first_person_pointer_over_hud(const game::runtime::InputState&) const;
+    bool update_placement_controls(const game::runtime::InputState&);
+    void cancel_placement_tool();
     void update_first_person_resource_hover();
     void first_person_grab_or_drop_resource();
     void drop_first_person_carried_resource();

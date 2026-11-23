@@ -1,14 +1,30 @@
-# JSD Lunar Base v0.63.0
+# JSD Lunar Base v0.67.0
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
-The game renders through the external **JSD 3d-engine 0.5.14**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+The game renders through the external **JSD 3d-engine 0.5.16**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
 
-Version 0.63.0 adds a framed glass hangar roof, four equipped robot service bays,
-camera-aware rocky drilling audio, blueprint-safe ore stacks and a red power-off
-symbol. See [UPDATE-0.63.0.md](UPDATE-0.63.0.md) for details.
+Version 0.67.0 adds cyan 12% faded hulls, first-person building with a free
+cursor (Tab), persistent bottom controls, brighter foundation guides and new
+boot footsteps. Fine aisle routing frees the carrier in the 0.65 simple save.
+See [UPDATE-0.67.0.md](UPDATE-0.67.0.md).
 
-The FPS option, high-contrast crosshair, sky sphere, sprint/jump and gate-based ore
+Version 0.66.0 opens fullscreen with a loading splash before graphics and game
+assets initialize. Compiled engine shaders are cached for later starts.
+See [UPDATE-0.66.0.md](UPDATE-0.66.0.md).
+
+Version 0.65.0 adds retained GPU guide rendering, bounded edge scrolling and
+robot destination coordination with persistent precision route recovery.
+See [UPDATE-0.65.0.md](UPDATE-0.65.0.md).
+
+Version 0.64.0 rebuilds corridor pressure boundaries, seals bends/junctions and
+building collars, and preserves atmosphere in intact unoccupied volumes.
+See [UPDATE-0.64.0.md](UPDATE-0.64.0.md) for details.
+
+Version 0.63.0 added the glass hangar roof, four service bays, driller acoustics,
+blueprint-safe ore stacks and the red power-off symbol; these features remain.
+
+The FPS option, native playfield crosshair, sky sphere, sprint/jump and gate-based ore
 hauling from 0.62.0 are retained.
 
 The Windows build fixes from 0.61.1 are retained.

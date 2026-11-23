@@ -1,6 +1,6 @@
-# Build dependencies — 0.63.0
+# Build dependencies — 0.66.0
 
-CMake 3.21+, Python 3.10+, a C++20 compiler, and the external JSD 3d-engine 0.5.14
+CMake 3.21+, Python 3.10+, a C++20 compiler, and the external JSD 3d-engine 0.5.16
 source tree. That engine supplies source-built SDL2/Jolt and its runtime services.
 RVO2 remains bundled with the game. No downloads occur during CMake configuration.
 

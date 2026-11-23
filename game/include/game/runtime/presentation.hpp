@@ -85,10 +85,12 @@ struct InputState {
     bool key_shift_down{};
     bool key_space_pressed{}, key_space_down{};
     bool key_j_pressed{}, key_j_down{};
+    bool key_tab_pressed{};
     std::uint8_t key_number_pressed{};
     bool delete_pressed{};
     bool backspace_pressed{}, enter_pressed{};
     std::string text_input{};
+    bool window_focused{true},pointer_inside_window{true};
     float frame_seconds{}; // actual wall-clock frame, independent of simulation step clamp
 };
 
@@ -165,6 +167,7 @@ public:
     GameHost();
     ~GameHost();
     int run(const WindowConfig& config, std::unique_ptr<GameLoop> game);
+    int run(const WindowConfig& config,const std::function<std::unique_ptr<GameLoop>()>& create_game);
     void request_quit();
     void set_fullscreen(bool enabled);
     bool fullscreen() const;
@@ -172,6 +175,7 @@ public:
     DisplayMode current_display_mode() const;
     bool set_display_mode(int width,int height);
     void set_cursor_visible(bool visible);
+    void set_world_cursor(bool world);
     bool cursor_visible() const;
     void set_relative_mouse_mode(bool enabled);
     bool relative_mouse_mode() const;

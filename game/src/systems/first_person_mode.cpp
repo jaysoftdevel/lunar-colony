@@ -1,5 +1,6 @@
 #include "game/world/robot_workshop.hpp"
 #include "game/game_app.hpp"
+#include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/corridor/detail.hpp"
 #include "game/world/corridor/corridor_module.hpp"
@@ -400,6 +401,7 @@ void GameApp::enter_first_person_drop_mode(){
     first_person_hover_ground_resource_=-1;
     first_person_hover_storage_resource_=-1;
     first_person_hover_storage_box_=-1;
+    first_person_cursor_=false;
     first_person_mode_=FirstPersonMode::DropPending;
     app_.set_relative_mouse_mode(false);
     app_.set_cursor_visible(false);
@@ -411,6 +413,8 @@ void GameApp::exit_first_person_mode(){
     first_person_hover_storage_resource_=-1;
     first_person_hover_storage_box_=-1;
     first_person_mode_=FirstPersonMode::Off;
+    first_person_cursor_=false;
+    cancel_placement_tool();
     app_.set_relative_mouse_mode(false);
     app_.set_cursor_visible(true);
 }
@@ -1290,9 +1294,47 @@ void GameApp::first_person_grab_or_drop_resource(){
     }
 }
 
+bool GameApp::first_person_pointer_over_hud(const InputState& input) const {
+    if(!first_person_cursor_)return false;
+    const float x=float(input.mouse_x)/ui_scale_,y=float(input.mouse_y)/ui_scale_;
+    float help_height=88.f;
+    const auto feet=first_person_.feet_position();
+    for(const auto& h:placed_habitats_){
+        if(h.kind!=HabitatKind::AirLock || !h.construction.complete())continue;
+        const auto local=rotate_y(feet-h.position,-h.rotation_degrees);const auto& mesh=habitat_models_.mesh(h);
+        if(std::abs(local.x)<=mesh.footprint_x*.5f+.2f && std::abs(local.z)<=mesh.footprint_z*.5f){help_height+=44.f;break;}
+    }
+    if(first_person_carried_resource_)help_height+=52.f;
+    const Rect help{layout::PLAYFIELD_MARGIN,layout::STATUS_BAR_H+layout::PLAYFIELD_MARGIN,528,help_height};
+    return x<0 || x>=float(viewport_width_)/ui_scale_ || y<layout::STATUS_BAR_H ||
+        y>=float(viewport_height_)/ui_scale_-layout::BUILD_BAR_H || help.contains(x,y) ||
+        mouse_over_playfield_overlay(input);
+}
+bool GameApp::pick_build_ground(Vec3& hit) const {
+    if(first_person_mode_!=FirstPersonMode::Active)
+        return camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit);
+    if(first_person_pointer_over_hud(input_))return false;
+    const auto eye=first_person_.eye_position(),forward=first_person_.look_direction();
+    const auto right=normalize(cross(forward,Vec3{0,1,0})),up=normalize(cross(right,forward));
+    const float tangent=std::tan(radians(first_person_.fov())*.5f);
+    const float x=first_person_cursor_?2.f*input_.mouse_x/std::max(1,viewport_width_)-1.f:0.f;
+    const float y=first_person_cursor_?1.f-2.f*input_.mouse_y/std::max(1,viewport_height_):0.f;
+    const auto ray=normalize(forward+right*(x*float(viewport_width_)/std::max(1,viewport_height_)*tangent)+up*(y*tangent));
+    if(ray.y>=-.0001f)return false;
+    const float distance=-eye.y/ray.y;if(distance<=0||distance>90.f)return false;
+    hit=eye+ray*distance;hit.y=0;
+    const float half=playfield_.size()*.5f;return std::abs(hit.x)<=half&&std::abs(hit.z)<=half;
+}
+void GameApp::cancel_placement_tool(){
+    build_catalog_.clear_selection();storage_gate_placement_active_=false;storage_gate_placement_owner_=kNoRobotIndex;
+    corridor_link_source_=-1;corridor_build_start_.reset();utility_build_start_.reset();walkway_build_start_.reset();walkway_build_target_.reset();
+    placement_tip_title_.clear();placement_tip_detail_.clear();placement_tip_cost_={};
+}
+
 void GameApp::update_first_person(float dt,const InputState& input){
+    corridor_network_.refresh_pressure_shells();
     if(first_person_mode_!=FirstPersonMode::Active) return;
-    first_person_.update_look(input);
+    if(!first_person_cursor_ || (input.right_down&&!first_person_pointer_over_hud(input)))first_person_.update_look(input);
     const Vec3 displacement=first_person_.desired_displacement(input,dt);
     Vec3 current=first_person_.feet_position();
     if(length(displacement)>0.0001f){
@@ -1317,7 +1359,7 @@ void GameApp::update_first_person(float dt,const InputState& input){
     const float ceiling=jump || !first_person_.grounded()?first_person_ceiling_height(current):std::numeric_limits<float>::max();
     first_person_.advance_vertical(jump,dt,first_person_floor_height(current),ceiling);
     update_first_person_resource_hover();
-    if(input.left_pressed) first_person_grab_or_drop_resource();
+    if(input.left_pressed&&!first_person_pointer_over_hud(input)&&!build_catalog_.selected()&&!storage_gate_placement_active_&&corridor_link_source_<0)first_person_grab_or_drop_resource();
 }
 
 } // namespace game

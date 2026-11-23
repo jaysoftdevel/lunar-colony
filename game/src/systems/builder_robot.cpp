@@ -2885,6 +2885,7 @@ void GameApp::update_builder_robot(float dt){
         }
         route.clear();
         const auto result=robots::plan_incremental_path(request,world_revision,callbacks,planner_state,route);
+
         if(result==robots::IncrementalPathResult::Success)
             robot.route_structure_clearance_margin_m=0.30f;
         return result;
@@ -4840,7 +4841,9 @@ void GameApp::update_builder_robot(float dt){
             robot.action==BuilderRobotAction::None && robot.cargo.empty() && robot.logistics_reservation.empty() &&
             !robot.stage_materials_picked && !robot.stage_commit_pending;
         const auto next=needs_assignment?choose_target(false):can_switch?choose_target(true):ConstructionTargetRef{};
-        if(needs_assignment || next.valid()){
+        // No executable job is also a stable dispatch state. Re-entering this
+        // branch every frame erased the live parking/yield route and D* search.
+        if(next.valid() || (needs_assignment && robot.target.valid())){
             robot.target=next;
             robot.service_slot_offset=0;
             if(robot.target.valid()){
@@ -6256,8 +6259,7 @@ void GameApp::update_builder_robot(float dt){
         if(trader_robot_busy(robot_index)&&!trader_powered()) continue;
         const bool waiting_for_traffic=robot.route_waiting_for_clearance&&
             (robot.safety.block_reason==robots::BlockReason::RobotReservation||
-             robot.safety.block_reason==robots::BlockReason::PassageReservation||
-             robot.safety.block_reason==robots::BlockReason::None);
+             robot.safety.block_reason==robots::BlockReason::PassageReservation);
         const bool state_changed=robot.mode!=robot.watchdog_mode||robot.action!=robot.watchdog_action;
         const bool working=robot.action!=BuilderRobotAction::None&&robot.action_elapsed>robot.watchdog_action_elapsed;
         robot.watchdog_action_elapsed=robot.action_elapsed;

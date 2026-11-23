@@ -54,8 +54,7 @@ std::array<int,2> coordinates(const State& s,int index){
 
 Vec3 point_for(const State& s,int index,const PathPlannerCallbacks& callbacks){
     const auto c=coordinates(s,index);
-    Vec3 p{s.origin_x+(float)c[0]*s.cell_size,0.0f,
-           s.origin_z+(float)c[1]*s.cell_size};
+    Vec3 p=Vec3{s.origin_x,0,s.origin_z}+s.grid_x*((float)c[0]*s.cell_size)+s.grid_z*((float)c[1]*s.cell_size);
     p.y=callbacks.floor_height?callbacks.floor_height(p):0.0f;
     return p;
 }
@@ -250,8 +249,9 @@ ComputeStatus compute_shortest_path(State& s,std::uint64_t epoch,const PathPlann
 }
 
 int nearest_grid_index(const State& s,Vec3 p){
-    const int x=(int)std::lround((p.x-s.origin_x)/s.cell_size);
-    const int z=(int)std::lround((p.z-s.origin_z)/s.cell_size);
+    const auto relative=p-Vec3{s.origin_x,0,s.origin_z};
+    const int x=(int)std::lround(game::runtime::dot(relative,s.grid_x)/s.cell_size);
+    const int z=(int)std::lround(game::runtime::dot(relative,s.grid_z)/s.cell_size);
     return in_bounds(s,x,z)?index_of(s,x,z):-1;
 }
 
@@ -281,28 +281,42 @@ int find_start_index(State& s,Vec3 actual,std::uint64_t epoch,const PathPlannerC
 }
 
 bool initialize_state(const PathPlanRequest& request,std::uint64_t epoch,
-                      const PathPlannerCallbacks& callbacks,State& s,bool global=false){
+                      const PathPlannerCallbacks& callbacks,State& s,bool global=false,bool precision=false,bool aisle=false){
     reset_incremental_path_state(s);
     s.global_search=global;
+    s.precision_search=precision;
+    s.aisle_search=aisle;
     if(!callbacks.floor_height || !callbacks.point_clear || !callbacks.segment_clear) return false;
     if(!callbacks.point_clear(request.goal)) return false;
 
-    float cell=global?std::clamp(request.cell_size,0.78f,1.05f):std::max(0.78f,request.cell_size);
-    const float margin=std::clamp(request.corridor_half_width,6.0f,34.0f);
+    float cell=aisle?.20f:precision?.45f:global?std::clamp(request.cell_size,0.78f,1.05f):std::max(0.78f,request.cell_size);
+    const float margin=precision?34.f:std::clamp(request.corridor_half_width,6.0f,34.0f);
     float min_x=std::min(request.start.x,request.goal.x)-margin;
     float max_x=std::max(request.start.x,request.goal.x)+margin;
     float min_z=std::min(request.start.z,request.goal.z)-margin;
     float max_z=std::max(request.start.z,request.goal.z)+margin;
-    if(global && request.world_half_extent>0){
+    if(global && !precision && request.world_half_extent>0){
         min_x=min_z=-request.world_half_extent;
         max_x=max_z=request.world_half_extent;
+    }
+    if(precision && !aisle){
+        // Rotate the refinement along the requested trip. A second axis-aligned
+        // grid can repeat the same narrow-aisle sampling failure at any density.
+        auto direction=request.goal-request.start;direction.y=0;
+        const float length=game::runtime::length(direction);
+        if(length>.001f){s.grid_x=direction*(1.f/length);s.grid_z={-s.grid_x.z,0,s.grid_x.x};}
+        const float along=std::clamp(margin*.90f,2.4f,22.f);
+        min_x=-along;max_x=length+along;min_z=-margin;max_z=margin;
     }
     // Anchor the lattice at the EXACT destination. A valid service bay can be
     // narrower than one cell; the old start-relative phase could put every
     // nearby row inside an adjacent building, returning NoPath without even
     // expanding a node. The goal and its approach now exist in the graph.
     const auto dimensions=[&](){
-        if(global){
+        if(aisle){
+            min_x=request.start.x-std::ceil((request.start.x-min_x)/cell)*cell;
+            min_z=request.start.z-std::ceil((request.start.z-min_z)/cell)*cell;
+        }else if(global && !precision){
             min_x=request.goal.x-std::ceil((request.goal.x-min_x)/cell)*cell;
             min_z=request.goal.z-std::ceil((request.goal.z-min_z)/cell)*cell;
         }
@@ -310,7 +324,7 @@ bool initialize_state(const PathPlanRequest& request,std::uint64_t epoch,
                                  std::max(5,(int)std::ceil((max_z-min_z)/cell)+1)}};
     };
     auto dims=dimensions();
-    const int max_cells=global?40000:10000;
+    const int max_cells=precision?160000:global?40000:10000;
     if((std::int64_t)dims[0]*dims[1]>max_cells){
         cell*=std::sqrt((float)((std::int64_t)dims[0]*dims[1])/(float)max_cells)*(global?1.01f:1.0f);
         dims=dimensions();
@@ -319,8 +333,9 @@ bool initialize_state(const PathPlanRequest& request,std::uint64_t epoch,
 
     s.initialized=true;
     s.cell_size=cell;
-    s.origin_x=min_x;
-    s.origin_z=min_z;
+    const auto origin=precision&&!aisle?request.start+s.grid_x*min_x+s.grid_z*min_z:Vec3{min_x,0,min_z};
+    s.origin_x=origin.x;
+    s.origin_z=origin.z;
     s.nx=nx;
     s.nz=nz;
     s.goal=request.goal;
@@ -574,9 +589,20 @@ IncrementalPathResult plan_incremental_path(const PathPlanRequest& request,
     if(!callbacks.floor_height || !callbacks.point_clear || !callbacks.segment_clear) return IncrementalPathResult::NoPath;
 
     const auto global_fallback=[&](){
-        if(state.global_search || request.world_half_extent<=0)return IncrementalPathResult::NoPath;
-        if(!initialize_state(request,world_epoch,callbacks,state,true)){
-            reset_incremental_path_state(state);return IncrementalPathResult::NoPath;
+        if(request.world_half_extent<=0 || state.aisle_search)return IncrementalPathResult::NoPath;
+        // A coarse grid and the trip-aligned refinement can both disconnect a
+        // long cargo aisle. Final refinement samples 20 cm cells and anchors a
+        // complete row at the ACTUAL rover pose, so it can reverse out first.
+        bool precision=state.global_search;
+        bool aisle=state.precision_search;
+        if(!initialize_state(request,world_epoch,callbacks,state,true,precision,aisle)){
+            if(!precision){precision=true;}
+            else if(!aisle){aisle=true;}
+            else return IncrementalPathResult::NoPath;
+            if(!initialize_state(request,world_epoch,callbacks,state,true,precision,aisle)){
+                if(aisle || !initialize_state(request,world_epoch,callbacks,state,true,true,true))
+                    return IncrementalPathResult::NoPath;
+            }
         }
         // Defer graph propagation to the next granted search slice, preserving
         // the normal per-call expansion budget even when a legacy search fails.
@@ -589,7 +615,8 @@ IncrementalPathResult plan_incremental_path(const PathPlanRequest& request,
             // Do not resample thousands of retained global nodes in one frame
             // after construction changes. A fresh lazy graph is cheap to seed
             // and its propagation resumes under the normal slice budget.
-            if(!initialize_state(request,world_epoch,callbacks,state,true))return IncrementalPathResult::NoPath;
+            const bool precision=state.precision_search,aisle=state.aisle_search;
+            if(!initialize_state(request,world_epoch,callbacks,state,true,precision,aisle))return IncrementalPathResult::NoPath;
             return IncrementalPathResult::Pending;
         }
         refresh_known_nodes(state,world_epoch,callbacks);

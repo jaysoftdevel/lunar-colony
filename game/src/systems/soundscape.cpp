@@ -253,19 +253,17 @@ void GameApp::update_soundscape(float dt,const game::runtime::InputState& input)
             const float stride=std::hypot(move.x,move.z);
             if(grounded && !audio.grounded)
                 audio.play(Cue::BodyLand,relative(cabin?.46f:.34f,cabin?1.05f:.86f,4));
-            if(grounded && stride<2.0f) audio.step_distance+=stride;
-            if(grounded && audio.step_distance>=.69f){
-                audio.step_distance=std::fmod(audio.step_distance,.69f);
+            if(audio.footsteps.advance(stride,dt,grounded && audio.grounded)){
                 audio.play(air?Cue::FootDeck:Cue::FootDust,relative(cabin?.40f:.28f,cabin?1.0f:.90f,3));
             }
-        }else audio.step_distance=0;
+        }else audio.footsteps.reset();
         audio.feet=feet;
         audio.grounded=grounded;
         audio.tracking_feet=true;
         const bool carrying=first_person_carried_resource_.has_value();
         if(const auto old=audio.observe(key(Global,7),carrying); old && bool(*old)!=carrying)
             ui_sound(carrying?Cue::Lift:Cue::Crate,.44f);
-    }else audio.tracking_feet=false;
+    }else {audio.tracking_feet=false;audio.footsteps.reset();}
 
     if(const auto previous=audio.observe(key(Global,8),next_blueprint_placement_sequence_);
        previous && next_blueprint_placement_sequence_>*previous && input.left_pressed) ui_sound(Cue::Place,.34f);

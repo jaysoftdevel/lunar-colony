@@ -1,9 +1,9 @@
-# Windows 11 x64 — Lunar Colony 0.63.0
+# Windows 11 x64 — Lunar Colony 0.66.0
 
 Use the Visual Studio Desktop development with C++ workload and a Windows SDK,
 Python 3.10+, and CMake 3.21+ (standalone or the Visual Studio CMake component).
 The build driver selects a compatible installed Visual Studio 2022/2026 and
-CMake pair. SDL2 and Jolt compile from the external JSD **0.5.14 source**.
+CMake pair. SDL2 and Jolt compile from the external JSD **0.5.16 source**.
 Both platforms use the same JSD desktop OpenGL 3.3 renderer, including the new
 materials, interiors and FOV control. A working vendor OpenGL driver is required.
 

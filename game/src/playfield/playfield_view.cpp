@@ -95,6 +95,7 @@ void GameApp::render_playfield(SceneRenderer& r){
     render_walkways(r);
     render_habitats(r);
     render_resources(r);
+    if(show_build_guides)render_build_footprints(r);
     render_lunar_lander(r);
     render_robot_blockers(r);
     render_stash(r);
@@ -106,12 +107,20 @@ void GameApp::render_playfield(SceneRenderer& r){
     }
 
     if(first_person_mode_==FirstPersonMode::Active){
+        placement_tip_title_.clear();placement_tip_detail_.clear();placement_tip_cost_={};
+        if(!first_person_pointer_over_hud(input_)){
+            render_corridor_link_preview(r);render_corridor_placement(r);
+            render_habitat_placement(r);render_resource_placement(r);render_utility_placement(r);render_walkway_placement(r);
+        }
+        app_.set_world_cursor(false);app_.set_cursor_visible(first_person_cursor_);
         r.set_2d(ui_scale_);
         render_construction_status_frames(r);
         render_supply_indicators(r);
         render_status_bar(r);
         render_progress_tree(r);
+        render_build_bar(r);
         render_first_person_hud(r);
+        render_placement_tooltip(r);
         return;
     }
 
@@ -235,20 +244,23 @@ void GameApp::render_selection_marquee(SceneRenderer& r){
 
 void GameApp::render_first_person_hud(SceneRenderer& r){
     if(first_person_mode_==FirstPersonMode::Active){
-        const float cx=ui_width(r)*0.5f,cy=ui_height(r)*0.5f;
-        const Color cross{1.f,.90f,.12f,1.f};
-        for(const auto& line:std::array<std::pair<Vec2,Vec2>,4>{{{{cx-9,cy},{cx-2,cy}},{{cx+2,cy},{cx+9,cy}},{{cx,cy-9},{cx,cy-2}},{{cx,cy+2},{cx,cy+9}}}})
-            r.draw_line(line.first,line.second,{.015f,.02f,.025f,1},4.f);
-        r.draw_line({cx-8.0f,cy},{cx-2.0f,cy},cross,2.0f);
-        r.draw_line({cx+2.0f,cy},{cx+8.0f,cy},cross,2.0f);
-        r.draw_line({cx,cy-8.0f},{cx,cy-2.0f},cross,2.0f);
-        r.draw_line({cx,cy+2.0f},{cx,cy+8.0f},cross,2.0f);
+        const float cx=first_person_cursor_?float(input_.mouse_x)/ui_scale_:ui_width(r)*.5f,cy=first_person_cursor_?float(input_.mouse_y)/ui_scale_:ui_height(r)*.5f;
+        if(!first_person_cursor_){
+            const Color cross{1.f,.90f,.12f,1.f};
+            for(const auto& line:std::array<std::pair<Vec2,Vec2>,4>{{{{cx-9,cy},{cx-2,cy}},{{cx+2,cy},{cx+9,cy}},{{cx,cy-9},{cx,cy-2}},{{cx,cy+2},{cx,cy+9}}}})
+                r.draw_line(line.first,line.second,{.015f,.02f,.025f,1},4.f);
+            r.draw_line({cx-8.0f,cy},{cx-2.0f,cy},cross,2.0f);
+            r.draw_line({cx+2.0f,cy},{cx+8.0f,cy},cross,2.0f);
+            r.draw_line({cx,cy-8.0f},{cx,cy-2.0f},cross,2.0f);
+            r.draw_line({cx,cy+2.0f},{cx,cy+8.0f},cross,2.0f);
 
+        }
         Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,528.0f,49.0f};
         r.draw_rect(help,kHudFill);
         game_label(r,{help.x+12.0f,help.y+8.0f},"FIRST PERSON VIEW",0.64f,theme_);
         game_label_fitted(r,{help.x+12.f,help.y+28.f,help.w-24.f,15.f},
-            "WASD WALK / SHIFT SPRINT / SPACE JUMP / LMB GRAB-DROP / MOUSE LOOK / V OR ESC EXIT",.43f,theme_,true);
+            build_catalog_.selected()?"LMB PLACE / WHEEL SIZE / N-M ROTATE / TAB CURSOR-LOOK / RMB CANCEL":
+            "WASD WALK / SHIFT SPRINT / SPACE JUMP / TAB BUILD CURSOR / V EXIT",.43f,theme_,true);
 
         const std::string environment=first_person_environment_label();
         Rect env{help.x,help.y+help.h+8.0f,help.w,31.0f};
@@ -322,28 +334,21 @@ void GameApp::render_playfield_crosshair(SceneRenderer& r){
     const float bottom_px=(ui_height(r)-BUILD_BAR_H)*ui_scale_;
     if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px ||
        mouse_over_selection_panel(input_) || mouse_over_playfield_overlay(input_)){
+        app_.set_world_cursor(false);
         app_.set_cursor_visible(true);
         return;
     }
 
     Vec3 hit{};
     if(!camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,r.width(),r.height(),playfield_.size(),hit)){
+        app_.set_world_cursor(false);
         app_.set_cursor_visible(true);
         return;
     }
 
-    app_.set_cursor_visible(false);
-    const float arm=std::clamp(camera_.distance()*0.030f,1.35f,5.0f)*UI_SCALES[ui_scale_index_]/UI_SCALES[2];
-    const float gap=arm*0.24f;
-    const float y=0.055f;
-    std::vector<Vec3> lines={
-        {hit.x-arm,y,hit.z},{hit.x-gap,y,hit.z},
-        {hit.x+gap,y,hit.z},{hit.x+arm,y,hit.z},
-        {hit.x,y,hit.z-arm},{hit.x,y,hit.z-gap},
-        {hit.x,y,hit.z+gap},{hit.x,y,hit.z+arm}
-    };
-    r.draw_lines_3d(lines,{.015f,.02f,.025f,1},5.0f*ui_scale_/UI_SCALES[2]);
-    r.draw_lines_3d(lines,{1.f,.9f,.12f,1},2.5f*ui_scale_/UI_SCALES[2]);
+    // The OS presents this cursor independently of world rendering/GPU load.
+    app_.set_cursor_visible(true);
+    app_.set_world_cursor(true);
 }
 
 } // namespace game

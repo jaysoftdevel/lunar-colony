@@ -166,6 +166,7 @@ add_library(game_cluster_networks OBJECT
     src/world/corridor_network.cpp
     src/world/corridor/geometry.cpp
     src/world/corridor/fittings.cpp
+    src/world/corridor/pressure_shell.cpp
     src/world/corridor/entrances.cpp
     src/world/corridor/routing.cpp
     src/world/corridor/factory.cpp

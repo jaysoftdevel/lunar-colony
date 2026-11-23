@@ -1,3 +1,46 @@
+# Version 0.64.0 — corridor pressure sealing
+
+Linux Release: 27/27 CTest checks pass. Targeted Linux Debug/render: 15/15 pass,
+including geometry/traversal, pressure gates, storage extensions, air-lock cycling,
+oxygen production/consumption, utility/air networks and the new sealing checks.
+GCC 14.2, CMake 4.4.5 and Ninja 1.13.2 were used.
+
+Pressure geometry: 46,080 outward rays pass across bends, slopes, sparse-panel
+T junctions, X/angled crossings, short/coincident splices and rotated/translated
+map positions. Separate checks require clear passage through the joins and closed
+walls beside unfinished branches, after commissioning and after demolition.
+Building collars: 14,336 rays pass across five habitat kinds, small/standard tiers,
+rotations and every storage-dome size at multiple attachment angles. The shared
+sampler retains facet-seam fallback, so cursor placement and air-lock crew routes
+remain valid. Total: 60,416 outward pressure rays.
+
+Atmosphere: an unoccupied sealed room retains oxygen mass over two simulation days.
+Full-pressure rooms do not spend oxygen/water replacing a fictional leak. Existing
+life-support tests confirm real crew demand, refill limits and air-lock behavior.
+
+Native GL/EGL: 22 actual game scenes render. Exterior T junction, crossing interior
+and dome collar captures were inspected. Surface, sky and renderer checks pass on
+Mesa software rendering. Hardware GPU performance was not measured.
+
+Windows x64 Release and Debug game, static engine archive, engine DLL and all test
+executables cross-build with Clang 22.1.8/MinGW via Zig 0.17.1, including the new
+pressure regression and native rendering test sources. PE imports select SDL2.dll
+for Release and SDL2d.dll for Debug; staged DLL hashes match each configuration.
+Native MSVC and Windows runtime/driver execution remain unverified. Full unrelated
+historical Debug stress scenarios were not rerun.
+
+External JSD source stays at 0.5.14 with zero source changes. Its 46/46 portable
+Python tooling checks pass. No in-game engine is introduced.
+
+Updater: 11/11 tests pass for exact roots/versions, local edits, corrupt payload,
+path traversal/symlinks, repeat application, save preservation and rollback after
+an injected write failure. The unchanged engine requires read access only.
+A clean full-source application, repeat application, installed-source hash comparison
+and fresh CMake configuration also pass. The ZIP contains source changes only.
+Save formats remain unchanged; old saved pressure skins regenerate on load.
+
+---
+
 # Version 0.63.0 — hangar service bays and driller presentation
 
 - Linux Release: 24/24 CTest checks pass, including the new workshop/stockyard/audio
@@ -492,3 +535,92 @@ Windows compilation cannot be executed in this Linux environment because MSVC, t
 - Trader regression checks nonempty wire geometry and no filled ship surfaces during approach, docked, loading and departure. Existing real robot transport, gas mass balance, mid-haul save/load, cash transfer-once, repeat visits and UI controls pass.
 - Visually reviewed software-projected captures of the actual status bar drawing commands and both native ship edge meshes. This is layout/geometry review, not native GPU playback.
 - Update installer verified against v0.51.2 for exact source equality, paths with spaces, save preservation, repeat-apply idempotence and zero-write conflict/wrong-version rejection; no build runs during installation.
+
+
+# Validation — Lunar Colony 0.65.0 / JSD 0.5.15
+
+## Builds and tests
+
+- Linux C++20 Release build: standalone game and all navigation, UI and real EGL/OpenGL integration targets compiled and linked against the updated separate engine.
+- 30 Release test groups validated, including the new visible-edge camera checks, retained native guide/depth checks and 900-second replay of the attached save. The runtime-path test was launched from a binary under the game source root, its expected deployment layout; the main build used an external scratch directory.
+- Additional eight fleet scenarios passed, including a distant idle robot blocking a destination, opposing rovers, a single lane and six-way crossing. Swept movement, hull separation and speed bounds remain checked.
+- Single/simultaneous/persistent/working-hold fault recovery and bounded recovery search passed, as did exact-goal narrow approaches, full-map detours and deterministic route repair.
+- Portable Windows build-driver tests passed. Native Windows execution and physical GPU performance were not available in this environment. The shared GL 3.3 line backend is used on both platforms. Debug source is supplied but a separate Debug build was not run here.
+
+## Attached-save replay
+
+The original carrier resumed its saved delivery at about 8.43 simulated seconds.
+The previously stranded later 3 kg utility delivery also completes. The replay
+continues for 900 simulated seconds and checks no safety faults, no relocation,
+continued progress of loaded carriers and bounded planner initialization counts.
+It does not require all construction to finish: later trips are still active.
+The idle constructor no longer accumulates hundreds of parking-route restarts
+in the first 30 seconds.
+
+## Render measurements
+
+Same save, camera, 960x540 viewport and graphics, on Mesa llvmpipe (software GL).
+Measurements exclude initial shader compilation/warm-up and are observations,
+not an FPS guarantee for another host.
+
+| Measurement | 0.64.0 / 0.5.14 | 0.65.0 / 0.5.15 |
+| --- | ---: | ---: |
+| CPU submission | approximately 34 ms | median 2.61 ms |
+| CPU preparation/upload before engine render | approximately 120 ms | median 2.46 ms |
+| Completed frame | approximately 665-690 ms | median 210 ms |
+| CPU-built shaded batch vertices | 2,017,614 | 60,402 |
+| Native guide segments | 0 | 216,642 |
+| Static guide upload after warm-up | rebuilt with triangle batches | 0 bytes |
+
+The software rasterizer remains the limiting part of these render samples.
+The update preserves requested graphics settings rather than reducing quality.
+Native guide tests check scene-depth occlusion, stable pixels, camera movement
+without uploads, invalid input rejection and clearing guides between frames.
+
+## Installation checks
+
+Paired updater tests cover exact source/payload hashes, reversed roots, wrong
+versions, changed affected sources, rollback after an injected partial write,
+save/settings preservation and idempotent reapplication. Apply only to the
+stated source versions and rebuild both configurations.
+
+
+# Validation — Lunar Colony 0.66.0 / JSD 0.5.16
+
+- Linux C++20 Release game, separate engine and all regression executables built successfully.
+- 32 Release test groups passed. New checks cover the rendered loading splash,
+  fullscreen before asset construction, the real GameApp reaching its first ready
+  frame, persistent shader restoration, identical cached/source pixels, corrupted
+  cache data, a driver-rejected binary, source and driver identity changes,
+  unavailable optional binary functions, disabled caching, an unwritable cache
+  root and startup-callback lifetime.
+- Existing navigation, attached-save recovery, bounded edge scrolling, native
+  guide rendering, atmosphere, pressure collars, menus and build guards passed.
+- The native startup sequence ran with SDL's offscreen desktop-window backend;
+  the real EGL/GL rendering checks used Mesa llvmpipe. Physical monitor behavior
+  and native Windows execution were not tested here. Portable Windows build-driver
+  and version/path guard checks passed. A separate Debug build was not run.
+
+## Observed shader-cache benefit
+
+The cold-cache test disabled Mesa's implicit shader cache to isolate the engine's
+explicit cache. In the final sample, the first renderer compiled and stored all
+40 programs (about 1,081 ms in source compile/link work); the next renderer restored
+all 40 with zero source compilations (about 110 ms loading those binaries).
+These are shader work timings on this environment, not total launch-time or
+per-frame performance guarantees. Other drivers can have their own caches and
+show a different improvement. Unsupported/rejected cache paths retain source
+compilation and a visible loading splash.
+
+The cache does not serialize texture pixels or terrain geometry. Procedural
+material shader programs are included, and their visual output matches fresh
+source compilation. The splash's tiny bootstrap/UI programs stay independent
+of the engine shader loader so it can present first.
+
+## Update installation
+
+Paired source updater checks passed for exact base/payload hashes, wrong versions,
+reversed roots, locally edited sources, a corrupt payload, rollback after an
+injected partial write, preservation of saves/preferences and safe reapplication.
+The update requires game 0.65.0 and engine 0.5.15, and changes both source roots to
+0.66.0 / 0.5.16. Rebuild both configurations after applying it.

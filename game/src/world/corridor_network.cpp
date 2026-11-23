@@ -1,5 +1,6 @@
 #include "game/world/robot_workshop.hpp"
 #include "game/world/corridor_network.hpp"
+#include "game/world/corridor/pressure_shell.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/world/corridor/detail.hpp"
 #include "game/world/storage_loading_gate.hpp"
@@ -568,6 +569,7 @@ void CorridorNetwork::synchronize_structure_interfaces(const std::vector<PlacedH
             wall.y=resource.position.y+mesh.walkable_floor_y;
             Vec3 shift=wall-ep->door.position;shift.y=0;
             ep->door.position=wall;ep->door.wall_position=wall;ep->position=ep->position+shift;
+            attach_surface_profile(ep->door,resource,mesh);
             if(!c.path.empty()){
                 if(ep==&c.endpoint_a) c.path.front()=ep->position;
                 else c.path.back()=ep->position;
@@ -589,6 +591,14 @@ void CorridorNetwork::repair_invalid_topology(const std::vector<PlacedHabitat>& 
     // the second entrance pass, without rearranging healthy saved networks.
     optimize_shared_entrance_groups(connections_,habitats,library);
     rebuild_all_meshes(connections_);
+}
+
+void CorridorNetwork::refresh_pressure_shells(){
+    std::uint64_t revision=1469598103934665603ULL;
+    revision=(revision^connections_.size())*1099511628211ULL;
+    for(const auto& c:connections_)revision=(revision^std::uint64_t(c.construction.complete()))*1099511628211ULL;
+    if(revision==pressure_revision_)return;
+    rebuild_pressure_shells(connections_);pressure_revision_=revision;
 }
 
 void CorridorNetwork::update_construction(float dt,ResourceManagement& resources,bool allow_negative){

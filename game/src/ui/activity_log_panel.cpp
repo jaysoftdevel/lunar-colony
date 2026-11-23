@@ -66,7 +66,7 @@ bool GameApp::mouse_over_playfield_overlay(const InputState& input) const {
     const float x=(float)std::lround(input.mouse_x/ui_scale_),y=(float)std::lround(input.mouse_y/ui_scale_);
     return mouse_over_build_queue(input) || mouse_over_activity_log(input) ||
            (debug_frame_visible() && debug_frame_rect().contains(x,y)) ||
-           (progress_tree_visible() && first_person_mode_==FirstPersonMode::Off && progress_tree_panel_rect().contains(x,y));
+           (progress_tree_visible() && (first_person_mode_==FirstPersonMode::Off || first_person_cursor_) && progress_tree_panel_rect().contains(x,y));
 }
 
 void GameApp::render_activity_log(SceneRenderer& r){

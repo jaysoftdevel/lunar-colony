@@ -10,6 +10,7 @@
 namespace game::corridor_detail {
 CorridorDoor transformed_builtin_door(const PlacedHabitat& habitat,const HabitatMesh& mesh,std::size_t entrance_index);
 bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& habitat,const HabitatMesh& mesh);
+bool attach_surface_profile(CorridorDoor& door,const PlacedResource& resource,const ResourceMesh& mesh);
 using namespace game::runtime;
 
 constexpr float PI=3.14159265358979323846f;
@@ -88,6 +89,7 @@ inline bool endpoint_uses_resource(const CorridorEndpoint& e,std::size_t index){
 }
 
 
+std::vector<Vec2> doorway_cross_section(float half_width,float height);
 void tri(std::vector<Vec3>& dst,Vec3 a,Vec3 b,Vec3 c);
 void edge(std::vector<Vec3>& dst,Vec3 a,Vec3 b);
 std::vector<Vec2> corridor_cross_section(float scale=1.0f);

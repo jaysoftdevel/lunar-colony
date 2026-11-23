@@ -13,6 +13,7 @@ class CameraController {
 public:
     void reset(int playfield_size);
     void update(const game::runtime::InputState& input,int playfield_size,int viewport_height,float dt);
+    void scroll_at_edge(const game::runtime::InputState&,int playfield_size,int width,int height,game::runtime::Rect world,float dt);
     game::runtime::Mat4 view_projection(float aspect) const;
     // Stage-1 coastal campus uses a close, distance-dependent depth range so
     // thin road/pad/marking layers remain stable during orbit and zoom.
