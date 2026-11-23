@@ -7,11 +7,13 @@ namespace game {
 class FirstPersonController {
 public:
     void spawn(game::runtime::Vec3 feet_position,float yaw_degrees=0.0f);
+    void restore_view(float yaw,float pitch);
     void update_look(const game::runtime::InputState& input);
     game::runtime::Vec3 desired_displacement(const game::runtime::InputState& input,float dt);
     void advance_vertical(bool jump_pressed,float dt,float floor_y,float ceiling_y);
     void set_fov(float degrees){fov_degrees_=std::isfinite(degrees)?std::clamp(degrees,50.f,110.f):68.f;}
     float fov() const {return fov_degrees_;}
+    void stop_motion(){planar_velocity_={};}
     bool grounded() const {return grounded_;}
     game::runtime::Mat4 view_projection(float aspect) const;
     game::runtime::Vec3 eye_position() const { return feet_position_+game::runtime::Vec3{0.0f,eye_height_,0.0f}; }

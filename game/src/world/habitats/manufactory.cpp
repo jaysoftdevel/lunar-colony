@@ -1,4 +1,5 @@
 #include "game/world/habitat_builder.hpp"
+#include "game/world/interior_station.hpp"
 #include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
@@ -31,6 +32,8 @@ void build_manufactory_outer(Builder& b){
     b.box(b.mesh.details,{-3.65f,7.1f,-4.45f},{8.1f,0.48f,0.5f});
     b.box(b.mesh.details,{-3.65f,1.3f,-4.45f},{8.1f,0.42f,0.5f});
 
+    {
+    interior_layout::StationScope installed_process_equipment(b.mesh);
     // Large external crane arms and cargo fixtures.
     crane_arm(b,{1.1f,9.2f,2.75f},1.0f);
     crane_arm(b,{5.0f,8.9f,-2.8f},1.0f);
@@ -44,6 +47,8 @@ void build_manufactory_outer(Builder& b){
         b.cylinder_between(b.mesh.details,{0.3f,6.2f,z},{5.8f,6.45f,z},0.09f,8,true,true);
     }
     b.box(b.mesh.details,{6.6f,7.65f,2.4f},{1.8f,1.8f,0.65f});
+
+    }
 
     b.supports(-6.4f,6.9f,3.4f,1.05f);
     b.supports(-6.4f,6.9f,-3.4f,1.05f);

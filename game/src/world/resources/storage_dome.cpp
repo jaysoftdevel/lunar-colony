@@ -32,19 +32,7 @@ ResourceMesh make_storage_dome(StorageDomeSize size){
         }
     }
     const float wall=5.35f*s;
-    for(int side=0;side<4;++side){
-        const float a=PI*0.5f*(float)side;
-        const Vec3 n{std::sin(a),0.0f,-std::cos(a)};
-        const float frame_h=geometry::kDoorFrameHeight;
-        const float frame_w=geometry::kDoorClearWidth+0.70f;
-        const float frame_d=0.55f;
-        const Vec3 c=n*wall+Vec3{0,b.mesh.walkable_floor_y+frame_h*0.5f,0};
-        // Docking ports stay human-sized on every dome tier. Increasing storage
-        // capacity enlarges the warehouse, not the person-sized doors.
-        b.box(b.mesh.details,c,{(side%2==0?frame_w:frame_d),frame_h,(side%2==0?frame_d:frame_w)});
-        const Vec3 inner=n*(wall+0.30f)+Vec3{0,b.mesh.walkable_floor_y+geometry::kDoorClearHeight*0.5f,0};
-        b.box(b.mesh.details,inner,{(side%2==0?geometry::kDoorClearWidth:0.24f),geometry::kDoorClearHeight,(side%2==0?0.24f:geometry::kDoorClearWidth)});
-    }
+    // Crew doors are generated only at actual corridor connections.
 
     // Four docking lanes meet at an unobstructed handling intersection.
     const float deck=b.mesh.walkable_floor_y;

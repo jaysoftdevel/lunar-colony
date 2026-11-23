@@ -15,7 +15,7 @@ target_include_directories(game PRIVATE include)
 target_link_libraries(game PRIVATE colony_runtime Threads::Threads rvo2)
 target_compile_definitions(game PRIVATE GAME_VERSION="${GAME_VERSION_FULL}")
 if(MSVC)
-    target_compile_options(game PRIVATE /W4 /permissive- /EHsc)
+    target_compile_options(game PRIVATE /W4 /permissive- /EHsc /bigobj /utf-8 /Zc:__cplusplus)
 else()
     target_compile_options(game PRIVATE -Wall -Wextra -Wpedantic)
 endif()
@@ -25,6 +25,9 @@ foreach(cluster IN LISTS GAME_CLUSTER_TARGETS)
 endforeach()
 
 if(GAME_BUILD_NAVIGATION_TESTS)
+    add_executable(gas_flow_regression tests/gas_flow_regression.cpp)
+    target_include_directories(gas_flow_regression PRIVATE include)
+    add_test(NAME colony_physical_gas_network COMMAND gas_flow_regression)
     add_executable(camera_scrolling_regression tests/camera_scrolling_regression.cpp src/systems/camera_controller.cpp)
     target_link_libraries(camera_scrolling_regression PRIVATE colony_runtime)
     add_test(NAME camera_visible_edge_scrolling COMMAND camera_scrolling_regression)
@@ -66,9 +69,13 @@ if(GAME_BUILD_NAVIGATION_TESTS)
     add_test(NAME game_graphics_quality COMMAND ui_regression graphics-quality)
     add_test(NAME game_gameplay_options COMMAND ui_regression gameplay-options)
     add_test(NAME game_workshop_service_stockyard_audio COMMAND navigation_regression workshop-service)
+    add_test(NAME game_selected_airlock_cutaway COMMAND ui_regression airlock-ui)
+    add_test(NAME game_interior_services COMMAND ui_regression interior-services)
+    add_test(NAME game_interior_units_powered_doors COMMAND ui_regression interior-systems)
     add_test(NAME game_gate_reservations_solar_uv COMMAND ui_regression gates-layout-solar)
     add_test(NAME game_station_hulls_screens_alt COMMAND ui_regression station-visuals)
     add_test(NAME game_fpv_building_footsteps COMMAND ui_regression fpv-building)
+    add_test(NAME game_astronaut_fpv_continuity COMMAND ui_regression player-control)
     add_test(NAME game_fpv_controls_gables COMMAND navigation_regression fpv-controls)
     add_test(NAME colony_ore_gate_dispatch COMMAND navigation_regression ore-dispatch)
     add_test(NAME game_fov_station_interiors COMMAND ui_regression fov-interiors)
@@ -242,21 +249,21 @@ if(GAME_BUILD_NAVIGATION_TESTS AND GAME_BUILD_RENDER_TESTS)
     set_tests_properties(jsd_aperiodic_materials PROPERTIES TIMEOUT 180)
 endif()
 
-# Tests live in their own configuration directories on Windows. Each executable
-# must receive the matching source-built SDL DLL, not just the main game binary.
+# Stage configuration-matched SDL2.dll after each executable is linked.
+# A PRE_BUILD shared staging target races with generated multi-config folders on
+# Visual Studio, and can copy the wrong SDL configuration on incremental builds.
+# POST_BUILD always uses the DLL for the executable's actual configuration.
 if(WIN32)
-    add_custom_target(stage_colony_windows_runtime)
-    add_dependencies(stage_colony_windows_runtime SDL2)
     get_property(colony_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(target IN LISTS colony_targets)
         get_target_property(type ${target} TYPE)
         if(type STREQUAL "EXECUTABLE")
-            add_custom_command(TARGET stage_colony_windows_runtime POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${target}>"
+            add_dependencies(${target} SDL2)
+            add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                     "$<TARGET_FILE:SDL2>" "$<TARGET_FILE_DIR:${target}>"
+                COMMENT "Stage configuration-matched SDL2 runtime for ${target}"
                 VERBATIM)
-            add_dependencies(${target} stage_colony_windows_runtime)
         endif()
     endforeach()
 endif()
@@ -265,10 +272,11 @@ if(GAME_BUILD_NAVIGATION_TESTS AND GAME_BUILD_RENDER_TESTS)
     add_executable(jsd_sky_regression tests/jsd_sky_regression.cpp)
     target_link_libraries(jsd_sky_regression PRIVATE JSD::GameEngineStatic)
     if(WIN32)
-        add_dependencies(jsd_sky_regression stage_colony_windows_runtime)
-        add_custom_command(TARGET stage_colony_windows_runtime POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:jsd_sky_regression>"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:SDL2>" "$<TARGET_FILE_DIR:jsd_sky_regression>" VERBATIM)
+        add_dependencies(jsd_sky_regression SDL2)
+        add_custom_command(TARGET jsd_sky_regression POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:SDL2>" "$<TARGET_FILE_DIR:jsd_sky_regression>"
+            VERBATIM)
     endif()
     add_test(NAME jsd_sky_sphere COMMAND jsd_sky_regression)
     set_tests_properties(jsd_sky_sphere PROPERTIES TIMEOUT 180)

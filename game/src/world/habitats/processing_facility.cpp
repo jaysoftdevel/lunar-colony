@@ -1,4 +1,5 @@
 #include "game/world/habitat_builder.hpp"
+#include "game/world/interior_station.hpp"
 #include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
@@ -10,6 +11,8 @@ void build_processing_facility_outer(Builder& b){
     b.cylinder_x(b.mesh.shell,{0.4f,3.55f,0},9.7f,2.75f,20,true);
     for(float x:{-3.6f,-1.4f,0.8f,3.0f}) b.torus_x(b.mesh.details,{x,3.55f,0},2.78f,0.09f,20,6);
 
+    {
+    interior_layout::StationScope installed_process_equipment(b.mesh);
     // Left feed hoppers and conveyor assembly.
     for(int i=0;i<3;++i){
         const float z=-2.55f+2.55f*(float)i;
@@ -41,6 +44,8 @@ void build_processing_facility_outer(Builder& b){
     for(const Vec3 c: {Vec3{-3.15f,7.05f,-1.8f},Vec3{-0.8f,7.45f,1.2f},Vec3{2.5f,7.15f,-0.7f}}){
         b.cylinder_y(b.mesh.details,c,2.35f,0.48f,12,true);
         b.cylinder_y(b.mesh.details,{c.x,c.y+1.25f,c.z},0.28f,0.66f,12,true);
+    }
+
     }
 
     b.supports(-4.4f,3.8f,2.7f,0.95f);

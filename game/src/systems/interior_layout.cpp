@@ -13,7 +13,7 @@ const HabitatMesh& GameApp::habitat_runtime_mesh(std::size_t index) const {
         reserved.push_back({wall,game::runtime::normalize(normal)});
     }
     if(habitat_layout_cache_.size()<placed_habitats_.size())habitat_layout_cache_.resize(placed_habitats_.size());
-    return interior_layout::resolve(habitat_layout_cache_[index],source,std::move(reserved),hydroponics_bay_count(habitat.size));
+    return assemble_interior_units(index,interior_layout::resolve(habitat_layout_cache_[index],source,std::move(reserved),hydroponics_bay_count(habitat.size),true));
 }
 const ResourceMesh& GameApp::resource_runtime_mesh(std::size_t index) const {
     const auto& item=placed_resources_[index];const auto& source=resource_models_.mesh(item);

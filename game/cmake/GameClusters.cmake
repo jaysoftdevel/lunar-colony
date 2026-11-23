@@ -9,7 +9,7 @@ function(configure_game_cluster target)
     target_link_libraries(${target} PRIVATE colony_runtime)
     target_compile_definitions(${target} PRIVATE GAME_VERSION="${GAME_VERSION_FULL}")
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc /bigobj /utf-8 /Zc:__cplusplus)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
@@ -40,10 +40,15 @@ add_library(game_cluster_interaction OBJECT
     src/systems/camera_controller.cpp
     src/systems/first_person_controller.cpp
     src/systems/first_person_mode.cpp
+    src/systems/first_person_control.cpp
+    src/systems/resource_package_collision.cpp
+    src/systems/manual_doors.cpp
     src/systems/pressure_doors.cpp
     src/systems/robot_workshop.cpp
     src/systems/storage_extensions.cpp
     src/systems/gate_areas.cpp
+    src/systems/interior_units.cpp
+    src/systems/interior_unit_placement.cpp
     src/systems/interior_layout.cpp
 )
 configure_game_cluster(game_cluster_interaction)
@@ -54,7 +59,7 @@ add_library(game_cluster_rendering OBJECT
     src/playfield/structure_display.cpp
     src/playfield/station_screens.cpp
     src/playfield/builder_robot_renderer.cpp
-    "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/src/playfield/astronaut_renderer.cpp>"
+    src/playfield/astronaut_renderer.cpp
     src/playfield/lunar_lander_renderer.cpp
     src/playfield/trader_renderer.cpp
 )
@@ -117,6 +122,7 @@ configure_game_cluster(game_cluster_simulation)
 
 add_library(game_cluster_world_core OBJECT
     src/world/playfield.cpp
+    src/world/interior_units.cpp
     src/world/habitat_mesh.cpp
     src/world/resource_mesh.cpp
     src/world/construction_sequence.cpp

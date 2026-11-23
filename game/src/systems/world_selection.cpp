@@ -144,7 +144,8 @@ float GameApp::selection_panel_content_height() const {
         HabitatKind kind=HabitatKind::CrewQuarters;
         if(selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size()){
             const auto& h=placed_habitats_[(std::size_t)selected_habitat_];kind=h.kind;
-            if(h.construction.complete())extra=supply_warning_extra_height(supply_warning_lines(h.supply,382.0f,warning_font));
+            extra+=interior_unit_panel_height((std::size_t)selected_habitat_);
+            if(h.construction.complete())extra+=supply_warning_extra_height(supply_warning_lines(h.supply,382.0f,warning_font));
         }
         if(kind==HabitatKind::OxygenGeneratorDome) return 378.0f+extra;
         if(kind==HabitatKind::AirLock) return 362.0f+extra;
@@ -286,6 +287,7 @@ void GameApp::clear_world_selection(){
     selection_panel_scroll_key_=0;
     hydroponics_dropdown_habitat_=-1;
     hydroponics_dropdown_bay_=-1;
+    interior_unit_tool_.reset();interior_unit_host_=kNoRobotIndex;
     selected_habitat_=-1;
     selected_corridor_=-1;
     selected_resource_=-1;
@@ -656,6 +658,7 @@ void GameApp::select_world_at(int screen_x,int screen_y){
     if(habitat>=0){
         selection_kind_=SelectionKind::Habitat;
         selected_habitat_=habitat;
+        focus_interior((std::size_t)habitat);
         selected_corridor_=-1;
         selected_resource_=-1;
         selected_utility_=-1;

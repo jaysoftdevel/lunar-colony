@@ -1,10 +1,29 @@
-# JSD Lunar Base v0.69.0
+# JSD Lunar Base v0.72.1
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
-The game renders through the external **JSD 3d-engine 0.5.18**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+The game renders through the external **JSD 3d-engine 0.5.21**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
 
-Version 0.69.0 marks disconnected gates red and usable corridor connections green,
+Version 0.72.1 repairs engine build-launcher version checks and aligns the game
+with JSD 0.5.21. Gameplay and saves retain the 0.72.0 behavior.
+
+Version 0.72.0 adds direct selected-astronaut FPV control, saved character view
+positions, live per-astronaut vitals and solid classified resource packages.
+See [UPDATE-0.72.0.md](UPDATE-0.72.0.md).
+
+Version 0.71.0 adds pressure-driven airflow, custom canteen furnishings, larger
+placeable oxygen generators, night occupancy lighting and viewport construction
+audio. See [UPDATE-0.71.0.md](UPDATE-0.71.0.md).
+
+Version 0.70.0 doubles the day length, adds detailed corridor deck materials,
+powered doors with an FPV manual crank (E), and empty configurable habitat
+interiors with saved processing units. Selecting a habitat centers an isometric
+cutaway view. See [UPDATE-0.70.0.md](UPDATE-0.70.0.md).
+
+Version 0.69.1 retains the 0.69.0 gameplay features, and synchronizes the native Windows build.
+See [UPDATE-0.69.1.md](UPDATE-0.69.1.md).
+
+Version 0.69.0 marked disconnected gates red and usable corridor connections green,
 reserves internal doorway approaches by removing obstructing station assemblies,
 and keeps photovoltaic surfaces attached to rigidly moving collector heads.
 See [UPDATE-0.69.0.md](UPDATE-0.69.0.md).
@@ -66,11 +85,15 @@ Career follows the mission stages. Free Play lets you start at a selected stage 
 
 Both builds store `.gmsave` files in `savegames/` at the game workspace root. The first launch moves saves from the former Linux and Windows `bin/savegames/` directories and gives conflicting filenames a numeric suffix. Older saves open normally. Saving again writes the compact format.
 
+Press **V** to enter/exit control of the selected or last astronaut. The first
+unassigned character spawns beside the lander. Use **Alt** or **Tab** for the
+mouse cursor, and the lower-right panel for individual vitals and rest.
+
 Press **1–3** to select a simulation speed and **Space** to pause or resume in orbit view. A pulsing frame marks paused simulation. In first person, **Shift** sprints and **Space** jumps (**J** is also accepted). In the Debug build, **Settings → Debug Layout** switches between the configured renderer and the meshed view. **Settings → Music** controls the atmospheric theme independently of sound effects.
 
 ## Build and run
 
-The game uses the external JSD 3d-engine 0.5.18 for rendering, platform, math,
+The game uses the external JSD 3d-engine 0.5.20 for rendering, platform, math,
 workers and audio. Its former in-game engine directory is removed. Game-specific
 bindings live under `game/src/runtime/` alongside the game code.
 

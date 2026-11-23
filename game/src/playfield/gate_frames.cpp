@@ -54,27 +54,25 @@ void GameApp::render_gate_connection_frames(game::runtime::SceneRenderer& render
         renderer.draw_lines_3d(lines,{.025f,.035f,.04f,1},6.f);
         renderer.draw_lines_3d(lines,accessible?Color{.18f,.95f,.34f,1}:Color{1.f,.16f,.12f,1},3.2f);
     };
-    for(std::size_t i=0;i<placed_habitats_.size();++i)if(placed_habitats_[i].construction.complete())
-        for(const auto& door:habitat_doors(i))frame(door.wall_position,door.normal,geometry::kDoorClearWidth,geometry::kDoorClearHeight,connected(CorridorEndpointKind::Habitat,i,door));
+    for(std::size_t i=0;i<placed_habitats_.size();++i)if(placed_habitats_[i].construction.complete()){
+        const auto& h=placed_habitats_[i];const bool powered=door_power_available(h.supply,h.power_enabled);
+        for(const auto& door:habitat_doors(i))if(!powered||connected(CorridorEndpointKind::Habitat,i,door))
+            frame(door.wall_position,door.normal,geometry::kDoorClearWidth,geometry::kDoorClearHeight,powered);
+    }
     for(std::size_t i=0;i<placed_resources_.size();++i){const auto& item=placed_resources_[i];if(!item.construction.complete())continue;
+        const bool powered=door_power_available(item.supply,item.power_enabled);
         if(item.kind==ResourceKind::StorageDome){
-            const auto doors=storage_dome_doors(i);for(const auto& door:doors)frame(door.wall_position,door.normal,geometry::kDoorClearWidth,geometry::kDoorClearHeight,connected(CorridorEndpointKind::Resource,i,door),.34f);
-            const auto& mesh=resource_models_.mesh(item);const float wall=storage_dome_diameter_m(item.storage_size)*(5.35f/13.f);
-            for(int face=0;face<4;++face){const auto normal=rotate_y(storage_loading::local_normal(face),item.rotation_degrees);
-                const auto base=item.position+normal*wall+Vec3{0,mesh.walkable_floor_y,0};
-                const bool occupied=std::any_of(doors.begin(),doors.end(),[&](const auto& door){return distance_xz(door.wall_position,base)<1.1f&&dot(normal,door.normal)>.8f;});
-                if(!occupied)frame(base,normal,geometry::kDoorClearWidth,geometry::kDoorClearHeight,false,.34f);
-            }
-            for(int face:storage_loading::faces(item))if(face>=0){const auto base=storage_loading::mouth(item,face)+Vec3{0,.15f,0};
-                bool ready=face==item.storage_loading_face?item.storage_loading_ready:false;
-                for(std::size_t slot=0;slot<item.storage_extra_faces.size();++slot)if(face==item.storage_extra_faces[slot])ready=item.storage_extra_ready[slot];
-                frame(base,storage_loading::normal(item,face),2*storage_loading::kHalfWidth,storage_loading::kHeight,ready);
-            }
+            for(const auto& door:storage_dome_doors(i))if(!powered||connected(CorridorEndpointKind::Resource,i,door))
+                frame(door.wall_position,door.normal,geometry::kDoorClearWidth,geometry::kDoorClearHeight,powered,.34f);
         }else if(item.kind==ResourceKind::RobotWorkshop){
-            frame(workshop::world(item,{0,workshop::kDeck,-workshop::kHalfZ}),rotate_y({0,0,-1},item.rotation_degrees),2*workshop::kGateHalf,2.9f,true);
+            frame(workshop::world(item,{0,workshop::kDeck,-workshop::kHalfZ}),rotate_y({0,0,-1},item.rotation_degrees),2*workshop::kGateHalf,2.9f,powered);
+        }else if(item.kind==ResourceKind::StorageGate&&item.storage_parent_index<placed_resources_.size()){
+            const auto& owner=placed_resources_[item.storage_parent_index];
+            const auto base=storage_loading::mouth(owner,item.storage_loading_face)+Vec3{0,.15f,0};
+            frame(base,storage_loading::normal(owner,item.storage_loading_face),2*storage_loading::kHalfWidth,storage_loading::kHeight,
+                  item.power_enabled&&door_power_available(owner.supply,owner.power_enabled));
         }
     }
-    for(const auto& corridor:runs)if(corridor.construction.complete())for(const auto* e:{&corridor.endpoint_a,&corridor.endpoint_b})
-        if(e->kind==CorridorEndpointKind::OpenDoor&&!e->suppress_open_door)frame({e->position.x,e->position.y+geometry::kCorridorDeckY,e->position.z},e->tangent,geometry::kDoorClearWidth,geometry::kDoorClearHeight,false);
+    // Unconnected candidate frames and capped tube ends carry no warning.
 }
 }

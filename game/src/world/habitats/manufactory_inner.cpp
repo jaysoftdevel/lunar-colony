@@ -18,6 +18,7 @@ void build_manufactory_inner(Builder& b){
         ceiling_light(b,{x,4.98f,-1.75f},{x,4.98f,1.75f});
     }
     // The gantry and tool head cross overhead with pedestrian clearance.
+    interior_layout::StationScope overhead(b.mesh);
     b.box(b.mesh.interior,{-3.8f,4.71f,0},{4.4f,.25f,.36f},false);
     b.box(b.mesh.interior,{-3.8f,4.33f,0},{.62f,.58f,.55f},false);
 }

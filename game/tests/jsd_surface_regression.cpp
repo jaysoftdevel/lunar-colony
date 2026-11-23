@@ -17,7 +17,7 @@ int main(){try{
         std::vector<unsigned char> image(640*360*4);gl.ReadPixels(0,0,640,360,vl::GL_RGBA,vl::GL_UNSIGNED_BYTE,image.data());return image;
     };
     const auto difference=[](const auto& a,const auto& b){double d=0;for(std::size_t i=0;i<a.size();++i)d+=std::abs(int(a[i])-int(b[i]));return d/a.size();};
-    for(auto surface:{SurfaceKind::Regolith,SurfaceKind::HullPanels,SurfaceKind::InteriorPanels,SurfaceKind::RobotArmor,SurfaceKind::DeckPlating,SurfaceKind::FabricWeave,SurfaceKind::PressureDoor}){
+    for(auto surface:{SurfaceKind::Regolith,SurfaceKind::HullPanels,SurfaceKind::InteriorPanels,SurfaceKind::RobotArmor,SurfaceKind::DeckPlating,SurfaceKind::FabricWeave,SurfaceKind::PressureDoor,SurfaceKind::CorridorDeck}){
         auto base=capture(surface,0,17,false,0),again=capture(surface,0,17,false,6),far=capture(surface,64,17,false,0),seed=capture(surface,0,381,false,0);
         require(base==again,"A static material flickers as time advances");
         require(difference(base,far)>.05 && difference(base,seed)>.05,"Material repeats at a distant position or ignores its seed");

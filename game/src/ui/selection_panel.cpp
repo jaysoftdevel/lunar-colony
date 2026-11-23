@@ -635,6 +635,9 @@ void GameApp::render_selection_panel(SceneRenderer& r){
 
                 for(std::size_t bay_index=0;bay_index<bay_count;++bay_index){
                     const bool reserved=bool(habitat_runtime_mesh((std::size_t)selected_habitat_).blocked_grow_bays&(1u<<bay_index));
+                    bool rack_present=false,gate_reserved=false;
+                    for(const auto& unit:h.units)if(unit.kind==InteriorUnitKind::HydroponicRack&&unit.grow_bay==bay_index){rack_present=true;gate_reserved|=interior_unit_reserved((std::size_t)selected_habitat_,unit);}
+                    const char* rack_state=gate_reserved?"GATE APPROACH RESERVED":rack_present?"GROW RACK SWITCHED OFF":"INSTALL A GROW RACK";
                     auto& bay=h.hydroponics[bay_index];
                     const auto& crop=hydroponic_profile(bay.plant);
                     const std::size_t row=bay_index/2;
@@ -656,7 +659,7 @@ void GameApp::render_selection_panel(SceneRenderer& r){
                     auto selector_input=ui_input_;
                     if(hydroponics_dropdown_bay_>=0 && hydroponics_dropdown_bay_!=static_cast<int>(bay_index))
                         selector_input.left_pressed=false;
-                    if(reserved){selector_text="GATE APPROACH RESERVED";if(hydroponics_dropdown_bay_==(int)bay_index)hydroponics_dropdown_bay_=-1;}
+                    if(reserved){selector_text=rack_state;if(hydroponics_dropdown_bay_==(int)bay_index)hydroponics_dropdown_bay_=-1;}
                     if(ui::button(r,selector_input,selector,selector_text,theme_,!reserved)){
                         const bool was_open=hydroponics_dropdown_habitat_==selected_habitat_ && hydroponics_dropdown_bay_==(int)bay_index;
                         hydroponics_dropdown_habitat_=was_open?-1:selected_habitat_;
@@ -669,7 +672,7 @@ void GameApp::render_selection_panel(SceneRenderer& r){
                     }
 
                     std::ostringstream progress;
-                    if(reserved)progress<<"STATION REMOVED / GROWTH SUSPENDED";
+                    if(reserved)progress<<"NO ACTIVE RACK / GROWTH SUSPENDED";
                     else if(bay.plant==HydroponicPlant::Empty) progress<<"EMPTY / HARVESTS "<<bay.harvests;
                     else progress<<"GROWTH "<<(int)std::lround(std::clamp(bay.growth_fraction,0.0,1.0)*100.0)<<"% / HARVESTS "<<bay.harvests;
                     layout::game_label_fitted(r,{cell.x+7.0f,cell.y+31.0f,cell.w-14.0f,15.0f},progress.str(),0.37f,theme_,true);
@@ -678,7 +681,7 @@ void GameApp::render_selection_panel(SceneRenderer& r){
                     if(bay.growth_fraction>0.0) r.draw_rect({track.x,track.y,track.w*(float)std::clamp(bay.growth_fraction,0.0,1.0),track.h},theme_.accent);
 
                     std::ostringstream stats;
-                    if(reserved)stats<<"GATE RESERVED / NO GROW LOAD";
+                    if(reserved)stats<<"RACK OFFLINE / NO GROW LOAD";
                     else if(bay.plant==HydroponicPlant::Empty) stats<<"NO CROP / NO LIGHT OR WATER LOAD";
                     else stats<<std::fixed<<std::setprecision(1)<<crop.growth_days<<" D / "<<crop.harvest_food_kg<<" KG / H2O "<<crop.water_litres_per_day<<" L/D / "<<std::setprecision(2)<<crop.power_kw<<" KW";
                     layout::game_label_fitted(r,{cell.x+7.0f,cell.y+59.0f,cell.w-14.0f,13.0f},stats.str(),0.31f,theme_,true);
@@ -730,7 +733,9 @@ void GameApp::render_selection_panel(SceneRenderer& r){
             game_label(r,{x,p.y+278},pressure.str(),0.43f,theme_);
             game_label(r,{x,p.y+300},airlock::phase(cycle),0.43f,theme_,true);
             game_label(r,{x,p.y+320},"3 CHAMBERS / BIDIRECTIONAL / DEL REMOVE",0.40f,theme_,true);
-        }else game_label(r,{x,p.y+282},"RATES PER GAME DAY / DEL REMOVE",0.40f,theme_,true);
+        }else game_label(r,{x,p.y+282},"SCROLL FOR INTERNAL UNITS / DEL REMOVE STRUCTURE",0.38f,theme_,true);
+        const auto index=static_cast<std::size_t>(selected_habitat_);const float units_h=interior_unit_panel_height(index);
+        if(units_h>0)render_interior_unit_panel(r,index,x,p.y+content_height-units_h-panel_scroll,p.w-28);
         return;
     }
 

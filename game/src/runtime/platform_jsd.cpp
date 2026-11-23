@@ -95,6 +95,7 @@ int GameHost::run(const WindowConfig& config,const std::function<std::unique_ptr
                     const int key=event.key.keysym.scancode;
                     if(key==41)in.escape_pressed=true;
                     if(key==43)in.key_tab_pressed=true;
+                    if(key==8)in.key_e_pressed=true;
                     if(key==40 || key==88)in.enter_pressed=true;
                     if(key==42)in.backspace_pressed=true;
                     if(key==76)in.delete_pressed=true;

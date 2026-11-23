@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix='colony-build-contract-') as temp:
     for item in ['build.sh', 'configure.sh', 'scripts/common.sh', 'scripts/build-arguments.sh']:
         shutil.copy2(root / item, game / item)
     (engine / 'include/jsd/engine.hpp').write_text('// test source root')
-    identity = {'project_id': 'jsd.engine', 'kind': 'source', 'version': '0.5.18'}
+    identity = {'project_id': 'jsd.engine', 'kind': 'source', 'version': '0.5.21'}
     (engine / 'JSD_PROJECT.json').write_text(json.dumps(identity))
     mock = fake_bin / 'cmake'
     mock.write_text('''#!/usr/bin/env python3
@@ -49,8 +49,8 @@ if '--build' in sys.argv:
         result = subprocess.run(['bash', str(game/'build.sh'), *args], env=env, capture_output=True, text=True)
         assert result.returncode != 0 and not log.read_text(), args
     # Reject another project/version before configuring bundled dependencies.
-    for identity in [{'project_id':'other.game','kind':'source','version':'0.5.18'}, {'project_id':'jsd.engine','kind':'source','version':'0.5.10'}]:
+    for identity in [{'project_id':'other.game','kind':'source','version':'0.5.21'}, {'project_id':'jsd.engine','kind':'source','version':'0.5.10'}]:
         (engine/'JSD_PROJECT.json').write_text(json.dumps(identity))
         result = subprocess.run(['cmake', '-DJSD_GAME_ENGINE_DIR='+str(engine), '-P', str(root/'cmake/ExternalEngine.cmake')], capture_output=True, text=True)
-        assert result.returncode != 0 and 'requires JSD engine source 0.5.18' in result.stderr
+        assert result.returncode != 0 and 'requires JSD engine source 0.5.21' in result.stderr
 print('PASS external engine arguments, spaces, both configurations and identity guards')

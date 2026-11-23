@@ -13,7 +13,7 @@ inline void bench(Builder& b,Vec3 feet,float width,float depth,float height=.78f
     b.box(b.mesh.service_metal,feet+Vec3{0,height-.19f,0},{width*.88f,.16f,depth*.74f},false);
 }
 inline void console(Builder& b,Vec3 c,float width=1.2f,float facing_z=-1.f){
-    interior_layout::StationScope station(b.mesh);
+    interior_layout::StationScope station(b.mesh,StationKind::Screen);
     b.box(b.mesh.interior,c,{width,.68f,.46f},false);
     b.box(b.mesh.interior,{c.x,c.y+.48f,c.z+.18f*facing_z},{width*.82f,.42f,.10f},false);
     structure_display::Mount screen{{c.x,c.y+.48f,c.z+.245f*facing_z},{facing_z,0,0},{0,1,0},width*.73f,.31f};
@@ -24,7 +24,7 @@ inline void console(Builder& b,Vec3 c,float width=1.2f,float facing_z=-1.f){
 }
 inline void locker_bank(Builder& b,Vec3 c,int count,float spacing=.62f){
     for(int i=0;i<count;++i){
-        interior_layout::StationScope station(b.mesh);
+        interior_layout::StationScope station(b.mesh,StationKind::Furniture);
         const float x=c.x+(i-(count-1)*.5f)*spacing;
         b.box(b.mesh.interior,{x,c.y,c.z},{.52f,1.55f,.50f},false);
         b.box(b.mesh.service_metal,{x,c.y,c.z-.258f},{.47f,1.46f,.025f},false);

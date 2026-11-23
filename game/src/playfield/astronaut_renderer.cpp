@@ -135,8 +135,9 @@ void draw_ring(SceneRenderer& r,Vec3 center,float radius,Color color,float width
 
 void GameApp::render_test_astronauts(SceneRenderer& r) const {
     if(astronaut_cache_.oxygen_kg>0 || astronaut_cache_.food_kg>0 || astronaut_cache_.water_litres>0)
-        draw_ring(r,{0,.018f,0},kCrewCacheRadius,{.30f,.68f,.58f,.55f},1.2f);
+        draw_ring(r,crew_cache_position()+Vec3{0,.018f,0},kCrewCacheRadius,{.30f,.68f,.58f,.55f},1.2f);
     for(std::size_t i=0;i<test_astronauts_.size();++i){
+        if(!astronaut_present(i)||(first_person_mode_==FirstPersonMode::Active&&controlled_astronaut_==int(i)))continue;
         const auto& actor=test_astronauts_[i];
         const auto& role=kAstronautRoles[i];
         const auto pose=astronaut_rest_pose(actor);

@@ -4,6 +4,7 @@
 #include "game/world/robot_workshop.hpp"
 #include "game/world/ore_stockyard.hpp"
 #include <limits>
+#include <numeric>
 #include "game/util/world_math.hpp"
 #include <cmath>
 #include <iomanip>
@@ -43,7 +44,7 @@ void GameApp::update_ore_logistics(float dt){
     for(auto& drill:placed_resources_){
         if(drill.kind!=ResourceKind::OreDriller || !drill.construction.complete() || drill.supply.power_fraction<=0)continue;
         const auto mix=ore::deposit(drill.position);
-        const double amount=ore::extraction_kg_per_day*dt/240.0*drill.supply.power_fraction*
+        const double amount=ore::extraction_kg_per_day*dt/kGameDaySeconds*drill.supply.power_fraction*
             (drill.size==ResourceSizeTier::Small?.5:1.0);
         for(std::size_t i=0;i<mix.size();++i){
             auto& stock=drill.mined_ore_kg[i];
@@ -76,11 +77,9 @@ void GameApp::update_ore_logistics(float dt){
             ++dome->stored_ore_boxes[belt.ore_cargo];
         }else{
             if(plant->supply.power_fraction<=0 || plant->supply.breathability()<95)continue;
-            // Only a processor converts ore into construction stock.
-            const auto& port=belt.endpoint_b;
-            const Vec3 side{-port.normal.z,0,port.normal.x};
-            const Vec3 output=port.position+port.normal*2.0f+side*1.7f;
-            if(!spawn_produced_resource(ore::materials[belt.ore_cargo],ore::refined_box_kg,output,false))continue;
+            auto& receiver=placed_habitats_[belt.endpoint_b.index];
+            if(receiver.unit_ore_kg[belt.ore_cargo]+ore::box_kg>ore::stock_capacity_kg)continue;
+            receiver.unit_ore_kg[belt.ore_cargo]+=ore::box_kg;
         }
         belt.ore_cargo=ore::no_cargo;
         belt.ore_distance_m=0;
@@ -92,7 +91,9 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
     const std::function<bool(std::size_t,Vec3,Vec3)>& reachable){
     const auto plant_ready=[](const PlacedHabitat& plant){
         return (plant.kind==HabitatKind::ProcessingFacility || plant.kind==HabitatKind::Factory) &&
-            plant.construction.complete() && plant.supply.power_fraction>0 && plant.supply.breathability()>=95;
+            plant.construction.complete() && plant.supply.power_fraction>0 && plant.supply.breathability()>=95 &&
+            std::accumulate(plant.unit_ore_kg.begin(),plant.unit_ore_kg.end(),0.)<4*ore::stock_capacity_kg-ore::box_kg &&
+            std::any_of(plant.units.begin(),plant.units.end(),[](const auto& u){return u.enabled&&!u.gate_reserved&&(u.kind==InteriorUnitKind::MetalFabricator||u.kind==InteriorUnitKind::OreRefinery);});
     };
     const auto dome_ready=[](const PlacedResource& dome){
         return dome.kind==ResourceKind::StorageDome && dome.construction.complete() &&
@@ -318,13 +319,11 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
             ++placed_resources_[dome].stored_ore_boxes[haul.kind];
             finish();
         }else if(plant!=kNoRobotIndex){
-            const Vec3 outward=normalize(haul.goal-focus);
-            const Vec3 side{-outward.z,0,outward.x};
-            const bool deposited=spawn_produced_resource(ore::materials[haul.kind],ore::refined_box_kg,
-                haul.goal+side*2.0f,false);
+            auto& receiver=placed_habitats_[plant];
+            const bool deposited=receiver.unit_ore_kg[haul.kind]+ore::box_kg<=ore::stock_capacity_kg;
+            if(deposited)receiver.unit_ore_kg[haul.kind]+=ore::box_kg;
             record_robot_operation_result(rover,deposited,haul.destination);
-            if(deposited)finish();
-            else rover.action=BuilderRobotAction::None;
+            if(deposited)finish();else rover.action=BuilderRobotAction::None;
         }
     }
 }

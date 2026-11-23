@@ -107,6 +107,7 @@ color=vec4(vColor.rgb,vColor.a*coverage);})GLSL");
         case LunarMaterial::PressureDoor:m.surface=gfx::SurfaceKind::PressureDoor;m.roughness=.48f;m.metallic=.20f;break;
         case LunarMaterial::DisplayText:m.surface=gfx::SurfaceKind::Textured;m.emissive={tint.r*1.25f,tint.g*1.25f,tint.b*1.25f,1};m.castShadow=false;m.temporalReactive=true;break;
         case LunarMaterial::Interior:m.surface=gfx::SurfaceKind::InteriorPanels;m.roughness=.68f;m.clearcoat=.04f;m.castShadow=false;break;
+        case LunarMaterial::CorridorDeck:m.surface=gfx::SurfaceKind::CorridorDeck;m.metallic=.38f;m.roughness=.74f;m.clearcoat=.12f;m.castShadow=false;break;
         case LunarMaterial::Deck:m.surface=gfx::SurfaceKind::DeckPlating;m.metallic=.24f;m.roughness=.84f;m.clearcoat=0;m.castShadow=false;break;
         case LunarMaterial::RobotPaint:m.surface=gfx::SurfaceKind::RobotArmor;m.roughness=.40f;m.metallic=.15f;break;
         case LunarMaterial::Textile:m.surface=gfx::SurfaceKind::FabricWeave;m.roughness=.92f;m.clearcoat=0;m.sheen=.15f;break;
@@ -184,7 +185,7 @@ public:
         initialize_ui();
         const auto& cache=renderer_.shaderCacheStatistics();
         std::cout<<"Shader cache: "<<cache.loaded<<" restored, "<<cache.compiled<<" compiled, "<<cache.stored<<" stored"<<(cache.supported?"":" (driver binaries unavailable)")<<'\n';
-        std::cout<<"JSD 0.5.18 colony renderer: "<<gpu_renderer()<<" | "<<gpu_version()<<'\n';
+        std::cout<<"JSD 0.5.20 colony renderer: "<<gpu_renderer()<<" | "<<gpu_version()<<'\n';
     }
     ~JsdRenderer() override {
         gl_.DeleteProgram(ui_program_);gl_.DeleteVertexArrays(1,&ui_vao_);gl_.DeleteBuffers(1,&ui_vbo_);gl_.DeleteTextures(1,&ui_atlas_);

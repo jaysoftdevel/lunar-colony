@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstdint>
 namespace game {
-// Units: metres, kg O2, litres water, kWh. One game day = 240 simulation seconds.
+// Units: metres, kg O2, litres water, kWh. One game day = 480 simulation seconds.
 // Cabin target is 70 kPa, 293 K, 30% O2; inert buffer gas is an assumed reserve.
 // Electrolysis mass balance: 9/8 kg H2O per kg O2 and 1/8 kg H2 per kg O2.
 // Hydrogen is buffered at the oxygen generator and can be sent through a

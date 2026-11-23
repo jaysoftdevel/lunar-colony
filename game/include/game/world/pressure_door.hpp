@@ -9,6 +9,9 @@ struct PressureDoorState {
     float open_fraction{0};
     float hold_seconds{0};
     bool seen{false};
+    bool powered{false};
+    bool manual_open{false};
+    bool manual_override{false};
 };
 namespace pressure_door {
 inline constexpr float kSealOverlap=0.06f;

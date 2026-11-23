@@ -8,6 +8,8 @@
 #include "game/systems/astronaut_test.hpp"
 #include "game/systems/activity_log.hpp"
 #include "game/systems/first_person_controller.hpp"
+#include "game/world/resource_package.hpp"
+#include <functional>
 #include "game/systems/colony_status.hpp"
 #include "game/systems/game_progress.hpp"
 #include "game/systems/planning_game.hpp"
@@ -91,7 +93,7 @@ private:
     enum class HabitatViewMode { FullHull=0, None=1 };
     enum class WorldLayoutMode { FullGraphics, Mesh };
     enum class GameSpeed { Normal = 0, Quick, Fast, Pause };
-    enum class FirstPersonMode { Off, DropPending, Active };
+    enum class FirstPersonMode { Off, Active };
     enum class SelectionKind { None, Habitat, Corridor, Resource, GroundResource, Utility, Walkway, Robot, Lander, Stash };
 
     struct SaveGameEntry {
@@ -180,6 +182,18 @@ private:
     int display_mode_index_=-1;
     Playfield playfield_{};
     CameraController camera_{};
+    std::array<AstronautViewMemory,kAstronautRoles.size()> astronaut_views_{};
+    int controlled_astronaut_{-1},last_fpv_astronaut_{-1};
+    bool astronaut_present(std::size_t i) const {return i<astronaut_views_.size()&&(astronaut_test_active()||astronaut_views_[i].present);}
+    bool astronauts_active() const {for(std::size_t i=0;i<astronaut_views_.size();++i)if(astronaut_present(i))return true;return false;}
+    int abstract_crew_count() const {if(astronaut_test_active())return 0;int n=std::max(0,status_.crew_current());for(const auto& v:astronaut_views_)n-=v.present;return std::max(0,n);}
+    void reset_first_person_crew();
+    void sync_controlled_astronaut(float);
+    std::optional<game::runtime::Vec3> nearest_first_person_spawn(game::runtime::Vec3,bool exterior) const;
+    game::runtime::Vec3 crew_cache_position() const;
+    game::runtime::Rect astronaut_status_rect() const;
+    bool astronaut_status_hover(const game::runtime::InputState&) const;
+    void cycle_astronaut_control();
     FirstPersonController first_person_{};
     FirstPersonMode first_person_mode_{FirstPersonMode::Off};
     bool first_person_cursor_{};
@@ -366,7 +380,7 @@ private:
     const SupplyState* astronaut_air_at(game::runtime::Vec3 p,bool& airlock) const;
     bool astronaut_placement_clear(game::runtime::Vec3 center,float rotation,float width,float depth) const;
     void render_test_astronauts(game::runtime::SceneRenderer& r) const;
-    void render_astronaut_status(game::runtime::SceneRenderer& r,const game::runtime::Mat4& view_projection) const;
+    void render_astronaut_status(game::runtime::SceneRenderer& r,const game::runtime::Mat4& view_projection);
     void render_planning_game(game::runtime::SceneRenderer& r);
     void render_planning_technology_tree(game::runtime::SceneRenderer& r,game::runtime::Rect panel,bool compact);
     void render_status_bar(game::runtime::SceneRenderer& r);
@@ -400,11 +414,36 @@ private:
     const ResourceMesh& resource_runtime_mesh(std::size_t) const;
     mutable std::vector<interior_layout::ResourceCache> resource_layout_cache_;
     const HabitatMesh& habitat_runtime_mesh(std::size_t) const;
+    struct UnitMeshCache {const HabitatMesh* source{};std::vector<std::uint64_t> signature;HabitatMesh mesh;};
+    mutable std::vector<UnitMeshCache> interior_unit_meshes_;
+    std::optional<InteriorUnitKind> interior_unit_tool_;
+    std::size_t interior_unit_host_{kNoRobotIndex};
+    float interior_unit_rotation_{};
+    std::string interior_unit_message_;
+    void focus_interior(std::size_t);
+    bool interior_unit_position_clear(std::size_t,const InteriorUnit&,std::string&) const;
+    bool interior_unit_reserved(std::size_t,const InteriorUnit&) const;
+    bool place_interior_unit(std::size_t,InteriorUnit,std::string&);
+    bool interior_unit_pointer(InteriorUnit&) const;
+    bool update_interior_unit_placement(const game::runtime::InputState&);
+    void render_interior_unit_preview(game::runtime::SceneRenderer&);
+    void render_interior_unit_panel(game::runtime::SceneRenderer&,std::size_t,float,float,float);
+    void render_interior_unit_screens(game::runtime::SceneRenderer&,std::size_t) const;
+    float interior_unit_panel_height(std::size_t) const;
+    std::string interior_unit_status(std::size_t,const InteriorUnit&) const;
+    void update_interior_units(float);
+    void fit_oxygen_units();
+    float interior_light_level(std::size_t,bool resource=false,bool require_power=true) const;
+    const HabitatMesh& assemble_interior_units(std::size_t,const HabitatMesh&) const;
     mutable std::vector<interior_layout::Cache> habitat_layout_cache_;
+    bool door_power_available(const SupplyState&,bool enabled) const;
+    std::optional<std::pair<bool,std::size_t>> manual_door_target() const;
+    bool manual_door_interaction(bool activate);
+    std::string manual_door_label() const;
     void render_gate_connection_frames(game::runtime::SceneRenderer&) const;
     mutable std::vector<std::uint64_t> gate_topology_signature_;
     mutable std::vector<std::size_t> gate_topology_roots_;
-    void render_habitat_mesh(game::runtime::SceneRenderer& r,const HabitatMesh& mesh,game::runtime::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false,HabitatKind kind=HabitatKind::AirLock,bool powered=true) const;
+    void render_habitat_mesh(game::runtime::SceneRenderer& r,const HabitatMesh& mesh,game::runtime::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false,HabitatKind kind=HabitatKind::AirLock,bool powered=true,float light_level=0) const;
     void render_resource_mesh(game::runtime::SceneRenderer& r,const ResourceMesh& mesh,game::runtime::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,ResourceKind kind=ResourceKind::Count) const;
     struct StructureAttachment {
         game::runtime::Vec3 position;
@@ -569,7 +608,7 @@ private:
     ResourceBundle construction_site_remaining(const ConstructionTargetRef& target,bool include_reservations=true,std::size_t exclude_robot=kNoRobotIndex) const;
     bool robot_load_needed_resources(BuilderRobotState& robot,const ResourceBundle& need);
     bool spawn_produced_resource(MaterialResource resource,std::int64_t amount,game::runtime::Vec3 source_position,bool defer_if_blocked=true);
-    void enter_first_person_drop_mode();
+    void enter_first_person_mode();
     void exit_first_person_mode();
     void update_first_person(float dt,const game::runtime::InputState& input);
     bool pick_build_ground(game::runtime::Vec3& hit) const;
@@ -582,6 +621,9 @@ private:
     bool store_first_person_carried_resource();
     void stored_resource_box_pose(const PlacedResource& structure,const ResourceMesh& mesh,std::size_t box_index,game::runtime::Vec3& base,float& half_width,float& height) const;
     bool first_person_spawn_valid(game::runtime::Vec3 p) const;
+    bool nearby_resource_packages(game::runtime::Vec3,float,const std::function<bool(const packages::Box&)>&) const;
+    bool resource_packages_block(game::runtime::Vec3) const;
+    float resource_package_support(game::runtime::Vec3) const;
     enum class CrewTraversal { Player, Astronaut, Plan };
     bool first_person_move_allowed(game::runtime::Vec3 from,game::runtime::Vec3 to,CrewTraversal traversal=CrewTraversal::Player) const;
     bool airlock_powered(std::size_t index) const;

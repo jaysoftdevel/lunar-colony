@@ -40,12 +40,13 @@ void GameApp::render_playfield(SceneRenderer& r){
         if(graphics_.enabled(GraphicsFeature::LocalLights)){
             std::vector<LunarLight> lights;
             for(const auto& fixture:corridor_fixtures)lights.push_back(fixture.light());
-            for(const auto& habitat:placed_habitats_){
+            for(std::size_t i=0;i<placed_habitats_.size();++i){const auto& habitat=placed_habitats_[i];
                 if(habitat.construction.complete() && lunar_look::powered(habitat.supply,habitat.power_enabled))
                 {
                     const auto& mesh=habitat_models_.mesh(habitat);
                     lights.push_back(lunar_look::habitat_fixture(habitat,mesh).light());
-                    lights.push_back({habitat.position+Vec3{0,mesh.walkable_floor_y+2.05f,0},{.80f,.89f,1.f,1},9.f,25.f});
+                    const float level=interior_light_level(i);
+                    if(level>0)lights.push_back({habitat.position+Vec3{0,mesh.walkable_floor_y+2.05f,0},{.80f,.89f,1.f,1},9.f,25.f*level});
                 }
             }
             for(const auto& pad:placed_resources_){
@@ -56,9 +57,13 @@ void GameApp::render_playfield(SceneRenderer& r){
             }
             for(std::size_t i=0;i<placed_resources_.size();++i){
                 const auto& home=placed_resources_[i];
-                if(home.kind!=ResourceKind::RobotWorkshop || !home.construction.complete() ||
-                   !lunar_look::powered(home.supply,home.power_enabled) || !workshop_operational(i))continue;
-                for(const auto& fixture:lunar_look::workshop_fixtures(home))lights.push_back(fixture.light());
+                const float level=interior_light_level(i,true);if(level<=0)continue;
+                if(home.kind==ResourceKind::RobotWorkshop){
+                    for(const auto& fixture:lunar_look::workshop_fixtures(home)){auto light=fixture.light();light.power*=level;lights.push_back(light);}
+                }else if(home.kind==ResourceKind::StorageDome){
+                    const auto& mesh=resource_models_.mesh(home);
+                    lights.push_back({home.position+Vec3{0,mesh.walkable_floor_y+2.4f,0},{.80f,.89f,1.f,1},mesh.footprint_x*.7f,25.f*level});
+                }
             }
             scene.light_count=std::min(lights.size(),scene.lights.size());
             const auto distance_to_focus=[&](const LunarLight& light){
@@ -105,9 +110,7 @@ void GameApp::render_playfield(SceneRenderer& r){
     render_builder_robot(r);
     render_gate_areas(r);
     render_gate_connection_frames(r);
-    if constexpr(build::debug_features){
-        if(astronaut_test_active()) render_test_astronauts(r);
-    }
+    if(astronauts_active())render_test_astronauts(r);
 
     if(first_person_mode_==FirstPersonMode::Active){
         placement_tip_title_.clear();placement_tip_detail_.clear();placement_tip_cost_={};
@@ -123,6 +126,7 @@ void GameApp::render_playfield(SceneRenderer& r){
         render_progress_tree(r);
         render_build_bar(r);
         render_first_person_hud(r);
+        render_astronaut_status(r,view);
         render_placement_tooltip(r);
         return;
     }
@@ -132,6 +136,7 @@ void GameApp::render_playfield(SceneRenderer& r){
     placement_tip_cost_={};
     const bool over_overlay=mouse_over_playfield_overlay(input_);
     if(!over_overlay){
+        render_interior_unit_preview(r);
         render_corridor_link_preview(r);
         render_corridor_placement(r);
         render_habitat_placement(r);
@@ -156,7 +161,7 @@ void GameApp::render_playfield(SceneRenderer& r){
     render_ore_survey(r);
     render_selection_marquee(r);
     if(selection_kind_!=SelectionKind::None) render_selection_panel(r);
-    if(astronaut_test_active())render_astronaut_status(r,camera_.view_projection(aspect));
+    if(astronauts_active())render_astronaut_status(r,camera_.view_projection(aspect));
 
     if(selection_kind_==SelectionKind::None){
     const BuildObjectDefinition* active_build=build_catalog_.selected();
@@ -258,10 +263,12 @@ void GameApp::render_first_person_hud(SceneRenderer& r){
             r.draw_line({cx,cy+2.0f},{cx,cy+8.0f},cross,2.0f);
 
         }
-        Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,528.0f,49.0f};
+        const float help_width=controlled_astronaut_>=0?std::min(528.f,astronaut_status_rect().x-2*PLAYFIELD_MARGIN):528.f;
+        Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,help_width,49.0f};
         r.draw_rect(help,kHudFill);
         game_label(r,{help.x+12.0f,help.y+8.0f},"FIRST PERSON VIEW",0.64f,theme_);
         game_label_fitted(r,{help.x+12.f,help.y+28.f,help.w-24.f,15.f},
+            help.w<400?(build_catalog_.selected()?"LMB PLACE / N-M ROTATE / RMB CANCEL":"WASD / SHIFT / SPACE / ALT / V EXIT"):
             build_catalog_.selected()?"LMB PLACE / WHEEL SIZE / N-M ROTATE / ALT CURSOR / TAB TOGGLE / RMB CANCEL":
             "WASD WALK / SHIFT SPRINT / SPACE JUMP / ALT CURSOR / TAB TOGGLE / V EXIT",.43f,theme_,true);
 
@@ -283,6 +290,12 @@ void GameApp::render_first_person_hud(SceneRenderer& r){
             env.h+=status.h;break;
         }
 
+        const auto manual=manual_door_label();
+        if(!manual.empty()){
+            Rect control{env.x,env.y+env.h+6,env.w,30};
+            if(ui::button(r,ui_input_,control,manual,theme_,!simulation_paused()))manual_door_interaction(true);
+            env.h+=36;
+        }
         if(first_person_carried_resource_){
             const auto& carried=*first_person_carried_resource_;
             std::ostringstream line;

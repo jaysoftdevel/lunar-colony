@@ -1023,6 +1023,7 @@ void GameApp::deploy_lunar_base_from_mission(){
     playfield_size_=kNewGamePlayfieldDefault;
     playfield_.rebuild(playfield_size_);
     camera_.reset(playfield_size_);
+    reset_first_person_crew();
     first_person_mode_=FirstPersonMode::Off;
     first_person_cursor_=false;first_person_alt_cursor_=false;
     app_.set_relative_mouse_mode(false);

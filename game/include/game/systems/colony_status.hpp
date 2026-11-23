@@ -2,6 +2,8 @@
 #include "game/systems/solar_tracking.hpp"
 
 namespace game {
+inline constexpr double kGameDaySeconds=480.0;
+inline constexpr double kGameHourSeconds=kGameDaySeconds/24.0;
 struct ColonyStatusState {
     int day{1};
     float hour{8.0f};
@@ -33,7 +35,7 @@ public:
 private:
     int day_=1;
     float hour_=8.0f;
-    float day_length_seconds_=240.0f;
+    float day_length_seconds_=static_cast<float>(kGameDaySeconds);
     int power_current_=72;
     int power_capacity_=100;
     int water_current_=840;

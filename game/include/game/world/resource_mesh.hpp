@@ -236,6 +236,8 @@ struct PlacedResource {
     std::array<bool,2> storage_extra_ready{};
     std::array<std::size_t,2> storage_extra_indices{{std::numeric_limits<std::size_t>::max(),std::numeric_limits<std::size_t>::max()}};
     float storage_extension_open{0.0f}; // transient shutter animation
+    bool manual_gate_override{false};
+    bool manual_gate_open{false}; // Transient manual crank, shared by exterior gates.
     float workshop_gate_open{0.0f}; // transient; restored from live occupancy
     float workshop_gate_hold{0.0f};
     bool workshop_gate_initialized{false};

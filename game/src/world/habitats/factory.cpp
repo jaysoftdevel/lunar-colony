@@ -1,4 +1,5 @@
 #include "game/world/habitat_builder.hpp"
+#include "game/world/interior_station.hpp"
 #include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
@@ -21,6 +22,8 @@ void build_factory_outer(Builder& b){
     for(int row=0;row<3;++row) for(int col=0;col<2;++col)
         b.box(b.mesh.details,{-6.55f,1.25f+0.8f*(float)row,-2.2f+4.4f*(float)col},{1.1f,0.62f,1.35f});
 
+    {
+    interior_layout::StationScope installed_process_equipment(b.mesh);
     // Gantry crane above the production hall.
     b.box(b.mesh.details,{-2.9f,7.15f,0},{7.4f,0.34f,0.40f});
     b.box(b.mesh.details,{-5.95f,5.15f,0},{0.34f,4.2f,0.40f});
@@ -32,6 +35,8 @@ void build_factory_outer(Builder& b){
     b.box(b.mesh.details,{3.7f,7.0f,-1.3f},{2.0f,1.9f,0.65f});
     for(int i=0;i<8;++i) b.line({2.85f+0.23f*i,6.25f,-1.67f},{2.85f+0.23f*i,7.75f,-1.67f});
     b.cylinder_between(b.mesh.details,{-1.8f,8.25f,1.5f},{3.0f,7.75f,0.8f},0.11f,8,true,true);
+
+    }
 
     b.supports(-5.3f,4.7f,3.0f,0.95f);
     b.supports(-5.3f,4.7f,-3.0f,0.95f);

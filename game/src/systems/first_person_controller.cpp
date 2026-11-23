@@ -19,6 +19,8 @@ void FirstPersonController::spawn(Vec3 feet_position,float yaw_degrees){
     planar_velocity_={};vertical_velocity_=0;grounded_=true;
 }
 
+void FirstPersonController::restore_view(float yaw,float pitch){yaw_degrees_=wrap_degrees(yaw);pitch_degrees_=std::clamp(pitch,-82.f,82.f);}
+
 void FirstPersonController::update_look(const InputState& input){
     constexpr float sensitivity=0.105f;
     yaw_degrees_=wrap_degrees(yaw_degrees_+(float)input.mouse_dx*sensitivity);

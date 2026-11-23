@@ -1313,7 +1313,7 @@ struct NavigationRegression {
         require(full.glass.size()>=mesh.glazing.size(),"Full hull does not submit transparent roof");
         app.habitat_view_mode_=GameApp::HabitatViewMode::None;
         app.render_resource_mesh(cut,mesh,{},0,false,true,false,kConstructionSteps,nullptr,home.kind);
-        require(cut.glass.size()==mesh.glazing.size() && !cut.triangles.empty(),"Faded hull lost roof tint or frame/equipment");
+        require(cut.glass.size()==full.glass.size() && cut.triangles.size()==full.triangles.size(),"Exterior workshop changed with the habitat cutaway option");
         app.first_person_.spawn({0,workshop::kDeck,0});
         require(app.first_person_ceiling_height({0,workshop::kDeck,0})<4.7f,"Transparent roof lost physical ceiling");
         app.builder_robots_.resize(4);
@@ -1446,6 +1446,7 @@ struct NavigationRegression {
                 plant.placement_sequence=2;
                 plant.supply.volume_m3=100;plant.supply.oxygen_kg=100*kOxygenKgPerM3;
                 plant.supply.power_fraction=1;
+                InteriorUnit refinery;refinery.kind=InteriorUnitKind::OreRefinery;refinery.position={0,app.habitat_models_.mesh(plant).walkable_floor_y,2};plant.units.push_back(refinery);
                 app.placed_habitats_.push_back(plant);
             }
             BuilderRobotState carrier;
@@ -1502,8 +1503,9 @@ struct NavigationRegression {
                 require(resumed.placed_resources_[1].stored_ore_boxes[0]==1 && resumed.resources_.amounts().empty(),
                         "stored raw ore did not survive save/load");
             }else{
-                require(app.resources_.amount(MaterialResource::Iron)==ore::refined_box_kg,
-                        "carrier did not credit one refined crate");
+                require(app.placed_habitats_[0].unit_ore_kg[0]==ore::box_kg&&app.resources_.amount(MaterialResource::Iron)==0,"Carrier raw ore accounting");
+                app.update_interior_units(static_cast<float>(kGameDaySeconds*.21));
+                require(app.resources_.amount(MaterialResource::Iron)==ore::refined_box_kg,"Refinery did not process delivered ore");
             }
         }
         // A parked carrier must request its closed workshop gate before its
@@ -1554,6 +1556,7 @@ struct NavigationRegression {
         app.placed_habitats_[0].kind=HabitatKind::CrewQuarters;
         require(!build(UtilityKind::ConveyorBelt,source,intake),"belt accepted an unrelated habitat");
         app.placed_habitats_[0].kind=HabitatKind::Factory;
+        {InteriorUnit metal;metal.kind=InteriorUnitKind::MetalFabricator;metal.position={0,app.habitat_models_.mesh(app.placed_habitats_[0]).walkable_floor_y,2};app.placed_habitats_[0].units.push_back(metal);}
         require(build(UtilityKind::ConveyorBelt,source,intake),"driller could not connect to factory");
         require(!build(UtilityKind::ConveyorBelt,source,intake),"driller accepted a duplicate conveyor");
         require(app.conveyor_route_clear(network.connections()[0].path) &&
@@ -1566,7 +1569,7 @@ struct NavigationRegression {
         require(build(UtilityKind::SupplyChannel,source,intake) && network.connections().size()==2,
                 "conveyor prevented an independent power channel between its endpoints");
         auto& belt=network.mutable_connections().front();
-        app.update_ore_logistics(240);
+        app.update_ore_logistics(static_cast<float>(kGameDaySeconds));
         require(app.resources_.amounts().empty() && belt.ore_cargo==ore::no_cargo &&
                 belt.ore_distance_m==0,"driller sent ore to a conveyor");
         auto& mined=app.placed_resources_[0].mined_ore_kg;
@@ -1575,7 +1578,7 @@ struct NavigationRegression {
         const auto standard=mined;
         mined={};
         app.placed_resources_[0].size=ResourceSizeTier::Small;
-        app.update_ore_logistics(240);
+        app.update_ore_logistics(static_cast<float>(kGameDaySeconds));
         require(std::abs(stock_total()-30)<1e-9 && belt.ore_cargo==ore::no_cargo,
                 "small driller production or ore routing changed");
         mined=standard;
@@ -1603,6 +1606,8 @@ struct NavigationRegression {
 
         app.placed_habitats_[0].supply.power_fraction=1;
         app.update_ore_logistics(1);
+        require(app.placed_habitats_[0].unit_ore_kg[cargo]==ore::box_kg,"Legacy belt raw-inventory custody");
+        app.update_interior_units(static_cast<float>(kGameDaySeconds*.26));
         require(app.resources_.amount(ore::materials[cargo])==ore::refined_box_kg &&
                 belt.ore_cargo==ore::no_cargo && app.ground_resource_piles_.size()==1,
                 "powered receiver did not process the arriving crate exactly once");
@@ -1786,7 +1791,7 @@ struct NavigationRegression {
         require(std::abs(gen.water_processed_litres_per_day-gen.oxygen_produced_kg_per_day*kWaterPerOxygen)<1e-9,"water processing and oxygen rate disagree");
         require(std::abs(gen.hydrogen_produced_kg_per_day-gen.oxygen_produced_kg_per_day*kHydrogenPerOxygen)<1e-9,"electrolysis hydrogen/oxygen mass ratio is not 1:8");
         require(gen.hydrogen_kg>0 && gen.hydrogen_kg<=kOxygenGeneratorHydrogenBufferKg,"oxygen generator did not retain hydrogen by-product in its local buffer");
-        require(app.placed_habitats_[1].supply.oxygen_kg==0 && app.placed_resources_[3].supply.oxygen_kg==0,"generator instantaneously filled downstream interiors");
+        require(app.placed_habitats_[0].supply.breathability()>app.placed_habitats_[1].supply.breathability()&&app.placed_habitats_[1].supply.breathability()<1,"Source/downstream pressure gradient disappeared");
         app.update_supply_simulation(60);
         require(std::abs((20-app.placed_resources_[1].supply.water_litres)-mass()*kWaterPerOxygen)<1e-7,"water-to-oxygen network mass balance failed");
         require(app.placed_habitats_[1].supply.oxygen_kg>0 && app.placed_resources_[3].supply.oxygen_kg>0,"connected indoor room or storage did not receive oxygen");
@@ -1892,6 +1897,7 @@ struct NavigationRegression {
         auto habitat=[](HabitatKind kind,Vec3 p){PlacedHabitat h;h.kind=kind;h.position=p;h.construction.step=kConstructionSteps;return h;};
         app.placed_habitats_={habitat(HabitatKind::OxygenGeneratorDome,{-10,0,0})};
         app.placed_habitats_[0].supply.hydrogen_kg=1.0;
+        app.placed_habitats_[0].oxygen_unit_fitted=true; // Fuel-cell test without electrolyzer load.
         app.placed_resources_={resource(ResourceKind::HydrogenGenerator,{10,0,0}),resource(ResourceKind::PowerStorage,{25,0,0})};
         UtilityConnection h2;h2.endpoint_a.kind=UtilityEndpointKind::Habitat;h2.endpoint_a.index=0;h2.endpoint_b.kind=UtilityEndpointKind::Resource;h2.endpoint_b.index=0;h2.path={{-10,0,0},{10,0,0}};h2.construction.step=h2.construction.total_steps;
         UtilityConnection battery;battery.endpoint_a.kind=battery.endpoint_b.kind=UtilityEndpointKind::Resource;battery.endpoint_a.index=0;battery.endpoint_b.index=1;battery.path={{10,0,0},{25,0,0}};battery.construction.step=battery.construction.total_steps;
@@ -1946,7 +1952,7 @@ struct NavigationRegression {
             recovery.builder_robots_[0].battery_charge_kwh=0.0f;
             recovery.builder_robots_[1].battery_charge_kwh=recovery.builder_robots_[1].battery_capacity_kwh*0.055f;
             bool builder_recovered=false,carrier_recovered=false;
-            for(int frame=0;frame<60*150 && !(builder_recovered&&carrier_recovered);++frame){
+            for(int frame=0;frame<int(60*kGameDaySeconds*.625) && !(builder_recovered&&carrier_recovered);++frame){
                 recovery.update_construction(1.0f/60.0f);
                 for(const auto& r:recovery.builder_robots_)
                     require(r.safety.mode!=SafetyMode::Fault,"battery depletion incorrectly became a safety fault");
@@ -2325,7 +2331,7 @@ struct NavigationRegression {
             }
         };
         const auto before=app.astronaut_cache_;
-        app.update_supply_simulation(24.f);
+        app.update_supply_simulation(static_cast<float>(kGameDaySeconds*.1));
         require(app.astronaut_cache_.food_kg<before.food_kg-.339 && app.astronaut_cache_.water_litres<before.water_litres-1.59 &&
                 app.astronaut_cache_.oxygen_kg<before.oxygen_kg-.334,"cache resource draw wrong");
         require(crew[0].fatigue>.11 && crew[0].hunger==0 && crew[0].thirst==0,"individual needs wrong");
@@ -2373,7 +2379,7 @@ struct NavigationRegression {
         int knocked_out=0;
         for(auto& c:crew)knocked_out+=c.activity==AstronautActivity::Knockout;
         require(knocked_out==2,"crew did not knock out with all beds occupied");
-        app.update_supply_simulation(24.f);
+        app.update_supply_simulation(static_cast<float>(kGameDaySeconds*.1));
         for(auto& c:crew)require(c.fatigue<(c.activity==AstronautActivity::Knockout?kCrewExhausted:.85f),"sleep did not restore fatigue");
 
         std::string error;
@@ -2509,6 +2515,7 @@ struct NavigationRegression {
         PlacedHabitat bio;bio.kind=HabitatKind::BioDome;bio.size=HabitatSizeTier::Standard;bio.position={15,0,0};bio.construction.step=kConstructionSteps;
         for(const auto& fresh:bio.hydroponics) require(fresh.plant==HydroponicPlant::Empty && fresh.growth_fraction==0.0,"new Bio Dome bay did not start empty");
         bio.hydroponics[0].plant=HydroponicPlant::Potato;
+        InteriorUnit rack;rack.kind=InteriorUnitKind::HydroponicRack;rack.position={0,app.habitat_models_.mesh(bio).walkable_floor_y,2};bio.units.push_back(rack);
         app.placed_habitats_={bio};
         auto connect=[&](UtilityEndpointKind ka,std::size_t a,UtilityEndpointKind kb,std::size_t b,Vec3 pa,Vec3 pb){
             UtilityConnection u;u.endpoint_a.kind=ka;u.endpoint_a.index=a;u.endpoint_b.kind=kb;u.endpoint_b.index=b;u.path={pa,pb};u.construction.step=u.construction.total_steps;app.utility_network_.mutable_connections().push_back(u);
@@ -2521,15 +2528,16 @@ struct NavigationRegression {
         const double water_before=app.placed_resources_[2].supply.water_litres;
         app.update_supply_simulation(24.0f);
         auto& bay=app.placed_habitats_[0].hydroponics[0];
-        require(bay.growth_fraction>0.02 && bay.growth_fraction<0.06,"potato bay did not advance at the expected crop-specific rate during the light phase");
+        const double expected=24./(kGameDaySeconds*hydroponic_profile(HydroponicPlant::Potato).growth_days);
+        require(std::abs(bay.growth_fraction-expected)<expected*.02,"potato bay did not advance at the expected crop-specific rate during the light phase");
         require(app.placed_resources_[2].supply.water_litres<water_before,"hydroponics growth did not consume connected water");
-        require(app.placed_habitats_[0].supply.power_demand_kw>1.5,"hydroponics grow lights were not added during the light phase");
+        require(app.placed_habitats_[0].supply.power_demand_kw>.30,"hydroponics grow lights were not added during the light phase");
         require(app.placed_habitats_[0].supply.water_demand_litres_per_day>=3.19,"hydroponics water demand telemetry missing during the light phase");
 
         const double light_growth=bay.growth_fraction;
         clock.hour=23;app.status_.restore(clock);app.update_supply_simulation(2.0f);
         require(std::abs(bay.growth_fraction-light_growth)<1e-9,"crop grew during the greenhouse dark phase");
-        require(std::abs(app.placed_habitats_[0].supply.power_demand_kw-1.5)<1e-6,"grow-light demand remained active during the dark phase");
+        require(std::abs(app.placed_habitats_[0].supply.power_demand_kw-(.20+.10*.18))<1e-6,"grow-light demand remained active during the dark phase");
         require(app.placed_habitats_[0].supply.water_demand_litres_per_day<1e-9,"crop water demand remained active during the dark phase");
 
         clock.hour=12;app.status_.restore(clock);app.placed_habitats_[0].supply.oxygen_kg=0.0;
@@ -2537,7 +2545,7 @@ struct NavigationRegression {
         require(std::abs(bay.growth_fraction-no_air_growth)<1e-9,"crop grew without breathable air");
         app.placed_habitats_[0].supply.oxygen_kg=app.placed_habitats_[0].supply.volume_m3*kOxygenKgPerM3;
 
-        bay.growth_fraction=0.999;
+        bay.growth_fraction=0.9999;
         const auto food_before=app.resources_.amount(MaterialResource::Food);
         app.update_supply_simulation(1.0f);
         require(bay.harvests==1 && bay.growth_fraction<0.01,"mature crop did not auto-harvest and restart growth");
@@ -2661,7 +2669,7 @@ struct NavigationRegression {
         const double solar_buffer=flow.placed_resources_[0].supply.energy_kwh;
         flow.update_supply_simulation(1);
         require(std::abs(flow.battery_net_kw_)<1e-6 && std::abs(flow.supply_power_delivered_kw_-4)<1e-6 &&
-            std::abs(flow.placed_resources_[0].supply.energy_kwh-solar_buffer+.4)<1e-6,
+            std::abs(flow.placed_resources_[0].supply.energy_kwh-solar_buffer+4./kGameHourSeconds)<1e-6,
             "solar buffer should supply nighttime load ahead of the battery");
         flow.placed_resources_[0].supply.energy_kwh=0;
         flow.update_supply_simulation(1);
@@ -2700,6 +2708,8 @@ struct NavigationRegression {
             item.position={18,0,(float)app.placed_habitats_.size()*22};
             item.construction.step=kConstructionSteps;
             item.placement_sequence=app.placed_habitats_.size()+4;
+            InteriorUnit unit;unit.kind=kind==HabitatKind::ProcessingFacility?InteriorUnitKind::OreRefinery:InteriorUnitKind::MetalFabricator;unit.position={-2,app.habitat_models_.mesh(item).walkable_floor_y,2};item.units.push_back(unit);
+            if(kind==HabitatKind::ProcessingFacility){unit.position.x=2;item.units.push_back(unit);}
             app.placed_habitats_.push_back(item);
         }
 
@@ -2724,14 +2734,14 @@ struct NavigationRegression {
         auto& processor=app.placed_habitats_[0];
         const auto near=[](double a,double b){return std::abs(a-b)<1e-6;};
         app.update_supply_simulation(1);
-        require(near(app.supply_power_delivered_kw_,16) && near(app.supply_power_load_kw_,18) &&
-            near(drill.supply.power_fraction,16.0/18.0) && near(app.battery_net_kw_,0),
+        require(near(app.supply_power_delivered_kw_,16) && near(app.supply_power_load_kw_,19.4) &&
+            near(drill.supply.power_fraction,16.0/19.4) && near(app.battery_net_kw_,0),
             "brownout telemetry hid available power or charged without surplus");
 
         processor.power_enabled=false;
         auto services=app.update_supply_simulation(1);
-        require(near(app.supply_power_load_kw_,12) && near(app.supply_power_delivered_kw_,12) &&
-            near(app.battery_net_kw_,3.8) && processor.supply.power_fraction==0 &&
+        require(near(app.supply_power_load_kw_,11.2) && near(app.supply_power_delivered_kw_,11.2) &&
+            near(app.battery_net_kw_,4.56) && processor.supply.power_fraction==0 &&
             !services.habitats[0].power && services.habitats[1].power,
             "load shedding failed or powered-off habitat cut power to downstream factory");
 
@@ -2841,8 +2851,8 @@ struct NavigationRegression {
         app.placed_habitats_.back().construction.step=kConstructionSteps;app.update_supply_simulation(100);require(app.placed_habitats_.back().supply.oxygen_kg>0,"completed room did not join the air network");
         GameApp solar(engine);clock.hour=12;solar.status_.restore(clock);PlacedResource panel;panel.kind=ResourceKind::SolarPanel;panel.construction.step=kConstructionSteps;PlacedResource battery=panel;battery.kind=ResourceKind::PowerStorage;solar.placed_resources_={panel,battery};
         UtilityConnection wire;wire.endpoint_a.kind=wire.endpoint_b.kind=UtilityEndpointKind::Resource;wire.endpoint_a.index=0;wire.endpoint_b.index=1;wire.path={{0,0,0},{5,0,0}};wire.construction.step=wire.construction.total_steps;solar.utility_network_.mutable_connections().push_back(wire);
-        solar.update_supply_simulation(1);require(std::abs(solar.placed_resources_[1].supply.energy_kwh-0.95)<1e-6,"standard solar failed increased output/charge cap");
-        solar.placed_resources_[0].size=ResourceSizeTier::Small;solar.placed_resources_[1].supply.energy_kwh=0;solar.update_supply_simulation(1);require(std::abs(solar.placed_resources_[1].supply.energy_kwh-0.76)<1e-6,"small solar failed doubled output");
+        solar.update_supply_simulation(1);require(std::abs(solar.placed_resources_[1].supply.energy_kwh-9.5/kGameHourSeconds)<1e-6,"standard solar failed increased output/charge cap");
+        solar.placed_resources_[0].size=ResourceSizeTier::Small;solar.placed_resources_[1].supply.energy_kwh=0;solar.update_supply_simulation(1);require(std::abs(solar.placed_resources_[1].supply.energy_kwh-7.6/kGameHourSeconds)<1e-6,"small solar failed doubled output");
         std::cout<<"All indoor types fill via mixed pipes/corridors and external manifolds; blueprint completion, solar doubling and ordered geometry streaming passed\n";
     }
     static void supply(){
@@ -2897,7 +2907,7 @@ struct NavigationRegression {
         app.placed_resources_[2].construction.step=0; // isolate electrolysis mass balance
         app.update_supply_simulation(0.1f);
         require(app.placed_habitats_[0].supply.oxygen_kg>0,"electrolyzer did not produce oxygen");
-        require(app.placed_habitats_[1].supply.oxygen_kg==0,"air teleported across corridor in first substep");
+        require(app.placed_habitats_[1].supply.breathability()<app.placed_habitats_[0].supply.breathability(),"Downstream pressure exceeded its source");
         require(app.placed_habitats_[0].supply.breathability()>app.placed_habitats_[1].supply.breathability(),"all rooms filled simultaneously");
         app.update_supply_simulation(60);
         double mass=0;for(const auto& h:app.placed_habitats_)mass+=h.supply.oxygen_kg;for(const auto& q:app.placed_resources_)mass+=q.supply.oxygen_kg;for(const auto& u:app.utility_network_.connections())mass+=u.supply.oxygen_kg;for(const auto& q:app.corridor_network_.connections())mass+=q.supply.oxygen_kg;
@@ -3285,7 +3295,7 @@ struct NavigationRegression {
             // This fixture exercises hatch clearance rather than utility
             // commissioning. The air lock needs power before its leaves move.
             a.supply.power_fraction=1.0;
-            PlacedHabitat b;b.kind=(HabitatKind)kind;b.size=(HabitatSizeTier)tier;b.position={22,0,0};b.rotation_degrees=rotation;b.construction.step=kConstructionSteps;
+            PlacedHabitat b;b.kind=(HabitatKind)kind;b.size=(HabitatSizeTier)tier;b.position={22,0,0};b.rotation_degrees=rotation;b.construction.step=kConstructionSteps;b.supply.power_fraction=1;
             app.placed_habitats_={a,b};
             const auto& mesh=app.habitat_models_.mesh(b);
             require(mesh.entrances.empty() && mesh.entrance_access.empty(),"habitat retained a predefined entrance");

@@ -1,4 +1,5 @@
 #include "game/world/habitat_builder.hpp"
+#include "game/world/interior_station.hpp"
 #include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
@@ -32,6 +33,8 @@ void build_laboratory_outer(Builder& b){
         const float a=2*PI*i/6.0f;
         b.box(b.mesh.glazing,{-2.6f+1.05f*std::cos(a),6.15f,1.05f*std::sin(a)},{0.08f,0.75f,0.75f},false);
     }
+    {
+    interior_layout::StationScope installed_process_equipment(b.mesh);
     mast(b,{0.5f,5.45f,-1.35f},2.2f);
     mast(b,{2.0f,5.35f,1.1f},2.8f);
     mast(b,{3.2f,5.3f,-0.5f},1.8f);
@@ -41,6 +44,8 @@ void build_laboratory_outer(Builder& b){
     // External sample tanks / equipment cabinets.
     for(float z:{-1.7f,0.0f,1.7f}) b.cylinder_y(b.mesh.details,{5.73f,2.5f,z},2.7f,0.42f,12,true);
     b.box(b.mesh.details,{3.85f,1.5f,-2.55f},{1.5f,1.1f,0.55f});
+
+    }
 
     b.supports(-4.4f,4.5f,2.2f,0.9f);
     b.supports(-4.4f,4.5f,-2.2f,0.9f);

@@ -1,5 +1,6 @@
 #include "game/world/robot_workshop.hpp"
 #include "game/game_app.hpp"
+#include "game/world/interior_unit_mesh.hpp"
 #include "game/ui/layout.hpp"
 #include "game/util/world_math.hpp"
 #include "game/world/corridor/detail.hpp"
@@ -390,35 +391,6 @@ const std::vector<Vec3>& storage_floor_cells(StorageDomeSize size){
 
 } // namespace
 
-void GameApp::enter_first_person_drop_mode(){
-    build_catalog_.clear_selection();
-    corridor_link_source_=-1;
-    corridor_build_start_.reset();
-    utility_build_start_.reset();
-    walkway_build_start_.reset();
-    walkway_build_target_.reset();
-    clear_world_selection();
-    first_person_hover_ground_resource_=-1;
-    first_person_hover_storage_resource_=-1;
-    first_person_hover_storage_box_=-1;
-    first_person_cursor_=false;first_person_alt_cursor_=false;
-    first_person_mode_=FirstPersonMode::DropPending;
-    app_.set_relative_mouse_mode(false);
-    app_.set_cursor_visible(false);
-}
-
-void GameApp::exit_first_person_mode(){
-    if(first_person_carried_resource_) drop_first_person_carried_resource();
-    first_person_hover_ground_resource_=-1;
-    first_person_hover_storage_resource_=-1;
-    first_person_hover_storage_box_=-1;
-    first_person_mode_=FirstPersonMode::Off;
-    first_person_cursor_=false;first_person_alt_cursor_=false;
-    cancel_placement_tool();
-    app_.set_relative_mouse_mode(false);
-    app_.set_cursor_visible(true);
-}
-
 bool GameApp::habitat_has_complete_corridor_connection(std::size_t habitat_index) const {
     for(const auto& c:corridor_network_.connections()){
         if(!c.construction.complete()) continue;
@@ -518,6 +490,7 @@ float GameApp::first_person_door_open_fraction(Vec3 door_position) const {
 }
 
 bool GameApp::first_person_spawn_valid(Vec3 p) const {
+    if(resource_packages_block(p))return false;
     if(lunar_lander_segment_blocked(lander_,p,p,0.35f))return false;
     const float radius=first_person_.body_radius();
     const float half=(float)playfield_.size()*0.5f-radius;
@@ -600,6 +573,7 @@ bool GameApp::first_person_spawn_valid(Vec3 p) const {
 }
 
 float GameApp::first_person_floor_height(Vec3 p) const {
+    const float package_top=resource_package_support(p);if(package_top>0)return package_top;
     for(const auto& item:placed_resources_) if(item.kind==ResourceKind::RobotWorkshop && item.construction.complete()){
         const float y=workshop::floor(item,p);if(y>0) return y;
     }
@@ -741,6 +715,9 @@ float GameApp::first_person_floor_height(Vec3 p) const {
 
 float GameApp::first_person_ceiling_height(Vec3 p) const {
     float ceiling=std::numeric_limits<float>::max();
+    nearby_resource_packages(p,first_person_.body_radius(),[&](const packages::Box& box){
+        if(std::abs(p.x-box.base.x)<box.half+first_person_.body_radius()&&std::abs(p.z-box.base.z)<box.half+first_person_.body_radius()&&box.bottom()>=p.y+first_person_.body_height()-.02f)ceiling=std::min(ceiling,box.bottom());return true;
+    });
     const float head=first_person_floor_height(p)+first_person_.body_height();
     const auto scan=[&](const std::vector<Vec3>& triangles,Vec3 origin,float rotation){
         const Vec3 local=rotate_y(p-origin,-rotation);
@@ -830,8 +807,6 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to,CrewTraversal traversa
         if(!placed_habitats_[i].construction.complete()) continue;
         for(const auto& d:habitat_doors(i)){
             float fraction=opening(d);
-            if(!planning && placed_habitats_[i].kind==HabitatKind::AirLock && !airlock_powered(i) &&
-               std::abs(dot(from-d.wall_position,d.normal))>=radius+pressure_door::kThickness*.5f)fraction=0.f;
             if(airlock::internal(d)?airlock::bulkhead_blocks(d,fraction,from,to,radius,first_person_.body_height(),habitat_models_.mesh(placed_habitats_[i]).footprint_x/10.0f):
                pressure_door::blocks(d,fraction,from,to,radius))return false;
         }
@@ -946,6 +921,13 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to,CrewTraversal traversa
     for(int sample=1;sample<=samples;++sample){
         const float t=(float)sample/(float)samples;
         const Vec3 current=from+(to-from)*t;
+        if(resource_packages_block(current))return false;
+        if(!crew&&controlled_astronaut_>=0){
+            for(std::size_t i=0;i<test_astronauts_.size();++i)if(int(i)!=controlled_astronaut_&&astronaut_present(i)){
+                const auto p=test_astronauts_[i].position;
+                if(std::abs(current.y-p.y)<first_person_.body_height()&&dist_xz_local(current,p)<kIndoorAstronautSeparation-.001f)return false;
+            }
+        }
         if(current.x<-half || current.x>half || current.z<-half || current.z>half) return false;
         if(crew){
             bool current_airlock=false;
@@ -1031,23 +1013,7 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to,CrewTraversal traversa
                 if(!doorway){
                     const Vec3 local=rotate_y(current-item.position,-item.rotation_degrees);
                     if(resource_interior_blocks_first_person(resource_runtime_mesh(i),local,radius,first_person_.body_height())) return false;
-                    const float lane=geometry::kDoorClearWidth*0.5f-radius;
-                    if(std::abs(local.x)>=lane && std::abs(local.z)>=lane){
-                        std::size_t visible_boxes=item.stored_boxes.size();
-                        for(auto count:item.stored_ore_boxes) visible_boxes+=std::min(count,kVisibleOreBoxesPerType);
-                        for(std::size_t box_index=0;box_index<visible_boxes;++box_index){
-                            Vec3 base{};float half_width=0.0f,height=0.0f;
-                            stored_resource_box_pose(item,mesh,box_index,base,half_width,height);
-                            const float bottom=base.y+0.02f;
-                            const float top=base.y+height+0.02f;
-                            const float body_bottom=current.y+0.045f;
-                            const float body_top=current.y+first_person_.body_height()-0.035f;
-                            if(top<=body_bottom || bottom>=body_top) continue;
-                            const float dx=std::max(0.0f,std::abs(current.x-base.x)-half_width);
-                            const float dz=std::max(0.0f,std::abs(current.z-base.z)-half_width);
-                            if(dx*dx+dz*dz<=radius*radius) return false;
-                        }
-                    }
+
                 }
             }else if(body_overlaps_region(current,radius,[&](Vec3 q){
                 return inside_storage_hull(q,item,mesh,0.0f);
@@ -1304,11 +1270,13 @@ bool GameApp::first_person_pointer_over_hud(const InputState& input) const {
         const auto local=rotate_y(feet-h.position,-h.rotation_degrees);const auto& mesh=habitat_models_.mesh(h);
         if(std::abs(local.x)<=mesh.footprint_x*.5f+.2f && std::abs(local.z)<=mesh.footprint_z*.5f){help_height+=44.f;break;}
     }
+    if(!manual_door_label().empty())help_height+=36.f;
     if(first_person_carried_resource_)help_height+=52.f;
-    const Rect help{layout::PLAYFIELD_MARGIN,layout::STATUS_BAR_H+layout::PLAYFIELD_MARGIN,528,help_height};
+    const float help_width=controlled_astronaut_>=0?std::min(528.f,astronaut_status_rect().x-2*layout::PLAYFIELD_MARGIN):528.f;
+    const Rect help{layout::PLAYFIELD_MARGIN,layout::STATUS_BAR_H+layout::PLAYFIELD_MARGIN,help_width,help_height};
     return x<0 || x>=float(viewport_width_)/ui_scale_ || y<layout::STATUS_BAR_H ||
         y>=float(viewport_height_)/ui_scale_-layout::BUILD_BAR_H || help.contains(x,y) ||
-        mouse_over_playfield_overlay(input);
+        astronaut_status_hover(input)||mouse_over_playfield_overlay(input);
 }
 bool GameApp::pick_build_ground(Vec3& hit) const {
     if(first_person_mode_!=FirstPersonMode::Active)
@@ -1326,16 +1294,81 @@ bool GameApp::pick_build_ground(Vec3& hit) const {
     const float half=playfield_.size()*.5f;return std::abs(hit.x)<=half&&std::abs(hit.z)<=half;
 }
 void GameApp::cancel_placement_tool(){
+    interior_unit_tool_.reset();interior_unit_host_=kNoRobotIndex;
     build_catalog_.clear_selection();storage_gate_placement_active_=false;storage_gate_placement_owner_=kNoRobotIndex;
     corridor_link_source_=-1;corridor_build_start_.reset();utility_build_start_.reset();walkway_build_start_.reset();walkway_build_target_.reset();
     placement_tip_title_.clear();placement_tip_detail_.clear();placement_tip_cost_={};
+}
+
+float GameApp::interior_light_level(std::size_t index,bool resource,bool require_power) const {
+    if(status_.sun_pose().above_horizon)return 0;
+    const auto occupied=[&](const auto& inside){
+        if(first_person_mode_==FirstPersonMode::Active&&inside(first_person_.feet_position()))return true;
+        for(const auto& actor:test_astronauts_)if(astronaut_present(std::size_t(&actor-test_astronauts_.data()))&&actor.health>0&&inside(actor.position))return true;
+        for(const auto& robot:builder_robots_)if(inside(robot.position))return true;
+        return false;
+    };
+    if(resource){
+        if(index>=placed_resources_.size())return 0;
+        const auto& h=placed_resources_[index];
+        if((h.kind!=ResourceKind::StorageDome&&h.kind!=ResourceKind::RobotWorkshop)||!h.construction.complete()||!h.power_enabled||(require_power&&h.supply.power_fraction<.5))return 0;
+        const auto& mesh=resource_models_.mesh(h);
+        const auto inside=[&](Vec3 p){const auto local=rotate_y(p-h.position,-h.rotation_degrees);
+            if(local.y<mesh.walkable_floor_y-.30f||local.y>mesh.height||std::abs(local.x)>mesh.footprint_x*.5f||std::abs(local.z)>mesh.footprint_z*.5f)return false;
+            if(h.kind==ResourceKind::StorageDome)return inside_storage_hull(p,h,mesh,.05f);
+            return std::abs(local.x)<mesh.footprint_x*.46f&&std::abs(local.z)<mesh.footprint_z*.46f;
+        };
+        return occupied(inside)?1.f:.18f;
+    }
+    if(index>=placed_habitats_.size())return 0;
+    const auto& h=placed_habitats_[index];
+    if(!h.construction.complete()||!h.power_enabled||(require_power&&h.supply.power_fraction<.5))return 0;
+    const auto& mesh=habitat_models_.mesh(h);
+    const auto inside=[&](Vec3 p){const auto local=rotate_y(p-h.position,-h.rotation_degrees);
+        return std::abs(local.x)<mesh.footprint_x*.5f&&std::abs(local.z)<mesh.footprint_z*.5f&&local.y>=mesh.walkable_floor_y-.30f&&local.y<mesh.height&&inside_habitat_hull(p,h,mesh,.05f);};
+    return occupied(inside)?1.f:.18f;
+}
+
+bool GameApp::interior_unit_position_clear(std::size_t index,const InteriorUnit& unit,std::string& error) const {
+    if(index>=placed_habitats_.size()||int(unit.kind)>=int(InteriorUnitKind::Count)){error="INVALID HOST OR UNIT";return false;}
+    const auto& host=placed_habitats_[index];const auto& source=habitat_models_.mesh(host);
+    if(!host.construction.complete()||!interior_unit_allowed(host.kind,unit.kind)){error="UNIT IS NOT COMPATIBLE WITH THIS ROOM";return false;}
+    if(host.units.size()>=64){error="ROOM UNIT LIMIT REACHED";return false;}
+    if(!std::isfinite(unit.position.x)||!std::isfinite(unit.position.y)||!std::isfinite(unit.position.z)||!std::isfinite(unit.rotation_degrees)||std::abs(unit.position.y-source.walkable_floor_y)>.01f){error="PLACE ON THE INTERNAL DECK";return false;}
+    const auto [low,high]=interior_unit_bounds(unit);
+    if(low.z<geometry::kDoorClearWidth*.5f+.20f&&high.z>-geometry::kDoorClearWidth*.5f-.20f){error="CENTER WALKING AISLE RESERVED";return false;}
+    if(interior_unit_reserved(index,unit)){error="GATE APPROACH RESERVED";return false;}
+    for(const auto& other:host.units){if(interior_unit_reserved(index,other))continue;const auto [a,b]=interior_unit_bounds(other);
+        if(low.x<b.x&&high.x>a.x&&low.z<b.z&&high.z>a.z){error="OVERLAPS AN INSTALLED UNIT";return false;}
+    }
+    const auto& mesh=habitat_runtime_mesh(index);const auto size=interior_unit_profile(unit.kind).size;
+    const int nx=std::max(1,int(std::ceil((high.x-low.x)/.25f))),nz=std::max(1,int(std::ceil((high.z-low.z)/.25f)));
+    for(int ix=0;ix<=nx;++ix)for(int iz=0;iz<=nz;++iz){
+        const float x=std::lerp(low.x,high.x,float(ix)/nx),z=std::lerp(low.z,high.z,float(iz)/nz);
+        const auto world=host.position+rotate_y({x,source.walkable_floor_y,z},host.rotation_degrees);
+        // Equipment already has a clearance margin; do not add avatar head radius.
+        float roof=std::numeric_limits<float>::max();
+        for(const auto* layer:{&source.shell,&source.glazing})for(std::size_t t=0;t+2<layer->size();t+=3){
+            float y=0;if(triangle_height_at_xz({x,0,z},(*layer)[t],(*layer)[t+1],(*layer)[t+2],y)&&y>source.walkable_floor_y+.10f)roof=std::min(roof,y);
+        }
+        if(!inside_habitat_hull(world,host,source,.15f)||roof<source.walkable_floor_y+size.y+.10f){error="UNIT MUST FIT INSIDE THE PRESSURE HULL";return false;}
+        if(habitat_interior_blocks_first_person(mesh,{x,source.walkable_floor_y,z},.13f,size.y)){error="OVERLAPS FURNITURE OR EQUIPMENT";return false;}
+    }
+    if(first_person_mode_==FirstPersonMode::Active){const auto p=rotate_y(first_person_.feet_position()-host.position,-host.rotation_degrees);
+        if(p.x>low.x-first_person_.body_radius()&&p.x<high.x+first_person_.body_radius()&&p.z>low.z-first_person_.body_radius()&&p.z<high.z+first_person_.body_radius()){error="MOVE AWAY FROM THE UNIT POSITION";return false;}
+    }
+    error.clear();return true;
 }
 
 void GameApp::update_first_person(float dt,const InputState& input){
     corridor_network_.refresh_pressure_shells();
     if(first_person_mode_!=FirstPersonMode::Active) return;
     if(!first_person_cursor_free() || (!first_person_alt_cursor_&&input.right_down&&!first_person_pointer_over_hud(input)))first_person_.update_look(input);
-    const Vec3 displacement=first_person_.desired_displacement(input,dt);
+    if(controlled_astronaut_>=0){auto& actor=test_astronauts_[controlled_astronaut_];
+        if(actor.activity==AstronautActivity::Sleeping&&(input.key_w_down||input.key_a_down||input.key_s_down||input.key_d_down))actor.activity=AstronautActivity::Manual;
+    }
+    const bool resting=controlled_astronaut_>=0&&(test_astronauts_[controlled_astronaut_].activity==AstronautActivity::Sleeping||test_astronauts_[controlled_astronaut_].health<=0);
+    const Vec3 displacement=resting?Vec3{}:first_person_.desired_displacement(input,dt);
     Vec3 current=first_person_.feet_position();
     if(length(displacement)>0.0001f){
         // Try the actual movement vector first. This is essential for rotated
@@ -1355,10 +1388,12 @@ void GameApp::update_first_person(float dt,const InputState& input){
         }
     }
     first_person_.set_feet_position(current);
-    const bool jump=input.key_space_pressed || input.key_j_pressed;
+    const bool jump=!resting&&(input.key_space_pressed || input.key_j_pressed);
     const float ceiling=jump || !first_person_.grounded()?first_person_ceiling_height(current):std::numeric_limits<float>::max();
     first_person_.advance_vertical(jump,dt,first_person_floor_height(current),ceiling);
+    sync_controlled_astronaut(dt);
     update_first_person_resource_hover();
+    if(input.key_e_pressed && !simulation_paused())manual_door_interaction(true);
     if(input.left_pressed&&!first_person_pointer_over_hud(input)&&!build_catalog_.selected()&&!storage_gate_placement_active_&&corridor_link_source_<0)first_person_grab_or_drop_resource();
 }
 

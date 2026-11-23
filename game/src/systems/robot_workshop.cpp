@@ -43,12 +43,19 @@ void GameApp::update_workshop_gates(float dt){
             requested=requested || (std::abs(p.z+workshop::kHalfZ)<4.0f && std::abs(p.x)<4.0f);
             occupied=occupied || (std::abs(p.z+workshop::kHalfZ)<1.2f && std::abs(p.x)<3.0f);
         }
+        const bool powered=door_power_available(item.supply,item.power_enabled);
         // A loaded save may contain a rover straddling the threshold. Restore
         // an open gate before it becomes authoritative collision geometry.
         if(!item.workshop_gate_initialized){
-            if(occupied) item.workshop_gate_open=1;
+            if(powered&&occupied) item.workshop_gate_open=1;
             item.workshop_gate_initialized=true;
         }
+        if(!powered){
+            item.workshop_gate_hold=0;
+            if(item.manual_gate_override)item.workshop_gate_open=std::clamp(item.workshop_gate_open+((item.manual_gate_open||occupied)?.65f:-.50f)*dt,0.f,1.f);
+            continue;
+        }
+        item.manual_gate_override=false;
         if(requested || occupied) item.workshop_gate_hold=0.85f;
         else item.workshop_gate_hold=std::max(0.0f,item.workshop_gate_hold-dt);
         const bool open=requested || occupied || item.workshop_gate_hold>0;

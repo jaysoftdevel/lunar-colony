@@ -12,7 +12,7 @@ import time
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-ENGINE_VERSION = '0.5.18'
+ENGINE_VERSION = '0.5.21'
 CONFIGURATIONS = ('Release', 'Debug', 'RelWithDebInfo', 'MinSizeRel')
 
 
@@ -115,10 +115,16 @@ def run(args, root=ROOT):
             flags.append('--clean-first')
         command(flags, root)
         durations.append(round((time.perf_counter()-variant_start)*1000))
-    # This also detects missing or mismatched Windows runtime DLLs before launch.
+    # Verify the app-local SDL runtime for both configurations, including Debug.
+    # Do not claim a portable build if only the .exe was produced.
+    runtime_dir = build/'bin'
     for name in ('game.exe', 'game-debug.exe'):
-        executable = build/'bin'/name
+        executable = runtime_dir/name
         require(executable.is_file(), f'Missing game binary: {executable}')
+        runtime_dlls = [entry for entry in runtime_dir.iterdir()
+                        if entry.is_file() and entry.suffix.lower() == '.dll'
+                        and entry.name.lower().startswith('sdl2')]
+        require(runtime_dlls, f'Missing SDL2 runtime DLL beside {executable}. Rebuild the game and JSD engine together.')
         result = subprocess.run([str(executable), '--version'], cwd=root, check=True,
                                 capture_output=True, text=True, encoding='utf-8', errors='replace')
         require(result.stdout.strip() == 'game '+version, f'Binary version does not match source: {executable}')

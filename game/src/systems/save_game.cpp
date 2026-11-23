@@ -35,7 +35,7 @@ namespace fs=std::filesystem;
 std::string path_utf8(const fs::path& path){const auto text=path.u8string();return {text.begin(),text.end()};}
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
 constexpr std::uint32_t kCompactSaveSchema=48;
-constexpr std::uint32_t kSaveSchema=kCompactSaveSchema;
+constexpr std::uint32_t kSaveSchema=51;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -483,6 +483,19 @@ PlacedHabitat read_habitat(Reader& r){
     if(r.schema<23) initialize_empty_hydroponics(h);
     else if(!r.compact() || h.kind==HabitatKind::BioDome) read_hydroponics(r,h);
     if(r.schema>=41) h.power_enabled=read_power_enabled(r);
+    if(r.schema>=49){
+        for(auto& kg:h.unit_ore_kg){kg=r.pod<double>();if(!std::isfinite(kg)||kg<0||kg>1000000)r.valid=false;}
+        const auto count=r.pod<std::uint32_t>();if(count>64){r.valid=false;return h;}
+        for(std::uint32_t i=0;i<count&&r.valid;++i){InteriorUnit unit;
+            unit.kind=static_cast<InteriorUnitKind>(r.pod<std::uint8_t>());unit.position=read_vec3(r);unit.rotation_degrees=r.pod<float>();
+            unit.enabled=r.boolean();unit.batch_active=r.boolean();unit.progress=r.pod<double>();unit.ore_kind=r.pod<std::uint8_t>();unit.grow_bay=r.pod<std::uint8_t>();unit.batches=r.pod<std::uint32_t>();
+            if(r.schema>=50){unit.water_litres=r.pod<double>();unit.food_kg=r.pod<double>();
+                if(!std::isfinite(unit.water_litres)||unit.water_litres<0||unit.water_litres>10||!std::isfinite(unit.food_kg)||unit.food_kg<0||unit.food_kg>20)r.valid=false;}
+            if((r.schema<50&&int(unit.kind)>=6)||int(unit.kind)>=int(InteriorUnitKind::Count)||!interior_unit_allowed(h.kind,unit.kind)||!std::isfinite(unit.position.x)||!std::isfinite(unit.position.y)||!std::isfinite(unit.position.z)||!std::isfinite(unit.rotation_degrees)||!std::isfinite(unit.progress)||unit.progress<0||unit.progress>1||unit.ore_kind>=4||unit.grow_bay>=kMaxHydroponicsBays){r.valid=false;return h;}
+            h.units.push_back(unit);
+        }
+    }
+    if(r.schema>=50)h.oxygen_unit_fitted=r.boolean();
     return h;
 }
 
@@ -832,6 +845,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     if(!w.ok()){ error="Unable to open the savegame file for writing."; return false; }
 
     w.out.write(kSaveMagic.data(),kSaveMagic.size());
+    sync_controlled_astronaut(0);
     w.pod(kSaveSchema);
     w.string(std::string(version::current));
     w.string(name);
@@ -865,6 +879,13 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
         write_supply(out,h.supply);
         if(h.kind==HabitatKind::BioDome) write_hydroponics(out,h);
         out.boolean(h.power_enabled);
+        for(double kg:h.unit_ore_kg)out.pod(kg);
+        out.pod(static_cast<std::uint32_t>(h.units.size()));
+        for(const auto& unit:h.units){
+            out.pod(static_cast<std::uint8_t>(unit.kind));write_vec3(out,unit.position);out.pod(unit.rotation_degrees);
+            out.boolean(unit.enabled);out.boolean(unit.batch_active);out.pod(unit.progress);out.pod(unit.ore_kind);out.pod(unit.grow_bay);out.pod(unit.batches);out.pod(unit.water_litres);out.pod(unit.food_kg);
+        }
+        out.boolean(h.oxygen_unit_fitted);
     });
     write_object_vector(w,placed_resources_,[](Writer& out,const PlacedResource& item){
         out.pod((std::uint8_t)item.kind); write_vec3(out,item.position); out.pod(item.rotation_degrees); write_construction(out,item.construction); write_plan(out,item.resource_plan); write_bundle(out,item.site_buffer);
@@ -1053,6 +1074,19 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error){
     for(const auto& stock:{planning_.mission_seeds,lander_.seeds_aboard,colony_seeds_})
         for(const auto count:stock)w.pod(count);
 
+    // Schema 51: persistent identities, needs and view direction for FPV crew.
+    w.pod(static_cast<std::uint8_t>(last_fpv_astronaut_<0?255:last_fpv_astronaut_));
+    for(std::size_t i=0;i<astronaut_views_.size();++i){
+        const auto& view=astronaut_views_[i];const auto& actor=test_astronauts_[i];
+        w.boolean(astronaut_present(i));w.boolean(view.visited);w.pod(view.yaw);w.pod(view.pitch);
+        write_vec3(w,actor.position);w.pod(actor.heading_degrees);w.pod(actor.health);
+        w.pod(actor.suit_oxygen_kg);w.pod(actor.food_pack_kg);
+        w.pod(actor.hunger);w.pod(actor.thirst);w.pod(actor.fatigue);w.boolean(actor.suited);
+        const bool building=actor.activity==AstronautActivity::Construction;
+        w.pod(static_cast<std::uint8_t>(building?AstronautActivity::Idle:actor.activity));w.boolean(!building&&actor.destination.has_value());
+        if(!building&&actor.destination)write_vec3(w,*actor.destination);
+    }
+    w.pod(astronaut_cache_.oxygen_kg);w.pod(astronaut_cache_.food_kg);w.pod(astronaut_cache_.water_litres);
     w.out.close();
     if(!w.ok()){ fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
     // The closed temporary file and its destination share a directory, so
@@ -1647,7 +1681,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     decltype(test_astronauts_) saved_astronauts{};
     AstronautCache saved_cache{};
     if(source_schema>=42 && stage3_mode==Stage3Mode::AstronautTest){
-        const float half=saved_playfield*.5f-kAstronautFieldMargin;
+        const float half=saved_playfield*.5f-(source_schema>=51?0.f:kAstronautFieldMargin);
         const auto valid_ground=[&](game::runtime::Vec3 p){
             return std::isfinite(p.y) && p.y>=0.f && p.y<=30.f && std::isfinite(p.x) && std::isfinite(p.z) &&
                    std::abs(p.x)<=half && std::abs(p.z)<=half;
@@ -1681,7 +1715,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
                 if(!valid_amount(actor.suit_oxygen_kg,kSuitOxygenCapacityKg+1e-9) ||
                    !valid_amount(actor.food_pack_kg,1.0) || !valid_amount(actor.hunger,1.f) ||
                    !valid_amount(actor.thirst,1.f) || !valid_amount(actor.fatigue,kCrewExhausted) ||
-                   actor.activity>AstronautActivity::Resupply || actor.bed_slot>=8)r.valid=false;
+                   actor.activity>(source_schema>=51?AstronautActivity::Construction:AstronautActivity::Resupply) || actor.bed_slot>=8)r.valid=false;
             }else if(actor.destination)actor.activity=AstronautActivity::Manual;
             if(!valid_ground(actor.position) || !std::isfinite(actor.heading_degrees) ||
                actor.heading_degrees<0.f || actor.heading_degrees>=360.f ||
@@ -1741,6 +1775,35 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
             saved_lander.seeds_aboard=kStarterCropSeeds;
         else
             saved_seeds=kStarterCropSeeds;
+    }
+
+    decltype(astronaut_views_) saved_views{};
+    auto controlled_crew=saved_astronauts;
+    AstronautCache controlled_cache=saved_cache;
+    int saved_last_fpv=-1;
+    if(source_schema>=51){
+        const auto last=r.pod<std::uint8_t>();if(last!=255&&last>=saved_views.size())r.valid=false;
+        saved_last_fpv=last==255?-1:int(last);
+        const auto finite_range=[](double value,double high){return std::isfinite(value)&&value>=0&&value<=high;};
+        const auto point_valid=[&](game::runtime::Vec3 p){return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&std::abs(p.x)<=saved_playfield*.5f&&std::abs(p.z)<=saved_playfield*.5f&&p.y>=0&&p.y<=30;};
+        for(std::size_t i=0;i<saved_views.size();++i){auto& view=saved_views[i];auto& actor=controlled_crew[i];
+            view.present=r.boolean();view.visited=r.boolean();view.yaw=r.pod<float>();view.pitch=r.pod<float>();
+            actor.position=read_vec3(r);actor.heading_degrees=r.pod<float>();actor.health=r.pod<float>();
+            actor.suit_oxygen_kg=r.pod<double>();actor.food_pack_kg=r.pod<double>();
+            actor.hunger=r.pod<float>();actor.thirst=r.pod<float>();actor.fatigue=r.pod<float>();actor.suited=r.boolean();
+            actor.activity=static_cast<AstronautActivity>(r.pod<std::uint8_t>());
+            actor.destination.reset();if(r.boolean())actor.destination=read_vec3(r);
+            if((view.visited&&!view.present)||!finite_range(view.yaw,360)||!std::isfinite(view.pitch)||std::abs(view.pitch)>82||
+               !point_valid(actor.position)||!finite_range(actor.heading_degrees,360)||!finite_range(actor.health,1)||
+               !finite_range(actor.suit_oxygen_kg,kSuitOxygenCapacityKg+1e-9)||!finite_range(actor.food_pack_kg,1)||
+               !finite_range(actor.hunger,1)||!finite_range(actor.thirst,1)||!finite_range(actor.fatigue,kCrewExhausted)||
+               actor.activity>AstronautActivity::Construction||(actor.destination&&!point_valid(*actor.destination)))r.valid=false;
+        }
+        controlled_cache.oxygen_kg=r.pod<double>();controlled_cache.food_kg=r.pod<double>();controlled_cache.water_litres=r.pod<double>();
+        const AstronautCache limits{};
+        if(!finite_range(controlled_cache.oxygen_kg,limits.oxygen_kg)||!finite_range(controlled_cache.food_kg,limits.food_kg)||
+           !finite_range(controlled_cache.water_litres,limits.water_litres)||(saved_last_fpv>=0&&!saved_views[saved_last_fpv].present))r.valid=false;
+        if(!r.valid){error="Savegame FPV crew state is damaged.";return false;}
     }
 
     // v0.40.11 and older stored delivered construction material on the BR-02
@@ -2157,6 +2220,9 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     storage_gate_placement_active_=false;
     storage_gate_placement_owner_=kNoRobotIndex;
 
+    astronaut_views_=saved_views;controlled_astronaut_=-1;last_fpv_astronaut_=saved_last_fpv;
+    if(source_schema>=51){test_astronauts_=std::move(controlled_crew);astronaut_cache_=controlled_cache;}
+    else if(!astronaut_test_active()){test_astronauts_={};astronaut_cache_={};}
     first_person_mode_=FirstPersonMode::Off;
     first_person_cursor_=false;first_person_alt_cursor_=false;
     app_.set_relative_mouse_mode(false);

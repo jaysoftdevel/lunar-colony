@@ -236,7 +236,7 @@ struct TraderRegression {
         const float held=a->trader_.elapsed;a->placed_resources_[0].supply.power_fraction=0;a->update_trader(100);require(a->trader_.elapsed==held,"approach ignored lost pad power");a->update_supply_simulation(0);a->update_trader(30);
         require(a->trader_.phase==TradePhase::Docked&&!a->start_trader_sale(),"empty sale accepted");
         const auto air=a->placed_habitats_[0].supply.oxygen_kg,water=a->placed_resources_[3].supply.water_litres;
-        a->update_supply_simulation(240);const double bottled=a->trader_oxygen_stock_amount(20);
+        a->update_supply_simulation(static_cast<float>(kGameDaySeconds));const double bottled=a->trader_oxygen_stock_amount(20);
         require(bottled>10&&a->placed_resources_[3].supply.water_litres<water-10,"bottled oxygen appeared without electrolysis/water");
         require(a->placed_habitats_[0].supply.oxygen_kg>=air*.98,"export production drained breathable air");
         const auto available=a->trader_available();require(available[8]>=10&&available[9]>=100,"oxygen/hydrogen missing from sale catalog");

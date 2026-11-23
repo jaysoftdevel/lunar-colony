@@ -109,7 +109,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
     const bool selection_click=(in.right_pressed || right_click_pending_) && !over_overlay &&
         screen_==Screen::Playfield && active_game_phase_!=GamePhase::Planning &&
         first_person_mode_==FirstPersonMode::Off && !in.key_v_pressed && !in.escape_pressed &&
-        !storage_gate_placement_active_ && !build_catalog_.selected() && corridor_link_source_<0 &&
+        !interior_unit_tool_ && !storage_gate_placement_active_ && !build_catalog_.selected() && corridor_link_source_<0 &&
         debug_move_pick_robot_<0 && !lander_.awaiting_site && !lander_.awaiting_stash;
     right_click_pending_=selection_click && in.right_down && !in.mouse_dx && !in.mouse_dy;
     if(selection_click && !in.right_down){
@@ -126,7 +126,12 @@ void GameApp::update_simulation(float dt,const InputState& in){
         fps_=fps_<=0.0f?instant:(fps_*0.90f+instant*0.10f);
     }
 
+    const bool unit_owns_input=interior_unit_tool_.has_value();
     if(screen_==Screen::Playfield){
+        if(unit_owns_input){
+            if(in.escape_pressed||in.right_pressed){interior_unit_tool_.reset();return;}
+            update_interior_unit_placement(in);
+        }
         update_speed_shortcuts(in);
         if(active_game_phase_==GamePhase::Planning){
             // Stage 1 owns a separate company/mission-planning simulation. It
@@ -193,33 +198,8 @@ void GameApp::update_simulation(float dt,const InputState& in){
         if(in.key_v_pressed){
             selection_marquee_active_=false;
             selection_marquee_dragged_=false;
-            if(first_person_mode_==FirstPersonMode::Off) enter_first_person_drop_mode();
+            if(first_person_mode_==FirstPersonMode::Off) enter_first_person_mode();
             else exit_first_person_mode();
-            return;
-        }
-
-        if(first_person_mode_==FirstPersonMode::DropPending){
-            advance_colony();
-            if(!paused && astronaut_test_active()) update_astronaut_test(sim_dt);
-            if(in.escape_pressed){ exit_first_person_mode(); return; }
-            camera_.update(world_camera_input,playfield_.size(),viewport_height_,dt);
-            const float logical_y=(float)in.mouse_y/ui_scale_;
-            const bool over_world=logical_y>=STATUS_BAR_H && logical_y<((float)viewport_height_/ui_scale_-BUILD_BAR_H);
-            if(in.left_pressed && over_world && !over_overlay){
-                Vec3 hit{};
-                if(camera_.intersect_playfield(in.mouse_x,in.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit)){
-                    // POV placement is exterior-only.  We still resolve the
-                    // local surface height before validation so Air Lock access
-                    // stairs and terrain are entered at the correct elevation;
-                    // pressurised structures/corridors themselves are rejected.
-                    Vec3 spawn{hit.x,first_person_floor_height(hit),hit.z};
-                    if(first_person_spawn_valid(spawn)){
-                        first_person_.spawn(spawn,camera_.azimuth_degrees());
-                        first_person_mode_=FirstPersonMode::Active;
-                        app_.set_relative_mouse_mode(true);
-                    }
-                }
-            }
             return;
         }
 
@@ -241,7 +221,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
             if(!first_person_pointer_over_hud(in))update_placement_controls(in);
             advance_colony();
             update_first_person(dt,fpv_input);
-            if(!paused && astronaut_test_active()) update_astronaut_test(sim_dt);
+            if(!paused && astronauts_active()) update_astronaut_test(sim_dt);
             return;
         }
 
@@ -295,7 +275,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
                 corridor_link_source_=-1;
                 return;
             }
-            if(astronaut_test_active() && selected_astronaut_>=0){
+            if(astronauts_active() && selected_astronaut_>=0){
                 selected_astronaut_=-1;
                 return;
             }
@@ -303,19 +283,19 @@ void GameApp::update_simulation(float dt,const InputState& in){
             return;
         }
 
-        if(in.delete_pressed && !storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 && !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_){
+        if(in.delete_pressed && !unit_owns_input && !storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 && !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_){
             delete_selected_world_object();
             return;
         }
 
-        const bool over_panel=over_overlay || mouse_over_selection_panel(in);
+        const bool over_panel=over_overlay || mouse_over_selection_panel(in)||astronaut_status_hover(in);
         if(!over_overlay) update_selection_panel_scroll(in);
         InputState camera_input=world_camera_input;
         if(!over_panel && update_placement_controls(in))camera_input.wheel=0.f;
         const float pointer_y=(float)in.mouse_y/ui_scale_;
         if(pointer_y<STATUS_BAR_H || pointer_y>=(float)viewport_height_/ui_scale_-BUILD_BAR_H || over_panel)camera_input.wheel=0;
         camera_.update(camera_input,playfield_.size(),viewport_height_,dt);
-        if(!over_overlay && !over_panel && !selection_marquee_active_)
+        if(!over_overlay && !over_panel && !selection_marquee_active_ && !unit_owns_input)
             camera_.scroll_at_edge(in,playfield_.size(),viewport_width_,viewport_height_,
                 {0,STATUS_BAR_H*ui_scale_,float(viewport_width_),float(viewport_height_)-(STATUS_BAR_H+BUILD_BAR_H)*ui_scale_},dt);
         advance_colony();
@@ -326,9 +306,9 @@ void GameApp::update_simulation(float dt,const InputState& in){
         // package whose projected center lies inside it.
         const float logical_y=(float)in.mouse_y/ui_scale_;
         const bool over_world=logical_y>=STATUS_BAR_H && logical_y<((float)viewport_height_/ui_scale_-BUILD_BAR_H);
-        const bool selection_idle=!storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 &&
+        const bool selection_idle=!unit_owns_input && !storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 &&
                                   !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_;
-        if(astronaut_test_active()){
+        if(astronauts_active()){
             if(!paused) update_astronaut_test(sim_dt);
             if(selection_idle && over_world && !over_panel && handle_astronaut_click(in)){
                 selection_marquee_active_=false;

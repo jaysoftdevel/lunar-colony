@@ -1,4 +1,5 @@
 #include "game/world/habitat_builder.hpp"
+#include "game/world/interior_station.hpp"
 #include "game/world/habitats/habitat_module.hpp"
 
 namespace game::habitats {
@@ -29,11 +30,15 @@ void build_sick_bay_outer(Builder& b){
         Builder::tri(b.mesh.glazing,low0,p1,low1);
     }
 
+    {
+    interior_layout::StationScope installed_process_equipment(b.mesh);
     // Exterior medical support pods / life support tanks.
     for(float z:{-2.6f,-0.9f,0.9f,2.6f}) b.cylinder_y(b.mesh.details,{-4.85f,2.35f,z},2.8f,0.46f,12,true);
     b.box(b.mesh.details,{-4.2f,1.55f,-3.65f},{1.35f,1.35f,0.55f});
     b.cylinder_y(b.mesh.details,{0,6.1f,0},1.35f,0.82f,16,true);
     for(Vec3 c:std::initializer_list<Vec3>{{-2.5f,5.25f,-1.8f},{2.6f,5.0f,1.9f}}) b.cylinder_y(b.mesh.details,c,0.95f,0.35f,12,true);
+
+    }
 
     for(float a:{0.5f,2.05f,3.65f,5.2f}){
         Vec3 top{3.85f*std::cos(a),0.8f,3.85f*std::sin(a)};

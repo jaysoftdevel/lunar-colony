@@ -96,7 +96,7 @@ using sound::Cue;
 
 enum Channel : std::uint64_t {
     Global=1, Ambient, RobotMotor, RobotTool, RobotEvent, RobotAlarm, Habitat, Resource, Gate,
-    Corridor, Utility, Walkway, BeltMotor, BeltCargo, Door, Airlock, CrewFeet, CrewSuit, CrewEvent, CrewAlarm
+    Corridor, Utility, Walkway, BeltMotor, BeltCargo, Door, Airlock, CrewFeet, CrewSuit, CrewEvent, CrewAlarm, CrewTool
 };
 constexpr std::uint64_t key(Channel channel,std::uint64_t id){
     return (channel<<56)|(id&0x00ffffffffffffffull);
@@ -232,9 +232,18 @@ void GameApp::update_soundscape(float dt,const game::runtime::InputState& input)
         ui_sound(Cue::Alarm,level);
         audio.warning_cooldown=2.2f;
     };
+    const Vec3 audio_eye=fpv?first_person_.eye_position():camera_eye;
+    const float audio_aspect=float(viewport_width_)/std::max(1,viewport_height_);
+    const auto audio_vp=fpv?first_person_.view_projection(audio_aspect):camera_.view_projection(audio_aspect);
+    const auto construction_voice=[&](Vec3 p,float gain){
+        auto voice=world_voice(p,gain,60,1.f,2);
+        voice.gain*=sound::construction_presence(p,audio_eye,audio_vp);
+        voice.position=listener+game::runtime::normalize(p-audio_eye);voice.range=1000.f;return voice;
+    };
     const auto completion=[&](Vec3 p){
         if(audio.completion_cooldown>0.0f || !nearby(p,72.0f)) return;
-        audio.play(Cue::Build,world_voice(p,.70f,75,1,3,true));
+        const auto voice=construction_voice(p+Vec3{0,1.f,0},.80f);
+        if(voice.gain>.0004f)audio.play(Cue::Build,voice);
         audio.completion_cooldown=.65f;
     };
 
@@ -400,17 +409,23 @@ void GameApp::update_soundscape(float dt,const game::runtime::InputState& input)
                 audio.play(Cue::Crate,world_voice(p,.53f,29,1,2));
         }
         if(!paused && (rover.action==BuilderRobotAction::Welding || rover.action==BuilderRobotAction::BuildUp ||
-                       rover.action==BuilderRobotAction::Dismantle))
-            audio.loop(key(RobotTool,i+1),rover.action==BuilderRobotAction::Welding?Cue::Weld:Cue::Mill,
-                world_voice(p,.41f,29,1.0f,2));
+                       rover.action==BuilderRobotAction::Dismantle)){
+            const auto voice=construction_voice(p+Vec3{0,.65f,0},.90f);
+            if(voice.gain>.0004f)audio.loop(key(RobotTool,i+1),rover.action==BuilderRobotAction::BuildUp?Cue::Mill:Cue::Weld,voice);
+        }
         const bool low=rover.battery_capacity_kwh>0 && rover.battery_charge_kwh/rover.battery_capacity_kwh<.08f;
         if(const auto last=audio.observe(key(RobotAlarm,i+1),low); last && low && !*last &&
            (selected_robot_==static_cast<int>(i) || nearby(p,12.0f))) alarm(.33f);
     }
 
-    if(astronaut_test_active()){
+    if(astronauts_active()){
         for(std::size_t i=0;i<test_astronauts_.size();++i){
+            if(!astronaut_present(i)||(first_person_mode_==FirstPersonMode::Active&&controlled_astronaut_==int(i)))continue;
             const auto& actor=test_astronauts_[i];
+            if(!paused&&actor.activity==AstronautActivity::Construction&&!actor.destination&&actor.construction_job){
+                const auto voice=construction_voice(actor.position+Vec3{0,1.f,0},.80f);
+                if(voice.gain>.0004f)audio.loop(key(CrewTool,i+1),Cue::Weld,voice);
+            }
             const auto phase=static_cast<std::uint64_t>(std::clamp(actor.stride_phase,0.0f,.99999f)*2.0f);
             const auto previous=audio.observe(key(CrewFeet,i+1),phase);
             const auto previous_suit=audio.observe(key(CrewSuit,i+1),actor.suited);

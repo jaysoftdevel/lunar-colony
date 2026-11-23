@@ -53,7 +53,7 @@ AstronautRestPose GameApp::astronaut_rest_pose(const AstronautTestActor& actor) 
 }
 
 void GameApp::assign_astronaut_duties(float dt){
-    if(dt<=0.f)return;
+    if(dt<=0.f||!astronaut_test_active())return;
     astronaut_schedule_seconds_-=dt;
     for(auto& actor:test_astronauts_){
         actor.decision_delay=std::max(0.f,actor.decision_delay-dt);
@@ -121,7 +121,7 @@ void GameApp::assign_astronaut_duties(float dt){
     }
     for(std::size_t i=0;i<test_astronauts_.size();++i){
         auto& actor=test_astronauts_[i];
-        if(actor.health<=0.f)continue;
+        if(actor.health<=0.f||(astronaut_views_[i].visited&&!actor.destination))continue;
         bool in_lock=false;
         const auto* air=astronaut_air_at(actor.position,in_lock);
         const auto here=node(air);
@@ -195,8 +195,8 @@ void GameApp::assign_astronaut_duties(float dt){
         }
         if(actor.activity==AstronautActivity::ToBed && !owns_bed())order(actor,AstronautActivity::Idle);
         // Turn back while the remaining air still covers the return trip.
-        const float cache_distance=std::hypot(actor.position.x,actor.position.z)-kCrewCacheRadius;
-        const float suit_range=(float)(240.0*actor.suit_oxygen_kg/kCrewOxygenKgPerDay)*astronaut_walk_speed(true);
+        const float cache_distance=distance_xz(actor.position,crew_cache_position())-kCrewCacheRadius;
+        const float suit_range=(float)(kGameDaySeconds*actor.suit_oxygen_kg/kCrewOxygenKgPerDay)*astronaut_walk_speed(true);
         bool target_lock=false;
         const bool shelter_in_range=actor.destination && ready(astronaut_air_at(*actor.destination,target_lock)) &&
                                     distance_xz(actor.position,*actor.destination)+5.f<suit_range;
@@ -204,7 +204,7 @@ void GameApp::assign_astronaut_duties(float dt){
            !shelter_in_range && astronaut_cache_.oxygen_kg>0){
             if(actor.activity!=AstronautActivity::Resupply){
                 constexpr std::array<Vec3,4> spots{{{-1.65f,0,.20f},{1.65f,0,-.20f},{-3.75f,0,-1.45f},{3.75f,0,-1.45f}}};
-                order(actor,AstronautActivity::Resupply,spots[i]);
+                order(actor,AstronautActivity::Resupply,crew_cache_position()+spots[i]);
             }
             continue;
         }

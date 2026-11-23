@@ -16,7 +16,7 @@ constexpr float kWalkBraking=3.2f;
 
 template<class Pose>
 int astronaut_at(const std::array<AstronautTestActor,kAstronautRoles.size()>& crew,const CameraController& camera,
-                 int x,int y,int width,int height,const Pose& rest_pose){
+                 int x,int y,int width,int height,const Pose& rest_pose,const std::array<AstronautViewMemory,kAstronautRoles.size()>& views,bool all){
     if(width<=0 || height<=0)return -1;
     const auto m=camera.view_projection((float)width/height).m;
     const auto project=[&](Vec3 p,float& px,float& py,float& depth){
@@ -29,6 +29,7 @@ int astronaut_at(const std::array<AstronautTestActor,kAstronautRoles.size()>& cr
     int picked=-1;
     float closest=std::numeric_limits<float>::infinity();
     for(std::size_t i=0;i<crew.size();++i){
+        if(!all&&!views[i].present)continue;
         const auto& actor=crew[i];
         const auto pose=rest_pose(actor);
         const bool lying=astronaut_resting(actor);
@@ -166,7 +167,7 @@ void GameApp::reset_astronaut_test(){
 bool GameApp::handle_astronaut_click(const InputState& input){
     if(!input.left_pressed || input.middle_down || input.right_down)return false;
     const int picked=astronaut_at(test_astronauts_,camera_,input.mouse_x,input.mouse_y,
-                                  viewport_width_,viewport_height_,[&](const auto& actor){return astronaut_rest_pose(actor);});
+                                  viewport_width_,viewport_height_,[&](const auto& actor){return astronaut_rest_pose(actor);},astronaut_views_,astronaut_test_active());
     if(picked>=0){
         selected_astronaut_=picked;
         clear_world_selection();
@@ -195,6 +196,7 @@ bool GameApp::handle_astronaut_click(const InputState& input){
 
 void GameApp::update_astronaut_suits(){
     for(auto& actor:test_astronauts_){
+        if(!astronaut_present(std::size_t(&actor-test_astronauts_.data())))continue;
         bool airlock=false;
         const auto* air=astronaut_air_at(actor.position,airlock);
         // Removing the suit requires full indicated pressure. Once removed,
@@ -209,10 +211,10 @@ void GameApp::update_astronaut_suits(){
 }
 
 bool GameApp::astronaut_placement_clear(Vec3 center,float rotation,float width,float depth) const {
-    if(!astronaut_test_active())return true;
+    if(!astronauts_active())return true;
     const auto hull=footprint(center,rotation,width,depth);
     for(const auto& actor:test_astronauts_)
-        if(overlaps(hull,footprint(actor.position,0.f,.90f,.90f),0.f))return false;
+        if(astronaut_present(std::size_t(&actor-test_astronauts_.data()))&&overlaps(hull,footprint(actor.position,0.f,.90f,.90f),0.f))return false;
     return true;
 }
 
@@ -233,6 +235,7 @@ void GameApp::update_astronaut_test(float dt){
             inside[i]=astronaut_air_at(test_astronauts_[i].position,lock) && !lock;
         }
         for(std::size_t i=0;i<test_astronauts_.size();++i){
+            if(!astronaut_present(i)||(first_person_mode_==FirstPersonMode::Active&&controlled_astronaut_==int(i)))continue;
             auto& actor=test_astronauts_[i];
             if(astronaut_resting(actor)){actor.tool_carry_blend=0.f;continue;}
             const float carry=actor.activity==AstronautActivity::Construction && actor.construction_job && actor.destination?1.f:0.f;
@@ -244,7 +247,7 @@ void GameApp::update_astronaut_test(float dt){
                 if(std::abs(b.x)>half || std::abs(b.z)>half)return false;
                 for(std::size_t j=0;j<test_astronauts_.size();++j){
                     const auto& other=test_astronauts_[j];
-                    if(j==i || other.activity==AstronautActivity::Sleeping)continue;
+                    if(j==i || !astronaut_present(j) || other.activity==AstronautActivity::Sleeping)continue;
                     // Distant moving crew are handled by the local passing and
                     // swept-step checks. A following actor can plan the same aisle.
                     if(planning && other.destination && distance_xz(other.position,actor.position)>2.5f)continue;

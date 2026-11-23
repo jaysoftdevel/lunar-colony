@@ -17,7 +17,7 @@ class WindowsBuild(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='windows build with spaces ')
         self.parent = Path(self.temp.name)
         self.root, self.engine = self.parent/'lunar colony', self.parent/'3d engine'
-        for name, text in [('VERSION', '0.69.0'), ('game/include/game/game_app.hpp', '')]:
+        for name, text in [('VERSION', '0.72.1'), ('game/include/game/game_app.hpp', '')]:
             p = self.root/name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text)
         for name in ('include/frontier/renderer.hpp', 'src/renderer.cpp', 'tools/build_windows.py'):
             p = self.engine/name; p.parent.mkdir(parents=True, exist_ok=True); p.touch()
@@ -34,10 +34,10 @@ class WindowsBuild(unittest.TestCase):
         return driver.parse_args(['build', '--engine', str(self.engine), *extra])
     def invoke(self, args):
         build = self.root/'build/windows/bin'; build.mkdir(parents=True, exist_ok=True)
-        for name in ('game.exe', 'game-debug.exe'): (build/name).touch()
+        for name in ('game.exe', 'game-debug.exe', 'SDL2.dll'): (build/name).touch()
         with patch.object(driver, 'select_toolchain', return_value=(str(self.cmake), 'Visual Studio 18 2026', str(self.parent/'Visual Studio'))), \
              patch.object(driver, 'command', side_effect=lambda args, root: self.calls.append([str(x) for x in args])), \
-             patch.object(driver.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'game 0.69.0\n', '')):
+             patch.object(driver.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'game 0.72.1\n', '')):
             driver.run(args, self.root)
     def write_cache(self, text):
         p = self.root/'build/windows/CMakeCache.txt'; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text)
@@ -83,6 +83,18 @@ class WindowsBuild(unittest.TestCase):
     def test_negative_jobs_refused_before_configure(self):
         with self.assertRaisesRegex(RuntimeError, 'positive integer'): self.invoke(self.args('--jobs', '-1'))
         self.assertEqual(self.calls, [])
+    def test_missing_sdl_runtime_rejected(self):
+        original = self.invoke
+        def invoke_without_dll(args):
+            root = self.root
+            binary_dir = root/'build/windows/bin'
+            binary_dir.mkdir(parents=True, exist_ok=True)
+            for name in ('game.exe', 'game-debug.exe'): (binary_dir/name).touch()
+            with patch.object(driver, 'select_toolchain', return_value=(str(self.cmake), 'Visual Studio 18 2026', str(self.parent/'Visual Studio'))), \
+                 patch.object(driver, 'command', return_value=None):
+                driver.run(args, root)
+        with self.assertRaisesRegex(RuntimeError, 'Missing SDL2 runtime DLL'):
+            invoke_without_dll(self.args())
     def test_native_test_launchers_and_dll_staging(self):
         for name in ('build.bat', 'configure.bat', 'test.bat'):
             text = (ROOT/name).read_text()
@@ -90,7 +102,9 @@ class WindowsBuild(unittest.TestCase):
         text = (ROOT/'game/CMakeLists.txt').read_text()
         self.assertIn('$<TARGET_FILE_DIR:${target}>', text)
         self.assertIn('$<TARGET_FILE:SDL2>', text)
-        self.assertIn('add_dependencies(${target} stage_colony_windows_runtime)', text)
+        self.assertIn('add_custom_command(TARGET ${target} POST_BUILD', text)
+        self.assertIn('add_dependencies(${target} SDL2)', text)
+        self.assertNotIn('stage_colony_windows_runtime', text)
         self.assertNotIn('0.54.3', (ROOT/'scripts/validate-windows-latest.bat').read_text())
 
 if __name__ == '__main__': unittest.main()

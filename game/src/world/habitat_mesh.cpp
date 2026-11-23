@@ -154,7 +154,7 @@ HabitatModelLibrary::HabitatModelLibrary(){
         // SMALL is a horizontal-only variant for every habitat. Keep the full
         // authored height, floor Y and door clear height so colonists can walk
         // inside exactly as they can in STANDARD.
-        meshes_[i][(std::size_t)HabitatSizeTier::Small]=scale_xz(standard,0.76f);
+        meshes_[i][(std::size_t)HabitatSizeTier::Small]=scale_xz(standard,i==std::size_t(HabitatKind::OxygenGeneratorDome)?.90f:.76f);
         if(scalable(kind)){
             // Size tiers enlarge usable floor area while keeping the original
             // vertical dimensions/door height. This preserves the common

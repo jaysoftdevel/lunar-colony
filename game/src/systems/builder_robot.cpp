@@ -5916,7 +5916,7 @@ void GameApp::update_builder_robot(float dt){
             clear_route(robot);
             robot.current_speed_mps=0.0f;
             robot.battery_charging=true;
-            const float charge_kwh=kStarterRobotChargePowerKw*(std::max(0.0f,dt)/10.0f);
+            const float charge_kwh=kStarterRobotChargePowerKw*(std::max(0.0f,dt)/static_cast<float>(kGameHourSeconds));
             robot.battery_charge_kwh=std::min(robot.battery_capacity_kwh,robot.battery_charge_kwh+charge_kwh);
             if(robot.battery_charge_kwh>=robot.battery_capacity_kwh*kStarterRobotChargeReleaseFraction){
                 robot.starter_charge_active=false;
@@ -6485,11 +6485,11 @@ void GameApp::update_builder_robot(float dt){
                              " #"+std::to_string(index+1)+" / restarting route after five failed attempts");
     }
 
-    // Consume real stored electrical energy. One simulation hour equals ten
+    // Consume real stored electrical energy. One simulation hour equals twenty
     // seconds of the existing colony clock; traction is distance-based while
     // onboard electronics and tools use kW x game-hours. This keeps energy
     // accounting stable across FPS and QUICK/FAST time scales.
-    const float game_hours=std::max(0.0f,dt)/10.0f;
+    const float game_hours=std::max(0.0f,dt)/static_cast<float>(kGameHourSeconds);
     for(std::size_t i=0;i<builder_robots_.size();++i){
         auto& robot=builder_robots_[i];
         const float travelled=dist_xz(battery_start_positions[i],robot.position);
@@ -6600,120 +6600,15 @@ bool GameApp::consume_colony_stock(MaterialResource material,std::int64_t amount
 
 void GameApp::update_resource_economy(float dt){
     if(dt<=0.0f) return;
-    // One in-game day is 240 real seconds. Production figures below are kg per
+    // One in-game day is 480 real seconds. Production figures below are kg per
     // in-game day and represent a mature automated lunar pilot plant rather
     // than present-day terrestrial equipment. Power/water availability is no
     // longer global: it is derived from the completed physical supply/corridor
     // network component that each structure actually belongs to.
-    constexpr double day_seconds=240.0;
-    struct NetworkEconomy {
-        int water_drillers{0};
-        int water_purifiers{0};
-        bool processing{false};
-        bool factory{false};
-        bool manufactory{false};
-        bool laboratory{false};
-        bool sick_bay{false};
-        Vec3 industrial{};
-        Vec3 water_source{};
-        Vec3 medical_source{};
-        std::array<double,kMaterialResourceCount> rate_per_day{};
-        std::array<Vec3,kMaterialResourceCount> output{};
-        std::array<bool,kMaterialResourceCount> has_output{};
-    };
-
-    const auto& services=update_supply_simulation(dt);
+    constexpr double day_seconds=kGameDaySeconds;
+    update_supply_simulation(dt);
+    update_interior_units(dt);
     update_ore_logistics(dt);
-    std::map<std::size_t,NetworkEconomy> networks;
-    auto network_for=[&](const UtilityServiceState& service)->NetworkEconomy*{
-        if(!service.connected || service.component==kNoUtilityComponent) return nullptr;
-        return &networks[service.component];
-    };
-
-    for(std::size_t i=0;i<placed_resources_.size();++i){
-        const auto& item=placed_resources_[i];
-        if(!item.construction.complete()) continue;
-        const UtilityServiceState service=i<services.resources.size()?services.resources[i]:UtilityServiceState{};
-        auto* network=network_for(service);
-        if(!network) continue;
-        switch(item.kind){
-            case ResourceKind::WaterDriller:
-                // Water availability means this driller shares one powered
-                // component with at least one purifier. Raw water can therefore
-                // move through the physical network instead of a global pool.
-                if(service.water){ ++network->water_drillers; network->water_source=item.position; }
-                break;
-            case ResourceKind::WaterPurifier:
-                if(service.water){ ++network->water_purifiers; network->water_source=item.position; }
-                break;
-            default:
-                break;
-        }
-    }
-
-    for(std::size_t i=0;i<placed_habitats_.size();++i){
-        const auto& h=placed_habitats_[i];
-        if(!h.construction.complete()) continue;
-        const UtilityServiceState service=i<services.habitats.size()?services.habitats[i]:UtilityServiceState{};
-        auto* network=network_for(service);
-        if(!network || h.supply.breathability()<95.0) continue;
-        switch(h.kind){
-            case HabitatKind::ProcessingFacility:
-                if(service.power){ network->processing=true; network->industrial=h.position; }
-                break;
-            case HabitatKind::Factory:
-                if(service.power){ network->factory=true; network->industrial=h.position; }
-                break;
-            case HabitatKind::Manufactory:
-                if(service.power){ network->manufactory=true; network->industrial=h.position; }
-                break;
-            case HabitatKind::Laboratory:
-                if(service.power){ network->laboratory=true; network->medical_source=h.position; }
-                break;
-            case HabitatKind::SickBay:
-                if(service.power){ network->sick_bay=true; network->medical_source=h.position; }
-                break;
-            case HabitatKind::BioDome:
-                // Food production is simulated per hydroponics bay in the
-                // supply system so crop choice, water, power and growth state
-                // are authoritative instead of using a fixed dome-wide rate.
-                break;
-            default:
-                break;
-        }
-    }
-
-    const auto set_rate=[](NetworkEconomy& network,MaterialResource material,double rate,Vec3 output){
-        const std::size_t i=(std::size_t)material;
-        network.rate_per_day[i]+=rate;
-        network.output[i]=output;
-        network.has_output[i]=true;
-    };
-    for(auto& [component,network]:networks){
-        (void)component;
-        // Every multi-stage production dependency below is deliberately
-        // component-local. Two separately powered pipe systems cannot exchange
-        // ore, water, food or medical feedstock without a physical connection.
-        if(network.processing && network.factory && network.manufactory)
-            set_rate(network,MaterialResource::Plastic,10.0,network.industrial);
-        // Water is delivered directly into connected tanks by supply_simulation.
-        // Bio Dome food is harvested per configured hydroponics bay.
-        if(network.laboratory && network.sick_bay && network.factory)
-            set_rate(network,MaterialResource::Medical,0.30,network.medical_source);
-    }
-
-    for(auto& [component,network]:networks){
-        (void)component;
-        for(std::size_t i=0;i<kMaterialResourceCount;++i){
-            if(network.rate_per_day[i]<=0.0 || !network.has_output[i]) continue;
-            production_fraction_[i]+=network.rate_per_day[i]*(double)dt/day_seconds;
-            const auto whole=(std::int64_t)std::floor(production_fraction_[i]);
-            if(whole>0){
-                production_fraction_[i]-=(double)whole;
-                spawn_produced_resource((MaterialResource)i,whole,network.output[i]);
-            }
-        }
-    }
 
     // Crew consumables (kg/day). Water is net make-up after high recovery;
     // food is edible mass; medical is a low continuous reserve draw.
@@ -6722,7 +6617,7 @@ void GameApp::update_resource_economy(float dt){
     if(life_support_fraction_seconds_>=1.0){
         const double seconds=life_support_fraction_seconds_;
         life_support_fraction_seconds_=0.0;
-        const int crew=std::max(0,status_.crew_current());
+        const int crew=abstract_crew_count();
         ResourceBundle use{};
         use.water=(std::int64_t)std::floor((double)crew*4.0*seconds/day_seconds);
         use.food=(std::int64_t)std::floor((double)crew*0.85*seconds/day_seconds);
@@ -6735,7 +6630,14 @@ void GameApp::update_resource_economy(float dt){
             {MaterialResource::Medical,(double)crew*0.03*seconds/day_seconds}}};
         for(const auto& [material,value]:demand){
             const std::size_t idx=(std::size_t)material;
-            production_fraction_[idx]-=value;
+            double remaining=value;
+            if(material==MaterialResource::Food)for(auto& home:placed_habitats_){
+                if(home.kind!=HabitatKind::CantineDome||!home.construction.complete())continue;
+                for(auto& unit:home.units)if(unit.kind==InteriorUnitKind::FoodProcessor&&unit.enabled&&!unit.gate_reserved){
+                    const double meal=std::min(remaining,unit.food_kg);unit.food_kg-=meal;remaining-=meal;
+                }
+            }
+            production_fraction_[idx]-=remaining;
             if(production_fraction_[idx]<=-1.0){
                 const auto consume=(std::int64_t)std::floor(-production_fraction_[idx]);
                 production_fraction_[idx]+=(double)consume;

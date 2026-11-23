@@ -2,6 +2,7 @@
 #include "game/world/supply_state.hpp"
 #include "game/world/structure_display.hpp"
 #include "game/world/hydroponics.hpp"
+#include "game/world/interior_unit.hpp"
 #include "game/runtime/presentation.hpp"
 #include "game/world/construction.hpp"
 #include "game/systems/resource_management.hpp"
@@ -86,7 +87,7 @@ inline constexpr int crew_quarters_bed_count(HabitatSizeTier size){
     }
 }
 
-enum class StationKind { Equipment, Grow, Bed, Screen };
+enum class StationKind { Equipment, Grow, Bed, Screen, Furniture };
 struct InteriorStation {
     StationKind kind{StationKind::Equipment};std::size_t slot{};
     std::array<std::size_t,8> first{},count{};
@@ -142,6 +143,9 @@ struct PlacedHabitat {
     ResourceBundle site_buffer{}; // delivered construction material staged at this blueprint
     std::array<HydroponicsBay,kMaxHydroponicsBays> hydroponics{};
     std::uint16_t blocked_grow_bays{}; // Derived doorway reservations; not serialized.
+    std::vector<InteriorUnit> units;
+    bool oxygen_unit_fitted{false}; // Included equipment is fitted only once.
+    std::array<double,4> unit_ore_kg{};
     bool power_enabled{true};
 };
 
