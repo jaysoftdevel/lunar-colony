@@ -1,5 +1,6 @@
 #pragma once
 #include "game/world/habitat_builder.hpp"
+#include "game/world/interior_station.hpp"
 namespace game::habitats::interior_detail {
 using namespace game::runtime;
 inline void bench(Builder& b,Vec3 feet,float width,float depth,float height=.78f){
@@ -12,14 +13,18 @@ inline void bench(Builder& b,Vec3 feet,float width,float depth,float height=.78f
     b.box(b.mesh.service_metal,feet+Vec3{0,height-.19f,0},{width*.88f,.16f,depth*.74f},false);
 }
 inline void console(Builder& b,Vec3 c,float width=1.2f,float facing_z=-1.f){
+    interior_layout::StationScope station(b.mesh);
     b.box(b.mesh.interior,c,{width,.68f,.46f},false);
     b.box(b.mesh.interior,{c.x,c.y+.48f,c.z+.18f*facing_z},{width*.82f,.42f,.10f},false);
-    b.box(b.mesh.displays,{c.x,c.y+.48f,c.z+.239f*facing_z},{width*.73f,.31f,.016f},false);
+    structure_display::Mount screen{{c.x,c.y+.48f,c.z+.245f*facing_z},{facing_z,0,0},{0,1,0},width*.73f,.31f};
+    structure_display::casing(b.mesh.service_metal,b.mesh.displays,screen);b.mesh.screens.push_back(screen);
+    b.box(b.mesh.service_metal,{c.x,c.y+.27f,c.z+.16f*facing_z},{.10f,.24f,.08f},false);
     b.box(b.mesh.service_metal,{c.x,c.y+.20f,c.z+.25f*facing_z},{width*.80f,.035f,.16f},false);
     for(int key=0;key<5;++key)b.box(b.mesh.markings,{c.x+width*(key-2)*.10f,c.y+.222f,c.z+.26f*facing_z},{width*.055f,.006f,.045f},false);
 }
 inline void locker_bank(Builder& b,Vec3 c,int count,float spacing=.62f){
     for(int i=0;i<count;++i){
+        interior_layout::StationScope station(b.mesh);
         const float x=c.x+(i-(count-1)*.5f)*spacing;
         b.box(b.mesh.interior,{x,c.y,c.z},{.52f,1.55f,.50f},false);
         b.box(b.mesh.service_metal,{x,c.y,c.z-.258f},{.47f,1.46f,.025f},false);

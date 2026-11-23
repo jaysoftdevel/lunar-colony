@@ -401,7 +401,7 @@ void GameApp::enter_first_person_drop_mode(){
     first_person_hover_ground_resource_=-1;
     first_person_hover_storage_resource_=-1;
     first_person_hover_storage_box_=-1;
-    first_person_cursor_=false;
+    first_person_cursor_=false;first_person_alt_cursor_=false;
     first_person_mode_=FirstPersonMode::DropPending;
     app_.set_relative_mouse_mode(false);
     app_.set_cursor_visible(false);
@@ -413,7 +413,7 @@ void GameApp::exit_first_person_mode(){
     first_person_hover_storage_resource_=-1;
     first_person_hover_storage_box_=-1;
     first_person_mode_=FirstPersonMode::Off;
-    first_person_cursor_=false;
+    first_person_cursor_=false;first_person_alt_cursor_=false;
     cancel_placement_tool();
     app_.set_relative_mouse_mode(false);
     app_.set_cursor_visible(true);
@@ -998,7 +998,7 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to,CrewTraversal traversa
                 if(!inside_habitat_hull(current,h,mesh,radius) && !doorway) return false;
                 if(!doorway){
                     const Vec3 local=rotate_y(current-h.position,-h.rotation_degrees);
-                    if(habitat_interior_blocks_first_person(mesh,local,radius,first_person_.body_height())) return false;
+                    if(habitat_interior_blocks_first_person(habitat_runtime_mesh(i),local,radius,first_person_.body_height())) return false;
                 }
             }else if(body_overlaps_region(current,radius,[&](Vec3 q){
                 return inside_habitat_hull(q,h,mesh,0.0f);
@@ -1030,7 +1030,7 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to,CrewTraversal traversa
                 if(!inside_storage_hull(current,item,mesh,radius) && !doorway) return false;
                 if(!doorway){
                     const Vec3 local=rotate_y(current-item.position,-item.rotation_degrees);
-                    if(resource_interior_blocks_first_person(mesh,local,radius,first_person_.body_height())) return false;
+                    if(resource_interior_blocks_first_person(resource_runtime_mesh(i),local,radius,first_person_.body_height())) return false;
                     const float lane=geometry::kDoorClearWidth*0.5f-radius;
                     if(std::abs(local.x)>=lane && std::abs(local.z)>=lane){
                         std::size_t visible_boxes=item.stored_boxes.size();
@@ -1295,7 +1295,7 @@ void GameApp::first_person_grab_or_drop_resource(){
 }
 
 bool GameApp::first_person_pointer_over_hud(const InputState& input) const {
-    if(!first_person_cursor_)return false;
+    if(!first_person_cursor_free())return false;
     const float x=float(input.mouse_x)/ui_scale_,y=float(input.mouse_y)/ui_scale_;
     float help_height=88.f;
     const auto feet=first_person_.feet_position();
@@ -1317,8 +1317,8 @@ bool GameApp::pick_build_ground(Vec3& hit) const {
     const auto eye=first_person_.eye_position(),forward=first_person_.look_direction();
     const auto right=normalize(cross(forward,Vec3{0,1,0})),up=normalize(cross(right,forward));
     const float tangent=std::tan(radians(first_person_.fov())*.5f);
-    const float x=first_person_cursor_?2.f*input_.mouse_x/std::max(1,viewport_width_)-1.f:0.f;
-    const float y=first_person_cursor_?1.f-2.f*input_.mouse_y/std::max(1,viewport_height_):0.f;
+    const float x=first_person_cursor_free()?2.f*input_.mouse_x/std::max(1,viewport_width_)-1.f:0.f;
+    const float y=first_person_cursor_free()?1.f-2.f*input_.mouse_y/std::max(1,viewport_height_):0.f;
     const auto ray=normalize(forward+right*(x*float(viewport_width_)/std::max(1,viewport_height_)*tangent)+up*(y*tangent));
     if(ray.y>=-.0001f)return false;
     const float distance=-eye.y/ray.y;if(distance<=0||distance>90.f)return false;
@@ -1334,7 +1334,7 @@ void GameApp::cancel_placement_tool(){
 void GameApp::update_first_person(float dt,const InputState& input){
     corridor_network_.refresh_pressure_shells();
     if(first_person_mode_!=FirstPersonMode::Active) return;
-    if(!first_person_cursor_ || (input.right_down&&!first_person_pointer_over_hud(input)))first_person_.update_look(input);
+    if(!first_person_cursor_free() || (!first_person_alt_cursor_&&input.right_down&&!first_person_pointer_over_hud(input)))first_person_.update_look(input);
     const Vec3 displacement=first_person_.desired_displacement(input,dt);
     Vec3 current=first_person_.feet_position();
     if(length(displacement)>0.0001f){

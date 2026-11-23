@@ -227,13 +227,20 @@ void GameApp::update_simulation(float dt,const InputState& in){
             const bool tool=build_catalog_.selected()||storage_gate_placement_active_||corridor_link_source_>=0;
             if(tool&&(in.escape_pressed||in.right_pressed)){cancel_placement_tool();return;}
             if(in.escape_pressed){exit_first_person_mode();return;}
-            if(in.key_tab_pressed){
-                first_person_cursor_=!first_person_cursor_;
-                app_.set_relative_mouse_mode(!first_person_cursor_);app_.set_cursor_visible(first_person_cursor_);
+            const bool cursor_was_free=first_person_cursor_free();
+            first_person_alt_cursor_=in.key_alt_down;
+            if(in.key_tab_pressed)first_person_cursor_=!first_person_cursor_;
+            const bool cursor_free=first_person_cursor_free();
+            app_.set_relative_mouse_mode(!cursor_free);app_.set_cursor_visible(cursor_free);
+            auto fpv_input=in;
+            if(cursor_was_free!=cursor_free){
+                fpv_input.mouse_dx=fpv_input.mouse_dy=0;
+                fpv_input.left_pressed=input_.left_pressed=false;
+                if(!cursor_free){input_.mouse_x=viewport_width_/2;input_.mouse_y=viewport_height_/2;}
             }
             if(!first_person_pointer_over_hud(in))update_placement_controls(in);
             advance_colony();
-            update_first_person(dt,in);
+            update_first_person(dt,fpv_input);
             if(!paused && astronaut_test_active()) update_astronaut_test(sim_dt);
             return;
         }

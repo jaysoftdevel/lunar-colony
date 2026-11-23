@@ -1,4 +1,5 @@
 #pragma once
+#include "game/world/habitat_mesh.hpp"
 #include "game/world/ore.hpp"
 #include "game/world/supply_state.hpp"
 #include "game/runtime/presentation.hpp"
@@ -170,12 +171,20 @@ inline constexpr std::int64_t storage_dome_capacity_kg(StorageDomeSize size){
     return static_cast<std::int64_t>(kg/1000.0f)*1000;
 }
 
+struct MeshRange {std::size_t first{},last{};};
+struct SolarHead {
+    std::vector<MeshRange> body,details,edges;
+    game::runtime::Vec3 pivot{0,3.38f,0},center{0,4.73303f,.25f};
+    float horizontal_scale{1};
+};
 struct ResourceMesh {
     std::vector<game::runtime::Vec3> body;
     std::vector<game::runtime::Vec3> glazing; // Transparent pressure roof; physical even with hull hidden.
     std::vector<game::runtime::Vec3> foundation;
     std::vector<game::runtime::Vec3> details;
     std::vector<game::runtime::Vec3> edges;
+    SolarHead solar_head;
+    std::vector<InteriorStation> stations;
     float footprint_x{1.0f};
     float footprint_z{1.0f};
     float height{1.0f};

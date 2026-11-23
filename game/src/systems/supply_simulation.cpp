@@ -46,20 +46,21 @@ double hydroponics_power_kw(const PlacedHabitat& h,bool light_phase){
     if(h.kind!=HabitatKind::BioDome || !light_phase) return 0.0;
     double total=0.0;
     const std::size_t count=hydroponics_bay_count(h.size);
-    for(std::size_t i=0;i<count;++i) total+=hydroponic_profile(h.hydroponics[i].plant).power_kw;
+    for(std::size_t i=0;i<count;++i)if(!(h.blocked_grow_bays&(1u<<i))) total+=hydroponic_profile(h.hydroponics[i].plant).power_kw;
     return total;
 }
 double hydroponics_water_litres_per_day(const PlacedHabitat& h,bool light_phase){
     if(h.kind!=HabitatKind::BioDome || !light_phase) return 0.0;
     double total=0.0;
     const std::size_t count=hydroponics_bay_count(h.size);
-    for(std::size_t i=0;i<count;++i) total+=hydroponic_profile(h.hydroponics[i].plant).water_litres_per_day;
+    for(std::size_t i=0;i<count;++i)if(!(h.blocked_grow_bays&(1u<<i))) total+=hydroponic_profile(h.hydroponics[i].plant).water_litres_per_day;
     return total;
 }
 }
 
 const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
     corridor_network_.refresh_pressure_shells();
+    for(std::size_t i=0;i<placed_habitats_.size();++i)placed_habitats_[i].blocked_grow_bays=habitat_runtime_mesh(i).blocked_grow_bays;
     const auto& topology=utility_network_.evaluate_services(corridor_network_,placed_habitats_,placed_resources_);
     auto& services=live_supply_services_;
     services=topology;
@@ -467,6 +468,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
                     const double air_factor=h.supply.breathability()>=95.0?1.0:(h.supply.breathability()>=80.0?0.35:0.0);
                     const std::size_t bay_count=hydroponics_bay_count(h.size);
                     for(std::size_t bay_index=0;bay_index<bay_count;++bay_index){
+                        if(h.blocked_grow_bays&(1u<<bay_index))continue;
                         auto& bay=h.hydroponics[bay_index];
                         const auto& crop=hydroponic_profile(bay.plant);
                         if(bay.plant==HydroponicPlant::Empty || crop.harvest_food_kg<=0 || !hydroponics_light_phase || air_factor<=0.0 || g.power<=1e-9) continue;

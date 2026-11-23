@@ -53,7 +53,7 @@ struct Builder {
         const Vec3 ref=std::abs(n.y)<0.92f?Vec3{0,1,0}:Vec3{1,0,0};
         const Vec3 u=normalize(cross(n,ref));
         const Vec3 v=normalize(cross(n,u));
-        const int seg=std::max(6,segments);
+        const int seg=std::max(&dst==&mesh.body?32:6,segments);
         for(int i=0;i<seg;++i){
             const float a0=2.0f*PI*(float)i/(float)seg;
             const float a1=2.0f*PI*(float)(i+1)/(float)seg;
@@ -77,7 +77,7 @@ struct Builder {
     }
 
     void dome(std::vector<Vec3>& dst,Vec3 base,float radius,int rings=7,int segments=20,bool outline=true,float y_scale=1.0f){
-        const int rs=std::max(3,rings), ss=std::max(8,segments);
+        const int rs=std::max(&dst==&mesh.body?12:3,rings), ss=std::max(&dst==&mesh.body?32:8,segments);
         for(int r=0;r<rs;++r){
             const float t0=(PI*0.5f)*(float)r/(float)rs;
             const float t1=(PI*0.5f)*(float)(r+1)/(float)rs;
@@ -128,13 +128,16 @@ inline ResourceMesh refine_future_resource(ResourceMesh source,ResourceKind kind
     }
 
     switch(kind){
-        case ResourceKind::SolarPanel:
+        case ResourceKind::SolarPanel:{
             // Rotary drive bearings, redundant harnesses and a field-service inverter.
             b.cylinder_y(b.mesh.details,{0,3.38f,0},0.24f,0.94f,16,true);
+            const auto detail_begin=b.mesh.details.size(),edge_begin=b.mesh.edges.size();
             b.cylinder_between(b.mesh.details,{-4.55f,3.55f,0.48f},{4.55f,3.55f,0.48f},0.045f,8,true,true);
             b.cylinder_between(b.mesh.details,{-4.55f,3.47f,0.66f},{4.55f,3.47f,0.66f},0.030f,8,true,true);
+            b.mesh.solar_head.details.push_back({detail_begin,b.mesh.details.size()});
+            b.mesh.solar_head.edges.push_back({edge_begin,b.mesh.edges.size()});
             b.box(b.mesh.details,{-1.05f,1.38f,0.62f},{0.72f,0.86f,0.54f});
-            break;
+            break;}
         case ResourceKind::WaterDriller:
             // Visible bypass manifold, valves and protected pressure instrumentation.
             b.cylinder_z(b.mesh.details,{1.30f,2.52f,0},4.80f,0.085f,10,true);

@@ -18,6 +18,7 @@ void build_airlock_inner(Builder& b){
     // Both end cabins have suit/isolation equipment, so either authored hatch
     // can face the colony without rebuilding or mirroring the structure.
     for(float x:{-3.15f,3.15f}){
+        interior_layout::StationScope station(b.mesh);
         locker_bank(b,{x,floor+.775f,-1.55f},2,.57f);
         bench(b,{x,floor,1.54f},.75f,.38f,.56f);
         tank(b,{x,floor+.56f,1.54f},.88f,.14f);

@@ -50,7 +50,7 @@ struct EngineIntegrationRegression {
         app.builder_robots_.resize(1);app.builder_robots_[0].position={-6,0,3};
         app.ground_resource_piles_={{MaterialResource::Iron,500,{-3,0,4},.5f,1}};
         vl::GL gl;gl.load([&](const char* name){return platform.resolve(name);});
-        const std::array names{"menu","orbit","first-person-exterior","first-person-interior","campus","graphics-menu","lab-interior","airlock-interior","biodome-interior","robot-closeup","fov-options","sky-east","sky-west","workshop-front","workshop-rear","workshop-open","workshop-glass-roof","workshop-service-interior","workshop-grounded-frame","corridor-T-exterior","corridor-X-interior","corridor-dome-collar","faded-hulls","fpv-build-preview"};
+        const std::array names{"menu","orbit","first-person-exterior","first-person-interior","campus","graphics-menu","lab-interior","airlock-interior","biodome-interior","robot-closeup","fov-options","sky-east","sky-west","workshop-front","workshop-rear","workshop-open","workshop-glass-roof","workshop-service-interior","workshop-grounded-frame","corridor-T-exterior","corridor-X-interior","corridor-dome-collar","faded-hulls","fpv-build-preview","solar-filter-hulls","oxygen-terminal","pressure-door-detail","workshop-terminal","gate-unused-red","gate-connected-green","solar-collector-morning","solar-collector-noon"};
         for(std::size_t scene=0;scene<names.size();++scene){
             app.screen_=scene==0?GameApp::Screen::MainMenu:GameApp::Screen::Playfield;
             app.first_person_mode_=GameApp::FirstPersonMode::Off;
@@ -120,11 +120,72 @@ struct EngineIntegrationRegression {
                     app.input_.mouse_x=480;app.input_.mouse_y=270;
                 }
             }
+            if(scene>=24){
+                app.build_catalog_.clear_selection();app.first_person_cursor_=false;app.first_person_alt_cursor_=false;
+                app.corridor_network_.clear();app.utility_network_.clear();app.builder_robots_.clear();app.ground_resource_piles_.clear();
+                app.placed_resources_.clear();app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;
+                auto habitat=room;habitat.kind=scene==26?HabitatKind::AirLock:HabitatKind::OxygenGeneratorDome;
+                habitat.supply.oxygen_produced_kg_per_day=12.3;habitat.supply.water_processed_litres_per_day=13.8;
+                habitat.supply.oxygen_kg=habitat.supply.volume_m3*kOxygenKgPerM3*.86;
+                app.placed_habitats_={habitat};app.first_person_mode_=GameApp::FirstPersonMode::Off;
+                app.camera_.restore({24,45,40,{0,1,0}});
+                if(scene==25){
+                    const auto& model=app.habitat_models_.mesh(habitat);const auto& display=model.screens.back();
+                    const auto normal=display.normal();const auto eye=display.center+normal*.60f;
+                    app.first_person_mode_=GameApp::FirstPersonMode::Active;
+                    app.first_person_.spawn(eye-game::runtime::Vec3{0,geometry::kHumanEyeHeight,0},std::atan2(-normal.x,normal.z)*180/3.14159265f);
+                }
+                if(scene==26){
+                    app.first_person_mode_=GameApp::FirstPersonMode::Active;
+                    app.first_person_.spawn({-.5f,app.habitat_models_.mesh(habitat).walkable_floor_y,0},90);
+                    game::runtime::InputState look;look.mouse_dy=100;app.first_person_.update_look(look);
+                }
+                if(scene==27){
+                    app.placed_habitats_.clear();auto home=hangar;home.position={0,0,0};home.supply.power_fraction=1;
+                    auto solar=panel;solar.position={-20,0,0};app.placed_resources_={home,solar};
+                    UtilityConnection feed;feed.kind=UtilityKind::SupplyChannel;feed.construction.finish();feed.endpoint_a.kind=feed.endpoint_b.kind=UtilityEndpointKind::Resource;
+                    feed.endpoint_a.index=0;feed.endpoint_b.index=1;feed.path={{-5.5f,0,0},{-17,0,0}};app.utility_network_.restore_connections({feed});
+                    app.builder_robots_.resize(1);auto& bot=app.builder_robots_[0];bot.workshop_index=0;bot.workshop_bay=0;bot.workshop_parked=true;bot.condition=.65f;bot.battery_capacity_kwh=10;bot.battery_charge_kwh=3;bot.position=workshop::bay(home,0);
+                    const auto bay=workshop::bay_local(0);const float sign=bay.x<0?-1.f:1.f;
+                    app.first_person_mode_=GameApp::FirstPersonMode::Active;
+                    app.first_person_.spawn({sign*3.25f,2.40f-geometry::kHumanEyeHeight,bay.z+.72f},sign<0?270:90);
+                }
+                app.input_.mouse_x=480;app.input_.mouse_y=270;
+            }
+            if(scene==28 || scene==29){
+                app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();
+                PlacedResource warehouse;warehouse.kind=ResourceKind::StorageDome;warehouse.construction.finish();
+                app.placed_resources_={warehouse};
+                if(scene==29){
+                    auto destination=room;destination.position={0,0,-25};app.placed_habitats_={destination};
+                    const CorridorBuildAnchor a{CorridorEndpointKind::Resource,0,{0,0,-6}},b{CorridorEndpointKind::Habitat,0,{0,0,-19}};
+                    auto link=app.corridor_network_.preview_built_corridor(a,b,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+                    if(!link)throw std::runtime_error("Gate capture has no corridor route");
+                    link->construction.finish();std::vector<CorridorConnection> links{*link};corridor_detail::rebuild_all_meshes(links);app.corridor_network_.restore_connections(std::move(links));
+                }
+                app.first_person_mode_=GameApp::FirstPersonMode::Active;
+                app.first_person_.spawn({0,app.resource_models_.mesh(warehouse).walkable_floor_y,.2f},0);
+            }
+            if(scene==30 || scene==31){
+                app.placed_habitats_.clear();app.corridor_network_.clear();
+                auto collector=panel;collector.position={0,0,0};collector.rotation_degrees=37;collector.solar_visual_initialized=true;
+                collector.solar_visual_normal=solar_tracking::pose(scene==30?9.f:12.f).direction;
+                app.placed_resources_={collector};app.first_person_mode_=GameApp::FirstPersonMode::Off;
+                app.camera_.restore({15,38,155,{0,3,0}});
+            }
             for(int frame=0;frame<3;++frame){app.ui_time_seconds_+=1./60;app.render(*renderer);}
             std::vector<unsigned char> pixels(960*540*4);gl.ReadPixels(0,0,960,540,vl::GL_RGBA,vl::GL_UNSIGNED_BYTE,pixels.data());
             unsigned low=255,high=0;
             for(int y=100;y<440;++y)for(int x=100;x<860;++x){const auto i=(y*960+x)*4;const unsigned value=(unsigned(pixels[i])+pixels[i+1]+pixels[i+2])/3;low=std::min(low,value);high=std::max(high,value);}
             if(high-low<12)throw std::runtime_error(std::string("Scene has no rendered contrast: ")+names[scene]);
+            if(scene==28 || scene==29){
+                int border_pixels=0;int low_y=540,high_y=0;
+                for(int y=80;y<460;++y)for(int x=300;x<660;++x){const auto i=(y*960+x)*4;
+                    const bool border=scene==28?pixels[i]>160&&pixels[i]>pixels[i+1]*3: pixels[i+1]>160&&pixels[i+1]>pixels[i]*3;
+                    if(border){++border_pixels;low_y=std::min(low_y,y);high_y=std::max(high_y,y);}
+                }
+                if(border_pixels<400||high_y-low_y<150)throw std::runtime_error(std::string("Gate border is hidden by its frame: ")+names[scene]);
+            }
             if(const char* folder=std::getenv("GAME_RENDER_CAPTURE_DIR")){
                 std::filesystem::create_directories(folder);
                 std::ofstream file(std::filesystem::path(folder)/(std::string(names[scene])+".ppm"),std::ios::binary);

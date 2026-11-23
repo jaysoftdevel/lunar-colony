@@ -1,5 +1,6 @@
 #pragma once
 #include "game/world/supply_state.hpp"
+#include "game/world/structure_display.hpp"
 #include "game/world/hydroponics.hpp"
 #include "game/runtime/presentation.hpp"
 #include "game/world/construction.hpp"
@@ -85,9 +86,18 @@ inline constexpr int crew_quarters_bed_count(HabitatSizeTier size){
     }
 }
 
+enum class StationKind { Equipment, Grow, Bed, Screen };
+struct InteriorStation {
+    StationKind kind{StationKind::Equipment};std::size_t slot{};
+    std::array<std::size_t,8> first{},count{};
+    std::size_t screen_first{},screen_count{};
+    game::runtime::Vec3 low{},high{};bool active{true};
+};
+
 struct CrewBunk {
     game::runtime::Vec3 access;
     game::runtime::Vec3 feet;
+    bool available{true};
 };
 
 struct HabitatMesh {
@@ -98,6 +108,9 @@ struct HabitatMesh {
     std::vector<game::runtime::Vec3> glazing;
     std::vector<game::runtime::Vec3> edges;
     std::vector<game::runtime::Vec3> lining,deck,service_metal,fabric,displays,lamps,markings;
+    std::vector<structure_display::Mount> screens;
+    std::vector<InteriorStation> stations;
+    std::uint16_t blocked_grow_bays{};
     float footprint_x{1.0f};
     float footprint_z{1.0f};
     float height{1.0f};
@@ -128,6 +141,7 @@ struct PlacedHabitat {
     ConstructionResourcePlan resource_plan{};
     ResourceBundle site_buffer{}; // delivered construction material staged at this blueprint
     std::array<HydroponicsBay,kMaxHydroponicsBays> hydroponics{};
+    std::uint16_t blocked_grow_bays{}; // Derived doorway reservations; not serialized.
     bool power_enabled{true};
 };
 

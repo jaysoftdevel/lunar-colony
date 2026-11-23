@@ -44,11 +44,15 @@ add_library(game_cluster_interaction OBJECT
     src/systems/robot_workshop.cpp
     src/systems/storage_extensions.cpp
     src/systems/gate_areas.cpp
+    src/systems/interior_layout.cpp
 )
 configure_game_cluster(game_cluster_interaction)
 
 add_library(game_cluster_rendering OBJECT
     src/playfield/world_renderer.cpp
+    src/playfield/gate_frames.cpp
+    src/playfield/structure_display.cpp
+    src/playfield/station_screens.cpp
     src/playfield/builder_robot_renderer.cpp
     "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/src/playfield/astronaut_renderer.cpp>"
     src/playfield/lunar_lander_renderer.cpp

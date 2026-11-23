@@ -37,7 +37,7 @@ struct Builder {
         Vec3 ref=std::abs(n.y)<0.92f?Vec3{0,1,0}:Vec3{1,0,0};
         Vec3 u=normalize(cross(n,ref));
         Vec3 v=normalize(cross(n,u));
-        const int seg=std::max(6,segments);
+        const int seg=std::max(&dst==&mesh.shell?32:6,segments);
         for(int i=0;i<seg;++i){
             const float a0=2.0f*PI*(float)i/(float)seg;
             const float a1=2.0f*PI*(float)(i+1)/(float)seg;
@@ -82,7 +82,7 @@ struct Builder {
     }
 
     void dome(std::vector<Vec3>& dst,Vec3 base,float radius,int rings=7,int segments=20,bool outline=true,float y_scale=1.0f){
-        const int rs=std::max(3,rings), ss=std::max(8,segments);
+        const int rs=std::max(&dst==&mesh.shell?12:3,rings), ss=std::max(&dst==&mesh.shell?32:8,segments);
         for(int r=0;r<rs;++r){
             const float t0=(PI*0.5f)*(float)r/(float)rs;
             const float t1=(PI*0.5f)*(float)(r+1)/(float)rs;

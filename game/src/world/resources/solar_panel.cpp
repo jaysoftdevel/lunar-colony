@@ -20,6 +20,7 @@ ResourceMesh make_solar_panel(){
     const Vec3 ax{1,0,0};
     const Vec3 ay{0,std::cos(pitch),-std::sin(pitch)};
     const Vec3 az{0,std::sin(pitch),std::cos(pitch)};
+    const auto body_begin=b.mesh.body.size(),detail_begin=b.mesh.details.size(),edge_begin=b.mesh.edges.size();
     for(int i=0;i<4;++i){
         const float x=-4.35f+2.90f*(float)i;
         const Vec3 c{x,4.55f+std::sin(pitch)*0.45f,0.25f};
@@ -38,6 +39,10 @@ ResourceMesh make_solar_panel(){
         }
     }
     b.cylinder_x(b.mesh.details,{0,3.45f,0},9.2f,0.14f,10,true);
+    b.mesh.solar_head.body.push_back({body_begin,b.mesh.body.size()});
+    b.mesh.solar_head.details.push_back({detail_begin,b.mesh.details.size()});
+    b.mesh.solar_head.edges.push_back({edge_begin,b.mesh.edges.size()});
+    b.mesh.solar_head.center={0,4.55f+std::sin(pitch)*.45f,.25f};
     return std::move(b.mesh);
 }
 }

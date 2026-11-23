@@ -17,7 +17,7 @@
 
 namespace game::runtime {
 struct Color { float r{},g{},b{},a{1.0f}; };
-enum class LunarMaterial { Paint, Alloy, Regolith, Solar, Glass, Fabric, Pad, Emissive, Skin, Marking, Hair, Hull, Interior, Deck, RobotPaint, Textile, Display, Rubber };
+enum class LunarMaterial { Paint, Alloy, Regolith, Solar, Glass, Fabric, Pad, Emissive, Skin, Marking, Hair, Hull, Interior, Deck, RobotPaint, Textile, Display, Rubber, PressureDoor, DisplayText, SolarShield };
 
 struct LunarSurfaceMapping {
     Vec3 origin{};
@@ -86,6 +86,7 @@ struct InputState {
     bool key_space_pressed{}, key_space_down{};
     bool key_j_pressed{}, key_j_down{};
     bool key_tab_pressed{};
+    bool key_alt_down{};
     std::uint8_t key_number_pressed{};
     bool delete_pressed{};
     bool backspace_pressed{}, enter_pressed{};

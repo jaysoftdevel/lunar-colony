@@ -9,6 +9,7 @@ void build_laboratory_inner(Builder& b){
     const float floor=b.mesh.walkable_floor_y;
     b.box(b.mesh.interior,{0,floor-.08f,0},{10.8f,.16f,3.52f},false);
     for(float x:{-3.31f,-1.36f,1.45f,3.40f}){
+        interior_layout::StationScope station(b.mesh);
         bench(b,{x,floor,-1.54f},1.01f,.58f);
         b.box(b.mesh.interior,{x,floor+1.01f,-1.65f},{.81f,.46f,.37f},false);
         bench(b,{x,floor,1.54f},1.01f,.58f,.72f);

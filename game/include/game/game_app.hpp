@@ -19,6 +19,7 @@
 #include "game/world/playfield.hpp"
 #include "game/world/geometry_standards.hpp"
 #include "game/world/habitat_mesh.hpp"
+#include "game/world/interior_station.hpp"
 #include "game/world/resource_mesh.hpp"
 #include "game/world/corridor_network.hpp"
 #include "game/world/pressure_door.hpp"
@@ -182,6 +183,8 @@ private:
     FirstPersonController first_person_{};
     FirstPersonMode first_person_mode_{FirstPersonMode::Off};
     bool first_person_cursor_{};
+    bool first_person_alt_cursor_{};
+    bool first_person_cursor_free() const {return first_person_cursor_ || first_person_alt_cursor_;}
     ColonyStatus status_{};
     // Derived live telemetry; never serialized as stored resources.
     double battery_net_kw_{0},water_net_litres_per_day_{0};
@@ -394,6 +397,13 @@ private:
     void render_walkway_placement(game::runtime::SceneRenderer& r);
     void render_corridor_placement(game::runtime::SceneRenderer& r);
     void render_placement_tooltip(game::runtime::SceneRenderer& r);
+    const ResourceMesh& resource_runtime_mesh(std::size_t) const;
+    mutable std::vector<interior_layout::ResourceCache> resource_layout_cache_;
+    const HabitatMesh& habitat_runtime_mesh(std::size_t) const;
+    mutable std::vector<interior_layout::Cache> habitat_layout_cache_;
+    void render_gate_connection_frames(game::runtime::SceneRenderer&) const;
+    mutable std::vector<std::uint64_t> gate_topology_signature_;
+    mutable std::vector<std::size_t> gate_topology_roots_;
     void render_habitat_mesh(game::runtime::SceneRenderer& r,const HabitatMesh& mesh,game::runtime::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,bool greenhouse_dark=false,HabitatKind kind=HabitatKind::AirLock,bool powered=true) const;
     void render_resource_mesh(game::runtime::SceneRenderer& r,const ResourceMesh& mesh,game::runtime::Vec3 position,float rotation_degrees,bool preview,bool valid=true,bool selected=false,float construction_step=(float)kConstructionSteps,const std::vector<CorridorDoor>* fpv_doors=nullptr,ResourceKind kind=ResourceKind::Count) const;
     struct StructureAttachment {
@@ -585,6 +595,8 @@ private:
     bool workshop_accessible(const PlacedResource& candidate) const;
     bool workshop_supplied(std::size_t resource_index) const;
     bool workshop_operational(std::size_t resource_index) const;
+    structure_display::Content habitat_screen_content(std::size_t) const;
+    void render_habitat_screens(game::runtime::SceneRenderer&,std::size_t) const;
     void render_workshop_services(game::runtime::SceneRenderer& r,std::size_t index) const;
     void render_workshop_gate(game::runtime::SceneRenderer& r,const PlacedResource& item,bool preview=false,bool valid=true) const;
     void assign_storage_loading_faces();

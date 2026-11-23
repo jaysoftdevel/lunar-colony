@@ -15,6 +15,10 @@ ResourceMesh scale_xz(const ResourceMesh& source,float scale){
     scale_vertices(out.foundation);
     scale_vertices(out.details);
     scale_vertices(out.edges);
+    for(auto& station:out.stations){station.low.x*=scale;station.low.z*=scale;station.high.x*=scale;station.high.z*=scale;}
+    out.solar_head.horizontal_scale*=scale;
+    out.solar_head.center.x*=scale;out.solar_head.center.z*=scale;
+    out.solar_head.pivot.x*=scale;out.solar_head.pivot.z*=scale;
     out.footprint_x*=scale;
     out.footprint_z*=scale;
     // Intentionally leave out.height and all Y coordinates untouched.

@@ -1,6 +1,6 @@
 # Shared Linux and Windows development — 0.66.0
 
-Both platforms use the same game sources and external JSD 0.5.16 engine services.
+Both platforms use the same game sources and external JSD 0.5.17 engine services.
 
 | Action | Linux | Windows 11 |
 | --- | --- | --- |

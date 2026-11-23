@@ -46,7 +46,7 @@ struct GeometryRecorder final:game::runtime::SceneRenderer {
     std::vector<game::runtime::Color> service_lamps;
     void draw_mapped_lunar_surface(const std::vector<Vec3>& v,game::runtime::LunarMaterial m,game::runtime::Color c,
         const game::runtime::LunarSurfaceMapping&) override {
-        if(m==game::runtime::LunarMaterial::Glass)glass.insert(glass.end(),v.begin(),v.end());
+        if(m==game::runtime::LunarMaterial::Glass||m==game::runtime::LunarMaterial::SolarShield)glass.insert(glass.end(),v.begin(),v.end());
         if(m==game::runtime::LunarMaterial::Display)displays.insert(displays.end(),v.begin(),v.end());
         if(m==game::runtime::LunarMaterial::Emissive)service_lamps.push_back(c);
         draw_triangles_3d(v,c);
@@ -1310,7 +1310,7 @@ struct NavigationRegression {
             require(segment_hits_mesh({x-.3f,y,z},{x+.3f,y,z},mesh.details),"Roof stanchion is not continuous to foundation");
         GeometryRecorder full,cut;app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;
         app.render_resource_mesh(full,mesh,{},0,false,true,false,kConstructionSteps,nullptr,home.kind);
-        require(full.glass.size()==mesh.glazing.size(),"Full hull does not submit transparent roof");
+        require(full.glass.size()>=mesh.glazing.size(),"Full hull does not submit transparent roof");
         app.habitat_view_mode_=GameApp::HabitatViewMode::None;
         app.render_resource_mesh(cut,mesh,{},0,false,true,false,kConstructionSteps,nullptr,home.kind);
         require(cut.glass.size()==mesh.glazing.size() && !cut.triangles.empty(),"Faded hull lost roof tint or frame/equipment");
@@ -1320,7 +1320,7 @@ struct NavigationRegression {
         for(int slot=0;slot<4;++slot){auto& bot=app.builder_robots_[slot];bot.workshop_index=0;bot.workshop_bay=slot;bot.workshop_parked=true;bot.condition=.6f;bot.battery_capacity_kwh=10;bot.battery_charge_kwh=2;bot.position=workshop::bay(home,slot);}
         require(app.workshop_operational(0),"Service fixture is not powered");
         GeometryRecorder active;app.render_workshop_services(active,0);
-        require(active.service_lamps.size()==4 && active.displays.size()==4*36,"Not all four bays have repair indicators and diagnostic screens");
+        require(active.service_lamps.size()==4 && active.displays.size()==4*6,"Not all four bays have repair indicators and diagnostic screens");
         for(const auto& c:active.service_lamps)require(c.r==1.f && c.g==.51f,"Damaged parked robot has no active repair indicator");
         app.builder_robots_[0].condition=app.builder_robots_[1].condition=1.f;
         app.builder_robots_[0].battery_charge_kwh=10;app.builder_robots_[3].workshop_parked=false;

@@ -1,4 +1,5 @@
 #include "game/world/resource_builder.hpp"
+#include "game/world/interior_station.hpp"
 #include "game/world/resources/resource_generators.hpp"
 #include "game/world/geometry_standards.hpp"
 
@@ -57,6 +58,7 @@ ResourceMesh make_storage_dome(StorageDomeSize size){
     // Fixed service cabinets stand outside the quadrant cargo grids.
     const float cabinet=0.236f*diameter;
     for(float x:{-cabinet,cabinet})for(float z:{-cabinet,cabinet}){
+        interior_layout::ResourceStationScope station(b.mesh);
         b.box(b.mesh.details,{x,deck+0.57f,z},{0.52f,1.14f,0.48f});
         b.box(b.mesh.details,{x,deck+1.19f,z},{0.56f,0.10f,0.52f});
         b.box(b.mesh.details,{x,deck+0.81f,z-std::copysign(0.245f,z)},{0.27f,0.12f,0.025f});

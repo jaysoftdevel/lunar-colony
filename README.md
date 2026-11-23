@@ -1,8 +1,20 @@
-# JSD Lunar Base v0.67.0
+# JSD Lunar Base v0.69.0
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
-The game renders through the external **JSD 3d-engine 0.5.16**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+The game renders through the external **JSD 3d-engine 0.5.18**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+
+Version 0.69.0 marks disconnected gates red and usable corridor connections green,
+reserves internal doorway approaches by removing obstructing station assemblies,
+and keeps photovoltaic surfaces attached to rigidly moving collector heads.
+See [UPDATE-0.69.0.md](UPDATE-0.69.0.md).
+
+Version 0.68.0 adds solar-filter upper glazing, revised pressure-door hardware,
+readable live structure displays with attached housings, and Alt-held FPV cursor
+release. See [UPDATE-0.68.0.md](UPDATE-0.68.0.md).
+
+Version 0.67.1 restores the star sky and global lunar surface in Classic
+and minimum graphics settings. See [UPDATE-0.67.1.md](UPDATE-0.67.1.md).
 
 Version 0.67.0 adds cyan 12% faded hulls, first-person building with a free
 cursor (Tab), persistent bottom controls, brighter foundation guides and new
@@ -58,7 +70,7 @@ Press **1–3** to select a simulation speed and **Space** to pause or resume in
 
 ## Build and run
 
-The game uses the external JSD 3d-engine 0.5.14 for rendering, platform, math,
+The game uses the external JSD 3d-engine 0.5.18 for rendering, platform, math,
 workers and audio. Its former in-game engine directory is removed. Game-specific
 bindings live under `game/src/runtime/` alongside the game code.
 

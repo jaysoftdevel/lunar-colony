@@ -117,7 +117,7 @@ int GameHost::run(const WindowConfig& config,const std::function<std::unique_ptr
             if(p.focused){
                 const auto* keys=SDL_GetKeyboardState(nullptr);
                 in.key_w_down=keys[26];in.key_a_down=keys[4];in.key_s_down=keys[22];in.key_d_down=keys[7];
-                in.key_shift_down=keys[225] || keys[229];in.key_v_down=keys[25];in.key_space_down=keys[44];in.key_j_down=keys[13];
+                in.key_alt_down=keys[226] || keys[230];in.key_shift_down=keys[225] || keys[229];in.key_v_down=keys[25];in.key_space_down=keys[44];in.key_j_down=keys[13];
                 int x=0,y=0,ww=1,wh=1;const auto buttons=SDL_GetMouseState(&x,&y);SDL_GetWindowSize(p.platform->window,&ww,&wh);
                 in.mouse_x=x*w/std::max(1,ww);in.mouse_y=y*h/std::max(1,wh);
                 in.left_down=(buttons&1)!=0;in.middle_down=(buttons&2)!=0;in.right_down=(buttons&4)!=0;

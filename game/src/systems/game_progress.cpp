@@ -86,7 +86,7 @@ GameProgressSnapshot GameApp::game_progress_snapshot() const {
 
     const auto dorm_capacity=[&](){
         int total=0;
-        for(const auto& h:placed_habitats_)if(h.kind==HabitatKind::CrewQuarters && h.construction.complete())total+=crew_quarters_bed_count(h.size);
+        for(const auto& h:placed_habitats_)if(h.kind==HabitatKind::CrewQuarters && h.construction.complete())total+=std::count_if(habitat_runtime_mesh(std::size_t(&h-placed_habitats_.data())).crew_bunks.begin(),habitat_runtime_mesh(std::size_t(&h-placed_habitats_.data())).crew_bunks.end(),[](const auto& bunk){return bunk.available;});
         return total;
     };
     const auto all_interiors_pressurized=[&](){
@@ -147,7 +147,7 @@ GameProgressSnapshot GameApp::game_progress_snapshot() const {
 
 int GameApp::crew_quarters_capacity() const {
     int capacity=0;
-    for(const auto& h:placed_habitats_)if(h.kind==HabitatKind::CrewQuarters && h.construction.complete())capacity+=crew_quarters_bed_count(h.size);
+    for(const auto& h:placed_habitats_)if(h.kind==HabitatKind::CrewQuarters && h.construction.complete())capacity+=std::count_if(habitat_runtime_mesh(std::size_t(&h-placed_habitats_.data())).crew_bunks.begin(),habitat_runtime_mesh(std::size_t(&h-placed_habitats_.data())).crew_bunks.end(),[](const auto& bunk){return bunk.available;});
     return capacity;
 }
 

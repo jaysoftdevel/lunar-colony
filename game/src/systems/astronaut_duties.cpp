@@ -42,8 +42,8 @@ AstronautRestPose GameApp::astronaut_rest_pose(const AstronautTestActor& actor) 
     if(actor.activity==AstronautActivity::Sleeping){
         for(const auto& h:placed_habitats_){
             if(h.placement_sequence!=actor.bed_owner || h.kind!=HabitatKind::CrewQuarters || !h.construction.complete())continue;
-            const auto& bunks=habitat_models_.mesh(h).crew_bunks;
-            if(actor.bed_slot<bunks.size())
+            const auto& bunks=habitat_runtime_mesh(std::size_t(&h-placed_habitats_.data())).crew_bunks;
+            if(actor.bed_slot<bunks.size()&&bunks[actor.bed_slot].available)
                 return {h.position+rotate_y(bunks[actor.bed_slot].feet,h.rotation_degrees),h.rotation_degrees+90.f};
         }
     }
@@ -177,7 +177,7 @@ void GameApp::assign_astronaut_duties(float dt){
         const auto owns_bed=[&]{
             return std::any_of(placed_habitats_.begin(),placed_habitats_.end(),[&](const auto& h){
                 return h.placement_sequence==actor.bed_owner && h.kind==HabitatKind::CrewQuarters &&
-                       h.construction.complete() && actor.bed_slot<crew_quarters_bed_count(h.size);
+                       h.construction.complete() && actor.bed_slot<crew_quarters_bed_count(h.size) && habitat_runtime_mesh(std::size_t(&h-placed_habitats_.data())).crew_bunks[actor.bed_slot].available;
             });
         };
         if(actor.activity==AstronautActivity::Sleeping){
@@ -233,12 +233,12 @@ void GameApp::assign_astronaut_duties(float dt){
                 const auto& room=placed_habitats_[h];
                 if(room.kind!=HabitatKind::CrewQuarters || !room.placement_sequence || !room.construction.complete() ||
                    !ready(&room.supply) || !can_reach(h))continue;
-                const auto& mesh=habitat_models_.mesh(room);
+                const auto& mesh=habitat_runtime_mesh(h);
                 for(int bed=0;bed<crew_quarters_bed_count(room.size) && bed<(int)mesh.crew_bunks.size();++bed){
                     const bool reserved=std::any_of(test_astronauts_.begin(),test_astronauts_.end(),[&](const auto& other){
                         return &other!=&actor && other.bed_owner==room.placement_sequence && other.bed_slot==bed;
                     });
-                    if(reserved)continue;
+                    if(reserved||!mesh.crew_bunks[bed].available)continue;
                     Vec3 p=room.position+rotate_y(mesh.crew_bunks[bed].access,room.rotation_degrees);
                     p.y=first_person_floor_height(p);
                     const float d=distance_xz(actor.position,p);

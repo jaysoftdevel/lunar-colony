@@ -9,6 +9,7 @@ void build_sick_bay_inner(Builder& b){
     const float floor=b.mesh.walkable_floor_y;
     b.cylinder_y(b.mesh.interior,{0,floor-.07f,0},.14f,4.55f,24,false);
     for(float x:{-1.85f,1.85f})for(float z:{-1.61f,1.61f}){
+        interior_layout::StationScope station(b.mesh);
         bench(b,{x,floor,z},1.72f,.62f,.48f);
         b.box(b.mesh.interior,{x,floor+.54f,z},{1.71f,.12f,.64f},false);
         b.box(b.mesh.interior,{x-.58f,floor+.635f,z},{.37f,.07f,.49f},false);

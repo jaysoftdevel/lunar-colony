@@ -26,7 +26,9 @@ void GameApp::render_playfield(SceneRenderer& r){
     const auto sun=status_.sun_pose();
     bool lunar=false;
     std::vector<lunar_look::Fixture> corridor_fixtures;
-    if(!meshed && graphics_.path!=GraphicsPath::Classic){
+    // The lunar world is fundamental scenery, including on the Classic path.
+    // Quality settings control its detail, not whether sky/terrain exist.
+    if(!meshed){
         const Vec3 eye=fpv?first_person_.eye_position():camera_.eye_position();
         Vec3 focus=fpv?eye+first_person_.look_direction()*12.0f:camera_.target();
         focus.y=0;
@@ -102,6 +104,7 @@ void GameApp::render_playfield(SceneRenderer& r){
     render_trader(r);
     render_builder_robot(r);
     render_gate_areas(r);
+    render_gate_connection_frames(r);
     if constexpr(build::debug_features){
         if(astronaut_test_active()) render_test_astronauts(r);
     }
@@ -112,7 +115,7 @@ void GameApp::render_playfield(SceneRenderer& r){
             render_corridor_link_preview(r);render_corridor_placement(r);
             render_habitat_placement(r);render_resource_placement(r);render_utility_placement(r);render_walkway_placement(r);
         }
-        app_.set_world_cursor(false);app_.set_cursor_visible(first_person_cursor_);
+        app_.set_world_cursor(false);app_.set_cursor_visible(first_person_cursor_free());
         r.set_2d(ui_scale_);
         render_construction_status_frames(r);
         render_supply_indicators(r);
@@ -244,8 +247,8 @@ void GameApp::render_selection_marquee(SceneRenderer& r){
 
 void GameApp::render_first_person_hud(SceneRenderer& r){
     if(first_person_mode_==FirstPersonMode::Active){
-        const float cx=first_person_cursor_?float(input_.mouse_x)/ui_scale_:ui_width(r)*.5f,cy=first_person_cursor_?float(input_.mouse_y)/ui_scale_:ui_height(r)*.5f;
-        if(!first_person_cursor_){
+        const float cx=first_person_cursor_free()?float(input_.mouse_x)/ui_scale_:ui_width(r)*.5f,cy=first_person_cursor_free()?float(input_.mouse_y)/ui_scale_:ui_height(r)*.5f;
+        if(!first_person_cursor_free()){
             const Color cross{1.f,.90f,.12f,1.f};
             for(const auto& line:std::array<std::pair<Vec2,Vec2>,4>{{{{cx-9,cy},{cx-2,cy}},{{cx+2,cy},{cx+9,cy}},{{cx,cy-9},{cx,cy-2}},{{cx,cy+2},{cx,cy+9}}}})
                 r.draw_line(line.first,line.second,{.015f,.02f,.025f,1},4.f);
@@ -259,8 +262,8 @@ void GameApp::render_first_person_hud(SceneRenderer& r){
         r.draw_rect(help,kHudFill);
         game_label(r,{help.x+12.0f,help.y+8.0f},"FIRST PERSON VIEW",0.64f,theme_);
         game_label_fitted(r,{help.x+12.f,help.y+28.f,help.w-24.f,15.f},
-            build_catalog_.selected()?"LMB PLACE / WHEEL SIZE / N-M ROTATE / TAB CURSOR-LOOK / RMB CANCEL":
-            "WASD WALK / SHIFT SPRINT / SPACE JUMP / TAB BUILD CURSOR / V EXIT",.43f,theme_,true);
+            build_catalog_.selected()?"LMB PLACE / WHEEL SIZE / N-M ROTATE / ALT CURSOR / TAB TOGGLE / RMB CANCEL":
+            "WASD WALK / SHIFT SPRINT / SPACE JUMP / ALT CURSOR / TAB TOGGLE / V EXIT",.43f,theme_,true);
 
         const std::string environment=first_person_environment_label();
         Rect env{help.x,help.y+help.h+8.0f,help.w,31.0f};

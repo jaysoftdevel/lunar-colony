@@ -24,6 +24,7 @@ void build_factory_inner(Builder& b){
     const float floor=b.mesh.walkable_floor_y;
     b.box(b.mesh.interior,{0,floor-.08f,0},{12.6f,.16f,5.9f},false);
     for(float x:{-4.14f,-1.42f,1.28f,4.06f}){
+        interior_layout::StationScope station(b.mesh);
         bench(b,{x,floor,-1.88f},1.31f,.92f,.54f);
         robot_arm(b,{x-.39f,floor+.54f,-1.95f},.62f);
         bench(b,{x,floor,1.89f},1.31f,.80f,.72f);

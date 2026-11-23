@@ -3,6 +3,7 @@
 #include "game/world/geometry_standards.hpp"
 #include "game/world/habitat_builder.hpp"
 #include "game/world/mesh_portals.hpp"
+#include "game/world/habitats/screen_mounts.hpp"
 #include <cmath>
 
 namespace game {
@@ -108,6 +109,8 @@ HabitatMesh scale_xz(const HabitatMesh& source,float scale){
     scale_vertices(out.glazing);
     scale_vertices(out.edges);
     for(auto* layer:{&out.lining,&out.deck,&out.service_metal,&out.fabric,&out.displays,&out.lamps,&out.markings})scale_vertices(*layer);
+    for(auto& station:out.stations){station.low.x*=scale;station.low.z*=scale;station.high.x*=scale;station.high.z*=scale;}
+    for(auto& screen:out.screens){screen.center.x*=scale;screen.center.z*=scale;screen.width*=scale;}
     for(auto& bunk:out.crew_bunks){
         bunk.access.x*=scale;
         bunk.access.z*=scale;
@@ -168,7 +171,9 @@ HabitatModelLibrary::HabitatModelLibrary(){
                 variant.crew_bunks.resize(crew_quarters_bed_count((HabitatSizeTier)tier));
                 const float scale=variant.footprint_x/standard.footprint_x;
                 habitats::Builder furniture;
+                std::size_t bed_slot=0;
                 for(const auto& bed:variant.crew_bunks){
+                    interior_layout::StationScope station(variant,StationKind::Bed,bed_slot++);
                     const float x=bed.feet.x+.78f*scale;
                     const float z=bed.feet.z;
                     furniture.box(variant.interior,{x,1.28f,z},{1.94f*scale,.44f,.68f*scale},false);
@@ -180,6 +185,7 @@ HabitatModelLibrary::HabitatModelLibrary(){
                 }
             }
             standardize_crew_interfaces(variant,kind==HabitatKind::AirLock);
+            habitats::finish_screen_mounts(variant);
         }
     });
 }

@@ -9,6 +9,7 @@ void build_processing_facility_inner(Builder& b){
     const float floor=b.mesh.walkable_floor_y;
     b.box(b.mesh.interior,{0,floor-.08f,0},{11.5f,.16f,5.5f},false);
     for(float x:{-2.65f,1.25f,3.65f}){
+        interior_layout::StationScope station(b.mesh);
         bench(b,{x,floor,-1.74f},1.35f,.81f,.86f);
         b.cylinder_y(b.mesh.interior,{x,floor+1.33f,-1.74f},.95f,.35f,12,false);
         b.cylinder_y(b.mesh.interior,{x,floor+1.91f,-1.74f},.22f,.22f,10,false);

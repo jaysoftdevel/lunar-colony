@@ -9,6 +9,7 @@ void build_manufactory_inner(Builder& b){
     const float floor=b.mesh.walkable_floor_y;
     b.box(b.mesh.interior,{0,floor-.09f,0},{15.2f,.18f,6.0f},false);
     for(float x:{-5.25f,-2.35f,1.52f,4.52f}){
+        interior_layout::StationScope station(b.mesh);
         bench(b,{x,floor,-1.97f},1.38f,1.03f,.72f);
         b.box(b.mesh.interior,{x,floor+1.28f,-1.97f},{1.17f,1.12f,.87f},false);
         b.cylinder_y(b.mesh.interior,{x,floor+1.99f,-1.97f},.30f,.37f,10,false);

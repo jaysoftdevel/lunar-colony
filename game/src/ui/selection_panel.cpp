@@ -634,6 +634,7 @@ void GameApp::render_selection_panel(SceneRenderer& r){
                 bool selector_toggled=false;
 
                 for(std::size_t bay_index=0;bay_index<bay_count;++bay_index){
+                    const bool reserved=bool(habitat_runtime_mesh((std::size_t)selected_habitat_).blocked_grow_bays&(1u<<bay_index));
                     auto& bay=h.hydroponics[bay_index];
                     const auto& crop=hydroponic_profile(bay.plant);
                     const std::size_t row=bay_index/2;
@@ -655,7 +656,8 @@ void GameApp::render_selection_panel(SceneRenderer& r){
                     auto selector_input=ui_input_;
                     if(hydroponics_dropdown_bay_>=0 && hydroponics_dropdown_bay_!=static_cast<int>(bay_index))
                         selector_input.left_pressed=false;
-                    if(ui::button(r,selector_input,selector,selector_text,theme_)){
+                    if(reserved){selector_text="GATE APPROACH RESERVED";if(hydroponics_dropdown_bay_==(int)bay_index)hydroponics_dropdown_bay_=-1;}
+                    if(ui::button(r,selector_input,selector,selector_text,theme_,!reserved)){
                         const bool was_open=hydroponics_dropdown_habitat_==selected_habitat_ && hydroponics_dropdown_bay_==(int)bay_index;
                         hydroponics_dropdown_habitat_=was_open?-1:selected_habitat_;
                         hydroponics_dropdown_bay_=was_open?-1:(int)bay_index;
@@ -667,7 +669,8 @@ void GameApp::render_selection_panel(SceneRenderer& r){
                     }
 
                     std::ostringstream progress;
-                    if(bay.plant==HydroponicPlant::Empty) progress<<"EMPTY / HARVESTS "<<bay.harvests;
+                    if(reserved)progress<<"STATION REMOVED / GROWTH SUSPENDED";
+                    else if(bay.plant==HydroponicPlant::Empty) progress<<"EMPTY / HARVESTS "<<bay.harvests;
                     else progress<<"GROWTH "<<(int)std::lround(std::clamp(bay.growth_fraction,0.0,1.0)*100.0)<<"% / HARVESTS "<<bay.harvests;
                     layout::game_label_fitted(r,{cell.x+7.0f,cell.y+31.0f,cell.w-14.0f,15.0f},progress.str(),0.37f,theme_,true);
                     const Rect track{cell.x+7.0f,cell.y+48.0f,cell.w-14.0f,7.0f};
@@ -675,7 +678,8 @@ void GameApp::render_selection_panel(SceneRenderer& r){
                     if(bay.growth_fraction>0.0) r.draw_rect({track.x,track.y,track.w*(float)std::clamp(bay.growth_fraction,0.0,1.0),track.h},theme_.accent);
 
                     std::ostringstream stats;
-                    if(bay.plant==HydroponicPlant::Empty) stats<<"NO CROP / NO LIGHT OR WATER LOAD";
+                    if(reserved)stats<<"GATE RESERVED / NO GROW LOAD";
+                    else if(bay.plant==HydroponicPlant::Empty) stats<<"NO CROP / NO LIGHT OR WATER LOAD";
                     else stats<<std::fixed<<std::setprecision(1)<<crop.growth_days<<" D / "<<crop.harvest_food_kg<<" KG / H2O "<<crop.water_litres_per_day<<" L/D / "<<std::setprecision(2)<<crop.power_kw<<" KW";
                     layout::game_label_fitted(r,{cell.x+7.0f,cell.y+59.0f,cell.w-14.0f,13.0f},stats.str(),0.31f,theme_,true);
                     layout::game_label_fitted(r,{cell.x+7.0f,cell.y+72.0f,cell.w-14.0f,11.0f},bay.plant==HydroponicPlant::Empty?"SELECT A CROP FROM THE DROPDOWN":crop.role,0.29f,theme_,true);
@@ -695,7 +699,7 @@ void GameApp::render_selection_panel(SceneRenderer& r){
                         const auto plant=(HydroponicPlant)plant_value;
                         const auto& profile=hydroponic_profile(plant);
                         const int seeds=plant_value==0?0:colony_seeds_[static_cast<std::size_t>(plant_value-1)];
-                        const bool available=plant_value==0 || plant==bay.plant || seeds>0;
+                        const bool available=!(habitat_runtime_mesh((std::size_t)selected_habitat_).blocked_grow_bays&(1u<<hydroponics_dropdown_bay_))&&(plant_value==0 || plant==bay.plant || seeds>0);
                         const std::string label=plant_value==0?"EMPTY / REMOVE CROP":
                             std::string(profile.name)+" / "+std::to_string(seeds)+(seeds==1?" SEED":" SEEDS");
                         const Rect option{menu.x+2.0f,menu.y+2.0f+(float)plant_value*item_h,menu.w-4.0f,item_h};

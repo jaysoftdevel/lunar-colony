@@ -31,13 +31,6 @@ inline void finish_station_interior(Builder& b,HabitatKind kind){
             const float x=std::lerp(-hx,hx,float(i)/4);
             b.box(m.service_metal,{x,ceiling-.14f,sign*side},{.055f,.40f,.19f},false);
         }
-        // Wall service/access panels stay outside the central crew circulation lane.
-        for(int i=0;i<3;++i){
-            const float x=std::lerp(-hx*.72f,hx*.72f,float(i)/2);
-            b.box(m.service_metal,{x,floor+1.34f,sign*(side+.04f)},{.72f,.58f,.065f},false);
-            b.box(m.displays,{x,floor+1.40f,sign*(side-.002f)},{.58f,.30f,.018f},false);
-            for(int vent=0;vent<4;++vent)b.box(m.service_metal,{x,floor+1.12f+vent*.035f,sign*(side-.008f)},{.43f,.012f,.026f},false);
-        }
         b.box(m.lamps,{0,ceiling+.06f,sign*side*.60f},{hx*1.45f,.026f,.075f},false);
     }
     // Wayfinding is physical paint on the deck, not a collision obstacle.

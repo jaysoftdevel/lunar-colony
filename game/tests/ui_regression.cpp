@@ -5,6 +5,10 @@
 #include "game/runtime/ui_font.hpp"
 #include "game/systems/footstep_cadence.hpp"
 #include "game/systems/sound_assets.hpp"
+#include "game/world/pressure_hardware.hpp"
+#include "game/world/hull_surface.hpp"
+#include "game/world/solar_collector.hpp"
+#include "game/world/habitats/screen_mounts.hpp"
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -689,9 +693,13 @@ struct UiRegression {
             app.playfield_.rebuild(side);
             app.render(r);
             require(std::abs(r.surface_area-side*side)<.5 && r.surface_batches==1 &&
-                    r.surface_tint>.10f && !r.saw_grid && r.scene_attempts==0,
+                    r.surface_tint>.10f && !r.saw_grid && r.scene_attempts==1,
                     "Classic graphics did not draw the full playfield with the regolith material");
         }
+        r.accept_enhanced=true;
+        app.render(r);
+        require(r.surface_batches==0 && r.scene_attempts==1,"Classic skipped the lunar sky/terrain or doubled the ground");
+        r.accept_enhanced=false;
         app.graphics_.path=GraphicsPath::Auto;
         app.render(r);
         require(r.surface_batches>0 && r.scene_attempts==1,"enhanced initialization failure lost the surface");
@@ -851,6 +859,151 @@ struct UiRegression {
             }
         }
         std::cout<<"FPV bottom controls, ground-ray placement, HUD isolation, borders and footstep cadence passed\n";
+    }
+
+    static void station_visuals(){
+        using namespace game::runtime;
+        GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        struct Materials:Recorder {
+            std::vector<Vec3> glazing,paint,text,structure;
+            bool bad_alpha{};
+            void draw_mapped_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color c,const LunarSurfaceMapping&) override {draw_lunar_surface(v,m,c);}
+            void draw_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color c) override {
+                auto* out=m==LunarMaterial::SolarShield?&glazing:m==LunarMaterial::PressureDoor?&paint:m==LunarMaterial::DisplayText?&text:m==LunarMaterial::Alloy?&structure:nullptr;
+                if(out)out->insert(out->end(),v.begin(),v.end());
+                if(m==LunarMaterial::SolarShield)bad_alpha=bad_alpha||c.a<.10f||c.a>.5f;
+            }
+        };
+        std::vector<Vec3> changed_skin{{0,0,0},{1,0,0},{0,2,0}};
+        require(!hull_surface::split(changed_skin,1).upper.empty(),"Hull split omitted upper skin");
+        changed_skin[2].y=.5f;
+        require(hull_surface::split(changed_skin,1).upper.empty(),"Hull cache retained obsolete geometry after a same-size rebuild");
+        int mounts=0;
+        for(int kind=0;kind<int(HabitatKind::Count);++kind)for(int tier=0;tier<int(HabitatSizeTier::Count);++tier){
+            const auto& mesh=app.habitat_models_.mesh(HabitatKind(kind),HabitatSizeTier(tier));
+            require(mesh.screens.size()>=4 && mesh.displays.size()==mesh.screens.size()*6,"A room variant has missing screen mounts or luminous box faces: "+std::to_string(kind)+"/"+std::to_string(tier)+" mounts="+std::to_string(mesh.screens.size())+" faces="+std::to_string(mesh.displays.size()));
+            for(const auto& screen:mesh.screens){
+                require(std::abs(length(screen.right)-1)<1e-5 && std::abs(dot(screen.right,screen.up))<1e-5,"Screen mounting basis is distorted");
+                require(screen.width>.4f && screen.height>.25f,"Screen is too small to read");++mounts;
+            }
+            Materials visual;app.render_habitat_mesh(visual,mesh,{},0,false,true,false,kConstructionSteps,nullptr,false,HabitatKind(kind),true);
+            require(!visual.glazing.empty()&&!visual.bad_alpha,"A room upper hull lost its transparent solar film");
+            require(!visual.structure.empty(),"Transparent hull removed solid structural parts");
+        }
+        PlacedHabitat oxygen;oxygen.kind=HabitatKind::OxygenGeneratorDome;oxygen.construction.finish();oxygen.supply.power_fraction=.75;
+        oxygen.supply.oxygen_produced_kg_per_day=12.3;oxygen.supply.water_processed_litres_per_day=13.8;
+        app.placed_habitats_={oxygen};const auto content=app.habitat_screen_content(0);
+        require(content.title=="OXYGEN SYSTEM"&&content.rows[0]=="O2 12.3 KG/D"&&content.rows[1]=="WATER 13.8 L/D","Oxygen screen invents telemetry or loses units");
+        const structure_display::Mount screen{{0,0,0},{1,0,0},{0,1,0},.9f,.48f};Materials text;
+        structure_display::draw(text,screen,{},0,content,true,{0,0,2});
+        require(text.text.size()>300,"Screen did not emit readable glyph geometry");
+        for(const auto v:text.text)require(std::abs(v.z-.004f)<1e-5,"Screen lettering floats away from its face");
+        const auto first=text.text;text.text.clear();auto changed=content;changed.rows[0]="O2 24.6 KG/D";
+        structure_display::draw(text,screen,{},0,changed,true,{0,0,2});
+        require(first.size()!=text.text.size()||std::memcmp(first.data(),text.text.data(),first.size()*sizeof(Vec3))!=0,"Screen glyphs do not follow changed measurements");
+        text.text.clear();structure_display::draw(text,screen,{},0,content,false,{0,0,2});require(text.text.empty(),"Unpowered terminal has emissive text");
+        Materials door;pressure_hardware::leaf(door,{}, {1,0,0},{0,0,1},.8f,2.2f,.16f);
+        require(!door.paint.empty()&&!door.structure.empty(),"Pressure door lacks coated skin and structural hardware");
+        for(auto v:door.paint)require(std::abs(v.x)<=.401f&&std::abs(v.y)<=1.101f&&std::abs(v.z)<=.081f,"Door rework exceeds its physical envelope");
+        app.screen_=GameApp::Screen::Playfield;app.game_speed_=GameApp::GameSpeed::Pause;
+        app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({20,0,20});
+        app.first_person_cursor_=false;InputState alt;alt.key_alt_down=true;alt.mouse_dx=300;
+        const auto direction=app.first_person_.look_direction();app.update_simulation(1.f/60,alt);
+        require(app.first_person_cursor_free()&&length(app.first_person_.look_direction()-direction)<1e-6,"Alt did not release the cursor without moving FPV");
+        app.update_simulation(1.f/60,alt);require(length(app.first_person_.look_direction()-direction)<1e-6,"Holding Alt still steers FPV");
+        alt.key_alt_down=false;app.update_simulation(1.f/60,alt);
+        require(!app.first_person_cursor_free()&&length(app.first_person_.look_direction()-direction)<1e-6,"Alt release jumps the FPV camera");
+        app.first_person_cursor_=true;alt.key_alt_down=true;app.update_simulation(1.f/60,alt);alt.key_alt_down=false;app.update_simulation(1.f/60,alt);
+        require(app.first_person_cursor_free(),"Alt release lost the Tab cursor preference");
+        std::cout<<mounts<<" screen mounts, live telemetry glyphs, transparent upper hulls, pressure hardware and Alt capture passed\n";
+    }
+
+    static void gates_layout_solar(){
+        using namespace game::runtime;using namespace world_math;
+        GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        PlacedHabitat grow;grow.kind=HabitatKind::BioDome;grow.construction.finish();grow.placement_sequence=1;
+        PlacedHabitat destination;destination.kind=HabitatKind::CrewQuarters;destination.position={20,0,0};destination.construction.finish();destination.placement_sequence=2;
+        app.placed_habitats_={grow,destination};
+        const auto& source=app.habitat_models_.mesh(grow);
+        const auto found=std::find_if(source.stations.begin(),source.stations.end(),[](const auto& station){return station.kind==StationKind::Grow;});
+        require(found!=source.stations.end(),"Grow stations are not registered as complete assemblies");
+        const auto station=*found;const Vec3 center=(station.low+station.high)*.5f;const float sign=center.z<0?-1.f:1.f;
+        const auto contact=habitats::screen_wall(source,center.x,source.walkable_floor_y+.8f,sign);require(bool(contact),"Gate test has no pressure skin contact");
+        CorridorConnection corridor;corridor.endpoint_a.kind=CorridorEndpointKind::Habitat;corridor.endpoint_a.index=0;
+        corridor.endpoint_a.door.wall_position={contact->x,source.walkable_floor_y,contact->z};corridor.endpoint_a.door.position=corridor.endpoint_a.door.wall_position;
+        corridor.endpoint_a.door.normal={0,0,sign};corridor.endpoint_a.position=corridor.endpoint_a.door.position;
+        corridor.endpoint_b.kind=CorridorEndpointKind::Habitat;corridor.endpoint_b.index=1;corridor.endpoint_b.door.wall_position={15,source.walkable_floor_y,0};corridor.endpoint_b.door.position=corridor.endpoint_b.door.wall_position;corridor.endpoint_b.door.normal={-1,0,0};corridor.endpoint_b.position=corridor.endpoint_b.door.position;
+        corridor.path={corridor.endpoint_a.position,corridor.endpoint_b.position};
+        const Vec3 feet{center.x,source.walkable_floor_y,center.z};
+        require(!app.first_person_move_allowed(feet,feet),"Test station did not block FPV before connection");
+        app.corridor_network_.restore_connections({corridor});
+        const auto& filtered=app.habitat_runtime_mesh(0);
+        require(filtered.blocked_grow_bays!=0 && filtered.interior.size()<source.interior.size(),"Planned gate did not remove whole obstructing station assemblies");
+        require(filtered.shell.size()==source.shell.size()&&filtered.glazing.size()==source.glazing.size()&&std::memcmp(filtered.glazing.data(),source.glazing.data(),source.glazing.size()*sizeof(Vec3))==0,"Station reservation cut an unbuilt doorway through the pressure hull");
+        require(app.first_person_move_allowed(feet,feet),"Removed station still blocks FPV traversal");
+        const interior_layout::Reservation reserve{corridor.endpoint_a.door.wall_position,corridor.endpoint_a.door.normal};
+        require(!interior_layout::can_place({reserve},station.low,station.high),"Gate reserve allows a new operating station in its approach");
+        require(interior_layout::can_place({reserve},{40,0,40},{41,2,41}),"Door reserve blocks unrelated stations");
+        const auto removed=std::count_if(filtered.stations.begin(),filtered.stations.end(),[](const auto& station){return !station.active;});
+        require(removed>0,"Interior cache did not mark removed operating slots");
+        const auto mask=filtered.blocked_grow_bays;app.placed_habitats_[0].hydroponics[0].plant=HydroponicPlant::Potato;
+        app.update_supply_simulation(0);require(app.placed_habitats_[0].blocked_grow_bays==mask,"Supply simulation ignores reserved grow bays");
+        const auto before=app.placed_habitats_[0].hydroponics[0].growth_fraction;app.update_supply_simulation(.1f);
+        require(app.placed_habitats_[0].hydroponics[0].growth_fraction==before,"Reserved grow bay continues operating");
+        app.corridor_network_.clear();require(app.habitat_runtime_mesh(0).blocked_grow_bays==0,"Cancelled connection kept an obsolete doorway reservation");
+        struct Frames:Recorder {int red{},green{};void draw_lines_3d(const std::vector<Vec3>&,Color color,float) override {
+            if(color.r==1.f&&color.g==.16f)++red;if(color.r==.18f&&color.g==.95f)++green;
+        }};
+        app.placed_habitats_[0].kind=HabitatKind::AirLock;PlacedResource store;store.kind=ResourceKind::StorageDome;store.position={45,0,0};store.construction.finish();app.placed_resources_={store};
+        Frames disconnected;app.render_gate_connection_frames(disconnected);require(disconnected.red>=6&&disconnected.green==0,"Unused interior gates are not red");
+        app.corridor_network_.restore_connections({corridor});Frames planned;app.render_gate_connection_frames(planned);require(planned.green==0,"Unfinished gate is marked accessible");
+        corridor.construction.finish();app.corridor_network_.restore_connections({corridor});Frames connected;app.render_gate_connection_frames(connected);
+        require(connected.green>=3&&connected.red>=4,"Connected gates lack green frames or unused storage ports lost red frames");
+        corridor.endpoint_b.kind=CorridorEndpointKind::OpenDoor;app.corridor_network_.restore_connections({corridor});Frames capped;app.render_gate_connection_frames(capped);require(capped.green==0&&capped.red>0,"A capped isolated corridor is marked connected");
+        auto cross_a=corridor,cross_b=corridor;
+        cross_a.path={{-10,0,0},{10,0,0}};cross_b.path={{0,0,-10},{0,0,10}};cross_b.endpoint_a.index=1;
+        app.corridor_network_.restore_connections({cross_a,cross_b});Frames crossing;app.render_gate_connection_frames(crossing);
+        require(crossing.green>=2,"An automatic pressure crossing does not connect the gate frames");
+        cross_b.path={{-10,0,10},{10,0,10}};app.corridor_network_.restore_connections({cross_a,cross_b});Frames separate;app.render_gate_connection_frames(separate);
+        require(separate.green==0,"Changed corridor paths reused obsolete gate connectivity");
+        cross_b.endpoint_b.kind=CorridorEndpointKind::Corridor;cross_b.endpoint_b.index=0;
+        app.corridor_network_.restore_connections({cross_a,cross_b});Frames branched;app.render_gate_connection_frames(branched);
+        require(branched.green>=2,"An explicit corridor branch does not connect the gate frames");
+        const auto& warehouse=app.resource_models_.mesh(store);
+        require(warehouse.stations.size()==4,"Storage service cabinets lack whole-assembly metadata");
+        const auto cabinet=warehouse.stations.front();const auto cabinet_center=(cabinet.low+cabinet.high)*.5f;
+        const auto outward=normalize(Vec3{cabinet_center.x,0,cabinet_center.z});
+        corridor.endpoint_a.kind=CorridorEndpointKind::Resource;corridor.endpoint_a.index=0;
+        corridor.endpoint_a.door.wall_position=store.position+Vec3{outward.x*5.35f,warehouse.walkable_floor_y,outward.z*5.35f};corridor.endpoint_a.door.normal=outward;
+        app.corridor_network_.restore_connections({corridor});const auto& cleared_store=app.resource_runtime_mesh(0);
+        require(!cleared_store.stations.front().active&&cleared_store.details.size()<warehouse.details.size(),"Storage doorway leaves an obstructing service cabinet in place");
+        require(cleared_store.body.size()==warehouse.body.size(),"Storage reservation damages the hull");
+        // Change a reservation to the opposite, equally sized assembly. This
+        // exercises cache invalidation when geometry counts remain identical.
+        const auto first_removed=cleared_store.details;
+        corridor.endpoint_a.door.wall_position=store.position+Vec3{-outward.x*5.35f,warehouse.walkable_floor_y,-outward.z*5.35f};corridor.endpoint_a.door.normal=outward*-1;
+        app.corridor_network_.restore_connections({corridor});const auto& other_store=app.resource_runtime_mesh(0);
+        require(other_store.stations.front().active&&!other_store.stations.back().active,"Storage station cache keeps an obsolete reservation");
+        require(first_removed.size()==other_store.details.size()&&std::memcmp(first_removed.data(),other_store.details.data(),first_removed.size()*sizeof(Vec3))!=0,"Equal-size cabinet changes were not rebuilt");
+        app.corridor_network_.clear();require(app.resource_runtime_mesh(0).details.size()==warehouse.details.size(),"Cancelled storage reservation kept a removed cabinet");
+        std::size_t checked=0;
+        for(const auto size:{ResourceSizeTier::Standard,ResourceSizeTier::Small}){
+            const auto& solar=app.resource_models_.mesh(ResourceKind::SolarPanel,size);
+            require(!solar.solar_head.body.empty()&&!solar.solar_head.details.empty(),"Collector head has no rigid part metadata");
+            for(float yaw:{0.f,37.f,150.f,270.f})for(float hour:{6.1f,9.f,12.f,17.9f})for(Vec3 position:{Vec3{},Vec3{80,0,-90}}){
+                const auto normal=solar_tracking::pose(hour).direction;const solar_collector::Pose pose(solar.solar_head,position,yaw,normal);const auto mapping=pose.mapping();
+                for(const auto range:solar.solar_head.body)for(std::size_t i=range.first;i<range.last;++i){
+                    const auto q=solar.body[i]-solar.solar_head.pivot;const auto point=pose.point(solar.body[i],solar.solar_head,true);const auto uv=mapping.coordinate(point);
+                    const Vec3 expected{dot(q,pose.authored_x),dot(q,pose.authored_normal),dot(q,pose.authored_z)};
+                    require(length(uv-expected)<.0001f,"Solar surface UVs drift while translating, yawing or tracking");++checked;
+                }
+                const auto first=solar.solar_head.body.front().first;
+                const auto a=pose.point(solar.body[first],solar.solar_head,true),b=pose.point(solar.body[first+1],solar.solar_head,true);
+                require(std::abs(length(a-b)-length(solar.body[first]-solar.body[first+1]))<.0001f,"Tracker stretches the collector surface");
+                require(length(pose.point(solar.body[0],solar.solar_head,false)-(position+rotate_y(solar.body[0],yaw)))<.0001f,"Tracker rotates the fixed mast");
+            }
+        }
+        std::cout<<"Gate colors, removed collision assemblies, reserved operating slots and "<<checked<<" locked solar UV samples passed\n";
     }
 
     static void runtime_paths(){
@@ -2604,6 +2757,8 @@ int main(int argc,char** argv){
             game::UiRegression::recent_saves();
         }
         else if(out=="gameplay-options") game::UiRegression::gameplay_options();
+        else if(out=="gates-layout-solar") game::UiRegression::gates_layout_solar();
+        else if(out=="station-visuals") game::UiRegression::station_visuals();
         else if(out=="fpv-building") game::UiRegression::fpv_building();
         else if(out=="runtime-paths") game::UiRegression::runtime_paths();
         else if(out=="fov-interiors") game::UiRegression::fov_and_station_interiors();

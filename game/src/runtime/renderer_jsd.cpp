@@ -102,14 +102,17 @@ color=vec4(vColor.rgb,vColor.a*coverage);})GLSL");
         case LunarMaterial::Alloy:m.surface=gfx::SurfaceKind::BareMetal;m.metallic=.82f;m.roughness=.31f;break;
         case LunarMaterial::Regolith:
             m.surface=gfx::SurfaceKind::Regolith;m.roughness=.96f;m.clearcoat=0;m.normalScale=.65f;m.castShadow=false;break;
-        case LunarMaterial::Hull:m.surface=gfx::SurfaceKind::HullPanels;m.roughness=.54f;break;
+        case LunarMaterial::Hull:m.surface=gfx::SurfaceKind::HullPanels;m.roughness=.52f;m.metallic=.12f;break;
+        case LunarMaterial::SolarShield:m.surface=gfx::SurfaceKind::SolarShield;m.roughness=.13f;m.metallic=.025f;m.normalScale=0;m.castShadow=false;break;
+        case LunarMaterial::PressureDoor:m.surface=gfx::SurfaceKind::PressureDoor;m.roughness=.48f;m.metallic=.20f;break;
+        case LunarMaterial::DisplayText:m.surface=gfx::SurfaceKind::Textured;m.emissive={tint.r*1.25f,tint.g*1.25f,tint.b*1.25f,1};m.castShadow=false;m.temporalReactive=true;break;
         case LunarMaterial::Interior:m.surface=gfx::SurfaceKind::InteriorPanels;m.roughness=.68f;m.clearcoat=.04f;m.castShadow=false;break;
         case LunarMaterial::Deck:m.surface=gfx::SurfaceKind::DeckPlating;m.metallic=.24f;m.roughness=.84f;m.clearcoat=0;m.castShadow=false;break;
         case LunarMaterial::RobotPaint:m.surface=gfx::SurfaceKind::RobotArmor;m.roughness=.40f;m.metallic=.15f;break;
         case LunarMaterial::Textile:m.surface=gfx::SurfaceKind::FabricWeave;m.roughness=.92f;m.clearcoat=0;m.sheen=.15f;break;
-        case LunarMaterial::Display:m.surface=gfx::SurfaceKind::Console;m.emissive={.10f,.75f,.92f,1};m.castShadow=false;m.temporalReactive=true;break;
+        case LunarMaterial::Display:m.surface=gfx::SurfaceKind::Console;m.emissive={.025f,.055f,.065f,1};m.castShadow=false;m.temporalReactive=true;break;
         case LunarMaterial::Rubber:m.surface=gfx::SurfaceKind::Rubber;m.roughness=.92f;m.clearcoat=0;break;
-        case LunarMaterial::Solar:m.metallic=.48f;m.roughness=.22f;m.clearcoat=.55f;break;
+        case LunarMaterial::Solar:m.surface=gfx::SurfaceKind::PhotovoltaicCells;m.metallic=.42f;m.roughness=.24f;m.normalScale=.05f;m.clearcoat=.68f;break;
         case LunarMaterial::Glass:m.surface=gfx::SurfaceKind::Textured;m.normalScale=0;m.metallic=.05f;m.roughness=.11f;m.clearcoat=.85f;m.castShadow=false;break;
         case LunarMaterial::Fabric:case LunarMaterial::Hair:m.surface=gfx::SurfaceKind::FabricWeave;m.roughness=.89f;m.clearcoat=0;break;
         case LunarMaterial::Pad:m.surface=gfx::SurfaceKind::Concrete;m.roughness=.85f;m.clearcoat=0;break;
@@ -128,10 +131,10 @@ color=vec4(vColor.rgb,vColor.a*coverage);})GLSL");
         for(std::size_t i=0;i+2<vertices.size();i+=3){
             const Vec3 center=(vertices[i]+vertices[i+1]+vertices[i+2])*(1.f/3);
             const Key key{kind,int(std::floor(center.x/24)),int(std::floor(center.z/24)),tint.a<.995f,
-                kind==int(LunarMaterial::Emissive)?(int(tint.r*255)<<16)|(int(tint.g*255)<<8)|int(tint.b*255):0,
+                (kind==int(LunarMaterial::Emissive)||kind==int(LunarMaterial::DisplayText))?(int(tint.r*255)<<16)|(int(tint.g*255)<<8)|int(tint.b*255):0,
                 mapping!=nullptr,mapping?mapping->seed:0};
             auto& batch=batches_[key];
-            if(batch.last_frame!=frame_){batch.previous_vertices.swap(batch.vertices);batch.vertices.clear();batch.last_frame=frame_;batch.material=material(kind,tint);batch.material.surfaceUV=mapping!=nullptr;
+            if(batch.last_frame!=frame_){batch.previous_vertices.swap(batch.vertices);batch.vertices.clear();batch.last_frame=frame_;batch.material=material(kind,tint);batch.material.surfaceUV=mapping!=nullptr || kind==int(LunarMaterial::Hull) || kind==int(LunarMaterial::Paint) || kind==int(LunarMaterial::PressureDoor);
                 batch.material.surfaceSeed=(key.seed?key.seed:unsigned(kind*8191+17))&0x7fffffffu;}
             const auto face=cross(vertices[i+1]-vertices[i],vertices[i+2]-vertices[i]);
             const float area=length(face);
@@ -181,7 +184,7 @@ public:
         initialize_ui();
         const auto& cache=renderer_.shaderCacheStatistics();
         std::cout<<"Shader cache: "<<cache.loaded<<" restored, "<<cache.compiled<<" compiled, "<<cache.stored<<" stored"<<(cache.supported?"":" (driver binaries unavailable)")<<'\n';
-        std::cout<<"JSD 0.5.16 colony renderer: "<<gpu_renderer()<<" | "<<gpu_version()<<'\n';
+        std::cout<<"JSD 0.5.18 colony renderer: "<<gpu_renderer()<<" | "<<gpu_version()<<'\n';
     }
     ~JsdRenderer() override {
         gl_.DeleteProgram(ui_program_);gl_.DeleteVertexArrays(1,&ui_vao_);gl_.DeleteBuffers(1,&ui_vbo_);gl_.DeleteTextures(1,&ui_atlas_);
