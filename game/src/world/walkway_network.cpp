@@ -1,4 +1,5 @@
 #include "game/world/airlock_connections.hpp"
+#include "game/world/airlock_cycle.hpp"
 #include "game/world/storage_loading_gate.hpp"
 #include "game/world/robot_workshop.hpp"
 #include "game/world/walkway_network.hpp"
@@ -79,7 +80,7 @@ bool door_clear(const CorridorDoor& door,const std::vector<WalkwayConnection>& e
     return true;
 }
 
-std::optional<WalkwayEndpoint> resolve_habitat_endpoint(const WalkwayBuildAnchor& a,Vec3 other,
+std::optional<WalkwayEndpoint> resolve_habitat_endpoint(const WalkwayBuildAnchor& a,Vec3,
                                                         const CorridorNetwork& corridors,
                                                         const std::vector<PlacedHabitat>& habitats,
                                                         const HabitatModelLibrary& library,
@@ -88,27 +89,19 @@ std::optional<WalkwayEndpoint> resolve_habitat_endpoint(const WalkwayBuildAnchor
     const auto& habitat=habitats[a.index];
     if(!habitat.construction.complete() || habitat.kind!=HabitatKind::AirLock) return std::nullopt;
 
-    // Exterior walkways may approach the pressurised colony only at a real
-    // Air Lock that is already connected to the corridor network. Never cut a
-    // new exterior hatch directly into an ordinary habitat or corridor.
-    bool networked=false;
-    for(const auto& c:corridors.connections()){
-        if(!c.construction.complete()) continue;
-        for(const CorridorEndpoint* ce:{&c.endpoint_a,&c.endpoint_b}){
-            if(ce->kind==CorridorEndpointKind::Habitat && ce->index==a.index){ networked=true; break; }
-        }
-        if(networked) break;
-    }
-    if(!networked) return std::nullopt;
-
-    if(!airlock_connections::allows(a.index,a.hit,habitats,corridors.connections(),{},existing))return std::nullopt;
-    CorridorBuildAnchor ca{CorridorEndpointKind::Habitat,a.index,a.hit};
-    auto ep=corridors.preview_anchor(ca,other,habitats,library);
-    if(!ep || ep->kind!=CorridorEndpointKind::Habitat || !door_clear(ep->door,existing)) return std::nullopt;
-
-    WalkwayEndpoint out;
-    out.kind=WalkwayEndpointKind::Habitat; out.index=a.index; out.door=ep->door;
-    out.position=ep->door.position; out.position.y=0.0f; out.normal=flat_normal(ep->door.normal);
+    // The exterior seal and stair exist even without a completed corridor.
+    int inside=1;
+    for(const auto& c:corridors.connections())for(const auto* e:{&c.endpoint_a,&c.endpoint_b})
+        if(e->kind==CorridorEndpointKind::Habitat&&e->index==a.index)
+            inside=airlock_connections::side(habitat,e->door.wall_position);
+    if(airlock_connections::side(habitat,a.hit)!=-inside)return std::nullopt;
+    const auto& mesh=library.mesh(habitat);
+    auto door=airlock::end_door(habitat,mesh,-inside);door.entrance_index=-4;
+    if(!door_clear(door,existing))return std::nullopt;
+    WalkwayEndpoint out;out.kind=WalkwayEndpointKind::Habitat;out.index=a.index;out.door=door;
+    const float deck=habitat.position.y+mesh.walkable_floor_y;
+    const float run=.32f*std::max(1,int(std::ceil(deck/.16f)));
+    out.position=door.wall_position+door.normal*run;out.position.y=0;out.normal=door.normal;
     return out;
 }
 
@@ -1135,6 +1128,25 @@ bool WalkwayNetwork::build_connection(const WalkwayBuildAnchor& source,const Wal
     connections_.push_back(std::move(*c));
     rebuild_walkway_merges();
     return true;
+}
+
+void WalkwayNetwork::synchronize_airlock_interfaces(const std::vector<PlacedHabitat>& habitats,
+    const HabitatModelLibrary& library,const CorridorNetwork& corridors){
+    bool changed=false;
+    for(auto& c:connections_)for(auto* e:{&c.endpoint_a,&c.endpoint_b}){
+        if(e->kind!=WalkwayEndpointKind::Habitat||e->index>=habitats.size())continue;
+        const auto& h=habitats[e->index];if(h.kind!=HabitatKind::AirLock)continue;
+        int inside=1;
+        for(const auto& run:corridors.connections())for(const auto* port:{&run.endpoint_a,&run.endpoint_b})
+            if(port->kind==CorridorEndpointKind::Habitat&&port->index==e->index)
+                inside=airlock_connections::side(h,port->door.wall_position);
+        const auto& mesh=library.mesh(h);auto d=airlock::end_door(h,mesh,-inside);d.entrance_index=-4;
+        const float run=.32f*std::max(1,int(std::ceil((h.position.y+mesh.walkable_floor_y)/.16f)));
+        auto target=d.wall_position+d.normal*run;target.y=0;
+        changed|=dist_xz(e->position,target)>.001f;e->door=d;e->normal=d.normal;e->position=target;
+        if(!c.path.empty()){if(e==&c.endpoint_a)c.path.front()=target;else c.path.back()=target;}
+    }
+    if(changed)rebuild_walkway_merges();
 }
 
 void WalkwayNetwork::rebuild_walkway_merges(){

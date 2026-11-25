@@ -1,4 +1,5 @@
 #include "game/world/resource_builder.hpp"
+#include "game/world/structural_frame.hpp"
 #include "game/world/resources/resource_generators.hpp"
 
 namespace game::resources {
@@ -26,6 +27,13 @@ ResourceMesh make_solar_panel(){
         const Vec3 c{x,4.55f+std::sin(pitch)*0.45f,0.25f};
         b.oriented_box(b.mesh.body,c,ax,ay,az,{2.62f,0.12f,4.35f});
         b.cylinder_between(b.mesh.details,{x,3.32f,0},{x,4.15f,-0.30f},0.10f,8,true,true);
+        // The perimeter and underside cross-battens belong to the moving
+        // collector range, so they track together with the photovoltaic skin.
+        structural::Builder frame{b.mesh.details,b.mesh.edges,{}};
+        const auto p0=c-ax*1.31f-az*2.175f-ay*.13f,p1=c+ax*1.31f-az*2.175f-ay*.13f;
+        const auto p2=c+ax*1.31f+az*2.175f-ay*.13f,p3=c-ax*1.31f+az*2.175f-ay*.13f;
+        for(const auto& pair:std::array<std::pair<Vec3,Vec3>,4>{{{p0,p1},{p1,p2},{p2,p3},{p3,p0}}})frame.beam(pair.first,pair.second,.10f,.13f,ay);
+        for(float z:{-1.f,1.f})frame.beam(c-ax*1.31f+az*z-ay*.18f,c+ax*1.31f+az*z-ay*.18f,.09f,.14f,ay);
         // Cell grid as mesh lines only.
         for(int gx=-2;gx<=2;++gx){
             const Vec3 a=c+ax*(0.50f*(float)gx)-az*2.0f+ay*0.08f;

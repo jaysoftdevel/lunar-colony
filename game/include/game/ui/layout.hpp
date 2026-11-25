@@ -24,7 +24,7 @@ constexpr float BUILD_BAR_H=80.0f;
 constexpr float BUILD_ICON_SIZE=50.0f;
 constexpr float BUILD_ICON_GAP=9.0f;
 constexpr float PLAYFIELD_MARGIN=12.0f;
-constexpr float GAME_FONT_BOOST=1.40f;
+constexpr float GAME_FONT_BOOST=1.68f;
 
 // At equal aspect ratio the logical canvas is identical at 720p, 1080p,
 // 1440p and 4K. Different aspect ratios gain usable space without stretching.

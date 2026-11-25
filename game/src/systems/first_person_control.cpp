@@ -49,13 +49,20 @@ std::optional<Vec3> GameApp::nearest_first_person_spawn(Vec3 desired,bool exteri
     return {};
 }
 void GameApp::enter_first_person_mode(){
+    door_hold_={};
     const bool explicit_selection=selected_astronaut_>=0&&astronaut_present(std::size_t(selected_astronaut_));
     int index=explicit_selection?selected_astronaut_:last_fpv_astronaut_;
-    if(index<0||!astronaut_present(std::size_t(index))){
+    if(index<0||!astronaut_present(std::size_t(index))||(!explicit_selection&&test_astronauts_[index].health<=0)){
         index=0;for(std::size_t i=0;i<test_astronauts_.size();++i)if(astronaut_present(i)&&test_astronauts_[i].health>0){index=int(i);break;}
     }
     auto& actor=test_astronauts_[index];auto& view=astronaut_views_[index];
-    if(astronaut_present(index)&&actor.health<=0)return;
+    if(astronaut_present(index)&&actor.health<=0){
+        actor.activity=AstronautActivity::Knockout;
+        cancel_placement_tool();clear_world_selection();
+        selected_astronaut_=index;
+        activity_log_.record(ui_time_seconds_,LogEvent::Incident,"FPV / This astronaut is deceased. Select living crew or dispatch a new explorer at the lander.");
+        return;
+    }
     controlled_astronaut_=index;
     const bool first=!view.visited&&!explicit_selection;
     const auto desired=first?crew_cache_position():actor.position;
@@ -73,6 +80,24 @@ void GameApp::enter_first_person_mode(){
     first_person_cursor_=first_person_alt_cursor_=false;first_person_mode_=FirstPersonMode::Active;
     sync_controlled_astronaut(0);app_.set_relative_mouse_mode(true);app_.set_cursor_visible(false);
 }
+bool GameApp::explorer_slot_available() const {
+    if(!lander_.has_depot()||astronaut_test_active())return false;
+    for(std::size_t i=0;i<astronaut_views_.size();++i)if(!astronaut_present(i))return true;
+    return false;
+}
+bool GameApp::dispatch_explorer(){
+    if(!explorer_slot_available())return false;
+    if(first_person_mode_==FirstPersonMode::Active)exit_first_person_mode();
+    const auto old_last=last_fpv_astronaut_;const auto old_selected=selected_astronaut_;
+    for(std::size_t i=0;i<astronaut_views_.size();++i)if(!astronaut_present(i)){
+        const auto old_actor=test_astronauts_[i];const auto old_view=astronaut_views_[i];
+        test_astronauts_[i]={};astronaut_views_[i]={};astronaut_views_[i].present=true;
+        last_fpv_astronaut_=int(i);selected_astronaut_=-1;enter_first_person_mode();
+        if(first_person_mode_==FirstPersonMode::Active){activity_log_.record(ui_time_seconds_,LogEvent::Note,"New explorer dispatched at the lander");return true;}
+        test_astronauts_[i]=old_actor;astronaut_views_[i]=old_view;last_fpv_astronaut_=old_last;selected_astronaut_=old_selected;return false;
+    }
+    return false;
+}
 void GameApp::sync_controlled_astronaut(float dt){
     if(first_person_mode_!=FirstPersonMode::Active||controlled_astronaut_<0)return;
     auto& actor=test_astronauts_[controlled_astronaut_];auto& view=astronaut_views_[controlled_astronaut_];
@@ -84,6 +109,7 @@ void GameApp::sync_controlled_astronaut(float dt){
     view.present=view.visited=true;view.yaw=first_person_.yaw_degrees();view.pitch=first_person_.pitch_degrees();
 }
 void GameApp::exit_first_person_mode(){
+    door_hold_={};
     sync_controlled_astronaut(0);
     if(first_person_carried_resource_)drop_first_person_carried_resource();
     if(controlled_astronaut_>=0)selected_astronaut_=last_fpv_astronaut_=controlled_astronaut_;
@@ -94,7 +120,7 @@ void GameApp::exit_first_person_mode(){
 }
 Rect GameApp::astronaut_status_rect() const {
     const float w=viewport_width_/ui_scale_,h=viewport_height_/ui_scale_;
-    const float width=std::min(326.f,w-24.f),height=std::min(216.f,h-layout::STATUS_BAR_H-layout::BUILD_BAR_H-24.f);
+    const float width=std::min(390.f,w-24.f),height=std::min(252.f,h-layout::STATUS_BAR_H-layout::BUILD_BAR_H-24.f);
     return {w-width-12.f,h-layout::BUILD_BAR_H-height-12.f,width,height};
 }
 bool GameApp::astronaut_status_hover(const InputState& in) const {

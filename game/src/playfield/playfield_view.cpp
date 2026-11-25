@@ -39,15 +39,16 @@ void GameApp::render_playfield(SceneRenderer& r){
             lunar_look::append_corridor_fixtures(corridor_fixtures,corridor);
         if(graphics_.enabled(GraphicsFeature::LocalLights)){
             std::vector<LunarLight> lights;
+            if(lander_.active()&&(lander_.phase==LanderPhase::OpeningRamp||lander_.phase==LanderPhase::DeployingRobots)){
+                for(float z:{-1.4f,1.4f})lights.push_back({lander_.site+Vec3{0,4.25f,z},{.84f,.91f,1.f,1},5.5f,45.f});
+            }
             for(const auto& fixture:corridor_fixtures)lights.push_back(fixture.light());
             for(std::size_t i=0;i<placed_habitats_.size();++i){const auto& habitat=placed_habitats_[i];
-                if(habitat.construction.complete() && lunar_look::powered(habitat.supply,habitat.power_enabled))
-                {
-                    const auto& mesh=habitat_models_.mesh(habitat);
-                    lights.push_back(lunar_look::habitat_fixture(habitat,mesh).light());
-                    const float level=interior_light_level(i);
-                    if(level>0)lights.push_back({habitat.position+Vec3{0,mesh.walkable_floor_y+2.05f,0},{.80f,.89f,1.f,1},9.f,25.f*level});
-                }
+                if(!habitat.construction.complete())continue;
+                const auto& mesh=habitat_models_.mesh(habitat);
+                if(lunar_look::powered(habitat.supply,habitat.power_enabled))lights.push_back(lunar_look::habitat_fixture(habitat,mesh).light());
+                const float level=interior_light_level(i);
+                if(level>0)lights.push_back({habitat.position+Vec3{0,mesh.walkable_floor_y+2.05f,0},{.80f,.89f,1.f,1},9.f,25.f*level});
             }
             for(const auto& pad:placed_resources_){
                 if(pad.kind!=ResourceKind::LandingPad || !pad.construction.complete() ||
@@ -74,7 +75,46 @@ void GameApp::render_playfield(SceneRenderer& r){
                 [&](const LunarLight& a,const LunarLight& b){ return distance_to_focus(a)<distance_to_focus(b); });
             std::copy_n(lights.begin(),scene.light_count,scene.lights.begin());
         }
+        // The shared renderer currently exposes point lights, not spotlights.
+        // Keep the point-light origin at the visor rather than offsetting it through nearby walls.
+        if(fpv && controlled_astronaut_>=0 && astronaut_views_[controlled_astronaut_].suit_light &&
+           test_astronauts_[controlled_astronaut_].health>0){
+            const auto slot=std::min(scene.light_count,scene.lights.size()-1);
+            scene.lights[slot]={eye,{.86f,.93f,1.f,1},12.f,44.f};
+            scene.light_count=std::min(scene.light_count+1,scene.lights.size());
+        }
         lunar=r.begin_lunar_scene(scene);
+    }
+    if(!meshed){
+        // Stylized game-day orbit: Earth remains above the lunar horizon and
+        // its longitude/position advance with the same clock as solar power.
+        const float angle=(status_.hour()-6.f)*6.2831853f/24.f;
+        const float elevation=.62f+.20f*std::sin(angle);
+        const Vec3 direction{std::cos(angle)*std::cos(elevation),std::sin(elevation),std::sin(angle)*std::cos(elevation)};
+        const Vec3 eye=fpv?first_person_.eye_position():camera_.eye_position();
+        const float distance=lander_.in_flight()?220.f:650.f, radius=distance*.039f;
+        const Vec3 center=eye+direction*distance;
+        // Low-cost procedural continent silhouettes on a spherical globe.
+        // Longitude/latitude are in degrees; each ring is drawn with ocean,
+        // land, polar ice and cloud tones, modulated by the solar direction.
+        struct Coast{float lon,lat,w,h;};
+        constexpr Coast land[]{{-105,49,39,26},{-86,22,16,22},{-61,-15,23,36},{-44,72,15,11},{19,6,26,34},{48,48,52,23},{94,48,43,25},{80,19,16,19},{117,7,22,11},{136,-25,22,15},{-5,52,15,15}};
+        constexpr int rings=40, sectors=80;constexpr float pi=3.14159265f;
+        std::array<std::vector<Vec3>,20> batches;
+        const auto point=[&](float u,float v){return Vec3{std::cos(v)*std::cos(u),std::sin(v),std::cos(v)*std::sin(u)};};
+        for(int j=0;j<rings;++j)for(int i=0;i<sectors;++i){
+            const float u0=-pi+2*pi*i/sectors,u1=-pi+2*pi*(i+1)/sectors,v0=-pi*.5f+pi*j/rings,v1=-pi*.5f+pi*(j+1)/rings;
+            const float u=(u0+u1)*.5f,v=(v0+v1)*.5f,lon=u*180/pi,lat=v*180/pi;
+            const float noise=.12f*std::sin(u*21+v*14)+.09f*std::cos(u*33-v*23);
+            float coast=10;for(const auto& l:land){const float x=(lon-l.lon)/l.w,y=(lat-l.lat)/l.h;coast=std::min(coast,x*x+y*y);}
+            int type=coast+noise<1?1:0;if(std::abs(lat)>72+5*std::sin(5*u))type=2;
+            if(std::sin(u*13+std::sin(v*9)*2)+std::cos(v*19-u*4)>1.52f)type=3;
+            const auto normal=point(u+angle*.25f,v);const int shade=std::clamp(int((.20f+.80f*std::max(0.f,dot(normal,sun.direction)))*5),0,4);
+            const auto p=center+point(u0+angle*.25f,v0)*radius,q=center+point(u1+angle*.25f,v0)*radius,a=center+point(u0+angle*.25f,v1)*radius,b=center+point(u1+angle*.25f,v1)*radius;
+            auto& dst=batches[type*5+shade];dst.insert(dst.end(),{p,a,b,p,b,q});
+        }
+        constexpr Color colors[]{{.045f,.16f,.43f,1},{.22f,.35f,.16f,1},{.70f,.78f,.82f,1},{.47f,.56f,.67f,1}};
+        for(int i=0;i<20;++i){auto c=colors[i/5];const float shade=.12f+.22f*(i%5);c.r*=shade;c.g*=shade;c.b*=shade;r.draw_lunar_surface(batches[i],LunarMaterial::Celestial,c);}
     }
     const bool show_build_guides=meshed || build_catalog_.selected() || storage_gate_placement_active_;
     if(!meshed && !lunar){
@@ -254,19 +294,16 @@ void GameApp::render_first_person_hud(SceneRenderer& r){
     if(first_person_mode_==FirstPersonMode::Active){
         const float cx=first_person_cursor_free()?float(input_.mouse_x)/ui_scale_:ui_width(r)*.5f,cy=first_person_cursor_free()?float(input_.mouse_y)/ui_scale_:ui_height(r)*.5f;
         if(!first_person_cursor_free()){
-            const Color cross{1.f,.90f,.12f,1.f};
-            for(const auto& line:std::array<std::pair<Vec2,Vec2>,4>{{{{cx-9,cy},{cx-2,cy}},{{cx+2,cy},{cx+9,cy}},{{cx,cy-9},{cx,cy-2}},{{cx,cy+2},{cx,cy+9}}}})
-                r.draw_line(line.first,line.second,{.015f,.02f,.025f,1},4.f);
-            r.draw_line({cx-8.0f,cy},{cx-2.0f,cy},cross,2.0f);
-            r.draw_line({cx+2.0f,cy},{cx+8.0f,cy},cross,2.0f);
-            r.draw_line({cx,cy-8.0f},{cx,cy-2.0f},cross,2.0f);
-            r.draw_line({cx,cy+2.0f},{cx,cy+8.0f},cross,2.0f);
+            const Color cross{.18f,1.f,.48f,1.f};
+            for(const auto& line:std::array<std::pair<Vec2,Vec2>,4>{{{{cx-15,cy},{cx-4,cy}},{{cx+4,cy},{cx+15,cy}},{{cx,cy-15},{cx,cy-4}},{{cx,cy+4},{cx,cy+15}}}}){
+                r.draw_line(line.first,line.second,{.015f,.02f,.025f,1},6.f);r.draw_line(line.first,line.second,cross,3.f);}
+            r.draw_rect({cx-1.5f,cy-1.5f,3,3},{1,.90f,.16f,1});
 
         }
         const float help_width=controlled_astronaut_>=0?std::min(528.f,astronaut_status_rect().x-2*PLAYFIELD_MARGIN):528.f;
         Rect help{PLAYFIELD_MARGIN,STATUS_BAR_H+PLAYFIELD_MARGIN,help_width,49.0f};
         r.draw_rect(help,kHudFill);
-        game_label(r,{help.x+12.0f,help.y+8.0f},"FIRST PERSON VIEW",0.64f,theme_);
+        game_label(r,{help.x+12.0f,help.y+8.0f},(controlled_astronaut_>=0 && astronaut_views_[controlled_astronaut_].suit_light)?"FPV / L LIGHT ON":"FPV / L LIGHT OFF",0.64f,theme_);
         game_label_fitted(r,{help.x+12.f,help.y+28.f,help.w-24.f,15.f},
             help.w<400?(build_catalog_.selected()?"LMB PLACE / N-M ROTATE / RMB CANCEL":"WASD / SHIFT / SPACE / ALT / V EXIT"):
             build_catalog_.selected()?"LMB PLACE / WHEEL SIZE / N-M ROTATE / ALT CURSOR / TAB TOGGLE / RMB CANCEL":
@@ -293,7 +330,8 @@ void GameApp::render_first_person_hud(SceneRenderer& r){
         const auto manual=manual_door_label();
         if(!manual.empty()){
             Rect control{env.x,env.y+env.h+6,env.w,30};
-            if(ui::button(r,ui_input_,control,manual,theme_,!simulation_paused()))manual_door_interaction(true);
+            r.draw_rect(control,kHudFill);game_label_fitted(r,{control.x+10,control.y+8,control.w-20,18},manual,.48f,theme_);
+            render_door_interaction(r);
             env.h+=36;
         }
         if(first_person_carried_resource_){
@@ -362,9 +400,8 @@ void GameApp::render_playfield_crosshair(SceneRenderer& r){
         return;
     }
 
-    // The OS presents this cursor independently of world rendering/GPU load.
-    app_.set_cursor_visible(true);
-    app_.set_world_cursor(true);
+    // Retain the independent, low-latency native world cursor.
+    app_.set_cursor_visible(true);app_.set_world_cursor(true);
 }
 
 } // namespace game

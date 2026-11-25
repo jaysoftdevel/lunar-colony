@@ -1,4 +1,5 @@
 #include "game/world/corridor/detail.hpp"
+#include "game/world/structural_frame.hpp"
 #include "game/world/corridor/pressure_shell.hpp"
 #include "game/world/mesh_portals.hpp"
 #include "game/world/corridor/corridor_module.hpp"
@@ -36,11 +37,112 @@ void append_open_rect_tunnel(CorridorMesh& mesh,Vec3 inner,Vec3 outer,Vec3 norma
     for(const auto& e:std::array<std::pair<Vec3,Vec3>,8>{{{a0,b0},{a1,b1},{a2,b2},{a3,b3},{a0,a3},{a1,a2},{b0,b3},{b1,b2}}}) edge(mesh.edges,e.first,e.second);
 }
 
+namespace {
+using Ring=std::vector<Vec3>;
+Ring profile_ring(Vec3 center,Vec3 side,const std::vector<Vec2>& profile){
+    Ring out;for(const auto q:profile)out.push_back(ring_vertex(center,side,q));return out;
+}
+Ring interpolate_ring(const Ring& a,const Ring& b,float t){
+    Ring out;for(std::size_t i=0;i<a.size();++i)out.push_back(a[i]+(b[i]-a[i])*t);return out;
+}
+// A continuous annular flange rather than a stack of intersecting I-beams.
+// Both inner faces follow the actual loft; the outer face is offset from it.
+// Keep the flat bottom of the oval on the same bearing plane as its feet.
+Ring offset_ring(const Ring& ring,float thickness){
+    Ring out=ring;
+    const auto side=normalize(ring[1]-ring[0]);
+    for(std::size_t i=0;i<ring.size();++i){
+        const auto p=ring[i];
+        const auto tangent=[&](std::size_t j,std::size_t k){return normalize(ring[k]-ring[j]);};
+        const auto outward=[&](Vec3 t){return side*t.y-Vec3{0,dot(t,side),0};};
+        const auto n0=outward(tangent((i+ring.size()-1)%ring.size(),i)),n1=outward(tangent(i,(i+1)%ring.size()));
+        const auto n=normalize(n0+n1);
+        const float m=thickness/std::max(.6f,dot(n,n1));
+        out[i]=p+n*m;
+        // A low ground-level sleeve has no room for a projecting flange below grade.
+        out[i].y=std::max(.025f,out[i].y);
+    }
+    return out;
+}
+void band(CorridorMesh& mesh,const Ring& a,const Ring& b,float thickness){
+    const auto oa=offset_ring(a,thickness),ob=offset_ring(b,thickness);
+    const auto quad=[&](Vec3 p,Vec3 q,Vec3 r,Vec3 s){
+        if(length(cross(q-p,r-p))>1e-8f)tri(mesh.details,p,q,r);
+        if(length(cross(r-p,s-p))>1e-8f)tri(mesh.details,p,r,s);
+    };
+    const bool reverse=cross(a[1]-a[0],b[0]-a[0]).y>0;
+    const auto face=[&](Vec3 p,Vec3 q,Vec3 r,Vec3 s){if(reverse)quad(p,s,r,q);else quad(p,q,r,s);};
+    for(std::size_t i=0;i<a.size();++i){const auto j=(i+1)%a.size();
+        face(oa[i],oa[j],ob[j],ob[i]);
+        // The shared pressure skin is the inner surface: no duplicate coplanar face.
+        face(a[i],a[j],oa[j],oa[i]);
+        face(b[j],b[i],ob[i],ob[j]);
+        edge(mesh.edges,oa[i],oa[j]);edge(mesh.edges,ob[i],ob[j]);
+    }
+}
+void bearing(CorridorMesh& mesh,const Ring& a,const Ring& b,float thickness,float spacing){
+    const auto oa=offset_ring(a,thickness),ob=offset_ring(b,thickness);
+    const auto mid=interpolate_ring(oa,ob,.5f);
+    const auto side=flat_normal(mid[1]-mid[0]);const Vec3 axis{side.z,0,-side.x};
+    structural::Builder frame{mesh.details,mesh.edges,{}};
+    const auto point=[&](float along,float across){
+        const auto left=oa[0]+(ob[0]-oa[0])*along,right=oa[1]+(ob[1]-oa[1])*along;
+        return left+(right-left)*across;
+    };
+    // The support tops are cut to the actual sloping underside of the hoop,
+    // not sunk into it. Foot pads and columns share the same boundary plane.
+    for(float t:{.08f,.92f}){
+        const float width=distance_xz(mid[0],mid[1]);
+        const float dt=std::min(.06f/width,.055f);
+        const std::array<Vec3,4> top{{point(.18f,t-dt),point(.82f,t-dt),point(.82f,t+dt),point(.18f,t+dt)}};
+        float low=top[0].y;for(auto p:top)low=std::min(low,p.y);
+        const float pad=std::min(.035f,low);if(pad<=.001f)continue;
+        const auto center=point(.5f,t);const float pad_width=std::min(.29f,spacing*.70f);
+        frame.box({center.x,pad*.5f,center.z},side,{0,1,0},axis,{pad_width,pad,pad_width});
+        std::array<Vec3,4> base=top;for(auto& p:base)p.y=pad;
+        const auto face=[&](Vec3 p,Vec3 q,Vec3 r,Vec3 s){
+            const auto c=(p+q+r+s)*.25f;const Vec3 middle{center.x,(pad+center.y)*.5f,center.z};
+            if(dot(cross(q-p,r-p),c-middle)<0)std::swap(q,s);
+            if(length(cross(q-p,r-p))>1e-8f)tri(mesh.details,p,q,r);
+            if(length(cross(r-p,s-p))>1e-8f)tri(mesh.details,p,r,s);
+        };
+        for(int j=0;j<4;++j){const int k=(j+1)%4;face(base[j],base[k],top[k],top[j]);}
+        // Shared pad/column and hoop/column faces deliberately omitted.
+    }
+}
+void append_oval_transition_frame(CorridorMesh& mesh,const Ring& a,const Ring& b,bool supports){
+    if(a.size()!=b.size()||a.size()<3)return;
+    const auto start=(a[0]+a[1])*.5f,finish=(b[0]+b[1])*.5f;
+    const float run=distance_xz(start,finish);if(run<.12f)return;
+    const int count=std::max(1,int(std::ceil(run/.82f)));
+    const float half=std::min(.065f/run,.28f/count);
+    constexpr float depth=.075f;
+    for(int i=0;i<count;++i){const float t=(i+.5f)/count;
+        const auto left=interpolate_ring(a,b,t-half),right=interpolate_ring(a,b,t+half);
+        band(mesh,left,right,depth);if(supports)bearing(mesh,left,right,depth,run/count);
+    }
+    // Longitudinal stringers stop at the flange faces, so there are no
+    // intersecting beam ends. Mount them along the same swept skin vertices.
+    structural::Builder rails{mesh.details,mesh.edges,{}};
+    const auto outer_a=offset_ring(a,.035f),outer_b=offset_ring(b,.035f);
+    for(int i=0;i<=count;++i){
+        const float t0=i==0?0.f:(i-.5f)/count+half;
+        const float t1=i==count?1.f:(i+.5f)/count-half;
+        if((t1-t0)*run<.01f)continue;
+        for(std::size_t k:{std::size_t(2),std::size_t(4),std::size_t(7),std::size_t(10),std::size_t(12)}){
+            if(k>=a.size())continue;
+            const auto p=outer_a[k]+(outer_b[k]-outer_a[k])*t0,q=outer_a[k]+(outer_b[k]-outer_a[k])*t1;
+            rails.beam(p,q,.035f,.045f,{0,1,0});
+        }
+    }
+}
+} // namespace
+
 std::vector<Vec2> doorway_cross_section(float half_width,float height){
     std::vector<Vec2> out;
     out.reserve(13);
     constexpr float floor_y=0.05f;
-    const float side_y=height-.02f; // Full-height hatch below the rounded crown.
+    const float side_y=height-geometry::kGeneratedEntranceCrownRise; // Rounded crown, clear hatch header.
     out.push_back({-half_width,floor_y});
     out.push_back({ half_width,floor_y});
     constexpr int ARC=10;
@@ -75,35 +177,8 @@ void append_profile_transition(CorridorMesh& mesh,Vec3 a,Vec3 b,Vec3 normal,
     }
 }
 
-void append_door_frame(CorridorMesh& mesh,Vec3 center,Vec3 normal,float half_width=geometry::kDoorFrameHalfWidth,float height=geometry::kDoorFrameHeight){
-    normal=flat_normal(normal);
-    const Vec3 side=perp_xz(normal);
-    const float bar=0.15f;
-    const Vec3 base=center;
-    append_oriented_box(mesh.details,base-side*(half_width-bar)+Vec3{0,height*0.5f,0},normal,0.12f,bar,height*0.5f);
-    append_oriented_box(mesh.details,base+side*(half_width-bar)+Vec3{0,height*0.5f,0},normal,0.12f,bar,height*0.5f);
-    append_oriented_box(mesh.details,base+Vec3{0,height-bar,0},normal,0.12f,half_width,bar);
-    append_oriented_box(mesh.details,base+Vec3{0,bar,0},normal,0.12f,half_width,bar);
-}
-
-void append_pressure_seal(CorridorMesh& mesh,Vec3 center,Vec3 normal,float half_width,float height){
-    normal=flat_normal(normal);
-    if(length(normal)<0.001f) return;
-    const Vec3 side=perp_xz(normal);
-    const float bar=0.070f;
-    const float depth=0.045f;
-    const Vec3 base=center+Vec3{0,0.055f,0};
-    // A narrow continuous gasket/flange sits inside the structural door frame.
-    // It is deliberately separate geometry so no visual gap survives between
-    // the pressure sleeve and a habitat/resource hull.
-    append_oriented_box(mesh.details,base-side*(half_width-bar)+Vec3{0,height*0.5f,0},normal,depth,bar,height*0.5f);
-    append_oriented_box(mesh.details,base+side*(half_width-bar)+Vec3{0,height*0.5f,0},normal,depth,bar,height*0.5f);
-    append_oriented_box(mesh.details,base+Vec3{0,height-bar,0},normal,depth,half_width,bar);
-    append_oriented_box(mesh.details,base+Vec3{0,bar,0},normal,depth,half_width,bar);
-}
-
 void append_generated_entrance(CorridorMesh& mesh,const CorridorDoor& door){
-    if(!door.generated) return;
+    if(!door.generated || length(door.position-door.wall_position)<.01f) return;
     const Vec3 n=flat_normal(door.normal);
     const Vec3 side=perp_xz(n);
     const Vec3 door_base=door.position-Vec3{0,geometry::kCorridorDeckY,0};
@@ -126,29 +201,49 @@ void append_generated_entrance(CorridorMesh& mesh,const CorridorDoor& door){
         const Vec3 wall_base=door.wall_position-Vec3{0,geometry::kCorridorDeckY,0};
         append_profile_transition(mesh,wall_base,door_base,n,profile,profile);
     }
-    append_door_frame(mesh,door.wall_position,n,geometry::kDoorFrameHalfWidth,geometry::kDoorFrameHeight);
-    append_door_frame(mesh,door.position,n,geometry::kDoorFrameHalfWidth,geometry::kDoorFrameHeight);
+    // The actual pressure hatch is rendered at the wall by draw_sliding_door.
+    // Reinforce the vestibule with the same skin section as its pressure loft.
+    const auto wall_base=door.wall_position-Vec3{0,WALKWAY_Y,0};
+    append_oval_transition_frame(mesh,profile_ring(wall_base,side,profile),profile_ring(door_base,side,profile),true);
 }
 
 // Continuous deck ramp: geometry and the shared crew surface query use the
 // exact same endpoints. No oversized final riser or unsampled stair gap.
-void append_entrance_stairs(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
-    if(endpoint.kind!=CorridorEndpointKind::Habitat && endpoint.kind!=CorridorEndpointKind::Resource) return;
+void append_entrance_stairs(CorridorMesh& mesh,const CorridorEndpoint& endpoint,Vec3 terminal_tangent){
+    if(!building_endpoint(endpoint))return;
     const auto& door=endpoint.door;
-    const Vec3 n=flat_normal(door.normal),side=perp_xz(n);
-    Vec3 inner=door.wall_position; inner.y=door.position.y;
-    Vec3 outer=endpoint.position; outer.y+=WALKWAY_Y;
-    const Vec3 a=inner-side*WALKWAY_HALF_WIDTH,b=inner+side*WALKWAY_HALF_WIDTH;
-    const Vec3 c=outer+side*WALKWAY_HALF_WIDTH,d=outer-side*WALKWAY_HALF_WIDTH;
-    tri(mesh.details,a,c,b); tri(mesh.details,a,d,c);
-    edge(mesh.edges,a,d); edge(mesh.edges,b,c);
-    // Carry the threshold deck through the carved foundation/hull thickness.
-    const Vec3 inside=inner-n*1.0f;
-    const Vec3 e=inside-side*WALKWAY_HALF_WIDTH,f=inside+side*WALKWAY_HALF_WIDTH;
-    tri(mesh.details,e,b,f);tri(mesh.details,e,a,b);
+    const Vec3 n=flat_normal(door.normal),side=perp_xz(n)*WALKWAY_HALF_WIDTH;
+    Vec3 end_side=perp_xz(terminal_tangent)*WALKWAY_HALF_WIDTH;
+    if(dot(side,end_side)<0)end_side=end_side*-1.f;
+    Vec3 inner=door.wall_position;inner.y=door.position.y;
+    Vec3 outer=endpoint.position;outer.y+=WALKWAY_Y;
+    const auto deck=[&](Vec3 a,Vec3 sa,Vec3 b,Vec3 sb){
+        if(distance_xz(a,b)<.001f)return;
+        const auto uptri=[&](Vec3 p,Vec3 q,Vec3 r){if(cross(q-p,r-p).y<0)std::swap(q,r);tri(mesh.details,p,q,r);};
+        const auto quad=[&](Vec3 p,Vec3 q,Vec3 r,Vec3 s){uptri(p,q,r);uptri(p,r,s);};
+        const int steps=docking_step_count(a,b);
+        const int panels=steps>1?steps:std::max(1,int(std::ceil(distance_xz(a,b)/.60f)));
+        for(int i=0;i<panels;++i){
+            const float t0=float(i)/panels,t1=float(i+1)/panels;
+            auto p=a+(b-a)*t0,q=a+(b-a)*t1;
+            const auto u=sa+(sb-sa)*t0,v=sa+(sb-sa)*t1;
+            if(steps>1)p.y=q.y=docking_floor_y(a,b,(t0+t1)*.5f);
+            quad(p-u,q-v,q+v,p+u);
+            // Continuous underside fascia and transverse tread nose, no holes between panels.
+            for(float sign:{-1.f,1.f}){auto x=p+u*sign,y=q+v*sign;tri(mesh.details,x,y,y-Vec3{0,.08f,0});tri(mesh.details,x,y-Vec3{0,.08f,0},x-Vec3{0,.08f,0});}
+            const auto nose=q+(p-q)*std::min(.15f,.035f/std::max(.001f,distance_xz(p,q)));
+            quad(nose-v*.91f+Vec3{0,.008f,0},q-v*.91f+Vec3{0,.008f,0},q+v*.91f+Vec3{0,.008f,0},nose+v*.91f+Vec3{0,.008f,0});
+            if(steps>1){const float next=i+1==panels?b.y:docking_floor_y(a,b,(float(i)+1.5f)/panels);if(std::abs(next-q.y)>.0001f){auto low=q;low.y=next;tri(mesh.details,q-v,low-v,low+v);tri(mesh.details,q-v,low+v,q+v);}}
+        }
+        if(steps>1){auto first=a;first.y=docking_floor_y(a,b,.5f/panels);if(std::abs(first.y-a.y)>.0001f){tri(mesh.details,a-sa,first-sa,first+sa);tri(mesh.details,a-sa,first+sa,a+sa);}}
+        edge(mesh.edges,a-sa,b-sb);edge(mesh.edges,a+sa,b+sb);
+    };
+    deck(inner-n*.7f,side,inner,side);
+    deck(inner,side,door.position,side);
+    deck(door.position,side,outer,end_side);
 }
 
-void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
+void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint,Vec3 terminal_tangent){
     if(endpoint.kind!=CorridorEndpointKind::Habitat && endpoint.kind!=CorridorEndpointKind::Resource) return;
     const CorridorDoor& door=endpoint.door;
     const Vec3 n=flat_normal(door.normal);
@@ -159,22 +254,23 @@ void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
     // declared hatch plane. The adapter then morphs once, without overlap, into
     // the exact D-profile used by the corridor shell at endpoint.position.
     const Vec3 door_base=door.position-Vec3{0,geometry::kCorridorDeckY,0};
-    const auto door_profile=doorway_cross_section(DOCK_SLEEVE_HALF_WIDTH,DOCK_SLEEVE_HEIGHT);
+    // Match the pressure-union solver's generated hatch section, including
+    // the terminal side orientation on the opposite end of the corridor.
+    const auto door_profile=doorway_cross_section(GENERATED_ENTRANCE_HALF_WIDTH,GENERATED_ENTRANCE_HEIGHT);
     const auto corridor_profile=corridor_cross_section();
-    append_profile_transition(mesh,door_base,endpoint.position,n,door_profile,corridor_profile);
-    append_door_frame(mesh,door.position,n,geometry::kDoorFrameHalfWidth,geometry::kDoorFrameHeight);
-    append_pressure_seal(mesh,door.position,n,DOCK_SLEEVE_HALF_WIDTH*0.94f,DOCK_SLEEVE_HEIGHT*0.94f);
-    // The hull contact gets a second flange. Generated entrances use the exact
-    // sampled wall profile for the pressure skin; this inner flange visually
-    // and mechanically consolidates that surface-to-sleeve seam.
-    append_pressure_seal(mesh,door.wall_position,n,geometry::kDoorClearWidth*0.62f,geometry::kDoorClearHeight*1.02f);
     const Vec3 side=perp_xz(n);
-    const Vec3 threshold=door.position-Vec3{0,0.045f,0};
-    append_oriented_box(mesh.details,threshold,n,0.18f,geometry::kDoorClearWidth*0.52f,0.055f);
-    edge(mesh.edges,threshold-side*(geometry::kDoorClearWidth*0.52f)+Vec3{0,0.06f,0},
-                    threshold+side*(geometry::kDoorClearWidth*0.52f)+Vec3{0,0.06f,0});
-    append_entrance_stairs(mesh,endpoint);
-    append_ring(mesh,endpoint.position,n,1.0f);
+    Vec3 terminal_side=perp_xz(terminal_tangent);
+    if(dot(side,terminal_side)<0)terminal_side=terminal_side*-1.f;
+    const auto hatch=profile_ring(door_base,side,door_profile),terminal=profile_ring(endpoint.position,terminal_side,corridor_profile);
+    for(std::size_t i=0;i<hatch.size();++i){const auto j=(i+1)%hatch.size();
+        tri(mesh.shell,hatch[i],terminal[i],terminal[j]);tri(mesh.shell,hatch[i],terminal[j],hatch[j]);
+        edge(mesh.edges,hatch[i],hatch[j]);
+    }
+    append_oval_transition_frame(mesh,hatch,terminal,true);
+    append_entrance_stairs(mesh,endpoint,terminal_tangent);
+    // The main run already supplies its first oval hoop and bearing pair.
+    // No duplicated terminal hoop, threshold box or free-standing hatch.
+
 }
 
 void append_sealed_open_end(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
@@ -228,11 +324,15 @@ void append_surface_matched_junction(CorridorMesh& mesh,const CorridorEndpoint& 
     // small floor gap between the host's 0.72 m walkway and 1.08 m hull side.
     const Vec3 host_walk_edge=endpoint.host_position+host_side*(side_sign*WALKWAY_HALF_WIDTH)+Vec3{0,WALKWAY_Y,0};
     const Vec3 shell_edge=endpoint.host_position+host_side*(side_sign*CORRIDOR_HALF_WIDTH)+Vec3{0,WALKWAY_Y,0};
-    const Vec3 hs=host*(WALKWAY_HALF_WIDTH*0.92f);
-    tri(mesh.details,shell_edge-hs,host_walk_edge-hs,host_walk_edge+hs);
-    tri(mesh.details,shell_edge-hs,host_walk_edge+hs,shell_edge+hs);
-    edge(mesh.edges,shell_edge-hs,host_walk_edge-hs);
-    edge(mesh.edges,shell_edge+hs,host_walk_edge+hs);
+    Vec3 hs=host*WALKWAY_HALF_WIDTH;
+    Vec3 bs=perp_xz(branch)*WALKWAY_HALF_WIDTH;if(dot(hs,bs)<0)hs=hs*-1.f;
+    const auto quad=[&](Vec3 a,Vec3 sa,Vec3 b,Vec3 sb){
+        for(auto t:std::array<std::array<Vec3,3>,2>{{{{a-sa,b-sb,b+sb}},{{a-sa,b+sb,a+sa}}}}){if(cross(t[1]-t[0],t[2]-t[0]).y<0)std::swap(t[1],t[2]);tri(mesh.details,t[0],t[1],t[2]);}
+        edge(mesh.edges,a-sa,b-sb);edge(mesh.edges,a+sa,b+sb);
+    };
+    // Include the actual adapter run outside the host shell, not only its inner lip.
+    quad(endpoint.position+Vec3{0,WALKWAY_Y,0},bs,shell_edge,hs);
+    quad(shell_edge,hs,host_walk_edge,hs);
 }
 
 void append_corridor_junction(CorridorMesh& mesh,const CorridorEndpoint& endpoint){
@@ -508,12 +608,32 @@ void append_merged_crossing_manifold(CorridorMesh& mesh,const MergedCrossingJunc
         edge(mesh.edges,d0,d1);
         edge(mesh.edges,t0,t1);
 
+        structural::Builder frame{mesh.details,mesh.edges,{}};
+        const auto out=flat_normal((poly[i]+poly[j])*.5f-junction.position);
+        frame.beam(t0+Vec3{0,.08f,0},t1+Vec3{0,.08f,0},.16f,.20f,{0,1,0},true);
+        frame.beam(f0,f1,.15f,.16f,{0,-1,0},true);
+        frame.beam(f0+out*.055f,t0+out*.055f,.14f,.18f,out,true);
         Vec3 outward{};
         if(junction_edge_opening(poly[i],poly[j],junction,outward)){
             append_d_profile_opening_wall(mesh,poly[i],poly[j],outward,base_y);
         }else{
             append_wall_quad(mesh,f0,f1,t1,t0);
             edge(mesh.edges,f0,t0);
+        }
+        frame.box({f0.x,base_y+.018f,f0.z},{1,0,0},{0,1,0},{0,0,1},{.34f,.036f,.32f});
+        frame.beam({f0.x,base_y+.035f,f0.z},f0,.18f,.16f,out);
+    }
+    Vec3 low=poly.front(),high=low;
+    for(const auto p:poly){low.x=std::min(low.x,p.x);low.z=std::min(low.z,p.z);high.x=std::max(high.x,p.x);high.z=std::max(high.z,p.z);}
+    for(float x=low.x;x<high.x;x+=2*WALKWAY_HALF_WIDTH){
+        CorridorMesh panels;append_deck_panels(panels,{{x+WALKWAY_HALF_WIDTH,base_y,low.z},{x+WALKWAY_HALF_WIDTH,base_y,high.z}});
+        for(std::size_t t=0;t+2<panels.details.size();t+=3){
+            std::vector<Vec3> fragment{panels.details[t],panels.details[t+1],panels.details[t+2]};
+            for(std::size_t j=0;j<poly.size()&&!fragment.empty();++j){const auto a=poly[j],b=poly[(j+1)%poly.size()];
+                auto n=flat_normal({b.z-a.z,0,a.x-b.x});if(dot(n,junction.position-a)>0)n=n*-1.f;
+                fragment=mesh_portals::clip(fragment,n,dot(n,a),false);
+            }
+            for(std::size_t j=1;j+1<fragment.size();++j)if(length(cross(fragment[j]-fragment[0],fragment[j+1]-fragment[0]))>1.e-7f)tri(mesh.details,fragment[0],fragment[j],fragment[j+1]);
         }
     }
 }
@@ -531,7 +651,7 @@ void append_crossing_hubs(CorridorMesh& mesh,const std::vector<MergedCrossingJun
 
 CorridorMesh build_endpoint_fitting(const CorridorEndpoint& endpoint){
     CorridorMesh mesh;
-    append_docking_collar(mesh,endpoint);
+    append_docking_collar(mesh,endpoint,endpoint.tangent);
     append_corridor_junction(mesh,endpoint);
     return mesh;
 }
@@ -541,8 +661,8 @@ CorridorMesh build_mesh(const CorridorEndpoint& a,const CorridorEndpoint& b,cons
     CorridorMesh mesh;
     corridor_module().build_outer(mesh,path);
     corridor_module().build_inner(mesh,path);
-    append_docking_collar(mesh,a);
-    append_docking_collar(mesh,b);
+    append_docking_collar(mesh,a,path_tangent(path,0));
+    append_docking_collar(mesh,b,path_tangent(path,path.empty()?0:path.size()-1));
     append_corridor_junction(mesh,a);
     append_corridor_junction(mesh,b);
     append_sealed_open_end(mesh,a);
@@ -560,6 +680,7 @@ CorridorMesh build_mesh(const CorridorEndpoint& a,const CorridorEndpoint& b,cons
         std::vector<CorridorConnection> preview;preview.push_back(std::move(candidate));
         rebuild_pressure_shells(preview);mesh.shell=std::move(preview.front().mesh.shell);
     }
+    mesh.prepare_surfaces(extended_floor_path(a,b,path));
     return mesh;
 }
 

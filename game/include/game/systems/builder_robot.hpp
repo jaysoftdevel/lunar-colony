@@ -59,6 +59,7 @@ inline constexpr float kCarrierRobotTransitSpeedMps = 6.00f;
 inline constexpr float kBuilderRobotBatteryCapacityKwh = 48.0f;
 inline constexpr float kCarrierRobotBatteryCapacityKwh = 76.0f;
 inline constexpr float kRobotBatteryReserveFraction = 0.10f;
+inline constexpr float kRobotBootstrapDispatchFraction = 0.22f; // Start charging before ore dispatch cuts off at 20%.
 inline constexpr float kRobotBatteryCriticalFraction = 0.025f;
 inline constexpr float kRobotWorkshopChargePowerKw = 8.0f;
 inline constexpr float kRobotWorkshopChargeEfficiency = 0.92f;
@@ -143,6 +144,8 @@ struct BuilderRobotState {
     float ore_probe_wait{}; // transient bounded retry; never serialized
     std::uint64_t ore_probe_revision{};
     RobotRole role{RobotRole::Constructor};
+    ConstructionTargetRef crew_deferred_target{}; // Transient failed-claim cooldown; peers may take this work.
+    float crew_deferred_seconds{};
     game::runtime::Vec3 position{};               // wheel contact / local floor position
     float heading_degrees{0.0f};
     robots::RoverWheels wheels{};

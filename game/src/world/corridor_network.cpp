@@ -3,6 +3,7 @@
 #include "game/world/corridor/pressure_shell.hpp"
 #include "game/systems/construction_costs.hpp"
 #include "game/world/corridor/detail.hpp"
+#include "game/world/airlock_cycle.hpp"
 #include "game/world/storage_loading_gate.hpp"
 #include <limits>
 
@@ -553,6 +554,15 @@ void CorridorNetwork::synchronize_structure_interfaces(const std::vector<PlacedH
     for(auto& c:connections_) for(CorridorEndpoint* ep:{&c.endpoint_a,&c.endpoint_b}){
         if(ep->kind==CorridorEndpointKind::Habitat && ep->index<habitats.size()){
             const auto& h=habitats[ep->index];const auto& mesh=library.mesh(h);
+            if(h.kind==HabitatKind::AirLock){
+                const auto local=world_math::rotate_y(ep->door.wall_position-h.position,-h.rotation_degrees);
+                const float run=std::max(DOCK_RUN,dot(ep->position-ep->door.wall_position,flat_normal(ep->door.normal)));
+                ep->door=airlock::end_door(h,mesh,local.x<0?-1:1);ep->tangent=ep->door.normal;
+                const float saved_base=ep->position.y;
+                ep->position=ep->door.position+ep->tangent*run;ep->position.y=saved_base;
+                if(!c.path.empty()){if(ep==&c.endpoint_a)c.path.front()=ep->position;else c.path.back()=ep->position;}
+                continue;
+            }
             // v0.43.17 removes authored entrances. Existing saves that used a
             // former built-in hatch keep that physical opening, but it becomes
             // an ordinary connection-created/generated entrance from now on.
@@ -560,6 +570,13 @@ void CorridorNetwork::synchronize_structure_interfaces(const std::vector<PlacedH
                 ep->door.generated=true;
                 ep->door.entrance_index=-1;
             }
+            const auto old_position=ep->door.position;
+            const float run=std::max(DOCK_RUN,distance_xz(ep->position,old_position));
+            const bool projected=mesh.dome_radii.x>0&&reproject_habitat_door(ep->door,h,mesh);
+            auto shift=ep->door.position-old_position;shift.y=0;
+            if(projected&&mesh.dome_radii.y==0){const float base=ep->position.y;ep->tangent=ep->door.normal;ep->position=ep->door.position+ep->tangent*run;ep->position.y=base;}
+            else ep->position=ep->position+shift;
+            if(!c.path.empty()){if(ep==&c.endpoint_a)c.path.front()=ep->position;else c.path.back()=ep->position;}
             ep->door.position.y=h.position.y+mesh.walkable_floor_y;
             ep->door.wall_position.y=ep->door.position.y;
             attach_surface_profile(ep->door,h,mesh);
@@ -575,6 +592,20 @@ void CorridorNetwork::synchronize_structure_interfaces(const std::vector<PlacedH
                 else c.path.back()=ep->position;
             }
         }
+    }
+    for(auto& c:connections_)align_docking_path(c.endpoint_a,c.endpoint_b,c.path);
+    // A host may have changed elevation during migration. Propagate its deck
+    // to every dependent branch, including chains of corridor splices.
+    for(std::size_t pass=0;pass<connections_.size();++pass){
+        bool changed=false;
+        for(auto& c:connections_){
+            for(auto* e:{&c.endpoint_a,&c.endpoint_b})if(e->kind==CorridorEndpointKind::Corridor&&e->index<connections_.size()&&!connections_[e->index].path.empty()){
+                const auto p=nearest_path_point(connections_[e->index].path,e->surface_matched_junction?e->host_position:e->position);
+                changed|=std::abs(e->position.y-p.y)>.0001f;e->position.y=p.y;e->host_position.y=p.y;
+            }
+            align_docking_path(c.endpoint_a,c.endpoint_b,c.path);
+        }
+        if(!changed)break;
     }
     rebuild_all_meshes(connections_);
 }

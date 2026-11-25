@@ -22,7 +22,8 @@ inline void finish_station_interior(Builder& b,HabitatKind kind){
     if(m.deck.empty())b.cylinder_y(m.deck,{0,floor,0},.018f,std::min(high.x,high.z)*.88f,40,false);
     const float hx=std::min(std::abs(low.x),std::abs(high.x))*.74f;
     const float side=std::min(std::abs(low.z),std::abs(high.z))*.77f;
-    const float ceiling=std::min(floor+2.48f,high.y-.52f);
+    // Tall electrolysis skids need clearance above their 2.70 m service envelope.
+    const float ceiling=std::min(floor+(kind==HabitatKind::OxygenGeneratorDome?3.25f:2.48f),high.y-.52f);
     // Separate electrical/data and air/water runs, with accessible ceiling hangers.
     for(float sign:{-1.f,1.f}){
         for(int cable=0;cable<3;++cable)

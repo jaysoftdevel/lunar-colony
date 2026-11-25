@@ -80,6 +80,8 @@ struct WalkwayConnection {
 class WalkwayNetwork {
 public:
     void clear(){ connections_.clear(); }
+    void synchronize_airlock_interfaces(const std::vector<PlacedHabitat>& habitats,
+        const HabitatModelLibrary& library,const CorridorNetwork& corridors);
     const std::vector<WalkwayConnection>& connections() const { return connections_; }
     std::vector<WalkwayConnection>& mutable_connections() { return connections_; }
     void restore_connections(std::vector<WalkwayConnection> connections,bool rebuild_geometry=false){

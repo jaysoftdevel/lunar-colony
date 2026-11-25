@@ -28,6 +28,10 @@ struct CorridorMesh {
     std::vector<game::runtime::Vec3> shell;
     std::vector<game::runtime::Vec3> details; // ribs, docking hardware and internal walkway
     std::vector<game::runtime::Vec3> edges;
+    // Derived batches are also built lazily for legacy serialized meshes.
+    mutable std::vector<game::runtime::Vec3> deck_surface,metal_surface,grip_surface;
+    mutable bool surface_batches_ready{};
+    void prepare_surfaces(const std::vector<game::runtime::Vec3>& path) const;
 };
 
 enum class CorridorEndpointKind {

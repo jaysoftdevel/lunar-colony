@@ -37,6 +37,7 @@ inline void casing(std::vector<Vec3>& metal,std::vector<Vec3>& glass,const Mount
     quad(glass,m.center,m.right,m.up,m.width,m.height);
 }
 std::string value(double number,int decimals=0);
+void paint(runtime::SceneRenderer&,const Mount&,Vec3 position,float rotation,const std::string&,runtime::Color);
 // CPU glyph strokes are cached; text remains a depth-tested part of the model.
 void draw(runtime::SceneRenderer&,const Mount&,Vec3 position,float rotation,const Content&,bool powered,Vec3 eye);
 }

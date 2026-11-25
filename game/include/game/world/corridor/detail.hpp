@@ -10,6 +10,7 @@
 namespace game::corridor_detail {
 CorridorDoor transformed_builtin_door(const PlacedHabitat& habitat,const HabitatMesh& mesh,std::size_t entrance_index);
 bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& habitat,const HabitatMesh& mesh);
+bool reproject_habitat_door(CorridorDoor& door,const PlacedHabitat& habitat,const HabitatMesh& mesh);
 bool attach_surface_profile(CorridorDoor& door,const PlacedResource& resource,const ResourceMesh& mesh);
 using namespace game::runtime;
 
@@ -47,6 +48,58 @@ inline float distance_xz(Vec3 a,Vec3 b){
     const float dx=a.x-b.x,dz=a.z-b.z;
     return std::sqrt(dx*dx+dz*dz);
 }
+// Short building-to-building spans use one continuously supported deck datum.
+// Keep the saved horizontal alignment and construction ledger; only repair the
+// terminal samples and elevation, not the placement or topology.
+inline bool building_endpoint(const CorridorEndpoint& e){return e.kind==CorridorEndpointKind::Habitat || e.kind==CorridorEndpointKind::Resource;}
+inline void align_docking_path(CorridorEndpoint& a,CorridorEndpoint& b,std::vector<Vec3>& path){
+    if(path.size()<2)return;
+    if(building_endpoint(a) && building_endpoint(b)){
+        float run=0;for(std::size_t i=1;i<path.size();++i)run+=distance_xz(path[i-1],path[i]);
+        if(run>.001f){
+            const float base=std::max(0.f,std::min(a.door.position.y,b.door.position.y)-WALKWAY_Y);
+            a.position.y=b.position.y=base;
+            for(auto& p:path)p.y=base;
+        }
+    }
+    if(building_endpoint(a)&&b.kind==CorridorEndpointKind::Corridor)a.position.y=b.position.y;
+    if(building_endpoint(b)&&a.kind==CorridorEndpointKind::Corridor)b.position.y=a.position.y;
+    path.front()=a.position;path.back()=b.position;
+    // Remove abrupt vertical changes in intermediate samples on non-building links.
+    float length_run=0;for(std::size_t i=1;i<path.size();++i)length_run+=distance_xz(path[i-1],path[i]);
+    float station=0;for(std::size_t i=1;i+1<path.size();++i){station+=distance_xz(path[i-1],path[i]);if(length_run>.001f)path[i].y=std::lerp(a.position.y,b.position.y,station/length_run);}
+    // Shift the small terminal lead onto the actual hatch normal, while leaving
+    // the remainder of the curve unchanged. This keeps deck and seal aligned.
+    if(path.size()>=4){
+        const auto align=[&](const CorridorEndpoint& e,Vec3& next){
+            if(!building_endpoint(e))return;
+            const float lead=distance_xz(e.position,next);
+            if(lead>.001f && lead<.5f){const float y=next.y;next=e.position+flat_normal(e.door.normal)*lead;next.y=y;}
+        };
+        align(a,path[1]);align(b,path[path.size()-2]);
+    }
+}
+inline int docking_step_count(Vec3 a,Vec3 b){
+    const float rise=std::abs(b.y-a.y),run=distance_xz(a,b);
+    return rise>.10f && rise>run*.16f?std::max(2,int(std::ceil(rise/.12f))):1;
+}
+inline float docking_floor_y(Vec3 a,Vec3 b,float t){
+    const int steps=docking_step_count(a,b);
+    if(steps==1)return std::lerp(a.y,b.y,t);
+    // Each tread has a level surface, and the final tread meets the landing.
+    if(b.y<a.y)return docking_floor_y(b,a,1.f-t);
+    return std::lerp(a.y,b.y,std::min(steps,int(std::floor(std::clamp(t,0.f,1.f)*steps))+1)/float(steps));
+}
+inline std::vector<Vec3> extended_floor_path(const CorridorEndpoint& a,const CorridorEndpoint& b,const std::vector<Vec3>& path){
+    auto out=path;
+    auto extension=[](const CorridorEndpoint& e){auto wall=e.door.wall_position;wall.y=e.door.position.y;
+        const Vec3 lift{0,WALKWAY_Y,0};return std::vector<Vec3>{wall-flat_normal(e.door.normal)*.7f-lift,wall-lift,e.door.position-lift};};
+    if(building_endpoint(a)){auto v=extension(a);out.insert(out.begin(),v.begin(),v.end());}
+    if(building_endpoint(b)){auto v=extension(b);out.insert(out.end(),v.rbegin(),v.rend());}
+    if(a.kind==CorridorEndpointKind::Corridor&&a.surface_matched_junction)out.insert(out.begin(),a.host_position);
+    if(b.kind==CorridorEndpointKind::Corridor&&b.surface_matched_junction)out.push_back(b.host_position);
+    return out;
+}
 inline float point_segment_distance_xz(Vec3 p,Vec3 a,Vec3 b){
     const float dx=b.x-a.x,dz=b.z-a.z;
     const float den=dx*dx+dz*dz;
@@ -57,7 +110,7 @@ inline float point_segment_distance_xz(Vec3 p,Vec3 a,Vec3 b){
 inline Vec3 closest_point_segment_xz(Vec3 p,Vec3 a,Vec3 b){
     const float dx=b.x-a.x,dz=b.z-a.z;
     const float den=dx*dx+dz*dz;
-    if(den<0.0001f) return {a.x,0,a.z};
+    if(den<0.0001f) return a;
     const float t=std::clamp(((p.x-a.x)*dx+(p.z-a.z)*dz)/den,0.0f,1.0f);
     return {a.x+dx*t,a.y+(b.y-a.y)*t,a.z+dz*t};
 }
@@ -100,7 +153,7 @@ void append_ring(CorridorMesh& mesh,Vec3 center,Vec3 tangent,float scale=1.055f)
 void append_ribs(CorridorMesh& mesh,const std::vector<Vec3>& path);
 void append_pressure_services(CorridorMesh& mesh,const std::vector<Vec3>& path);
 void append_deck_panels(CorridorMesh& mesh,const std::vector<Vec3>& path);
-void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint);
+void append_docking_collar(CorridorMesh& mesh,const CorridorEndpoint& endpoint,Vec3 terminal_tangent);
 
 std::optional<CorridorEndpoint> resolve_anchor(const CorridorBuildAnchor& anchor,Vec3 other,
                                                const std::vector<PlacedHabitat>& habitats,const HabitatModelLibrary& library,
@@ -128,6 +181,7 @@ std::optional<CorridorConnection> make_generic_via_waypoint(const CorridorBuildA
                                                             const std::vector<PlacedResource>& resources,const ResourceModelLibrary& resource_library,
                                                             const std::vector<CorridorConnection>& existing,float playfield_half_extent);
 Vec3 nearest_path_point(const std::vector<Vec3>& path,Vec3 p);
+Vec3 path_tangent(const std::vector<Vec3>& path,std::size_t i);
 Vec3 nearest_path_tangent(const std::vector<Vec3>& path,Vec3 p);
 std::pair<Vec3,Vec3> closest_pair(const std::vector<Vec3>& a,const std::vector<Vec3>& b);
 float path_length(const std::vector<Vec3>& path);

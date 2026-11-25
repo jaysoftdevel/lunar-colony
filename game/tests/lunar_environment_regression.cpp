@@ -58,6 +58,18 @@ struct EngineIntegrationRegression {
                 throw std::runtime_error(std::string(prefix)+"full graphics lost the global surface beyond the playfield");
             std::cout<<"PASS "<<prefix<<"lowest settings: "<<stars<<" star pixels and continuous terrain outside the playfield\n";
         }
+        app.graphics_.path=GraphicsPath::Classic;
+        app.first_person_.spawn({0,0,0},90);app.first_person_.restore_view(90,.62f*57.2957795f);
+        auto clock=app.status_.state();clock.hour=6;app.status_.restore(clock);
+        const auto dawn=capture("earth-dawn");
+        clock.hour=18;app.status_.restore(clock);
+        const auto opposite=capture("earth-moved-away");
+        app.first_person_.restore_view(270,.62f*57.2957795f);
+        const auto dusk=capture("earth-dusk");
+        const auto globe=[](const auto& pixels){int count=0;for(int y=240;y<300;++y)for(int x=450;x<510;++x){const auto i=(y*width+x)*4;const int r=pixels[i],g=pixels[i+1],b=pixels[i+2];if(b>r+5&&b>g+3&&b>18)++count;}return count;};
+        const auto a=globe(dawn),b=globe(opposite),c=globe(dusk);
+        std::cout<<"Earth blue disk pixels dawn="<<a<<" moved="<<b<<" dusk="<<c<<"\n";
+        if(a<60||c<60||b>std::min(a,c)/3)throw std::runtime_error("Earth disk not visible or does not follow colony clock");
         return 0;
     }
 };

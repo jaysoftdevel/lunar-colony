@@ -1,4 +1,5 @@
 #pragma once
+#include "game/world/structural_frame.hpp"
 #include "game/world/habitat_mesh.hpp"
 #include "game/world/ore.hpp"
 #include "game/world/supply_state.hpp"
@@ -178,6 +179,7 @@ struct SolarHead {
     float horizontal_scale{1};
 };
 struct ResourceMesh {
+    structural::Metrics reinforcement;
     std::vector<game::runtime::Vec3> body;
     std::vector<game::runtime::Vec3> glazing; // Transparent pressure roof; physical even with hull hidden.
     std::vector<game::runtime::Vec3> foundation;
@@ -238,6 +240,7 @@ struct PlacedResource {
     float storage_extension_open{0.0f}; // transient shutter animation
     bool manual_gate_override{false};
     bool manual_gate_open{false}; // Transient manual crank, shared by exterior gates.
+    float player_gate_request_seconds{0};
     float workshop_gate_open{0.0f}; // transient; restored from live occupancy
     float workshop_gate_hold{0.0f};
     bool workshop_gate_initialized{false};

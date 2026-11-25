@@ -40,10 +40,11 @@ void GameApp::update_workshop_gates(float dt){
         }
         if(first_person_mode_==FirstPersonMode::Active){
             const auto p=workshop::local(item,first_person_.feet_position());
-            requested=requested || (std::abs(p.z+workshop::kHalfZ)<4.0f && std::abs(p.x)<4.0f);
-            occupied=occupied || (std::abs(p.z+workshop::kHalfZ)<1.2f && std::abs(p.x)<3.0f);
+            occupied=occupied || (item.workshop_gate_open>.001f&&std::abs(p.z+workshop::kHalfZ)<1.2f && std::abs(p.x)<3.0f);
         }
         const bool powered=door_power_available(item.supply,item.power_enabled);
+        item.player_gate_request_seconds=powered?std::max(0.f,item.player_gate_request_seconds-dt):0;
+        requested|=item.player_gate_request_seconds>0;
         // A loaded save may contain a rover straddling the threshold. Restore
         // an open gate before it becomes authoritative collision geometry.
         if(!item.workshop_gate_initialized){

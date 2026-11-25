@@ -28,6 +28,43 @@ inline std::array<CorridorDoor,2> partitions(const PlacedHabitat& habitat,const 
     }
     return result;
 }
+// The finished airlock owns two fixed axial end hatches, plus its two
+// internal partitions. All consumers use this same port definition.
+inline CorridorDoor end_door(const PlacedHabitat& h,const HabitatMesh& m,int sign){
+    CorridorDoor d;const float s=sign<0?-1.f:1.f;
+    d.wall_position=d.position=h.position+world_math::rotate_y({s*m.dome_radii.x,m.walkable_floor_y,0},h.rotation_degrees);
+    d.normal=world_math::rotate_y({s,0,0},h.rotation_degrees);
+    d.generated=true;d.entrance_index=sign<0?-5:-6;
+    const auto point=[&](float lateral,float y){
+        const float x=s*m.dome_radii.x*(m.dome_radii.y==0?1.f:std::sqrt(std::max(0.f,1-lateral*lateral/(m.dome_radii.z*m.dome_radii.z))));
+        return h.position+world_math::rotate_y({x,m.walkable_floor_y+y,lateral},h.rotation_degrees);
+    };
+    constexpr float half=geometry::kGeneratedEntranceHalfWidth;
+    d.wall_profile.push_back(point(-s*half,-.15f));d.wall_profile.push_back(point(s*half,-.15f));
+    for(int i=0;i<=10;++i){const float a=3.14159265358979323846f*i/10.f;
+        d.wall_profile.push_back(point(s*std::cos(a)*half,geometry::kGeneratedEntranceHeight-geometry::kCorridorDeckY-geometry::kGeneratedEntranceCrownRise+std::sin(a)*geometry::kGeneratedEntranceCrownRise));
+    }
+    return d;
+}
+// Skin-to-seat adapter for a fixed end hatch. The skin is curved in plan;
+// rendering a flat jamb at its tangent plane alone leaves an open visual gap.
+inline std::vector<game::runtime::Vec3> fitted_collar(const CorridorDoor& door){
+    using game::runtime::Vec3;
+    std::vector<Vec3> out;if(door.wall_profile.size()<3)return out;
+    const auto n=game::runtime::normalize(door.normal);const Vec3 side{-n.z,0,n.x};
+    const auto inner=[&](Vec3 p){
+        const auto delta=p-door.wall_position;
+        const float u=game::runtime::dot(delta,side)/geometry::kGeneratedEntranceHalfWidth;
+        const float v=(delta.y+.15f)/(geometry::kGeneratedEntranceHeight-.05f);
+        return door.wall_position+side*(u*(geometry::kDoorClearWidth*.5f+.055f))+
+            Vec3{0,std::clamp(v,0.f,1.f)*(geometry::kDoorClearHeight+.035f)-.015f,0}+n*.015f;
+    };
+    for(std::size_t i=0;i<door.wall_profile.size();++i){
+        const auto a=door.wall_profile[i]-n*.045f,b=door.wall_profile[(i+1)%door.wall_profile.size()]-n*.045f;
+        const auto c=inner(door.wall_profile[(i+1)%door.wall_profile.size()]),d=inner(door.wall_profile[i]);
+        out.insert(out.end(),{a,b,c,a,c,d,c,b,a,d,c,a});
+    }return out;
+}
 inline const char* phase(const Cycle& cycle){
     return cycle.sealing?"SEALING DOORS":cycle.equalizing?(cycle.target>0.5f?"EQUALIZING TO INSIDE":"EQUALIZING TO OUTSIDE"):
         cycle.requested>=0?"READY / PASS THROUGH":"SEALED / STANDBY";
@@ -40,7 +77,7 @@ inline const char* chamber(float local_x,float partition,int inside_sign){
 // of travel; doors just passed close even when still within approach range.
 // This also permits retreat/backtracking without a one-way traversal script.
 inline void advance(Cycle& cycle,std::vector<DoorSample>& doors,game::runtime::Vec3 feet,float wish_x,bool present,
-                    int inside_sign,float radius,float dt){
+                    int inside_sign,float radius,float dt,int explicit_request=-2){
     dt=std::clamp(dt,0.f,0.1f);
     cycle.requested=-1;cycle.equalizing=false;cycle.sealing=false;
     if(present){
@@ -57,9 +94,10 @@ inline void advance(Cycle& cycle,std::vector<DoorSample>& doors,game::runtime::V
         const float delta=doors[i].x-feet.x;
         occupied[i]=present && std::abs(delta)<radius+pressure_door::kThickness*0.5f+0.06f;
         if(occupied[i])occupied_door=(int)i;
-        if(present && delta*cycle.direction>=-0.02f && std::abs(delta)<best){best=std::abs(delta);cycle.requested=(int)i;}
+        if(explicit_request==-2 && present && delta*cycle.direction>=-0.02f && std::abs(delta)<best){best=std::abs(delta);cycle.requested=(int)i;}
     }
-    if(occupied_door>=0)cycle.requested=occupied_door;
+    if(explicit_request>=-1)cycle.requested=explicit_request<int(doors.size())?explicit_request:-1;
+    if(occupied_door>=0&&!sealed[std::size_t(occupied_door)])cycle.requested=occupied_door;
     bool all_sealed=std::all_of(sealed.begin(),sealed.end(),[](bool value){return value;});
     if(cycle.requested>=0){
         const auto& wanted=doors[(std::size_t)cycle.requested];
@@ -102,9 +140,12 @@ inline bool bulkhead_blocks(const CorridorDoor& door,float fraction,game::runtim
     // An internal bulkhead must never become an invisible wall across the map.
     const float u=game::runtime::dot(p,side),v=game::runtime::dot(q,side);
     const float near_side=u*v<=0?0:std::max(0.f,std::min(std::abs(u),std::abs(v))-radius);
-    const float near_height=std::max({0.f,std::min(p.y,q.y)-1.75f,1.75f-(std::max(p.y,q.y)+height)});
-    const float z=near_side/(2.12f*horizontal_scale),y=near_height/2.12f;
-    if(z*z+y*y>1.f)return false;
+    constexpr float section=.94280904f; // sqrt(1 - (1.6 / 4.8)^2)
+    const float z=near_side/(2.5f*section*horizontal_scale);
+    const float bottom=std::min(p.y,q.y),top=std::max(p.y,q.y)+height;
+    if(z>1.f || top<-.1f)return false;
+    const float roof=2.9f+1.25f*section*std::sqrt(std::max(0.f,1-z*z));
+    if(bottom>roof)return false;
     return std::max(std::abs(game::runtime::dot(p,side)),std::abs(game::runtime::dot(q,side)))+radius+0.015f>pressure_door::clear_half_width(fraction) ||
         std::min(p.y,q.y)<-0.1f || std::max(p.y,q.y)+height>geometry::kDoorClearHeight;
 }

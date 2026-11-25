@@ -19,7 +19,7 @@ void GameApp::render_view_selector(SceneRenderer& r,float y,float logical_w){
     constexpr float margin=10.0f;
     constexpr float gap=5.0f;
     constexpr float full_w=82.0f;
-    constexpr float none_w=60.0f;
+    constexpr float none_w=100.0f;
     constexpr float button_h=31.0f;
     constexpr float speed_group_w=176.0f;
     constexpr float between_groups=12.0f;
@@ -69,7 +69,7 @@ void GameApp::render_view_selector(SceneRenderer& r,float y,float logical_w){
     struct ViewButton { HabitatViewMode mode; const char* label; float width; };
     const ViewButton buttons[]={
         {HabitatViewMode::FullHull,"FULL HULL",full_w},
-        {HabitatViewMode::None,"FADED",none_w}
+        {HabitatViewMode::None,"HIDE HULLS",none_w}
     };
 
     float bx=view_x;
@@ -86,7 +86,7 @@ void GameApp::render_view_selector(SceneRenderer& r,float y,float logical_w){
         const float label_scale=0.43f;
         const float label_w=game_text_width(b.label,label_scale,theme_);
         game_label(r,{rect.x+(rect.w-label_w)*0.5f,rect.y+7.0f},b.label,label_scale,theme_,!active);
-        if(hover && ui_input_.left_pressed) habitat_view_mode_=b.mode;
+        if(hover&&ui_input_.left_pressed&&habitat_view_mode_!=b.mode){habitat_view_mode_=b.mode;persist_preferences();}
         bx+=b.width+gap;
     }
 }

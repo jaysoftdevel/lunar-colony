@@ -1,11 +1,50 @@
-# JSD Lunar Base v0.72.1
+# JSD Lunar Base v0.88.1
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
-The game renders through the external **JSD 3d-engine 0.5.21**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+The game renders through the external **JSD 3d-engine 0.5.22**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+
+Version 0.88.1 refines corridor connector structure with rounded transition frames, basement-fitted supports and cleaner sleeve-to-foundation joins. See [UPDATE-0.88.1.md](UPDATE-0.88.1.md).
+
+Version 0.88.0 adds a clock-driven Earth, continuous corridor connector floors and steps, storage-gate closure, a more visible crosshair and rectangular crew habitats. See [UPDATE-0.88.0.md](UPDATE-0.88.0.md).
+
+Version 0.87.0 adds supported corridor connector walkways in no-hull mode, restores small processing-facility refinery placement and adds plastic processing to the interior-unit options. See [UPDATE-0.87.0.md](UPDATE-0.87.0.md).
+
+Version 0.86.0 adds confirmed save deletion, keyboard recovery, battery-backed cabin lighting and builder-driven deconstruction. See [UPDATE-0.86.0.md](UPDATE-0.86.0.md).
+
+Version 0.85.1 adds native-engine validation and exact-save carrier/corridor plus FPV light regressions. See [UPDATE-0.85.1.md](UPDATE-0.85.1.md).
+
+Version 0.85.0 adds carrier charging-route protection, a suit light (L), clearer status information and docking-deck repair. See [UPDATE-0.85.0.md](UPDATE-0.85.0.md).
+
+Version 0.84.0 retains the selected airlock's full hull, fits end-door collars
+and stairs before any connection, grounds elevated corridor supports, keeps
+door controls available on battery-fed grids, and adds configurable autosave
+with a ten-minute default. See [UPDATE-0.84.0.md](UPDATE-0.84.0.md).
+
+Version 0.80.0 restored the original oxygen-dome sizes and adds Very Small,
+Small and Medium generator units inside the dome. See [UPDATE-0.80.0.md](UPDATE-0.80.0.md).
+
+Version 0.79.0 replaced barrel habitats with dome pressure volumes, adds Very
+Small/Small/Medium oxygen domes, fixes generator placement, aligns perimeter
+machines to the local hull and provides a clear structural cutaway view.
+See [UPDATE-0.79.0.md](UPDATE-0.79.0.md).
+
+Version 0.78.0 consolidated interior floors and added explicit E-key hatches.
+
+Version 0.77.0 added critical first-person vital alerts and distinct need icons.
+
+Version 0.76.0 removed duplicate airlock transfer barriers, added the save-name
+editor/sidebar, and explicit recovery for deceased FPV crew.
+
+Version 0.75.0 added fullscreen startup and game-wide settings separate from
+progress-only schema52 saves. These behaviors remain.
+
+Version 0.74.0 added detailed corridor decks, airlock hardware and FPV clearance.
+
+Version 0.73.0 added structural ribs, bulkheads and supported UV glazing.
 
 Version 0.72.1 repairs engine build-launcher version checks and aligns the game
-with JSD 0.5.21. Gameplay and saves retain the 0.72.0 behavior.
+with JSD 0.5.22. Gameplay and saves retain the 0.72.0 behavior.
 
 Version 0.72.0 adds direct selected-astronaut FPV control, saved character view
 positions, live per-astronaut vitals and solid classified resource packages.

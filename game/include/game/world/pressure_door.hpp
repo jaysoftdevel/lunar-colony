@@ -12,6 +12,7 @@ struct PressureDoorState {
     bool powered{false};
     bool manual_open{false};
     bool manual_override{false};
+    float player_request_seconds{0}; // Explicit powered E command; transient.
 };
 namespace pressure_door {
 inline constexpr float kSealOverlap=0.06f;

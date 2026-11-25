@@ -224,6 +224,7 @@ void GameApp::render_stage3_modes(SceneRenderer& r){
 }
 
 void GameApp::start_new_game(Stage3Mode stage3_mode){
+    reset_deconstruction();
     if(!build::debug_features && new_game_phase_selection_==GamePhase::Debug) return;
     const bool robot_stage=new_game_phase_selection_==GamePhase::RobotPreparation;
     const bool debug_stage=build::debug_features && new_game_phase_selection_==GamePhase::Debug;
@@ -306,7 +307,6 @@ void GameApp::start_new_game(Stage3Mode stage3_mode){
     placement_storage_size_=StorageDomeSize::Small;
     storage_gate_placement_active_=false;
     storage_gate_placement_owner_=kNoRobotIndex;
-    habitat_view_mode_=HabitatViewMode::FullHull;
     game_speed_=start_template?GameSpeed::Pause:GameSpeed::Normal;
     last_running_speed_=1;
     clear_world_selection();
@@ -324,6 +324,7 @@ void GameApp::start_new_game(Stage3Mode stage3_mode){
     active_game_mode_=new_game_mode_selection_;
     new_game_status_message_.clear();
     game_session_active_=true;
+    reset_autosave();
     screen_=Screen::Playfield;
     reset_activity_log("New game");
     update_activity_log();

@@ -37,7 +37,9 @@ bool arrow(SceneRenderer& r,const InputState& input,Rect rect,int direction,cons
 
 Rect GameApp::build_queue_panel_rect() const {
     const float width=viewport_width_/ui_scale_,height=viewport_height_/ui_scale_;
-    const float w=std::min(390.f,width*.40f);
+    const bool crew_panel=astronauts_active()&&selected_astronaut_>=0&&astronaut_present(std::size_t(selected_astronaut_));
+    const float right=crew_panel?astronaut_status_rect().x-8.f:width-PLAYFIELD_MARGIN;
+    const float w=std::min({390.f,width*.40f,right-PLAYFIELD_MARGIN});
     const float bottom=height-BUILD_BAR_H-PLAYFIELD_MARGIN;
     float top=STATUS_BAR_H+PLAYFIELD_MARGIN;
     if(debug_frame_visible())top+=DEBUG_FRAME_H+8.f;
@@ -57,7 +59,7 @@ Rect GameApp::build_queue_panel_rect() const {
         if(count==0)h+=29.f;
         else if(rows>0)h=padding+std::min(rows,count)*kRowHeight;
     }
-    return {width-w-PLAYFIELD_MARGIN,bottom-h,w,h};
+    return {right-w,bottom-h,w,h};
 }
 
 bool GameApp::mouse_over_build_queue(const InputState& input) const {

@@ -47,7 +47,7 @@ inline constexpr std::array<AstronautRole,4> kAstronautRoles{{
     {"INEZ SILVA","MEDIC",{.96f,.32f,.40f}},
 }};
 
-struct AstronautViewMemory {bool present{},visited{};float yaw{},pitch{};};
+struct AstronautViewMemory {bool present{},visited{};float yaw{},pitch{};bool suit_light{};};
 
 struct AstronautTestActor {
     game::runtime::Vec3 position{};

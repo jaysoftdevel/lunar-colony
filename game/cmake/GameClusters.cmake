@@ -75,6 +75,7 @@ add_library(game_cluster_ui OBJECT
     src/ui/build_icons.cpp
     src/ui/selection_panel.cpp
     src/ui/construction_status_frames.cpp
+    src/ui/first_person_alerts.cpp
     src/ui/debug_crew_paths.cpp
     src/ui/progress_tree.cpp
 )
@@ -125,6 +126,7 @@ add_library(game_cluster_world_core OBJECT
     src/world/interior_units.cpp
     src/world/habitat_mesh.cpp
     src/world/resource_mesh.cpp
+    src/world/structural_model.cpp
     src/world/construction_sequence.cpp
 )
 configure_game_cluster(game_cluster_world_core)

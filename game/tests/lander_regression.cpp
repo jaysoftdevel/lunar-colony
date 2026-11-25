@@ -58,7 +58,7 @@ struct LanderRegression {
     static void setup(GameApp& a){a.playfield_size_=128;a.playfield_.rebuild(128);a.on_resize(1600,900);a.screen_=GameApp::Screen::Playfield;a.active_game_phase_=GameApp::GamePhase::RobotPreparation;a.game_session_active_=true;a.status_.reset();a.begin_lunar_landing(cargo(),1,1);}
     static game::runtime::Vec2 screen(GameApp& a,game::runtime::Vec3 p){auto m=a.camera_.view_projection(1600.f/900);float w=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];return {(m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12])/w*800+800,450-(m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13])/w*450};}
     static void click(GameApp& a,game::runtime::Vec3 p){auto s=screen(a,p);game::runtime::InputState in;in.mouse_x=(int)s.x;in.mouse_y=(int)s.y;in.left_pressed=true;a.update(0,in);}
-    static void roundtrip(GameApp& a,const std::string& name,bool legacy_preflight_stash=false){std::string error;require(a.save_game_to_name(name,error),error);auto path=std::filesystem::path(a.save_game_directory())/(name+".gmsave");GameApp b(a.app_);require(b.load_game_from_file(path.string(),error),error);require(b.lander_.awaiting_site==a.lander_.awaiting_site&&b.lander_.awaiting_stash==(a.lander_.awaiting_stash && !legacy_preflight_stash)&&b.lander_.salvaged==a.lander_.salvaged&&b.lander_.boxed==a.lander_.boxed,"placement/salvage flags lost on load");require(game::runtime::length(b.lander_.stash_center-a.lander_.stash_center)<.001f&&b.ground_resource_piles_.size()==a.ground_resource_piles_.size(),"stash/boxes lost on load");require(b.resources_.amounts().total_amount()==a.resources_.amounts().total_amount(),"inventory changed on resume");require(b.colony_seeds_==a.colony_seeds_&&b.lander_.seeds_aboard==a.lander_.seeds_aboard,"seed custody changed on resume");std::filesystem::remove(path);}
+    static void roundtrip(GameApp& a,const std::string& name,bool legacy_preflight_stash=false){std::string error;require(a.save_game_to_name(name,error),error);auto path=std::filesystem::path(a.save_game_directory())/(name+".gmsave");GameApp b(a.app_);require(b.load_game_from_file(path.string(),error),error);require(b.lander_.phase==a.lander_.phase&&std::abs(b.lander_.elapsed-a.lander_.elapsed)<.001f&&b.builder_robots_.size()==a.builder_robots_.size(),"rover opening/deployment clock or parked prefix changed on load");require(b.lander_.awaiting_site==a.lander_.awaiting_site&&b.lander_.awaiting_stash==(a.lander_.awaiting_stash && !legacy_preflight_stash)&&b.lander_.salvaged==a.lander_.salvaged&&b.lander_.boxed==a.lander_.boxed,"placement/salvage flags lost on load");require(game::runtime::length(b.lander_.stash_center-a.lander_.stash_center)<.001f&&b.ground_resource_piles_.size()==a.ground_resource_piles_.size(),"stash/boxes lost on load");require(b.resources_.amounts().total_amount()==a.resources_.amounts().total_amount(),"inventory changed on resume");require(b.colony_seeds_==a.colony_seeds_&&b.lander_.seeds_aboard==a.lander_.seeds_aboard,"seed custody changed on resume");std::filesystem::remove(path);}
     static void exhaust(GameApp& app){
         using game::runtime::Vec3;
         const auto saved=app.lander_;
@@ -206,7 +206,9 @@ struct LanderRegression {
         app.update_lunar_lander(200);
         require(app.lander_.awaiting_stash && app.prepare_default_landing(),"fleet stash after touchdown");
         require(app.unload_lunar_lander(),"fleet unload");
-        app.update_lunar_lander(kLanderRampSeconds+7);
+        const float visible_unfold=kLanderRampMotionSeconds+1.75f;
+        app.update_lunar_lander(visible_unfold);roundtrip(app,"rover-unfold-clock");
+        app.update_lunar_lander(kLanderRampSeconds+7-visible_unfold);
         require(app.lander_.phase==LanderPhase::DeployingRobots,"fleet queue not active");
         const auto expected=lunar_lander_robot_pose(app.lander_,2,0);
         std::string error;
@@ -216,6 +218,9 @@ struct LanderRegression {
         require(resumed.load_game_from_file(path.string(),error),error);
         require(game::runtime::length(lunar_lander_robot_pose(resumed.lander_,2,0).position-expected.position)<.001f,
                 "unload queue moved on save/load");
+        for(int tick=0;tick<1000&&resumed.builder_robots_.empty();++tick)resumed.update_lunar_lander(.05f);
+        require(!resumed.builder_robots_.empty()&&resumed.builder_robots_.size()<12,"No independent parked prefix to resume");
+        roundtrip(resumed,"rover-parked-prefix");
         resumed.update_lunar_lander(100);
         require(resumed.lander_.phase==LanderPhase::Ready&&resumed.builder_robots_.size()==12,
                 "full fleet did not finish parking");
@@ -374,7 +379,7 @@ struct LanderRegression {
         for(int i=0;i<450*90&&!a.placed_resources_[0].construction.complete();++i)a.update_construction(1.f/90);
         if(!a.placed_resources_[0].construction.complete()){
             std::cerr<<"build stage "<<(int)a.placed_resources_[0].construction.step<<" stash "<<a.lander_.stash_center.x<<","<<a.lander_.stash_center.z<<" stock "<<a.resources_.amounts().total_amount()<<"\n";
-            for(const auto& r:a.builder_robots_)std::cerr<<"robot "<<(int)r.role<<" mode "<<(int)r.mode<<" pos "<<r.position.x<<","<<r.position.z<<" station "<<r.interaction_position.x<<","<<r.interaction_position.z<<" cargo "<<r.cargo.total_amount()<<" block "<<(int)r.safety.block_reason<<"\n";
+            for(const auto& r:a.builder_robots_)std::cerr<<"robot "<<(int)r.role<<" mode "<<(int)r.mode<<" pos "<<r.position.x<<","<<r.position.z<<" station "<<r.interaction_position.x<<","<<r.interaction_position.z<<" cargo "<<r.cargo.total_amount()<<" block "<<(int)r.safety.block_reason<<" action "<<(int)r.action<<" timer "<<r.action_elapsed<<" / "<<r.action_duration<<" reserved "<<r.logistics_reservation.total_amount()<<" target "<<(int)r.target.kind<<"/"<<r.target.index<<" retry "<<(int)r.operation_retry.failures<<" route "<<r.route_active<<" commit "<<r.cargo_committed_to_build<<"\n";
         }
         require(a.placed_resources_[0].construction.complete(),"robots could not build using the boxed stash");
         for(float t=0;t<79;t+=.1f){auto f=lunar_lander_flight(t);require(f.offset.y>=0&&f.velocity.y<=.01f&&f.thrust_acceleration<2.5f,"descent profile regressed");}

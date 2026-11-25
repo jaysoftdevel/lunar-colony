@@ -358,7 +358,7 @@ void GameApp::assign_astronaut_duties(float dt){
 GameApp::BuildQueueItem GameApp::next_astronaut_construction() const {
     for(const auto& job:construction_queue()){
         const auto* plan=construction_target_plan(job.target);
-        if(job.sequence && construction_queue_allows(job) && construction_target_dependencies_ready(job.target) &&
+        if(job.sequence && construction_queue_allows(job) && (!job.manual_priority || job.automatic_priority || construction_dispatch_rank(job.target)!=3) && construction_target_dependencies_ready(job.target) &&
            plan && plan->remaining(construction_target_step(job.target)).empty()) return job;
     }
     return {};

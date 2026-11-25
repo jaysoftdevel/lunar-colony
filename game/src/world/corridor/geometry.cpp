@@ -1,4 +1,5 @@
 #include "game/world/corridor/detail.hpp"
+#include "game/world/structural_frame.hpp"
 #include <array>
 #include <limits>
 #include <vector>
@@ -113,8 +114,8 @@ void append_walkway(CorridorMesh& mesh,const std::vector<Vec3>& path){
         const Vec3 s1=perp_xz(t1)*WALKWAY_HALF_WIDTH;
         const Vec3 p0{path[i].x,path[i].y+WALKWAY_Y,path[i].z};
         const Vec3 p1{path[i+1].x,path[i+1].y+WALKWAY_Y,path[i+1].z};
-        tri(mesh.details,p0-s0,p1-s1,p1+s1);
-        tri(mesh.details,p0-s0,p1+s1,p0+s0);
+        tri(mesh.details,p0-s0,p1+s1,p1-s1);
+        tri(mesh.details,p0-s0,p0+s0,p1+s1);
         edge(mesh.edges,p0-s0,p1-s1);
         edge(mesh.edges,p0+s0,p1+s1);
     }
@@ -166,51 +167,142 @@ void append_pressure_services(CorridorMesh& mesh,const std::vector<Vec3>& path){
 }
 
 void append_deck_panels(CorridorMesh& mesh,const std::vector<Vec3>& path){
-    if(path.size()<2) return;
-    float next=0.70f;
-    float travelled=0.0f;
-    for(std::size_t i=0;i+1<path.size();++i){
-        const float seg=distance_xz(path[i],path[i+1]);
-        if(seg<0.001f) continue;
-        while(travelled+seg>=next){
-            const float t=(next-travelled)/seg;
-            const Vec3 p=path[i]+(path[i+1]-path[i])*t;
-            const Vec3 tangent=flat_normal(path[i+1]-path[i]);
-            const Vec3 side=perp_xz(tangent)*WALKWAY_HALF_WIDTH;
-            const Vec3 c=p+Vec3{0,WALKWAY_Y+0.012f,0};
-            edge(mesh.edges,c-side,c+side);
-            next+=1.10f;
+    if(path.size()<2)return;
+    std::vector<float> stations(path.size(),0.f);
+    for(std::size_t i=1;i<path.size();++i)stations[i]=stations[i-1]+distance_xz(path[i-1],path[i]);
+    const float total=stations.back();if(total<.01f)return;
+    const auto at=[&](float distance,float lateral,float y){
+        auto end=std::upper_bound(stations.begin(),stations.end(),distance);
+        const auto i=std::min(std::size_t(end-stations.begin()),path.size()-1);
+        const auto j=i?i-1:0;const float span=stations[i]-stations[j];
+        const float t=span>.0001f?std::clamp((distance-stations[j])/span,0.f,1.f):0.f;
+        const auto tangent=normalize(path_tangent(path,j)*(1-t)+path_tangent(path,i)*t);
+        return path[j]+(path[i]-path[j])*t+perp_xz(tangent)*lateral+Vec3{0,y,0};
+    };
+    // Removable three-lane cassettes: real chamfered edges, recessed fasteners,
+    // inset anti-slip strips and continuous support rails, swept in route space.
+    // All relief stays below 12 mm; the authoritative walking plane stays .20 m.
+    structural::Builder metal{mesh.details,mesh.edges,{}};
+    constexpr float lane=2*WALKWAY_HALF_WIDTH/3;
+    const int panels=std::max(1,int(std::ceil(total/.90f)));
+    for(int panel=0;panel<panels;++panel){
+        const float start=total*panel/panels+.006f,finish=total*(panel+1)/panels-.006f;
+        if(finish<=start)continue;
+        for(int col=0;col<3;++col){
+            const float left=-WALKWAY_HALF_WIDTH+col*lane+.006f,right=left+lane-.012f;
+            const float c=std::min(.025f,(finish-start)*.20f);
+            const std::array<Vec2,8> rim{{{start+c,left},{finish-c,left},{finish,left+c},{finish,right-c},
+                {finish-c,right},{start+c,right},{start,right-c},{start,left+c}}};
+            const auto center=at((start+finish)*.5f,(left+right)*.5f,WALKWAY_Y+.004f);
+            for(int i=0;i<8;++i){const int j=(i+1)%8;
+                const auto a=at(rim[i].x,rim[i].y,WALKWAY_Y+.004f),b=at(rim[j].x,rim[j].y,WALKWAY_Y+.004f);
+                // Route direction and lateral form a left-handed horizontal basis.
+                tri(mesh.details,center,b,a);
+                const auto lowa=a-Vec3{0,.024f,0},lowb=b-Vec3{0,.024f,0};
+                tri(mesh.details,a,b,lowb);tri(mesh.details,a,lowb,lowa);
+            }
+            const auto tangent=flat_normal(at(finish,0,0)-at(start,0,0)),side=perp_xz(tangent);
+            for(float distance:{start+.052f,finish-.052f})for(float lateral:{left+.045f,right-.045f}){
+                // Low captive screw heads and a physical slot, not floating lines.
+                const auto p=at(distance,lateral,WALKWAY_Y+.006f);
+                metal.box(p,side*-1.f,{0,1,0},tangent,{.030f,.004f,.030f});
+                metal.box(p+Vec3{0,.0025f,0},side*-1.f,{0,1,0},tangent,{.004f,.001f,.020f});
+            }
+            for(int strip=0;strip<6;++strip){
+                const float distance=std::lerp(start+.15f,finish-.15f,float(strip)/5);
+                if(finish-start<.32f)break;
+                const auto p=at(distance,(left+right)*.5f,WALKWAY_Y+.008f);
+                metal.box(p,side*-1.f,{0,1,0},tangent,{lane-.16f,.006f,.018f});
+            }
+            // Two recessed longitudinal grip channels outline each tread insert.
+            for(float lateral:{left+.075f,right-.075f}){
+                const auto a=at(start+.12f,lateral,WALKWAY_Y+.005f),b=at(finish-.12f,lateral,WALKWAY_Y+.005f);
+                if(finish-start>.28f)metal.beam(a,b,.010f,.002f,{0,1,0});
+            }
         }
-        travelled+=seg;
+    }
+    for(std::size_t i=1;i<path.size();++i)for(float side:{-1.f,1.f}){
+        const auto a=path[i-1]+perp_xz(path_tangent(path,i-1))*(side*(WALKWAY_HALF_WIDTH+.04f))+Vec3{0,.13f,0};
+        const auto b=path[i]+perp_xz(path_tangent(path,i))*(side*(WALKWAY_HALF_WIDTH+.04f))+Vec3{0,.13f,0};
+        metal.beam(a,b,.09f,.12f,{0,1,0},true);
     }
 }
 
 void append_ring(CorridorMesh& mesh,Vec3 center,Vec3 tangent,float scale){
-    tangent=flat_normal(tangent);
-    if(length(tangent)<0.001f) return;
-    const Vec3 side=perp_xz(tangent);
-    const auto section=corridor_cross_section(scale);
-    for(std::size_t j=0;j<section.size();++j){
-        const std::size_t k=(j+1)%section.size();
-        edge(mesh.edges,ring_vertex(center,side,section[j]),ring_vertex(center,side,section[k]));
+    tangent=flat_normal(tangent);if(length(tangent)<.001f)return;
+    const Vec3 side=perp_xz(tangent);const auto section=corridor_cross_section(std::min(scale,.94f));
+    structural::Builder frame{mesh.details,mesh.edges,{}};
+    const auto node=[&](const Vec2& q){
+        auto p=ring_vertex(center,side,q);
+        // Lower tie clears the ground and supports the underside of the deck.
+        if(q.y<=CORRIDOR_FLOOR_Y+.001f)p.y= center.y+.10f;
+        return p;
+    };
+    for(std::size_t j=0;j<section.size();++j){const auto k=(j+1)%section.size();
+        const auto a=node(section[j]),b=node(section[k]);
+        Vec3 normal=(a+b)*.5f-center-Vec3{0,CORRIDOR_SIDE_Y,0};
+        if(j==0)normal={0,-1,0};
+        frame.beam(a,b,.13f,.16f,normal,true);
+    }
+    for(float sign:{-1.f,1.f}){
+        const auto foot=center+side*(sign*(CORRIDOR_HALF_WIDTH*.88f));
+        // The route may be elevated or sloped. Feet bear on the lunar build
+        // plane, while telescopic legs terminate at the actual deck frame.
+        const Vec3 ground{foot.x,0,foot.z};
+        frame.box(ground+Vec3{0,.024f,0},side*-1.f,{0,1,0},tangent,{.40f,.048f,.40f});
+        frame.beam(ground+Vec3{0,.035f,0},foot+Vec3{0,.17f,0},.18f,.16f,side);
+        if(center.y>.20f){
+            frame.beam(ground+side*(-sign*.12f)+Vec3{0,.05f,0},
+                       foot+side*(-sign*.20f)+Vec3{0,.12f,0},.065f,.07f,tangent);
+        }
     }
 }
 
 void append_ribs(CorridorMesh& mesh,const std::vector<Vec3>& path){
-    if(path.size()<2) return;
-    float next=1.7f;
-    float travelled=0.0f;
-    for(std::size_t i=0;i+1<path.size();++i){
-        const float seg=distance_xz(path[i],path[i+1]);
-        if(seg<0.001f) continue;
-        while(travelled+seg>=next){
-            const float t=(next-travelled)/seg;
-            const Vec3 p=path[i]+(path[i+1]-path[i])*t;
-            append_ring(mesh,{p.x,0,p.z},path[i+1]-path[i]);
-            next+=1.7f;
+    if(path.size()<2)return;
+    float total=0;for(std::size_t i=1;i<path.size();++i)total+=distance_xz(path[i-1],path[i]);
+    if(total<.01f)return;
+    // A continuous ring at each end plus one in every <=1.35 m bay.
+    const float end=std::min(.15f,total*.25f);const int bays=std::max(1,int(std::ceil((total-2*end)/1.35f)));
+    for(int ring=0;ring<=bays;++ring){
+        const float station=std::lerp(end,total-end,float(ring)/bays);float travelled=0;
+        for(std::size_t i=1;i<path.size();++i){const float span=distance_xz(path[i-1],path[i]);
+            if(span>.001f&&travelled+span>=station-.0001f){
+                const float t=std::clamp((station-travelled)/span,0.f,1.f);const auto p=path[i-1]+(path[i]-path[i-1])*t;
+                const auto tangent=normalize(path_tangent(path,i-1)*(1-t)+path_tangent(path,i)*t);
+                append_ring(mesh,p,tangent);
+                break;
+            }
+            travelled+=span;
         }
-        travelled+=seg;
+    }
+    structural::Builder frame{mesh.details,mesh.edges,{}};
+    // Stringers meet every hoop. They run inside the skin, outside the deck/head envelope, and
+    // continue through each swept bend in the pressure shell's local basis.
+    const std::array<Vec2,7> rails{{{-1.38f,.66f},{1.38f,.66f},{-1.38f,.89f},{1.38f,.89f},{-.98f,1.98f},{.98f,1.98f},{0,2.42f}}};
+    for(std::size_t i=1;i<path.size();++i){
+        const auto a=perp_xz(path_tangent(path,i-1)),b=perp_xz(path_tangent(path,i));
+        for(const auto& q:rails)frame.beam(ring_vertex(path[i-1],a,q),ring_vertex(path[i],b,q),.075f,.105f,{0,q.y-CORRIDOR_SIDE_Y,0});
     }
 }
 
 } // namespace game::corridor_detail
+
+namespace game {
+void CorridorMesh::prepare_surfaces(const std::vector<runtime::Vec3>& path) const {
+    using namespace runtime;
+    if(surface_batches_ready&&deck_surface.size()+metal_surface.size()+grip_surface.size()==details.size())return;
+    deck_surface.clear();metal_surface.clear();grip_surface.clear();
+    for(std::size_t v=0;v+2<details.size();v+=3){
+        const auto a=details[v],b=details[v+1],c=details[v+2],p=(a+b+c)/3.f;
+        const auto n=normalize(cross(b-a,c-a));float base=0,best=std::numeric_limits<float>::max();
+        for(std::size_t j=1;j<path.size();++j){const auto q=corridor_detail::closest_point_segment_xz(p,path[j-1],path[j]);const float d=corridor_detail::distance_xz(p,q);if(d<best){best=d;base=q.y;}}
+        const bool horizontal=std::abs(n.y)>.80f;
+        const float relief=p.y-base-geometry::kCorridorDeckY;
+        auto& layer=horizontal&&relief>.0095f&&relief<.016f?grip_surface:
+            horizontal&&relief<.12f?deck_surface:metal_surface;
+        layer.insert(layer.end(),{a,b,c});
+    }
+    surface_batches_ready=true;
+}
+} // namespace game

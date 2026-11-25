@@ -28,6 +28,8 @@ struct SupplyState {
     double oxygen_kg{0}, energy_kwh{0}, water_litres{0}, hydrogen_kg{0};
     // Derived each simulation tick; persisted quantities above survive save/load.
     double volume_m3{0}, water_to_fill_litres{0}, power_fraction{0}, network_water_to_fill_litres{0};
+    // Derived priority-light service; -1 permits fixtures with manually supplied legacy test states.
+    double lighting_fraction{-1};
     // Measured rates from the last simulation update, per in-game day.
     // These are derived, never serialized or used as an inventory source.
     double oxygen_produced_kg_per_day{0}, water_processed_litres_per_day{0};

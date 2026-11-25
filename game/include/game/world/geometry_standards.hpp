@@ -48,7 +48,10 @@ inline constexpr float kDockSleeveHalfWidth = 1.25f;
 inline constexpr float kDockSleeveHeight = 2.72f;
 inline constexpr float kGeneratedEntranceDepth = 1.70f;
 inline constexpr float kGeneratedEntranceHalfWidth = 1.16f;
-inline constexpr float kGeneratedEntranceHeight = 2.68f;
+// Crown clears the full rectangular sliding hatch hardware (including header)
+// while the pressure sleeve itself has a rounded roof.
+inline constexpr float kGeneratedEntranceHeight = 3.00f;
+inline constexpr float kGeneratedEntranceCrownRise = .28f;
 inline constexpr float kRouteClearance = 0.55f;
 
 // Placement reservation around every structure. A generated habitat corridor

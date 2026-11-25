@@ -53,7 +53,7 @@ void GameApp::render_settings(SceneRenderer& r){
     const float logical_w=ui_width(r);
     const float logical_h=ui_height(r);
     const float w=std::min(820.0f,logical_w-2.0f*SCREEN_MARGIN);
-    const float h=std::min(416.0f,logical_h-92.0f);
+    const float h=std::min(470.0f,logical_h-92.0f);
     Rect p={(logical_w-w)*0.5f,70,w,h};
     ui::panel(r,p,theme_);
 
@@ -76,14 +76,14 @@ void GameApp::render_settings(SceneRenderer& r){
     const float small_button=38.0f;
     const float control_right=left_x+column_w;
     if(ui::button(r,ui_input_,{control_right-150,inner_y+66,small_button,34},"<",theme_) && ui_scale_index_>0){
-        --ui_scale_index_;
+        --ui_scale_index_;persist_preferences();
         // Apply the new zoom at the next frame boundary with matching input/drawing.
     }
     std::ostringstream scale;
     scale<<(int)std::lround(UI_SCALES[ui_scale_index_]*100.0f)<<"%";
     ui::label(r,{control_right-99,inner_y+78},scale.str(),0.94f,theme_);
     if(ui::button(r,ui_input_,{control_right-small_button,inner_y+66,small_button,34},">",theme_) && ui_scale_index_<UI_SCALE_COUNT-1){
-        ++ui_scale_index_;
+        ++ui_scale_index_;persist_preferences();
         // Apply the new zoom at the next frame boundary with matching input/drawing.
     }
 
@@ -101,7 +101,7 @@ void GameApp::render_settings(SceneRenderer& r){
     ui::label(r,{control_right-140,inner_y+119},resolution.str(),0.86f,theme_);
 
     if(ui::button(r,ui_input_,{control_right-112,inner_y+151,112,34},"APPLY",theme_)){
-        app_.set_display_mode(mode.width,mode.height);
+        if(app_.set_display_mode(mode.width,mode.height)){preferred_display_mode_=mode;persist_preferences();}
     }
     ui::label(r,{left_x,inner_y+158},"COMMON SUPPORTED MODES",0.72f,theme_,true);
     ui::label_fitted(r,{left_x,inner_y+202,std::max(10.f,column_w-160.f),18},"FIRST PERSON FOV",.92f,theme_);
@@ -120,23 +120,28 @@ void GameApp::render_settings(SceneRenderer& r){
 
     const float right_edge=right_x+column_w;
     ui::label(r,{right_x,inner_y},"GAMEPLAY",1.18f,theme_);
-    ui::label(r,{right_x,inner_y+39},"FPS COUNTER",.92f,theme_);
-    if(ui::button(r,ui_input_,{right_edge-82,inner_y+27,82,34},show_fps_?"ON":"OFF",theme_)){
+    ui::label_fitted(r,{right_x,inner_y+39,column_w-158,18},"AUTOSAVE",.92f,theme_);
+    const auto set_interval=[&](int minutes){autosave_minutes_=std::clamp(minutes,0,60);reset_autosave();persist_preferences();};
+    if(ui::button(r,ui_input_,{right_edge-150,inner_y+27,38,34},"-",theme_,autosave_minutes_>0))set_interval(autosave_minutes_<=5?0:autosave_minutes_-5);
+    ui::label_fitted(r,{right_edge-106,inner_y+39,64,18},autosave_minutes_?std::to_string(autosave_minutes_)+" MIN":"OFF",.86f,theme_);
+    if(ui::button(r,ui_input_,{right_edge-38,inner_y+27,38,34},"+",theme_,autosave_minutes_<60))set_interval(autosave_minutes_==0?5:autosave_minutes_+5);
+    ui::label(r,{right_x,inner_y+80},"FPS COUNTER",.92f,theme_);
+    if(ui::button(r,ui_input_,{right_edge-82,inner_y+68,82,34},show_fps_?"ON":"OFF",theme_)){
         show_fps_=!show_fps_;persist_preferences();
     }
     if constexpr(build::debug_features){
-        ui::label(r,{right_x,inner_y+80},"DEBUG FRAME",0.92f,theme_);
+        ui::label(r,{right_x,inner_y+121},"DEBUG FRAME",0.92f,theme_);
         const std::string debug_label=debug_frame_enabled_?"ON":"OFF";
-        if(ui::button(r,ui_input_,{right_x+column_w-82,inner_y+68,82,34},debug_label,theme_)){
-            debug_frame_enabled_=!debug_frame_enabled_;
+        if(ui::button(r,ui_input_,{right_x+column_w-82,inner_y+109,82,34},debug_label,theme_)){
+            debug_frame_enabled_=!debug_frame_enabled_;persist_preferences();
         }
-        ui::label(r,{right_x,inner_y+121},"DEBUG LAYOUT",0.92f,theme_);
-        if(ui::button(r,ui_input_,{right_edge-148,inner_y+109,148,34},
+        ui::label(r,{right_x,inner_y+162},"DEBUG LAYOUT",0.92f,theme_);
+        if(ui::button(r,ui_input_,{right_edge-148,inner_y+150,148,34},
                       mesh_layout_active()?"MESHED":"FULL GRAPHICS",theme_))
             toggle_world_layout();
     }
 
-    const float audio_y=inner_y+(build::debug_features?160.0f:80.0f);
+    const float audio_y=inner_y+(build::debug_features?201.0f:121.0f);
     ui::label(r,{right_x,audio_y},"AUDIO",1.18f,theme_);
     ui::label(r,{right_x,audio_y+38},"MUSIC",0.92f,theme_);
     if(ui::button(r,ui_input_,{right_edge-82,audio_y+26,82,34},soundscape_.music_enabled()?"ON":"OFF",theme_)){
@@ -146,13 +151,16 @@ void GameApp::render_settings(SceneRenderer& r){
 
     const float volume=soundscape_.volume();
     ui::label(r,{right_x,audio_y+80},"SOUND VOLUME",0.92f,theme_);
-    if(ui::button(r,ui_input_,{right_edge-150,audio_y+68,small_button,34},"-",theme_))
-        soundscape_.set_volume(volume-.10f);
+    if(ui::button(r,ui_input_,{right_edge-150,audio_y+68,small_button,34},"-",theme_)){
+        soundscape_.set_volume(volume-.10f);persist_preferences();
+    }
     ui::label(r,{right_edge-99,audio_y+80},std::to_string((int)std::lround(volume*100.0f))+"%",0.91f,theme_);
-    if(ui::button(r,ui_input_,{right_edge-small_button,audio_y+68,small_button,34},"+",theme_))
-        soundscape_.set_volume(volume+.10f);
-    if(ui::button(r,ui_input_,{right_edge-112,audio_y+108,112,34},volume>0.0f?"MUTE":"UNMUTE",theme_))
-        soundscape_.set_volume(volume>0.0f?0.0f:.72f);
+    if(ui::button(r,ui_input_,{right_edge-small_button,audio_y+68,small_button,34},"+",theme_)){
+        soundscape_.set_volume(volume+.10f);persist_preferences();
+    }
+    if(ui::button(r,ui_input_,{right_edge-112,audio_y+108,112,34},volume>0.0f?"MUTE":"UNMUTE",theme_)){
+        soundscape_.set_volume(volume>0.0f?0.0f:.72f);persist_preferences();
+    }
 
     if(preferences_save_failed_)
         ui::label_fitted(r,{left_x,inner_y+288,column_w,24},"PREFERENCES COULD NOT BE SAVED",0.78f,theme_);

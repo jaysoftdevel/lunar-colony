@@ -125,7 +125,7 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
     for(std::size_t ri=0;ri<builder_robots_.size();++ri){
         auto& rover=builder_robots_[ri];
         auto& haul=rover.ore_haul;
-        if(rover.role!=RobotRole::Carrier || rover.operation_retry.replan_pending() || trader_robot_busy(ri))continue;
+        if(rover.role!=RobotRole::Carrier || rover.starter_charge_active || rover.operation_retry.replan_pending() || trader_robot_busy(ri))continue;
         const auto finish=[&]{
             stop(ri);
             haul={};
@@ -161,7 +161,8 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
         };
 
         if(!haul.active()){
-            if(rover.mode!=BuilderRobotMode::Idle || rover.target.valid() || !rover.cargo.empty() ||
+            const bool free_for_work=rover.mode==BuilderRobotMode::Idle || (rover.mode==BuilderRobotMode::DepotTransfer&&!rover.cargo_committed_to_build);
+            if(!free_for_work || rover.target.valid() || !rover.cargo.empty() ||
                rover.action!=BuilderRobotAction::None || rover.debug_move_active || rover.drop_exit_pending ||
                rover.starter_charge_active || rover.battery_charge_kwh<rover.battery_capacity_kwh*.2f)continue;
 
@@ -225,13 +226,15 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
             if(!valid_gate)haul.goal_valid=false;
         }
         const bool return_crate=haul.loaded && !haul.destination;
-        const auto pad=drill!=kNoRobotIndex?driller_stockyard(placed_resources_[drill]):std::nullopt;
-        if((!haul.loaded || return_crate) && !pad){stop(ri);if(!haul.loaded)finish();continue;}
+        std::optional<ore::Stockyard> stockyard;
+        if(drill!=kNoRobotIndex)stockyard=driller_stockyard(placed_resources_[drill]);
+        const auto pad=stockyard.value_or(ore::Stockyard{});
+        if((!haul.loaded || return_crate) && !stockyard){stop(ri);if(!haul.loaded)finish();continue;}
         // Planning a new channel can move the pad while a carrier is en route.
         // Revalidate its approach and cancel any stale pickup animation.
         if((!haul.loaded || return_crate) && haul.goal_valid){
             bool current=false;
-            for(float side:{0.f,-1.f,1.f,-2.f,2.f})if(distance_xz(haul.goal,pad->pickup(haul.kind,side))<.05f)current=true;
+            for(float side:{0.f,-1.f,1.f,-2.f,2.f})if(distance_xz(haul.goal,pad.pickup(haul.kind,side))<.05f)current=true;
             if(!current){haul.goal_valid=false;rover.action=BuilderRobotAction::None;}
         }
         if(return_crate && drill==kNoRobotIndex){
@@ -259,7 +262,7 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
                 }
             };
             if(at_driller && drill!=kNoRobotIndex){
-                for(const float side:{0.f,-1.f,1.f,-2.f,2.f})consider(pad->pickup(haul.kind,side));
+                for(const float side:{0.f,-1.f,1.f,-2.f,2.f})consider(pad.pickup(haul.kind,side));
             }else if(plant!=kNoRobotIndex){
                 const auto& receiver=placed_habitats_[plant];
                 const auto& mesh=habitat_models_.mesh(receiver);
@@ -282,7 +285,7 @@ void GameApp::update_ore_hauling(float dt,const std::function<bool(std::size_t,V
             continue;
         }
         if(at_driller && drill!=kNoRobotIndex){
-            focus=pad->box(haul.kind,1);
+            focus=pad.box(haul.kind,1);
         }else if(plant!=kNoRobotIndex)focus=placed_habitats_[plant].position;
         else if(dome!=kNoRobotIndex)focus=placed_resources_[dome].position;
         rover.interaction_position=haul.goal;

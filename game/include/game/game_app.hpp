@@ -1,6 +1,7 @@
 #include <chrono>
 #pragma once
 #include "game/runtime/presentation.hpp"
+#include "game/ui/text_edit.hpp"
 #include "game/build_mode.hpp"
 #include "game/config/graphics_benchmark.hpp"
 #include "game/features/build_catalog.hpp"
@@ -77,6 +78,7 @@ private:
     friend struct NavigationRegression;
     friend struct EngineIntegrationRegression;
     friend struct UiRegression;
+    friend struct StartupRegression;
     friend struct LanderRegression;
     friend struct TraderRegression;
     friend struct ShipLayoutRegression;
@@ -117,6 +119,11 @@ private:
     GraphicsBenchmark graphics_benchmark_;
     std::size_t benchmark_target_index_{1};
     bool preferences_save_failed_{};
+    int autosave_minutes_{10};
+    double autosave_elapsed_{},autosave_notice_until_{};
+    std::string autosave_notice_;
+    void update_autosave(float dt);
+    void reset_autosave(){autosave_elapsed_=0;autosave_notice_until_=0;autosave_notice_.clear();}
     static constexpr int kNewGamePlayfieldMin=32;
     static constexpr int kNewGamePlayfieldMax=1024;
     static constexpr int kNewGamePlayfieldStep=32;
@@ -180,6 +187,7 @@ private:
     int ui_scale_index_=0;
     std::vector<game::runtime::DisplayMode> display_modes_{};
     int display_mode_index_=-1;
+    game::runtime::DisplayMode preferred_display_mode_{};
     Playfield playfield_{};
     CameraController camera_{};
     std::array<AstronautViewMemory,kAstronautRoles.size()> astronaut_views_{};
@@ -322,8 +330,14 @@ private:
     std::optional<WalkwayBuildAnchor> walkway_build_start_{};
     std::optional<WalkwayBuildAnchor> walkway_build_target_{};
     std::string save_game_name_{};
+    text_edit::Editor save_name_editor_;
+    bool save_name_focus_{true},save_name_drag_{};
+    int save_list_scroll_{},save_list_selected_{-1},save_name_scroll_{};
+    double save_caret_epoch_{};
     std::string save_status_message_{};
     std::vector<SaveGameEntry> save_games_{};
+    std::string pending_save_delete_{};
+    bool delete_save_entry(const std::string& path,std::string& error);
     int load_save_scroll_{0};
 
     void render_menu(game::runtime::SceneRenderer& r);
@@ -381,6 +395,7 @@ private:
     bool astronaut_placement_clear(game::runtime::Vec3 center,float rotation,float width,float depth) const;
     void render_test_astronauts(game::runtime::SceneRenderer& r) const;
     void render_astronaut_status(game::runtime::SceneRenderer& r,const game::runtime::Mat4& view_projection);
+    void render_first_person_alerts(game::runtime::SceneRenderer& r) const;
     void render_planning_game(game::runtime::SceneRenderer& r);
     void render_planning_technology_tree(game::runtime::SceneRenderer& r,game::runtime::Rect panel,bool compact);
     void render_status_bar(game::runtime::SceneRenderer& r);
@@ -419,6 +434,7 @@ private:
     std::optional<InteriorUnitKind> interior_unit_tool_;
     std::size_t interior_unit_host_{kNoRobotIndex};
     float interior_unit_rotation_{};
+    InteriorUnitSize interior_unit_size_{InteriorUnitSize::Medium};
     std::string interior_unit_message_;
     void focus_interior(std::size_t);
     bool interior_unit_position_clear(std::size_t,const InteriorUnit&,std::string&) const;
@@ -433,13 +449,25 @@ private:
     std::string interior_unit_status(std::size_t,const InteriorUnit&) const;
     void update_interior_units(float);
     void fit_oxygen_units();
+    bool find_interior_unit_bay(std::size_t index,InteriorUnit& unit) const;
+    void align_saved_interior_units();
     float interior_light_level(std::size_t,bool resource=false,bool require_power=true) const;
     const HabitatMesh& assemble_interior_units(std::size_t,const HabitatMesh&) const;
     mutable std::vector<interior_layout::Cache> habitat_layout_cache_;
     bool door_power_available(const SupplyState&,bool enabled) const;
     std::optional<std::pair<bool,std::size_t>> manual_door_target() const;
-    bool manual_door_interaction(bool activate);
+    bool manual_door_interaction(bool activate,std::optional<bool> goal={});
     std::string manual_door_label() const;
+    void update_door_interaction(float dt,const game::runtime::InputState& input);
+    void render_door_interaction(game::runtime::SceneRenderer& r) const;
+    bool door_target_powered(std::pair<bool,std::size_t> target) const;
+    float door_target_fraction(std::pair<bool,std::size_t> target) const;
+    struct DoorHold {
+        std::optional<std::pair<bool,std::size_t>> target;
+        game::runtime::Vec3 anchor{};
+        bool opening{true},complete{},down{},blocked{};
+        float progress{};
+    } door_hold_{};
     void render_gate_connection_frames(game::runtime::SceneRenderer&) const;
     mutable std::vector<std::uint64_t> gate_topology_signature_;
     mutable std::vector<std::size_t> gate_topology_roots_;
@@ -481,7 +509,19 @@ private:
     bool mouse_over_selection_panel(const game::runtime::InputState& input) const;
     void clear_world_selection();
     void finish_selection_marquee();
-    void delete_selected_world_object();
+    void delete_selected_world_object(); // internal final removal / blueprint cancellation
+    struct DeconstructionJob { std::uint64_t sequence{}; float progress{}; };
+    std::vector<DeconstructionJob> deconstruction_jobs_{};
+    std::size_t deconstruction_worker_{kNoRobotIndex};
+    std::optional<game::runtime::Vec3> deconstruction_station_{};
+    bool deconstruction_uses_robot(std::size_t i) const { return i==deconstruction_worker_ && !deconstruction_jobs_.empty(); }
+    ConstructionTargetRef deconstruction_target(std::uint64_t sequence) const;
+    const DeconstructionJob* deconstruction_job(const ConstructionTargetRef& target) const;
+    bool deconstruction_safe(const ConstructionTargetRef& target) const;
+    void request_selected_deconstruction();
+    void finish_deconstruction();
+    void reset_deconstruction(){deconstruction_jobs_.clear();deconstruction_worker_=kNoRobotIndex;deconstruction_station_.reset();}
+
     void remove_structure_routes(bool habitat,std::size_t index);
     void remove_corridor_routes(const std::vector<std::size_t>& roots);
     void remove_utility_route(std::size_t index);
@@ -609,6 +649,8 @@ private:
     bool robot_load_needed_resources(BuilderRobotState& robot,const ResourceBundle& need);
     bool spawn_produced_resource(MaterialResource resource,std::int64_t amount,game::runtime::Vec3 source_position,bool defer_if_blocked=true);
     void enter_first_person_mode();
+    bool dispatch_explorer();
+    bool explorer_slot_available() const;
     void exit_first_person_mode();
     void update_first_person(float dt,const game::runtime::InputState& input);
     bool pick_build_ground(game::runtime::Vec3& hit) const;
@@ -627,6 +669,7 @@ private:
     enum class CrewTraversal { Player, Astronaut, Plan };
     bool first_person_move_allowed(game::runtime::Vec3 from,game::runtime::Vec3 to,CrewTraversal traversal=CrewTraversal::Player) const;
     bool airlock_powered(std::size_t index) const;
+    bool airlock_access_enabled(std::size_t index,const CorridorDoor& door) const;
     float first_person_floor_height(game::runtime::Vec3 p) const;
     float first_person_ceiling_height(game::runtime::Vec3 p) const;
     std::string first_person_environment_label() const;
@@ -672,7 +715,7 @@ private:
     std::filesystem::path save_game_directory() const;
     void refresh_save_games();
     bool resume_save(const SaveGameEntry& entry);
-    bool save_game_to_name(const std::string& name,std::string& error);
+    bool save_game_to_name(const std::string& name,std::string& error,bool automatic=false);
     bool load_game_from_file(const std::string& path,std::string& error);
     bool load_debug_blueprint_template_from_file(const std::string& path,std::string& error,bool completed=false);
     std::string debug_blueprint_template_path() const;

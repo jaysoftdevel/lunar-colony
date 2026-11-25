@@ -182,8 +182,8 @@ bool GameApp::construction_ready_connection(const ConstructionTargetRef& t) cons
 }
 
 bool GameApp::construction_queue_allows(const BuildQueueItem& item) const {
-    return !construction_target_complete(item.target) &&
-           (!item.manual_priority || item.automatic_priority || construction_dispatch_rank(item.target)!=3);
+    // Priority orders the next claim; it must not idle the rest of the crew.
+    return !construction_target_complete(item.target);
 }
 
 bool GameApp::construction_automatic_priority(const ConstructionTargetRef& target) const {
@@ -307,7 +307,8 @@ void GameApp::consume_storage_inventory(const ResourceBundle& cost){
 }
 
 void GameApp::update_construction(float dt){
-    if(lander_.deploying())return;
+    if(lander_.deploying() && (lander_.phase!=LanderPhase::DeployingRobots ||
+       lander_.legacy_parking || builder_robots_.empty()))return;
     prune_construction_priorities();
     assign_storage_loading_faces();
     synchronize_storage_gates();
@@ -333,6 +334,7 @@ void GameApp::update_construction(float dt){
     while(remaining>0.000001f && guard++<64){
         const float step=std::min(remaining,kRobotMaxStep);
         update_builder_robot(step);
+        finish_deconstruction();
         if(lander_.salvage_worker>=0&&lander_.salvage_seconds>=kLanderSalvageSeconds){
             auto& worker=builder_robots_[(std::size_t)lander_.salvage_worker];
             worker.action=BuilderRobotAction::None;

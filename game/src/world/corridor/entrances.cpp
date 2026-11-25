@@ -1,4 +1,5 @@
 #include "game/world/airlock_connections.hpp"
+#include "game/world/airlock_cycle.hpp"
 #include "game/world/corridor/detail.hpp"
 #include <array>
 #include "game/world/storage_loading_gate.hpp"
@@ -77,23 +78,11 @@ std::optional<Vec3> local_hull_wall_point(const HabitatMesh& mesh,Vec3 local_nor
 }
 
 std::optional<Vec3> local_hull_wall_point(const HabitatMesh& mesh,Vec3 local_normal,float tangent){
-    return local_hull_wall_point(mesh,local_normal,tangent,geometry::kEntranceSliceY);
+    return local_hull_wall_point(mesh,local_normal,tangent,mesh.walkable_floor_y+.8f);
 }
 
 std::vector<Vec2> generated_door_profile(){
-    std::vector<Vec2> out;
-    out.reserve(13);
-    constexpr float floor_y=0.05f;
-    const float side_y=GENERATED_ENTRANCE_HEIGHT-.02f;
-    out.push_back({-GENERATED_ENTRANCE_HALF_WIDTH,floor_y});
-    out.push_back({ GENERATED_ENTRANCE_HALF_WIDTH,floor_y});
-    constexpr int ARC=10;
-    for(int i=0;i<=ARC;++i){
-        const float a=(float)i/(float)ARC*PI;
-        out.push_back({std::cos(a)*GENERATED_ENTRANCE_HALF_WIDTH,
-                       side_y+std::sin(a)*(GENERATED_ENTRANCE_HEIGHT-side_y)});
-    }
-    return out;
+    return doorway_cross_section(GENERATED_ENTRANCE_HALF_WIDTH,GENERATED_ENTRANCE_HEIGHT);
 }
 
 void nearest_pressure_hit(const std::vector<Vec3>& triangles,Vec3 origin,Vec3 direction,
@@ -139,6 +128,23 @@ bool attach_profile(CorridorDoor& door,Vec3 position,float rotation,float width,
 
 bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& h,const HabitatMesh& m){
     return attach_profile(door,h.position,h.rotation_degrees,m.footprint_x,m.footprint_z,m.walkable_floor_y,m.shell,m.glazing,m.foundation);
+}
+bool reproject_habitat_door(CorridorDoor& door,const PlacedHabitat& h,const HabitatMesh& m){
+    auto n=flat_normal(rotate_y(door.normal,-h.rotation_degrees));
+    if(m.dome_radii.x>0&&m.dome_radii.y==0)n=std::abs(n.x)>std::abs(n.z)?Vec3{std::copysign(1.f,n.x),0,0}:Vec3{0,0,std::copysign(1.f,n.z)};
+    const auto side=perp_xz(n);
+    const auto local=rotate_y(door.wall_position-h.position,-h.rotation_degrees);
+    float lateral=dot(flatten(local),side);
+    if(m.dome_radii.x>0&&m.dome_radii.y==0){const float limit=std::max(0.f,(std::abs(n.x)>.5f?m.dome_radii.z:m.dome_radii.x)-GENERATED_ENTRANCE_HALF_WIDTH-.12f);lateral=std::clamp(lateral,-limit,limit);}
+    const auto hit=local_hull_wall_point(m,n,lateral,m.walkable_floor_y+.8f);
+    if(!hit)return false;
+    const auto old=door.wall_position;
+    door.wall_position=h.position+rotate_y(*hit,h.rotation_degrees);door.wall_position.y=h.position.y+m.walkable_floor_y;
+    auto shift=door.wall_position-old;shift.y=0;
+    if(m.dome_radii.x>0&&m.dome_radii.y==0){door.normal=flat_normal(rotate_y(n,h.rotation_degrees));door.position=door.wall_position+door.normal*GENERATED_ENTRANCE_DEPTH;}
+    else door.position=door.position+shift;
+    door.position.y=door.wall_position.y;
+    return attach_surface_profile(door,h,m);
 }
 bool attach_surface_profile(CorridorDoor& door,const PlacedResource& r,const ResourceMesh& m){
     return attach_profile(door,r.position,r.rotation_degrees,m.footprint_x,m.footprint_z,m.walkable_floor_y,m.body,m.glazing,m.foundation);
@@ -211,7 +217,9 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
     outward=normalize(outward);
     const Vec3 local_outward=flat_normal(rotate_y(outward,-habitat.rotation_degrees));
     const float radius=std::max(mesh.footprint_x,mesh.footprint_z)*0.75f+4.0f;
-    constexpr float DOOR_SLICE_Y=geometry::kEntranceSliceY;
+    // Sample the pressure wall above the raised deck. A fixed world slice can
+    // strike the wider foundation instead, leaving a vacuum gap at the collar.
+    const float DOOR_SLICE_Y=mesh.walkable_floor_y+1.05f;
     const Vec3 origin=local_outward*radius+Vec3{0,DOOR_SLICE_Y,0};
     const Vec3 direction=local_outward*-1.0f;
     float best_t=std::numeric_limits<float>::max();
@@ -224,6 +232,12 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
 
     const Vec3 local_hit=origin+direction*best_t;
     local_normal=flat_normal(local_normal);
+    if(mesh.dome_radii.x>0&&mesh.dome_radii.y>0){
+        const auto r=mesh.dome_radii;
+        // Use the continuous pressure-wall normal. At a tessellation seam,
+        // choosing either facet can skew an axial hatch and its walking aisle.
+        local_normal=flat_normal({local_hit.x/(r.x*r.x),0,local_hit.z/(r.z*r.z)});
+    }
     if(length(local_normal)<0.001f)local_normal=local_outward;
     if(dot(local_normal,local_outward)<0.0f)local_normal=local_normal*-1.0f;
     CorridorDoor d;
@@ -234,7 +248,8 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
     d.position.y=habitat.position.y+mesh.walkable_floor_y;
     d.generated=true;
     d.entrance_index=-1;
-    if(!attach_surface_profile(d,habitat,mesh)) return std::nullopt;
+    if(mesh.dome_radii.x>0&&mesh.dome_radii.y==0){if(!reproject_habitat_door(d,habitat,mesh))return std::nullopt;}
+    else if(!attach_surface_profile(d,habitat,mesh)) return std::nullopt;
     // wall_profile retains the actual curved/faceted surface points. The door
     // controller's logical threshold, however, belongs at walking-floor level
     // just like every corridor endpoint; keeping it at the geometry slice made
@@ -471,8 +486,7 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     const auto& mesh=library.mesh(habitat);
 
     // Air Locks accept a base connection only through one of their longitudinal
-    // end zones.  The exact hatch location is still generated from the selected
-    // hull point; no authored entrance is involved.
+    // end zones. The connection snaps to the fixed, factory-fitted axial port.
     if(habitat.kind==HabitatKind::AirLock &&
        !airlock_connections::allows(anchor.index,anchor.position,habitats,existing)) return std::nullopt;
 
@@ -481,6 +495,15 @@ std::optional<CorridorEndpoint> resolve_habitat(const CorridorBuildAnchor& ancho
     if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,anchor.position,existing,1.15f))
         return branch_from_existing_door(*used,other,existing);
 
+    if(habitat.kind==HabitatKind::AirLock){
+        const int sign=airlock_connections::side(habitat,anchor.position);
+        auto d=airlock::end_door(habitat,mesh,sign);
+        if(auto used=existing_door_use_near(CorridorEndpointKind::Habitat,anchor.index,d.wall_position,existing,2.f))
+            return branch_from_existing_door(*used,other,existing);
+        CorridorEndpoint out;out.kind=CorridorEndpointKind::Habitat;out.index=anchor.index;out.door=d;out.tangent=d.normal;
+        const float run=std::max(DOCK_RUN,(d.position.y-geometry::kCorridorDeckY)/.60f+.30f);
+        out.position=d.position+d.normal*run;out.position.y=0;return out;
+    }
     auto generated=generated_cursor_door(anchor.index,habitat,mesh,anchor.position,existing);
     // Faceted/curved pressure skins can miss a ray on a triangle seam. Fall
     // back to the nearest real hull face, still producing a generated entrance.

@@ -63,7 +63,7 @@ void GameApp::render_build_bar(SceneRenderer& r){
     r.draw_gradient_rect({0,y,logical_w,BUILD_BAR_H},{.045f,.07f,.09f,.78f},{.025f,.042f,.059f,.92f});
     r.draw_line({0,y},{logical_w,y},theme_.border,1.0f);
 
-    constexpr float view_area_w=345.0f;
+    constexpr float view_area_w=385.0f;
     const float category_y=y+(BUILD_BAR_H-category_size)*0.5f;
 
     int hovered_category=-1;
@@ -180,7 +180,7 @@ void GameApp::render_build_bar(SceneRenderer& r){
         line1=item.name;
         line2="TYPE " + item.type;
         if(item.kind==BuildObjectKind::Habitat && hovered_item==build_catalog_.selected_index())
-            line2 += " / SIZE " + std::string(habitat_size_name(placement_habitat_size_));
+            line2 += " / SIZE " + std::string(habitat_size_name(item.habitat_kind,placement_habitat_size_));
         if(item.kind==BuildObjectKind::Resource && hovered_item==build_catalog_.selected_index()){
             if(item.resource_kind==ResourceKind::RobotWorkshop)
                 line2 += " / FOUR SERVICE BAYS / SUPPLY REQUIRED";

@@ -35,6 +35,9 @@ void GameApp::update_speed_shortcuts(const InputState& in){
     if(current>=1 && current<=3) last_running_speed_=static_cast<std::uint8_t>(current);
 
     auto next=in.key_number_pressed;
+    // SDL text events provide a layout-independent fallback in gameplay only.
+    if(next==0 && !in.key_ctrl_down && !in.key_alt_down && in.text_input.size()==1 && in.text_input[0]>='1' && in.text_input[0]<='3')
+        next=static_cast<std::uint8_t>(in.text_input[0]-'0');
     if(in.key_space_pressed && first_person_mode_!=FirstPersonMode::Active) next=current==0?last_running_speed_:0;
     else if(next<1 || next>3) return;
     if(next>0) last_running_speed_=next;
@@ -88,6 +91,8 @@ void GameApp::update(float dt,const InputState& in){
     update_simulation(dt,in);
     update_activity_log();
     update_soundscape(dt,in);
+    // Autosave follows wall time, independent of speed and a clamped simulation step.
+    update_autosave(in.frame_seconds>0?in.frame_seconds:dt);
 }
 
 void GameApp::update_simulation(float dt,const InputState& in){
@@ -128,11 +133,11 @@ void GameApp::update_simulation(float dt,const InputState& in){
 
     const bool unit_owns_input=interior_unit_tool_.has_value();
     if(screen_==Screen::Playfield){
+        update_speed_shortcuts(in);
         if(unit_owns_input){
             if(in.escape_pressed||in.right_pressed){interior_unit_tool_.reset();return;}
             update_interior_unit_placement(in);
         }
-        update_speed_shortcuts(in);
         if(active_game_phase_==GamePhase::Planning){
             // Stage 1 owns a separate company/mission-planning simulation. It
             // intentionally never advances Stage-2 robots, construction, colony
@@ -210,6 +215,8 @@ void GameApp::update_simulation(float dt,const InputState& in){
             const bool cursor_was_free=first_person_cursor_free();
             first_person_alt_cursor_=in.key_alt_down;
             if(in.key_tab_pressed)first_person_cursor_=!first_person_cursor_;
+            if(in.key_l_pressed && controlled_astronaut_>=0 && !cursor_was_free && !in.key_alt_down && test_astronauts_[controlled_astronaut_].health>0)
+                astronaut_views_[controlled_astronaut_].suit_light=!astronaut_views_[controlled_astronaut_].suit_light;
             const bool cursor_free=first_person_cursor_free();
             app_.set_relative_mouse_mode(!cursor_free);app_.set_cursor_visible(cursor_free);
             auto fpv_input=in;
@@ -218,6 +225,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
                 fpv_input.left_pressed=input_.left_pressed=false;
                 if(!cursor_free){input_.mouse_x=viewport_width_/2;input_.mouse_y=viewport_height_/2;}
             }
+            if(in.delete_pressed && cursor_free && !tool && !unit_owns_input && selected_construction_target().valid())request_selected_deconstruction();
             if(!first_person_pointer_over_hud(in))update_placement_controls(in);
             advance_colony();
             update_first_person(dt,fpv_input);
@@ -284,8 +292,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
         }
 
         if(in.delete_pressed && !unit_owns_input && !storage_gate_placement_active_ && build_catalog_.selected()==nullptr && corridor_link_source_<0 && !corridor_build_start_ && !utility_build_start_ && !walkway_build_start_){
-            delete_selected_world_object();
-            return;
+            request_selected_deconstruction();
         }
 
         const bool over_panel=over_overlay || mouse_over_selection_panel(in)||astronaut_status_hover(in);
@@ -337,6 +344,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
             if(!in.left_down) finish_selection_marquee();
         }
     } else if(in.escape_pressed) {
+        pending_save_delete_.clear();
         // When the pause/game menu is open, ESC is a direct resume shortcut.
         // Sub-pages still use ESC to return one level to that menu first.
         if(screen_==Screen::MainMenu && game_session_active_) screen_=Screen::Playfield;

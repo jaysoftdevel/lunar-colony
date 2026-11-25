@@ -1,3 +1,4 @@
+#include "jsd/filesystem.hpp"
 #include "game/game_app.hpp"
 #include "game/config/preferences.hpp"
 #include "game/ui/layout.hpp"
@@ -8,8 +9,11 @@
 #include "game/systems/sound_assets.hpp"
 #include "game/world/pressure_hardware.hpp"
 #include "game/world/hull_surface.hpp"
+#include "game/world/corridor/detail.hpp"
+#include "game/world/mesh_portals.hpp"
 #include "game/world/solar_collector.hpp"
 #include "game/world/interior_unit_mesh.hpp"
+#include "game/world/interior_finish.hpp"
 #include "game/world/habitats/screen_mounts.hpp"
 #include <array>
 #include <chrono>
@@ -751,63 +755,199 @@ struct UiRegression {
         app.graphics_.path=GraphicsPath::Classic;
         require(app.habitat_view_mode_==GameApp::HabitatViewMode::FullHull,"new game did not start with Full Hull");
         HabitatMesh habitat;
-        habitat.foundation=layer(1);
-        habitat.interior=layer(2);
-        habitat.shell=layer(3);
-        habitat.glazing=layer(4);
-        habitat.edges={{0,5,0},{1,5,0}};
-        ResourceMesh resource;
-        resource.foundation=habitat.foundation;
-        resource.details=habitat.interior;
-        resource.body=habitat.shell;
-        resource.edges=habitat.edges;
-        CorridorConnection corridor;
-        corridor.path={{0,1,0},{1,1,0}};
-        corridor.mesh={habitat.shell,habitat.interior,habitat.edges};
-        corridor.construction.finish();
+        habitat.foundation=layer(1);habitat.interior=layer(2);
+        habitat.shell=layer(3);habitat.glazing=layer(4);
+        habitat.edges={{0,5,0},{1,5,0}};habitat.hull_frames=layer(6);
+        ResourceMesh resource;resource.walkable_floor_y=2;
+        resource.foundation=habitat.foundation;resource.details=habitat.interior;
+        resource.body=habitat.shell;resource.edges=habitat.edges;
+        CorridorConnection corridor;corridor.path={{0,1,0},{1,1,0}};
+        corridor.mesh={habitat.shell,layer(0),habitat.edges};corridor.construction.finish();
         app.corridor_network_.restore_connections({corridor});
-        app.selection_kind_=GameApp::SelectionKind::Corridor;
-        app.selected_corridor_=0;
         HullRecorder r;
-        const auto draw_room=[&](float step){
-            r.vertices.clear();
-            app.render_habitat_mesh(r,habitat,{},0,false,true,true,step);
-        };
+        const auto draw_room=[&](float step){r.vertices.clear();
+            app.render_habitat_mesh(r,habitat,{},0,false,true,false,step);};
+        // Mesh mode also displays outline layers; filled mode omits unselected edges.
         draw_room(kConstructionSteps);
-        require(r.drew_at(1) && r.drew_at(2) && r.drew_at(3) && r.drew_at(4) && r.drew_at(5),
-                "Classic Full Hull lost filled exterior or interior geometry");
-        r.set_2d(1);
-        app.render_view_selector(r,0,1280);
-        const auto none=r.button("FADED");
-        require(r.button("FULL HULL").w>0,"Full Hull button missing");
-        app.ui_input_.mouse_x=static_cast<int>(none.x+none.w*.5f);
-        app.ui_input_.mouse_y=static_cast<int>(none.y+none.h*.5f);
-        app.ui_input_.left_pressed=true;
-        app.render_view_selector(r,0,1280);
-        require(app.habitat_view_mode_==GameApp::HabitatViewMode::None,"Faded button did not select the cutaway");
-
+        require(r.drew_at(1)&&r.drew_at(2)&&r.drew_at(3)&&r.drew_at(4)&&r.drew_at(6),
+                "Full Hull lost filled exterior, frames or interior geometry");
+        r.set_2d(1);app.render_view_selector(r,0,1280);
+        const auto none=r.button("HIDE HULLS");require(r.button("FULL HULL").w>0,"Full Hull button missing");
+        app.ui_input_.mouse_x=int(none.x+none.w*.5f);app.ui_input_.mouse_y=int(none.y+none.h*.5f);
+        app.ui_input_.left_pressed=true;app.render_view_selector(r,0,1280);app.ui_input_={};
+        require(app.habitat_view_mode_==GameApp::HabitatViewMode::None,"Hide hulls did not select the cutaway");
         for(const auto layout:{GameApp::WorldLayoutMode::FullGraphics,GameApp::WorldLayoutMode::Mesh}){
             app.world_layout_mode_=layout;
-            for(const float step:{4.f,static_cast<float>(kConstructionSteps)}){
+            for(const float step:{4.f,float(kConstructionSteps)}){
                 draw_room(step);
-                require(r.drew_at(1) && r.drew_at(2) && r.drew_at(5),
-                        "Faded habitat lost its cyan boundary or interior");
+                require(r.drew_at(1)&&r.drew_at(2)&&!r.drew_at(3)&&!r.drew_at(4)&&!r.drew_at(5)&&!r.drew_at(6),
+                        "Habitat cutaway retained shell/frames or lost its interior");
             }
-            for(const auto kind:{ResourceKind::StorageDome,ResourceKind::StorageGate,ResourceKind::RobotWorkshop,ResourceKind::OreDriller}){
-                r.vertices.clear();
-                app.render_resource_mesh(r,resource,{},0,false,true,true,kConstructionSteps,nullptr,kind);
-                require(r.drew_at(1) && r.drew_at(2) && r.drew_at(3) && r.drew_at(5),
-                        "Faded resource lost its shell cue or equipment");
+            for(const auto kind:{ResourceKind::StorageDome,ResourceKind::RobotWorkshop,ResourceKind::OreDriller}){
+                r.vertices.clear();app.render_resource_mesh(r,resource,{},0,false,true,false,kConstructionSteps,nullptr,kind);
+                require(r.drew_at(1)&&r.drew_at(2),"Resource cutaway lost deck or equipment");
+                require(r.drew_at(3)==(kind==ResourceKind::OreDriller),"Cutaway hid exterior machinery or retained a habitat shell");
             }
-            r.vertices.clear();
-            app.render_corridors(r);
-            require(r.drew_at(1) && r.drew_at(2) && r.drew_at(5),
-                    "Faded corridor lost its shell cue or deck");
+            r.vertices.clear();app.render_corridors(r);
+            require(!r.drew_at(3)&&!r.drew_at(5),"Corridor cutaway retained its pressure shell");
         }
-        require(r.faded,"Faded hull did not submit a cyan shell with at least 10 percent opacity");
-        std::cout<<"Full Hull default, faded selector and tinted 12 percent hull layers passed\n";
+        require(!r.faded,"Hide hulls submitted a ghost pressure shell");
+        std::cout<<"Full Hull default and clear frame-free cutaways, with exterior equipment retained, passed\n";
     }
 
+    static void structural_frames(){
+        using namespace game::runtime;GameHost host;GameApp app(host);
+        const auto check=[&](const auto& mesh,const std::string& name,bool crew){
+            const auto& s=mesh.reinforcement;
+            const auto& frame=[&]() -> const std::vector<Vec3>& {if constexpr(requires {mesh.hull_frames;})return mesh.hull_frames;else return mesh.details;}();
+            require(s.members>0&&s.frames>0&&s.vertices>0&&s.vertices%3==0,name+" missing solid structural geometry");
+            require(s.first_vertex+s.vertices<=frame.size()&&s.vertices<400000,name+" frame range or geometry budget");
+            require(s.max_bay_m<=1.501f,name+" frame bays stretched beyond design spacing");
+            const float bottom=mesh.walkable_floor_y+.045f,top=mesh.walkable_floor_y+geometry::kHumanHeight-.035f;
+            for(std::size_t i=s.first_vertex;i<s.first_vertex+s.vertices;i+=3){
+                const auto a=frame[i],b=frame[i+1],c=frame[i+2];
+                for(auto p:{a,b,c})require(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z),name+" non-finite member");
+                require(length(cross(b-a,c-a))>1e-9f,name+" degenerate structural face");
+                if(crew&&std::max({a.y,b.y,c.y})>bottom&&std::min({a.y,b.y,c.y})<top){
+                    const bool crosses_core=std::min({a.x,b.x,c.x})<.40f&&std::max({a.x,b.x,c.x})>-.40f&&std::min({a.z,b.z,c.z})<.40f&&std::max({a.z,b.z,c.z})>-.40f;
+                    if(crosses_core){
+                        std::vector<Vec3> polygon{a,b,c};
+                        for(const auto& plane:std::array<std::pair<Vec3,float>,6>{{{{1,0,0},.40f},{{-1,0,0},.40f},{{0,0,1},.40f},{{0,0,-1},.40f},{{0,1,0},top},{{0,-1,0},-bottom}}})polygon=mesh_portals::clip(polygon,plane.first,plane.second,false);
+                        require(polygon.size()<3,name+" structural member crosses the central crew clearance");
+                    }
+                }
+            }
+        };
+        std::size_t vertices=0;
+        for(int k=0;k<int(HabitatKind::Count);++k)for(int t=0;t<int(HabitatSizeTier::Count);++t){
+            const auto& m=app.habitat_models_.mesh(HabitatKind(k),HabitatSizeTier(t));check(m,"Habitat "+std::to_string(k)+"/"+std::to_string(t),true);vertices+=m.reinforcement.vertices;
+        }
+        for(int k=0;k<int(ResourceKind::Count);++k)for(auto size:{ResourceSizeTier::Small,ResourceSizeTier::Standard}){
+            const auto& m=app.resource_models_.mesh(ResourceKind(k),size);check(m,"Resource "+std::to_string(k),k==int(ResourceKind::StorageDome)||k==int(ResourceKind::RobotWorkshop));
+        }
+        for(int t=0;t<int(StorageDomeSize::Count);++t){const auto& m=app.resource_models_.mesh(ResourceKind::StorageDome,StorageDomeSize(t));check(m,"Storage "+std::to_string(t),true);}
+        const auto& small=app.habitat_models_.mesh(HabitatKind::CantineDome,HabitatSizeTier::Small);
+        const auto& big=app.habitat_models_.mesh(HabitatKind::CantineDome,HabitatSizeTier::Big);
+        require(big.reinforcement.frames>small.reinforcement.frames,"Larger glazing bays merely stretch the same ribs");
+        // Compound halls have open internal transfers, not a new solid bulkhead.
+        app.playfield_.rebuild(128);
+        for(auto kind:{HabitatKind::Factory,HabitatKind::Manufactory}){
+            PlacedHabitat hall;hall.kind=kind;hall.construction.finish();app.placed_habitats_={hall};
+            const float y=app.habitat_models_.mesh(hall).walkable_floor_y;
+            for(int i=0;i<10;++i)require(app.first_person_move_allowed({i*.3f,y,0},{(i+1)*.3f,y,0}),"New frame closes an internal hall transfer");
+        }
+        app.placed_habitats_.clear();
+        // Frames are physical opaque members even while the solar-filter skin is visible.
+        struct Visual:Recorder{std::size_t metal=0,glass=0;bool faded=false;
+            void draw_mapped_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color c,const LunarSurfaceMapping&)override{draw_lunar_surface(v,m,c);}
+            void draw_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color c)override{
+                if(m==LunarMaterial::Alloy){metal+=v.size();faded|=c.a<.99f;}if(m==LunarMaterial::SolarShield&&c.a>.10f&&c.a<.5f)glass+=v.size();}
+        } visual;
+        app.graphics_.path=GraphicsPath::Classic;app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;
+        app.render_habitat_mesh(visual,big,{},0,false,true,false,kConstructionSteps,nullptr,false,HabitatKind::CantineDome,true);
+        require(visual.metal>=big.reinforcement.vertices&&visual.glass>0&&!visual.faded,"New frame faded away with transparent upper hull");
+        // Straight pressure passage: the solid hoops are outside the complete crew envelope.
+        app.playfield_.rebuild(128);CorridorConnection c;c.path={{0,0,0},{0,0,20}};c.construction.finish();
+        c.endpoint_a.kind=c.endpoint_b.kind=CorridorEndpointKind::OpenDoor;c.endpoint_a.position=c.path.front();c.endpoint_b.position=c.path.back();c.endpoint_a.tangent={0,0,-1};c.endpoint_b.tangent={0,0,1};
+        std::vector<CorridorConnection> passages{c};corridor_detail::rebuild_all_meshes(passages);app.corridor_network_.restore_connections(passages);
+        require(passages[0].mesh.details.size()>4000,"Corridor ribs are still line-only");
+        for(int z=2;z<18;++z)require(app.first_person_move_allowed({0,geometry::kCorridorDeckY,float(z)},{0,geometry::kCorridorDeckY,float(z)+.5f}),"Solid corridor frame blocks FPV centerline");
+        // New under-panel members are in the tracked range; base braces stay stationary.
+        const auto& solar=app.resource_models_.mesh(ResourceKind::SolarPanel);
+        solar_collector::Pose pose(solar.solar_head,{},37,normalize(Vec3{.6f,.7f,.2f}));
+        bool moved=false,stationary=false;
+        for(std::size_t i=0;i<solar.details.size();++i){const bool tracked=solar_collector::moving(i,solar.solar_head.details);const auto p=pose.point(solar.details[i],solar.solar_head,tracked);
+            if(tracked)moved|=length(p-solar.details[i])>.1f;else if(i>=solar.reinforcement.first_vertex){stationary=true;require(length(p-world_math::rotate_y(solar.details[i],37))<1e-5f,"Static solar base rotates with its head");}}
+        require(moved&&stationary,"Solar framing ranges not separated at the bearing");
+        std::cout<<"All habitat/resource tiers: solid load frames, bounded bays, central clearances, opaque metal/UV glazing, corridor FPV and moving solar frames passed; added habitat vertices="<<vertices<<"\n";
+    }
+    static void corridor_airlock_fpv(){
+        using namespace runtime;
+        GameHost host;GameApp app(host);app.playfield_.rebuild(128);app.viewport_width_=1920;app.viewport_height_=1080;
+        app.screen_=GameApp::Screen::Playfield;app.game_session_active_=true;app.active_game_phase_=GameApp::GamePhase::RobotPreparation;
+        app.game_speed_=GameApp::GameSpeed::Pause;
+        for(auto tier:{HabitatSizeTier::Small,HabitatSizeTier::Standard,HabitatSizeTier::Mid,HabitatSizeTier::Big}){
+            PlacedHabitat dome;dome.kind=HabitatKind::OxygenGeneratorDome;dome.size=tier;dome.rotation_degrees=37;dome.construction.finish();
+            app.placed_habitats_={dome};app.fit_oxygen_units();auto& room=app.placed_habitats_[0];
+            require(room.units.size()==1,"Oxygen fitting fails after complete solid collision check");
+            const auto& u=room.units[0];const float floor=app.habitat_models_.mesh(room).walkable_floor_y;
+            const auto world=[&](Vec3 p){return room.position+world_math::rotate_y(p,room.rotation_degrees);};
+            // These upright tanks were rendered in service_metal and omitted by FPV.
+            const auto tank=world(u.position+world_math::rotate_y({.92f,0,.20f},u.rotation_degrees));
+            require(!app.first_person_move_allowed(tank,tank),"FPV can enter oxygen generator tank");
+            app.astronaut_views_[0].present=app.astronaut_views_[0].visited=true;
+            app.test_astronauts_[0].position=tank;app.selected_astronaut_=0;
+            app.enter_first_person_mode();const auto recovered=app.first_person_.feet_position();
+            require(app.first_person_mode_==GameApp::FirstPersonMode::Active&&app.first_person_move_allowed(recovered,recovered),"Old embedded oxygen pose does not recover to clear floor");
+            require(length(recovered-tank)<2.f,"Oxygen recovery moved beyond nearby floor");
+            app.exit_first_person_mode();app.reset_first_person_crew();
+            // Traverse both axes around the installed machine; each
+            // accepted movement must permit the exact reverse, including diagonals.
+            const float reach=app.habitat_models_.mesh(room).footprint_x*.25f;
+            for(int axis=0;axis<2;++axis)for(int i=-30;i<30;++i){
+                Vec3 a{axis?0.f:reach*i/30,floor,axis?reach*i/30:0.f};
+                Vec3 b{axis?0.f:reach*(i+1)/30,floor,axis?reach*(i+1)/30:0.f};
+                a=world(a);b=world(b);
+                if(app.first_person_move_allowed(a,a)&&app.first_person_move_allowed(a,b))
+                    require(app.first_person_move_allowed(b,a),"Oxygen movement enters a one-way collision trap");
+            }
+            // A real rotated hatch, sleeve and ramp must permit egress and
+            // re-entry in every oxygen-dome tier with the generator installed.
+            const auto direction=world_math::rotate_y({1,0,0},room.rotation_degrees);
+            const CorridorBuildAnchor anchor{CorridorEndpointKind::Habitat,0,direction*35};
+            const auto endpoint=app.corridor_network_.preview_anchor(anchor,direction*45,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);
+            require(bool(endpoint),"Oxygen dome has no usable hatch anchor");
+            CorridorConnection connection;connection.endpoint_a=*endpoint;connection.endpoint_b.kind=CorridorEndpointKind::OpenDoor;
+            connection.path={endpoint->position,endpoint->position+endpoint->tangent*9};connection.endpoint_b.position=connection.path.back();connection.endpoint_b.tangent=endpoint->tangent;connection.construction.finish();
+            std::vector<CorridorConnection> links{connection};corridor_detail::rebuild_all_meshes(links);app.corridor_network_.restore_connections(links);
+            app.pressure_doors_.clear();for(const auto& door:app.habitat_doors(0)){PressureDoorState state;state.door=door;state.open_fraction=1;app.pressure_doors_.push_back(state);}
+            const auto destination=endpoint->position+endpoint->tangent*2;
+            const int steps=int(std::ceil(length(destination)/.05f));Vec3 previous{0,floor,0};
+            for(int step=1;step<=steps;++step){auto next=destination*(float(step)/steps);next.y=app.first_person_floor_height(next);
+                require(app.first_person_move_allowed(previous,next)&&app.first_person_move_allowed(next,previous),"Oxygen hatch/ramp traps FPV in tier "+std::to_string(int(tier))+" step "+std::to_string(step));previous=next;}
+            app.corridor_network_.clear();app.pressure_doors_.clear();
+            // Returning from FPV must leave the structure inspector reachable.
+            app.camera_.restore({24,35.26439f,45,{0,.8f,0}});
+            const auto vp=app.camera_.view_projection(1920.f/1080);
+            const Vec2 target{(vp.m[12]/vp.m[15]*.5f+.5f)*1920,(.5f-vp.m[13]/vp.m[15]*.5f)*1080};
+            InputState click;click.left_pressed=true;click.mouse_x=int(target.x);click.mouse_y=int(target.y);
+            app.astronaut_views_[0].present=true;app.test_astronauts_[0].position={30,0,30};app.selected_astronaut_=0;
+            require(!app.handle_astronaut_click(click)&&app.selected_astronaut_==-1,"Selected astronaut still swallows structure selection");
+            app.select_world_at(click.mouse_x,click.mouse_y);
+            require(app.selection_kind_==GameApp::SelectionKind::Habitat&&app.selected_habitat_==0,"Oxygen inspector is not selectable after FPV");
+            app.reset_first_person_crew();app.clear_world_selection();
+        }
+        // Landing on a low installed unit must not put the body inside it.
+        PlacedHabitat canteen;canteen.kind=HabitatKind::CantineDome;canteen.construction.finish();
+        InteriorUnit table;table.kind=InteriorUnitKind::DiningTable;table.position={0,app.habitat_models_.mesh(canteen).walkable_floor_y,2};canteen.units={table};app.placed_habitats_={canteen};
+        const auto top=table.position+Vec3{0,interior_unit_profile(table.kind).size.y,0};
+        app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn(top+Vec3{0,.15f,0},0);
+        for(int tick=0;tick<120;++tick)app.update_first_person(1.f/120,{});
+        require(std::abs(app.first_person_.feet_position().y-top.y)<.001f&&app.first_person_move_allowed(app.first_person_.feet_position(),app.first_person_.feet_position()),"FPV falls into a solid installed unit after a jump");
+        app.first_person_mode_=GameApp::FirstPersonMode::Off;app.placed_habitats_.clear();
+        const auto run=[](std::vector<Vec3> path){CorridorConnection c;c.path=std::move(path);c.construction.finish();c.endpoint_a.kind=c.endpoint_b.kind=CorridorEndpointKind::OpenDoor;c.endpoint_a.position=c.path.front();c.endpoint_b.position=c.path.back();c.endpoint_a.tangent=normalize(c.path.front()-c.path[1]);c.endpoint_b.tangent=normalize(c.path.back()-c.path[c.path.size()-2]);return c;};
+        for(auto c:{run({{0,0,-10},{0,0,10}}),run({{-8,0,0},{0,0,0},{5,0,5}}),run({{0,2,-10},{0,2,10}})}){
+            std::vector<CorridorConnection> links{c};corridor_detail::rebuild_all_meshes(links);const auto& mesh=links[0].mesh;
+            require(mesh.deck_surface.size()>6000&&mesh.metal_surface.size()>3000&&mesh.grip_surface.size()>100,"Detailed deck or frame render batch is absent");
+            require(mesh.deck_surface.size()+mesh.metal_surface.size()+mesh.grip_surface.size()==mesh.details.size(),"Corridor render partition loses geometry");
+            for(const auto p:mesh.details)require(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&p.y>=-.001f,"Corridor fitting penetrates the ground or contains invalid vertices");
+        }
+        for(auto tier:{HabitatSizeTier::Small,HabitatSizeTier::Standard}){
+            PlacedHabitat airlock;airlock.kind=HabitatKind::AirLock;airlock.size=tier;airlock.construction.finish();airlock.supply.power_fraction=1;app.placed_habitats_={airlock};
+            const auto& m=app.habitat_runtime_mesh(0);require(m.stations.empty()&&m.screens.size()==2,"Fitted wall services missing or unnecessary airlock floor equipment remains");
+            const float y=m.walkable_floor_y;
+            for(float x:{-3.f,-.5f,.5f,3.f})require(app.first_person_move_allowed({x,y,0},{x+.1f,y,0}),"Airlock equipment obstructs transfer aisle");
+            struct HatchRecorder:Recorder{std::size_t control=0,text=0;
+                void draw_lunar_surface(const std::vector<Vec3>& vertices,LunarMaterial material,Color)override{
+                    if(material==LunarMaterial::Display)control+=vertices.size();if(material==LunarMaterial::DisplayText)text+=vertices.size();}
+            } controls;
+            app.graphics_.path=GraphicsPath::Classic;app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,y,0},90);
+            app.render_habitats(controls);
+            require(controls.control>0&&controls.text>100,"Airlock hatch controls have no mounted display or readable status");
+            app.first_person_mode_=GameApp::FirstPersonMode::Off;
+        }
+        std::cout<<"Oxygen tanks/embedded pose recovery/reversible movement, FPV-to-inspector selection, detailed corridor batches/grounding and uncluttered airlock aisle passed\n";
+    }
     static void player_control(){
         using namespace game::runtime;
         GameHost host;GameApp app(host);Recorder r;
@@ -820,6 +960,11 @@ struct UiRegression {
         require(app.first_person_mode_==GameApp::FirstPersonMode::Active&&app.controlled_astronaut_==0,"V requires free placement instead of immediate character control");
         require(length(app.first_person_.feet_position()-app.crew_cache_position())<.01f,"First FPV did not spawn beside the lander");
         require(app.astronaut_present(0)&&!app.astronaut_present(1),"Initial FPV created invisible extra crew");
+        InputState light;light.key_l_pressed=true;
+        app.update_simulation(0,light);
+        require(app.astronaut_views_[0].suit_light&&!app.astronaut_views_[1].suit_light,"L did not enable only the controlled astronaut's light");
+        app.update_simulation(0,light);
+        require(!app.astronaut_views_[0].suit_light,"L did not toggle the suit light off");
         const auto start=app.first_person_.feet_position();InputState walk;walk.key_w_down=true;
         for(int frame=0;frame<20;++frame)app.update_first_person(.016f,walk);
         require(length(app.first_person_.feet_position()-start)>.1f&&length(app.test_astronauts_[0].position-app.first_person_.feet_position())<1e-6,"FPV does not move the selected astronaut");
@@ -892,7 +1037,7 @@ struct UiRegression {
         } boxes;
         app.first_person_.spawn({12,0,14},0);app.first_person_mode_=GameApp::FirstPersonMode::Active;app.render_ground_resources(boxes);
         require(boxes.saw_box&&!boxes.translucent,"Resource package faces remain transparent");
-        std::cout<<"Direct astronaut control, lander spawn, FPV continuity, nearest safe return, schema51 vitals, HUD scaling and solid classified packages passed\n";
+        std::cout<<"Direct astronaut control, lander spawn, FPV continuity, nearest safe return, schema52 vitals, HUD scaling and solid classified packages passed\n";
     }
     static void fpv_building(){
         using namespace game::runtime;
@@ -912,7 +1057,7 @@ struct UiRegression {
             app.input_={};app.input_.mouse_x=r.w/2;app.input_.mouse_y=r.h/2;
         };
         aim({20,0,20});app.render(r);r.check_bounds("FPV bottom controls");
-        require(r.button("FULL HULL").y>r.h/r.scale-layout::BUILD_BAR_H && r.button("FADED").w>0,"FPV bottom configuration bar missing");
+        require(r.button("FULL HULL").y>r.h/r.scale-layout::BUILD_BAR_H && r.button("HIDE HULLS").w>0,"FPV bottom configuration bar missing");
         Vec3 hit;require(app.pick_build_ground(hit)&&hit.z<12,"FPV center aim did not intersect the ground");
         select("crew_quarters");InputState rotation;rotation.key_m_pressed=true;
         require(app.update_placement_controls(rotation)&&app.placement_rotation_degrees_==15,"FPV rotation did not use structure controls");
@@ -974,7 +1119,7 @@ struct UiRegression {
         int mounts=0;
         for(int kind=0;kind<int(HabitatKind::Count);++kind)for(int tier=0;tier<int(HabitatSizeTier::Count);++tier){
             const auto& mesh=app.habitat_models_.mesh(HabitatKind(kind),HabitatSizeTier(tier));
-            require(mesh.screens.size()>=4 && mesh.displays.size()==mesh.screens.size()*6,"A room variant has missing screen mounts or luminous box faces: "+std::to_string(kind)+"/"+std::to_string(tier)+" mounts="+std::to_string(mesh.screens.size())+" faces="+std::to_string(mesh.displays.size()));
+            require(mesh.screens.size()>=(kind==int(HabitatKind::AirLock)?0u:kind==int(HabitatKind::OxygenGeneratorDome)?2u:4u) && mesh.displays.size()==mesh.screens.size()*6,"A room variant has missing screen mounts or luminous box faces: "+std::to_string(kind)+"/"+std::to_string(tier)+" mounts="+std::to_string(mesh.screens.size())+" faces="+std::to_string(mesh.displays.size()));
             for(const auto& screen:mesh.screens){
                 require(std::abs(length(screen.right)-1)<1e-5 && std::abs(dot(screen.right,screen.up))<1e-5,"Screen mounting basis is distorted");
                 require(screen.width>.4f && screen.height>.25f,"Screen is too small to read");++mounts;
@@ -1018,32 +1163,29 @@ struct UiRegression {
         PlacedHabitat destination;destination.kind=HabitatKind::CrewQuarters;destination.position={20,0,0};destination.construction.finish();destination.placement_sequence=2;
         app.placed_habitats_={grow,destination};
         const auto& source=app.habitat_models_.mesh(grow);
-        const auto found=std::find_if(source.stations.begin(),source.stations.end(),[](const auto& station){return station.kind==StationKind::Grow;});
-        require(found!=source.stations.end(),"Grow stations are not registered as complete assemblies");
-        const auto station=*found;const Vec3 center=(station.low+station.high)*.5f;const float sign=center.z<0?-1.f:1.f;
-        const auto contact=habitats::screen_wall(source,center.x,source.walkable_floor_y+.8f,sign);require(bool(contact),"Gate test has no pressure skin contact");
+        require(std::none_of(source.stations.begin(),source.stations.end(),[](const auto& station){return station.kind==StationKind::Grow;}),"Dome contains obsolete template machines");
+        InteriorUnit rack;rack.kind=InteriorUnitKind::HydroponicRack;
+        require(app.find_interior_unit_bay(0,rack),"No legal grow rack bay");rack.grow_bay=0;
+        app.placed_habitats_[0].units.push_back(rack);
+        const auto radii=source.dome_radii;const auto normal=normalize(Vec3{rack.position.x/(radii.x*radii.x),0,rack.position.z/(radii.z*radii.z)});
+        const float wall_radius=1/std::sqrt(normal.x*normal.x/(radii.x*radii.x)+normal.z*normal.z/(radii.z*radii.z));
         CorridorConnection corridor;corridor.endpoint_a.kind=CorridorEndpointKind::Habitat;corridor.endpoint_a.index=0;
-        corridor.endpoint_a.door.wall_position={contact->x,source.walkable_floor_y,contact->z};corridor.endpoint_a.door.position=corridor.endpoint_a.door.wall_position;
-        corridor.endpoint_a.door.normal={0,0,sign};corridor.endpoint_a.position=corridor.endpoint_a.door.position;
+        corridor.endpoint_a.door.wall_position=normal*wall_radius;corridor.endpoint_a.door.wall_position.y=source.walkable_floor_y;
+        corridor.endpoint_a.door.position=corridor.endpoint_a.door.wall_position;corridor.endpoint_a.door.normal=normal;corridor.endpoint_a.position=corridor.endpoint_a.door.position;
         corridor.endpoint_b.kind=CorridorEndpointKind::Habitat;corridor.endpoint_b.index=1;corridor.endpoint_b.door.wall_position={15,source.walkable_floor_y,0};corridor.endpoint_b.door.position=corridor.endpoint_b.door.wall_position;corridor.endpoint_b.door.normal={-1,0,0};corridor.endpoint_b.position=corridor.endpoint_b.door.position;
         corridor.path={corridor.endpoint_a.position,corridor.endpoint_b.position};
-        const Vec3 feet{center.x,source.walkable_floor_y,center.z};
-        require(app.first_person_move_allowed(feet,feet),"Removed template machine still blocks FPV");
+        require(!app.interior_unit_reserved(0,rack),"Rack reserved without a gate");
+        const auto before_vertices=app.habitat_runtime_mesh(0).service_metal.size();
         app.corridor_network_.restore_connections({corridor});
         const auto& filtered=app.habitat_runtime_mesh(0);
-        require(filtered.blocked_grow_bays!=0 && filtered.interior.size()<source.interior.size(),"Planned gate did not remove whole obstructing station assemblies");
+        require(app.interior_unit_reserved(0,rack)&&filtered.service_metal.size()<before_vertices,"Planned gate did not remove the complete rack assembly");
         require(filtered.shell.size()==source.shell.size()&&filtered.glazing.size()==source.glazing.size()&&std::memcmp(filtered.glazing.data(),source.glazing.data(),source.glazing.size()*sizeof(Vec3))==0,"Station reservation cut an unbuilt doorway through the pressure hull");
-        require(app.first_person_move_allowed(feet,feet),"Removed station still blocks FPV traversal");
-        const interior_layout::Reservation reserve{corridor.endpoint_a.door.wall_position,corridor.endpoint_a.door.normal};
-        require(!interior_layout::can_place({reserve},station.low,station.high),"Gate reserve allows a new operating station in its approach");
-        require(interior_layout::can_place({reserve},{40,0,40},{41,2,41}),"Door reserve blocks unrelated stations");
-        const auto removed=std::count_if(filtered.stations.begin(),filtered.stations.end(),[](const auto& station){return !station.active;});
-        require(removed>0,"Interior cache did not mark removed operating slots");
+        std::string error;require(!app.interior_unit_position_clear(0,rack,error)&&error.find("GATE")!=std::string::npos,"Gate approach allows replacement equipment");
         const auto mask=filtered.blocked_grow_bays;app.placed_habitats_[0].hydroponics[0].plant=HydroponicPlant::Potato;
         app.update_supply_simulation(0);require(app.placed_habitats_[0].blocked_grow_bays==mask,"Supply simulation ignores reserved grow bays");
         const auto before=app.placed_habitats_[0].hydroponics[0].growth_fraction;app.update_supply_simulation(.1f);
         require(app.placed_habitats_[0].hydroponics[0].growth_fraction==before,"Reserved grow bay continues operating");
-        app.corridor_network_.clear();require(app.habitat_runtime_mesh(0).blocked_grow_bays!=0,"Cancelled connection restored removed template machines");
+        app.corridor_network_.clear();require(!app.interior_unit_reserved(0,rack),"Cancelled gate kept a placeable rack reserved");
         struct Frames:Recorder {int red{},green{};void draw_lines_3d(const std::vector<Vec3>&,Color color,float) override {
             if(color.r==1.f&&color.g==.16f)++red;if(color.r==.18f&&color.g==.95f)++green;
         }};
@@ -1149,7 +1291,7 @@ struct UiRegression {
         host.units[0].water_litres=0;host.units[0].enabled=false;app.update_supply_simulation(10);require(host.units[0].water_litres==0,"Disabled well pumps water");
         host.units[0].enabled=true;host.units[0].water_litres=3.75;require(app.save_game_to_name("interior-services-roundtrip",error),error);
         require(loaded.load_game_from_file(path.string(),error),error);require(loaded.placed_habitats_[0].units[0].water_litres==3.75,"Well save inventory changed");std::filesystem::remove(path);
-        app.builder_robots_.clear();host.supply.power_fraction=1;require(app.interior_light_level(0)==0,"Lights active by day");
+        app.builder_robots_.clear();host.supply.power_fraction=1;host.supply.lighting_fraction=-1;require(app.interior_light_level(0)==0,"Lights active by day");
         clock.hour=0;app.status_.restore(clock);require(app.interior_light_level(0)==.18f,"Empty room has no low night lights");
         app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,floor,0},0);require(app.interior_light_level(0)==1,"FPV entry does not brighten room");
         app.first_person_.spawn({30,floor,0},0);require(app.interior_light_level(0)==.18f,"Outside observer counts as occupant");app.first_person_mode_=GameApp::FirstPersonMode::Off;
@@ -1227,7 +1369,7 @@ struct UiRegression {
         app.corridor_network_.clear();
 
         require(!app.interior_unit_position_clear(0,unit,reason),"Unit can overlap another machine");
-        auto aisle=unit;aisle.position.z=0;require(!app.interior_unit_position_clear(0,aisle,reason),"Unit blocks the center aisle");
+        auto aisle=unit;aisle.position.x=aisle.position.z=0;require(!app.interior_unit_position_clear(0,aisle,reason),"Unit blocks the center aisle");
         auto outside=unit;outside.position.x=50;require(!app.interior_unit_position_clear(0,outside,reason),"Unit can be placed outside its host");
         app.focus_interior(0);require(std::abs(app.camera_.elevation_degrees()-35.26439f)<.001f&&std::abs(app.camera_.azimuth_degrees()-45.f)<.001f,"Selected room is not isometric");
         require(length(app.camera_.target()-(hall.position+Vec3{0,floor+.8f,0}))<.001f,"Selected room is not centered");
@@ -1261,17 +1403,18 @@ struct UiRegression {
         for(int f=0;f<20;++f)doors.update_pressure_doors(.1f);
         require(doors.pressure_doors_.size()==1&&doors.pressure_doors_[0].open_fraction==0,"Unpowered pressure door auto-opens");
         require(!doors.manual_door_label().empty(),"FPV has no manual control for an unpowered door");
-        InputState crank;crank.key_e_pressed=true;doors.update_first_person(1.f/60,crank);
-        require(doors.pressure_doors_[0].manual_override,"E does not engage the FPV manual crank");
-        for(int f=0;f<40;++f)doors.update_pressure_doors(.1f);
+        InputState crank;crank.key_e_down=true;
+        for(int f=0;f<32;++f){doors.update_first_person(.1f,crank);doors.update_pressure_doors(.1f);}
         require(doors.pressure_doors_[0].open_fraction>.99f&&!doors.pressure_doors_[0].powered,"Manual door crank does not open without electricity");
         require(doors.manual_door_interaction(true),"Manual close was unavailable");doors.first_person_.spawn({0,deck,0},0);
         for(int f=0;f<60;++f)doors.update_pressure_doors(.1f);
         require(doors.pressure_doors_[0].open_fraction<.001f,"Manual door does not close");
         doors.first_person_.spawn({0,deck,-.5f},0);doors.placed_habitats_[0].supply.power_fraction=1;
         for(int f=0;f<20;++f)doors.update_pressure_doors(.1f);
-        require(doors.pressure_doors_[0].powered&&!doors.pressure_doors_[0].manual_override&&doors.pressure_doors_[0].open_fraction>.99f,"Power restoration does not restore automatic doors");
-        PlacedResource exterior;exterior.kind=ResourceKind::StorageDome;exterior.construction.finish();app.placed_resources_={exterior};
+        require(doors.pressure_doors_[0].powered&&!doors.pressure_doors_[0].manual_override&&doors.pressure_doors_[0].open_fraction<.001f,"Power restoration auto-opens a player hatch");
+        InputState tap;tap.key_e_pressed=true;doors.update_first_person(.016f,tap);for(int f=0;f<10;++f)doors.update_pressure_doors(.1f);
+        require(doors.pressure_doors_[0].open_fraction>.99f,"Powered E command did not open the hatch");
+        PlacedResource exterior;exterior.kind=ResourceKind::OreDriller;exterior.construction.finish();app.placed_resources_={exterior};
         Recorder solid,faded;app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;app.render_resources(solid);app.habitat_view_mode_=GameApp::HabitatViewMode::None;app.render_resources(faded);
         require(solid.mesh_triangles==faded.mesh_triangles,"Exterior structure changes with the interior cutaway option");
         std::cout<<"480-second day, empty interiors, validated units, recipe conservation, schema49/48, isometric focus, manual/powered doors and exterior hull independence passed\n";
@@ -1280,7 +1423,7 @@ struct UiRegression {
     static void runtime_paths(){
         using namespace game::runtime;
         namespace fs=std::filesystem;
-        const auto folder=fs::temp_directory_path()/fs::u8path("lunar-paths-ü-月-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const auto folder=fs::temp_directory_path()/jsd::utf8_path("lunar-paths-ü-月-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 #ifdef _WIN32
         const std::wstring save_before=_wgetenv(L"GAME_SAVE_DIR")?_wgetenv(L"GAME_SAVE_DIR"):L"";
         const std::wstring config_before=_wgetenv(L"GAME_GRAPHICS_CONFIG")?_wgetenv(L"GAME_GRAPHICS_CONFIG"):L"";
@@ -1291,7 +1434,7 @@ struct UiRegression {
         unsetenv("GAME_SAVE_DIR");
 #endif
         GameHost host;GameApp app(host);
-        require(fs::weakly_canonical(app.save_game_directory())==fs::weakly_canonical(fs::u8path(GAME_SOURCE_ROOT)/"savegames"),"External-engine workspace saves did not resolve to game root");
+        require(fs::weakly_canonical(app.save_game_directory())==fs::weakly_canonical(jsd::utf8_path(GAME_SOURCE_ROOT)/"savegames"),"External-engine workspace saves did not resolve to game root");
         fs::create_directories(folder);
 #ifdef _WIN32
         _wputenv_s(L"GAME_SAVE_DIR",folder.c_str());
@@ -1336,13 +1479,18 @@ struct UiRegression {
         require(button.w>0,"FPS option has no toggle hitbox");
         app.input_.mouse_x=int((button.x+button.w*.5f)*draw.scale);app.input_.mouse_y=int((button.y+button.h*.5f)*draw.scale);app.input_.left_pressed=true;app.render(draw);app.input_={};
         require(app.show_fps_ && load_preferences().show_fps,"FPS toggle did not apply/persist");
-        GameApp restarted(host);restarted.on_start();require(restarted.show_fps_,"FPS preference lost at restart");
+        app.render(draw);float auto_row=-1;for(const auto& d:draw.draws)if(d.type=='T'&&d.text=="AUTOSAVE")auto_row=d.v[1];
+        Rect auto_plus{};for(const auto& d:draw.draws){if(d.type=='R')last={d.v[0],d.v[1],d.v[2],d.v[3]};if(d.type=='T'&&d.text=="+"&&std::abs(d.v[1]-auto_row)<14)auto_plus=last;}
+        require(auto_row>0&&auto_plus.w>0,"Gameplay autosave interval control missing");
+        app.input_.mouse_x=int((auto_plus.x+auto_plus.w*.5f)*draw.scale);app.input_.mouse_y=int((auto_plus.y+auto_plus.h*.5f)*draw.scale);app.input_.left_pressed=true;app.render(draw);app.input_={};
+        require(app.autosave_minutes_==15&&load_preferences().autosave_minutes==15,"Autosave options control did not apply/persist");
+        GameApp restarted(host);restarted.on_start();require(restarted.show_fps_&&restarted.autosave_minutes_==15,"FPS/autosave preference lost at restart");
         app.playfield_.rebuild(64);app.camera_.reset(64);app.screen_=GameApp::Screen::Playfield;app.fps_=60;
         app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,0,0});app.render(draw);
         unsigned gold=0,outline=0;bool fps=false;
         for(const auto& d:draw.draws){
             if(d.type=='T' && d.text=="FPS 60"){fps=true;require(d.v[0]<30 && d.v[1]>draw.h/draw.scale-layout::BUILD_BAR_H-40 && d.v[1]<draw.h/draw.scale-layout::BUILD_BAR_H,"FPS counter is not lower left");}
-            if(d.type=='L' && d.color.r==1.f && d.color.g==.90f && d.color.b==.12f)++gold;
+            if(d.type=='L' && d.color.r==.18f && d.color.g==1.f && d.color.b==.48f && d.v[5]>=3)++gold;
             if(d.type=='L' && d.color.r==.015f && d.v[5]>=4)++outline;
         }
         require(fps && gold>=4 && outline>=4,"FPS or outlined high-contrast crosshair was not drawn");
@@ -1380,8 +1528,8 @@ struct UiRegression {
         app.first_person_.set_fov(500);require(app.first_person_.fov()==110,"FOV maximum was not enforced");
         for(int kind=0;kind<int(HabitatKind::Count);++kind)for(int tier=0;tier<int(HabitatSizeTier::Count);++tier){
             const auto& mesh=app.habitat_models_.mesh(HabitatKind(kind),HabitatSizeTier(tier));
-            require(!mesh.lining.empty() && !mesh.deck.empty() && !mesh.service_metal.empty() && !mesh.lamps.empty() && !mesh.displays.empty(),"A room variant has missing station detail layers: "+std::to_string(kind)+"/"+std::to_string(tier));
-            for(const auto* layer:{&mesh.lining,&mesh.deck,&mesh.service_metal,&mesh.lamps,&mesh.displays}){
+            require(!mesh.lining.empty() && !mesh.deck.empty() && (!mesh.service_metal.empty()||!mesh.overhead_services.empty()) && (!mesh.lamps.empty()||!mesh.overhead_lamps.empty()) && (kind==int(HabitatKind::AirLock)||!mesh.displays.empty()),"A room variant has missing station detail layers: "+std::to_string(kind)+"/"+std::to_string(tier));
+            for(const auto* layer:{&mesh.lining,&mesh.deck,&mesh.service_metal,&mesh.lamps,&mesh.displays,&mesh.overhead_services,&mesh.overhead_lamps}){
                 require(layer->size()%3==0,"Station detail layer is not a triangle list");
                 for(const auto& p:*layer)require(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z),"Station detail layer has invalid geometry");
             }
@@ -1849,6 +1997,715 @@ struct UiRegression {
         std::cout<<"Activity starts/stops, warning/resolution export, overlay input, and independent blueprint bars passed\n";
     }
 
+    static void save_editor(){
+        using namespace runtime;using text_edit::Editor;
+        Editor edit;std::string value="Moon Base";edit.reset(value);InputState in;in.edit_home=true;edit.update(value,in,{});
+        in={};in.text_input="New ";edit.update(value,in,{});require(value=="New Moon Base"&&edit.caret==4,"Text is still append-only");
+        in={};in.edit_right=true;in.key_shift_down=true;for(int i=0;i<4;++i)edit.update(value,in,{});
+        in={};in.edit_copy=true;const auto copied=edit.update(value,in,{});require(copied&&*copied=="Moon","Selection or clipboard copy failed");
+        in={};in.text_input="Lunar";edit.update(value,in,{});require(value=="New Lunar Base","Selection replacement failed");
+        in={};in.edit_undo=true;edit.update(value,in,{});require(value=="New Moon Base","Undo failed");in={};in.edit_redo=true;edit.update(value,in,{});require(value=="New Lunar Base","Redo failed");
+        in={};in.edit_select_all=true;edit.update(value,in,{});in={};in.edit_paste=true;edit.update(value,in,"\xC3\xBC" "ber\nbase");require(value=="\xC3\xBC" "berbase","UTF-8 paste or line filtering failed");
+        edit.move(2,false);in={};in.backspace_pressed=true;edit.update(value,in,{});require(value=="berbase","Backspace split a UTF-8 character");
+        value="abcdef";edit.reset(value);edit.move(2,false);in={};in.delete_pressed=true;edit.update(value,in,{});require(value=="abdef","Forward delete failed");
+        value=std::string(63,'a');edit.reset(value);in={};in.edit_paste=true;edit.update(value,in,"\xC3\xBC");require(value.size()==63,"Paste split a character at the 64-byte name limit");
+        in={};in.text_input="x";edit.update(value,in,{});in.text_input="y";edit.update(value,in,{});require(value.size()==64,"Name limit failed");
+        GameHost host;host.set_clipboard_text("test clipboard");require(host.clipboard_text()=="test clipboard","Headless clipboard contract failed");
+        GameApp app(host);app.game_session_active_=true;app.screen_=GameApp::Screen::SaveGame;app.builder_robots_.resize(1);app.save_game_name_="EditableName";
+        for(const auto size:std::array<Vec2,4>{{{1280,720},{1920,1080},{3440,1440},{3840,2160}}})for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom){
+            app.ui_scale_index_=zoom;Recorder r;r.resize(int(size.x),int(size.y));app.render(r);r.check_bounds("save editor/list layout");
+            r.button("SAVE");r.button("BACK");require(std::any_of(r.draws.begin(),r.draws.end(),[](const auto& d){return d.type=='T'&&d.text.find("EXISTING SAVES")!=std::string::npos;}),"Save dialog has no side list");
+        }
+        app.ui_scale_index_=0;Recorder r;r.resize(1920,1080);app.save_games_={{}};app.save_games_[0].name="Existing colony";app.save_games_[0].version="0.75.0";app.save_name_focus_=false;app.save_list_selected_=0;
+        app.input_={};app.input_.enter_pressed=true;app.render(r);require(app.save_name_focus_&&app.save_status_message_.empty(),"Selecting a list row with Enter wrote a save unexpectedly");
+        std::cout<<"Insert/caret/selection/copy-paste/undo-redo/UTF-8/name limits and 20 save-editor/sidebar scaling cases passed\n";
+    }
+    static void removal_controls(){
+        using namespace runtime;namespace fs=std::filesystem;
+        GameHost host;GameApp app(host);app.playfield_.rebuild(128);app.builder_robots_.resize(1);
+        app.active_game_phase_=GameApp::GamePhase::RobotPreparation;app.game_session_active_=true;
+        app.screen_=GameApp::Screen::Playfield;app.game_speed_=GameApp::GameSpeed::Pause;
+        for(int i=1;i<=3;++i){InputState in;in.key_number_pressed=i;app.update_simulation(0,in);require(int(app.game_speed_)==i-1,"Number key did not set speed");}
+        InputState text;text.text_input="1";app.update_simulation(0,text);require(app.game_speed_==GameApp::GameSpeed::Normal,"Text-key fallback did not set speed");
+        app.game_speed_=GameApp::GameSpeed::Pause;
+        PlacedResource item;item.kind=ResourceKind::SolarPanel;item.position={20,0,20};item.placement_sequence=101;item.construction.finish();app.placed_resources_={item};
+        app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;
+        InputState del;del.delete_pressed=true;app.update_simulation(0,del);require(app.placed_resources_.size()==1&&app.deconstruction_jobs_.size()==1,"DEL did not queue deconstruction");
+        app.deconstruction_jobs_.front().progress=.42f;
+        const auto name="deconstruct-regression-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        std::string error;require(app.save_game_to_name(name,error),error);
+        const auto found=std::find_if(app.save_games_.begin(),app.save_games_.end(),[&](const auto& e){return e.name==name;});require(found!=app.save_games_.end(),"Test save missing");
+        const auto path=found->path;struct Cleanup{fs::path p;~Cleanup(){std::error_code e;fs::remove(p,e);}} cleanup{fs::u8path(path)};
+        GameApp loaded(host);require(loaded.load_game_from_file(path,error),error);
+        require(loaded.deconstruction_jobs_.size()==1&&loaded.deconstruction_jobs_.front().sequence==101&&std::abs(loaded.deconstruction_jobs_.front().progress-.42f)<.001f,"Save lost deconstruction progress");
+        // Use the actual save-manager button hitboxes, not a direct unlink.
+        app.screen_=GameApp::Screen::SaveGame;app.ui_scale_index_=0;app.save_list_scroll_=0;app.save_list_selected_=-1;
+        const auto entry=*found;app.save_games_={entry};Recorder r;r.resize(1920,1080);
+        const auto click=[&](const std::string& label){app.render(r);auto b=r.button(label);app.input_.mouse_x=int((b.x+b.w*.5f)*r.scale);app.input_.mouse_y=int((b.y+b.h*.5f)*r.scale);app.input_.left_pressed=true;app.render(r);app.input_={};};
+        click("DELETE");require(fs::exists(cleanup.p),"Delete did not wait for confirmation");
+        click("CONFIRM");require(!fs::exists(cleanup.p),"Confirmed save deletion failed");
+        std::cout<<"Number shortcuts, DEL queue, in-progress save/load and confirmed save manager deletion passed\n";
+    }
+    static void airlock_transfers(){
+        using namespace runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        for(auto tier:{HabitatSizeTier::Small,HabitatSizeTier::Standard})for(float rotation:{0.f,37.f,90.f}){
+            PlacedHabitat lock;lock.kind=HabitatKind::AirLock;lock.size=tier;lock.rotation_degrees=rotation;lock.construction.finish();app.placed_habitats_={lock};
+            const auto& m=app.habitat_models_.mesh(lock);const float scale=m.footprint_x/10.f,floor=m.walkable_floor_y;
+            for(float sign:{-1.f,1.f})for(const auto* layer:{&m.shell,&m.lining,&m.interior,&m.details,&m.service_metal})for(std::size_t t=0;t+2<layer->size();t+=3){
+                std::vector<Vec3> polygon{(*layer)[t],(*layer)[t+1],(*layer)[t+2]};
+                const float x=sign*3.5f*scale;
+                const std::array<std::pair<Vec3,float>,6> planes{{{{1,0,0},x+.4f*scale},{{-1,0,0},-x+.4f*scale},{{0,0,1},.5f},{{0,0,-1},.5f},{{0,1,0},floor+1.65f},{{0,-1,0},-floor-.06f}}};
+                for(const auto& [n,d]:planes)polygon=mesh_portals::clip(polygon,n,d,false);
+                float area=0;for(std::size_t k=1;k+1<polygon.size();++k)area+=length(cross(polygon[k]-polygon[0],polygon[k+1]-polygon[0]));
+                require(area<1.e-5f,"An overlapping airlock cap/liner/frame still blocks the transfer cabin");
+            }
+            app.pressure_doors_.clear();for(const auto& d:app.habitat_doors(0)){PressureDoorState state;state.door=d;state.open_fraction=1;app.pressure_doors_.push_back(state);}
+            const auto world=[&](float x){return world_math::rotate_y({x,floor,0},rotation);};
+            for(float x=-4.1f*scale;x<4.1f*scale;x+=.05f)require(app.first_person_move_allowed(world(x),world(x+.05f))&&app.first_person_move_allowed(world(x+.05f),world(x)),"Open airlock aisle is not reversible tier="+std::to_string(int(tier))+" rot="+std::to_string(rotation)+" x="+std::to_string(x));
+            for(auto& d:app.pressure_doors_)d.open_fraction=0;
+            const float partition=airlock::partition_x(m);require(!app.first_person_move_allowed(world(partition-.4f),world(partition+.4f)),"Removing duplicate caps bypassed the real pressure seal");
+        }
+        std::cout<<"Both sizes / three rotations: visible and physical transfer clearance with functioning pressure seals passed\n";
+    }
+    static void hatch_interaction(){
+        using namespace runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);app.screen_=GameApp::Screen::Playfield;app.game_speed_=GameApp::GameSpeed::Normal;
+        app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,0,2.0f},0);
+        PressureDoorState d;d.door.position=d.door.wall_position={0,0,0};d.door.normal={0,0,1};d.powered=true;app.pressure_doors_={d};
+        const auto tick=[&](int frames,bool held){InputState in;in.key_e_down=held;for(int i=0;i<frames;++i)app.update_door_interaction(.1f,in);};
+        require(app.manual_door_label().find("PRESS E")!=std::string::npos,"Powered hatch has no E prompt");
+        InputState tap;tap.key_e_pressed=true;app.update_door_interaction(.016f,tap);require(app.pressure_doors_[0].player_request_seconds>0,"Powered E did not create an explicit request");
+        app.pressure_doors_[0].powered=false;app.pressure_doors_[0].player_request_seconds=0;tick(10,true);const auto partial=app.pressure_doors_[0].open_fraction;
+        require(partial>.30f&&partial<.36f,"Manual hold is not a three-second physical crank");tick(10,false);require(app.pressure_doors_[0].open_fraction==partial,"Released crank keeps opening");
+        tick(22,true);require(app.pressure_doors_[0].open_fraction>.999f&&app.door_hold_.complete,"Resumed crank does not complete");tick(20,true);require(app.pressure_doors_[0].open_fraction>.999f,"Held E repeatedly toggles a completed hatch");
+        tick(1,false);tick(10,true);require(app.pressure_doors_[0].open_fraction<.70f&&app.pressure_doors_[0].open_fraction>.63f,"Fresh hold does not crank closed");
+        app.first_person_.spawn({0,0,6},0);tick(10,true);const auto stopped=app.pressure_doors_[0].open_fraction;require(!app.door_hold_.target,"Out-of-reach hold did not cancel");tick(10,true);require(app.pressure_doors_[0].open_fraction==stopped,"Crank continues outside reach");
+        app.first_person_.spawn({0,0,2},0);app.game_speed_=GameApp::GameSpeed::Pause;tick(10,true);require(app.pressure_doors_[0].open_fraction==stopped,"Paused game advances the crank");app.game_speed_=GameApp::GameSpeed::Normal;
+        app.pressure_doors_[0].open_fraction=.8f;app.door_hold_={};app.first_person_.spawn({0,0,.2f},0);app.first_person_.restore_view(0,-65);tick(10,true);require(app.pressure_doors_[0].open_fraction==.8f,"Manual close crushes the controlled body");
+        app.first_person_.spawn({0,0,2},0);app.door_hold_={};app.pressure_doors_[0].open_fraction=0;tick(15,true);
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:std::array<Vec2,3>{{{1280,720},{1920,1080},{3840,2160}}}){
+            Recorder r;r.resize(int(size.x),int(size.y));app.ui_scale_index_=zoom;app.on_resize(r.w,r.h);r.set_2d(app.ui_scale_);app.render_door_interaction(r);r.check_bounds("hatch crank ring");
+            require(std::count_if(r.draws.begin(),r.draws.end(),[](const auto& x){return x.type=='L'&&x.color.r>.9f;})>=23,"Half crank lacks an opening progress ring");
+        }
+        // Both sides of a real airlock stay sealed until explicitly requested.
+        PlacedHabitat lock;lock.kind=HabitatKind::AirLock;lock.construction.finish();lock.supply.power_fraction=1;app.placed_habitats_={lock};app.pressure_doors_.clear();
+        const auto floor=app.habitat_models_.mesh(lock).walkable_floor_y;app.first_person_.spawn({-2.7f,floor,0},90);app.input_.key_w_down=true;
+        for(int i=0;i<30;++i)app.update_pressure_doors(.1f);
+        require(std::all_of(app.pressure_doors_.begin(),app.pressure_doors_.end(),[](const auto& s){return s.open_fraction==0;}),"Approaching an airlock automatically opens it");
+        app.update_door_interaction(.016f,tap);
+        for(int i=0;i<45;++i){app.update_pressure_doors(.1f);int open=0;for(const auto& s:app.pressure_doors_)open+=!pressure_door::sealed(s.open_fraction);require(open<=1,"Powered E bypasses the airlock interlock");}
+        require(std::any_of(app.pressure_doors_.begin(),app.pressure_doors_.end(),[](const auto& s){return s.open_fraction>.99f;}),"Requested airlock hatch never opened after equalizing");
+        lock.supply.power_fraction=0;app.placed_habitats_[0]=lock;app.update_pressure_doors(.1f);app.first_person_.spawn({.3f,floor,0},90);app.door_hold_={};tick(10,true);
+        require(app.door_hold_.blocked&&app.manual_door_label().find("INTERLOCK")!=std::string::npos,"Unpowered opposing hatch ignores the interlock");
+        std::cout<<"Explicit powered E / three-second crank / partial release / retarget / pause / safe close / 15 ring layouts / pressure interlock passed\n";
+    }
+    static void interior_surfaces(){
+        using namespace runtime;HabitatMesh mesh;mesh.walkable_floor_y=0;
+        mesh.interior={{0,0,0},{2,0,0},{2,0,2},{0,0,0},{2,0,2},{0,0,2},{1,0,1},{3,0,1},{3,0,3},{1,0,1},{3,0,3},{1,0,3}};
+        mesh.deck=mesh.interior;interior_finish::finish(mesh);double area=0;
+        for(std::size_t i=0;i<mesh.deck.size();i+=3)area+=length(cross(mesh.deck[i+1]-mesh.deck[i],mesh.deck[i+2]-mesh.deck[i]))*.5;
+        require(std::abs(area-7)<1e-4&&mesh.interior.empty(),"Coplanar deck union duplicates area or leaves overlapping source faces");
+        HabitatModelLibrary library;int cases=0;
+        for(int kind=0;kind<int(HabitatKind::Count);++kind)for(int tier=0;tier<int(HabitatSizeTier::Count);++tier){
+            const auto& m=library.mesh(HabitatKind(kind),HabitatSizeTier(tier));require(!m.deck.empty(),"Habitat has no finished deck");
+            for(const auto& s:m.stations)require(s.first[0]+s.count[0]<=m.interior.size(),"Deck consolidation damaged station ranges");
+            for(float x=-m.footprint_x*.4f;x<m.footprint_x*.4f;x+=.413f)for(float z=-m.footprint_z*.4f;z<m.footprint_z*.4f;z+=.397f){
+                const Vec3 p{x,0,z};int hits=0;
+                for(std::size_t i=0;i<m.deck.size();i+=3){const auto a=m.deck[i],b=m.deck[i+1],c=m.deck[i+2];
+                    const auto ab=interior_finish::side(a,b,p),bc=interior_finish::side(b,c,p),ca=interior_finish::side(c,a,p);
+                    if((ab>1e-5&&bc>1e-5&&ca>1e-5)||(ab<-1e-5&&bc<-1e-5&&ca<-1e-5))++hits;
+                }require(hits<=1,"Habitat deck still contains coplanar overlapping finishes");
+            }++cases;
+        }
+        std::cout<<cases<<" habitat size/type decks: unique planar coverage, preserved station ranges and partial-overlap union passed\n";
+    }
+    static void fpv_alerts(){
+        using namespace runtime;GameHost host;GameApp app(host);
+        app.screen_=GameApp::Screen::Playfield;app.first_person_mode_=GameApp::FirstPersonMode::Active;
+        app.controlled_astronaut_=0;app.astronaut_views_[0].present=true;
+        auto& a=app.test_astronauts_[0];
+        const std::array<std::string,5> labels{"LOW HEALTH","LOW OXYGEN","LOW FOOD","LOW WATER","LOW REST"};
+        const auto render=[&](Recorder& r){r.begin_frame({});app.on_resize(r.w,r.h);app.render_first_person_alerts(r);};
+        const auto caption_count=[&](const Recorder& r,const std::string& text){return std::count_if(r.draws.begin(),r.draws.end(),[&](const auto& d){return d.type=='T'&&d.text==text;});};
+        const auto reset=[&](){a={};app.placed_habitats_.clear();};
+        Recorder r;
+        reset();render(r);require(r.draws.empty(),"Healthy FPV shows critical warnings");
+        a.health=.20f;a.suit_oxygen_kg=kSuitOxygenCapacityKg*.20;a.hunger=a.thirst=.80f;a.fatigue=kCrewExhausted*.80f;
+        render(r);require(r.draws.empty(),"Exactly 20% reserves incorrectly trigger below-20% alerts");
+        int cases=0;
+        for(int zoom=0;zoom<layout::UI_SCALE_COUNT;++zoom)for(const auto size:std::array<Vec2,6>{{{1024,768},{1280,720},{1920,1080},{2560,1440},{3440,1440},{3840,2160}}})for(unsigned mask=0;mask<32;++mask){
+            reset();app.ui_scale_index_=zoom;r.resize(int(size.x),int(size.y));app.show_fps_=true;
+            a.health=mask&1?.199f:.201f;a.suit_oxygen_kg=kSuitOxygenCapacityKg*(mask&2?.199:.201);
+            a.hunger=mask&4?.801f:.799f;a.thirst=mask&8?.801f:.799f;a.fatigue=kCrewExhausted*(mask&16?.801f:.799f);
+            render(r);r.check_bounds("FPV critical alerts");
+            for(unsigned i=0;i<labels.size();++i)require(caption_count(r,labels[i])==(mask&(1u<<i)?2:0),"A critical need is missing or a recovered need is still warned");
+            if(mask){
+                require(r.draws.size()>12&&r.draws[0].type=='R'&&r.draws[0].v[0]==0&&r.draws[0].v[1]==0,"Critical needs lack a screen border");
+                const auto crew=app.astronaut_status_rect();const float bottom=r.h/app.ui_scale_-layout::BUILD_BAR_H;
+                for(const auto& d:r.draws)if(d.type=='T'){
+                    require(d.color.r>.9f&&d.color.g<.2f&&d.color.b<.2f&&d.color.a==1,"Critical caption is not persistent red");
+                    require(d.v[0]+d.v[2]<crew.x&&d.v[1]+d.v[3]<bottom-29,"Warning covers crew controls or FPS/build bar");
+                }
+                require(std::count_if(r.draws.begin(),r.draws.end(),[](const auto& d){return d.type=='L';})>0||mask==1,"Critical warning is missing its need icon");
+            }else require(r.draws.empty(),"Recovered reserves retained border");
+            ++cases;
+        }
+        reset();a.health=.1f;app.ui_time_seconds_=.25;render(r);const float bright=r.draws[0].color.a;
+        app.ui_time_seconds_=.75;render(r);require(bright-r.draws[0].color.a>.7f,"Border is not flashing on UI time");
+        require(caption_count(r,"LOW HEALTH")==2&&r.draws.back().color.a==1,"Caption disappears in dim flash phase");
+        app.controlled_astronaut_=1;app.astronaut_views_[1].present=true;app.test_astronauts_[1]={};render(r);require(r.draws.empty(),"Warnings come from previously controlled astronaut");app.controlled_astronaut_=0;
+        app.first_person_mode_=GameApp::FirstPersonMode::Off;render(r);require(r.draws.empty(),"Alerts remain outside FPV");
+        app.first_person_mode_=GameApp::FirstPersonMode::Active;app.screen_=GameApp::Screen::SaveGame;render(r);require(r.draws.empty(),"Alerts appear over menus");app.screen_=GameApp::Screen::Playfield;
+        reset();a.suited=false;PlacedHabitat h;h.kind=HabitatKind::OxygenGeneratorDome;h.construction.finish();h.supply.volume_m3=100;
+        h.supply.oxygen_kg=h.supply.volume_m3*kOxygenKgPerM3*.19;app.placed_habitats_={h};a.position={0,app.habitat_models_.mesh(h).walkable_floor_y,0};
+        render(r);require(caption_count(r,"LOW OXYGEN")==2,"Unsuited cabin oxygen is not monitored");
+        app.placed_habitats_[0].supply.oxygen_kg=100*kOxygenKgPerM3; a.suit_oxygen_kg=0;render(r);require(r.draws.empty(),"Unused empty suit falsely warns in healthy cabin air");
+        app.placed_habitats_.clear();render(r);require(caption_count(r,"LOW OXYGEN")==2,"Unsuited vacuum fails to warn");
+        a.suited=true;a.suit_oxygen_kg=kSuitOxygenCapacityKg;render(r);require(r.draws.empty(),"Full suit warns because exterior has no cabin air");
+        std::cout<<cases<<" threshold combinations / resolution / zoom cases; flash phases, crew switch, menus and suit/cabin oxygen passed\n";
+    }
+    static void saved_fpv_recovery(const std::string& path){
+        using namespace runtime;GameHost host;GameApp app(host);std::string error;require(app.load_game_from_file(path,error),error);
+        require(app.last_fpv_astronaut_==0&&app.astronaut_present(0)&&app.test_astronauts_[0].health==0,"Provided save no longer reproduces deceased FPV");
+        const auto original=app.test_astronauts_[0].position;const auto buildings=app.placed_habitats_.size();
+        app.enter_first_person_mode();require(app.first_person_mode_==GameApp::FirstPersonMode::Off&&app.selected_astronaut_==0,"Deceased crew did not expose recovery status");
+        require(app.selection_kind_==GameApp::SelectionKind::None,"Dead crew status retained a competing structure selection");
+        for(const auto size:std::array<std::pair<int,int>,3>{{{640,360},{960,540},{1920,1080}}}){
+            app.on_resize(size.first,size.second);const auto q=app.build_queue_panel_rect(),a=app.astronaut_status_rect();
+            require(q.x+q.w<a.x&&q.x>=0,"Build queue covers the deceased crew recovery controls");
+        }
+        Recorder r;r.set_2d(1);app.on_resize(1920,1080);app.render_astronaut_status(r,{});const auto button=r.button("NEW EXPLORER");
+        require(std::any_of(r.draws.begin(),r.draws.end(),[](const auto& d){return d.type=='T'&&d.text.find("DECEASED")!=std::string::npos;}),"Death is still presented as a silent input freeze");
+        app.ui_input_.mouse_x=int(button.x+button.w*.5f);app.ui_input_.mouse_y=int(button.y+button.h*.5f);app.ui_input_.left_pressed=true;app.render_astronaut_status(r,{});app.ui_input_={};
+        require(app.first_person_mode_==GameApp::FirstPersonMode::Active&&app.controlled_astronaut_==1&&app.test_astronauts_[0].health==0&&length(app.test_astronauts_[0].position-original)<.001f&&app.placed_habitats_.size()==buildings,"Explorer dispatch resurrected/moved the casualty or lost the colony");
+        const auto start=app.first_person_.feet_position();require(world_math::distance_xz(start,app.crew_cache_position())<5&&app.first_person_move_allowed(start,start),"Replacement did not start at a clear lander-side position");
+        float moved=0;for(int direction=0;direction<4;++direction){app.first_person_.spawn(start,90.f*direction);InputState input;input.key_w_down=true;
+            for(int frame=0;frame<60;++frame)app.update_first_person(1.f/60,input);moved=std::max(moved,length(app.first_person_.feet_position()-start));}
+        require(moved>1.f,"Replacement FPV remains immobilized");const int current=app.controlled_astronaut_;app.test_astronauts_[current].health=0;app.update_first_person(1.f/60,{});
+        require(app.first_person_mode_==GameApp::FirstPersonMode::Off&&app.selected_astronaut_==current,"New death left the player trapped in FPV");
+        std::cout<<"Provided 0.74 save: health=0 cause reproduced; explicit new explorer, living movement and safe FPV exit passed\n";
+    }
+    static void habitat_domes(const std::string& path){
+        using namespace runtime;GameHost host;GameApp app(host);std::string error;require(app.load_game_from_file(path,error),error);
+        require(app.placed_habitats_.size()==3,"Supplied colony did not load intact");
+        const auto buildings=app.placed_habitats_.size();auto& oxygen=app.placed_habitats_[1];require(oxygen.kind==HabitatKind::OxygenGeneratorDome&&oxygen.units.empty(),"Fixture no longer reproduces empty oxygen dome");
+        InteriorUnit generator;generator.kind=InteriorUnitKind::OxygenGenerator;
+        require(app.find_interior_unit_bay(1,generator),"Supplied save still has no legal oxygen-generator bay");
+        const auto iron=app.resources_.amount(MaterialResource::Iron);require(app.place_interior_unit(1,generator,error),error);
+        require(app.placed_habitats_.size()==buildings&&oxygen.units.size()==1&&app.resources_.amount(MaterialResource::Iron)==iron-interior_unit_profile(generator.kind).cost.iron,"Generator placement lost buildings or charged incorrect materials");
+        struct Capture:Recorder {std::size_t metal{},shield{};bool faded{};void draw_mapped_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color c,const LunarSurfaceMapping&) override{if(m==LunarMaterial::Alloy)metal+=v.size();if(m==LunarMaterial::SolarShield)shield+=v.size();faded|=!v.empty()&&c.a>0&&c.a<.99f;}};
+        for(int k=0;k<int(HabitatKind::Count);++k){const auto& m=app.habitat_models_.mesh(HabitatKind(k));
+            require(m.dome_radii.x>0&&m.dome_radii.z>0&&!m.hull_frames.empty()&&m.dome_radii.y==0,"Incorrect pressure-room profile");
+            Capture full,cut;app.first_person_mode_=GameApp::FirstPersonMode::Off;app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;app.render_habitat_mesh(full,m,{},0,false,true,false,kConstructionSteps,nullptr,false,HabitatKind(k));
+            app.habitat_view_mode_=GameApp::HabitatViewMode::None;app.render_habitat_mesh(cut,m,{},0,false,true,false,kConstructionSteps,nullptr,false,HabitatKind(k));
+            require(full.metal-cut.metal==m.hull_frames.size()+m.overhead_services.size()+m.overhead_lamps.size()&&cut.shield==0&&!cut.faded,"Hide hulls retains structural frames or ghost hulls kind="+std::to_string(k));
+        }
+        app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();app.utility_network_.clear();
+        float previous=0;
+        for(const auto size:{InteriorUnitSize::VerySmall,InteriorUnitSize::Small,InteriorUnitSize::Medium}){
+            PlacedHabitat h;h.kind=HabitatKind::OxygenGeneratorDome;h.size=HabitatSizeTier::Small;h.construction.finish();h.oxygen_unit_fitted=true;app.placed_habitats_={h};
+            const auto& m=app.habitat_models_.mesh(h);generator={};generator.kind=InteriorUnitKind::OxygenGenerator;generator.size=size;
+            require(app.find_interior_unit_bay(0,generator),"A generator size cannot fit the restored Small dome");
+            const auto& profile=interior_unit_profile(generator);require(profile.size.x>previous,"Generator physical sizes do not increase");previous=profile.size.x;
+            require(std::abs(interior_unit_mesh(generator).height-profile.size.y)<.001f,"Rendered generator and collision dimensions disagree");
+            require(std::abs(interior_unit_wall_yaw(m,generator.position)-generator.rotation_degrees)<.01f,"Generator is not hull aligned");
+            const auto iron=app.resources_.amount(MaterialResource::Iron);require(app.place_interior_unit(0,generator,error),error);
+            require(app.resources_.amount(MaterialResource::Iron)==iron-profile.cost.iron,"Generator size charged the wrong cost");
+            auto& installed=app.placed_habitats_[0].units[0];installed.water_litres=3.75;installed.progress=.37;installed.batch_active=true;installed.batches=12;
+            GameApp roundtrip(host);roundtrip.playfield_.rebuild(128);roundtrip.placed_habitats_=app.placed_habitats_;roundtrip.builder_robots_.resize(1);
+            require(roundtrip.save_game_to_name("generator-size-roundtrip",error),error);
+            const auto path=std::filesystem::path(roundtrip.save_game_directory())/"generator-size-roundtrip.gmsave";GameApp loaded(host);
+            require(loaded.load_game_from_file(path.string(),error),error);
+            const auto& saved=loaded.placed_habitats_[0];require(saved.size==HabitatSizeTier::Small&&saved.units.size()==1&&saved.units[0].size==size&&saved.units[0].water_litres==3.75&&saved.units[0].progress==.37&&saved.units[0].batches==12&&saved.units[0].batch_active,"Schema55 lost unit size or inventory");
+            if(size==InteriorUnitSize::Medium){
+                std::ifstream input(path,std::ios::binary);std::string bytes{std::istreambuf_iterator<char>(input),{}};
+                std::string record;const auto pod=[&](auto value){record.append(reinterpret_cast<const char*>(&value),sizeof(value));};
+                const auto& u=roundtrip.placed_habitats_[0].units[0];pod(std::uint8_t(u.kind));pod(u.position.x);pod(u.position.y);pod(u.position.z);pod(u.rotation_degrees);pod(std::uint8_t(u.enabled));pod(std::uint8_t(u.batch_active));pod(u.progress);pod(u.ore_kind);pod(u.grow_bay);pod(u.batches);pod(u.water_litres);pod(u.food_kg);pod(std::uint8_t(u.size));
+                const auto pos=bytes.find(record);require(pos!=std::string::npos&&bytes.find(record,pos+1)==std::string::npos,"Cannot locate synthetic legacy unit record");
+                bytes.erase(pos+record.size()-1,1);const std::uint32_t schema=53;std::memcpy(bytes.data()+8,&schema,sizeof(schema));
+                const auto version=bytes.find("0.80.0");if(version!=std::string::npos)bytes.replace(version,6,"0.79.0");
+                const auto legacy=path.parent_path()/"generator-schema53.gmsave";{std::ofstream output(legacy,std::ios::binary);output.write(bytes.data(),bytes.size());}
+                require(loaded.load_game_from_file(legacy.string(),error),error);std::filesystem::remove(legacy);
+                const auto& old=loaded.placed_habitats_[0].units[0];require(old.size==InteriorUnitSize::Medium&&old.water_litres==3.75&&old.batches==12,"An old generator was downgraded or lost inventory");
+            }
+            std::filesystem::remove(path);
+            // Exercise production, demand and water conservation through the real network.
+            GameApp sim(host);sim.playfield_.rebuild(128);auto clock=sim.status_.state();clock.hour=12;clock.crew_current=0;sim.status_.restore(clock);
+            h.size=HabitatSizeTier::Standard;h.units={generator};sim.placed_habitats_={h};
+            PlacedResource tank;tank.kind=ResourceKind::WaterStorage;tank.position={20,0,0};tank.construction.finish();tank.supply.water_litres=80;
+            auto solar=tank;solar.kind=ResourceKind::SolarPanel;solar.position={30,0,0};solar.supply.water_litres=0;sim.placed_resources_={tank,solar};
+            UtilityConnection pipe;pipe.endpoint_a.kind=UtilityEndpointKind::Habitat;pipe.endpoint_a.index=0;pipe.endpoint_b.kind=UtilityEndpointKind::Resource;pipe.endpoint_b.index=0;pipe.path={{0,0,0},{20,0,0}};pipe.construction.finish();auto power=pipe;power.endpoint_a.kind=UtilityEndpointKind::Resource;power.endpoint_a.index=0;power.endpoint_b.index=1;power.path={{20,0,0},{30,0,0}};
+            sim.utility_network_.restore_connections({pipe,power});sim.update_supply_simulation(20);
+            const auto& supply=sim.placed_habitats_[0].supply;require(std::abs(supply.oxygen_produced_kg_per_day-oxygen_unit_capacity(generator))<1e-5,"Oxygen output ignores generator size");
+            require(std::abs(supply.water_processed_litres_per_day-oxygen_unit_capacity(generator)*1.125)<1e-5,"Sized oxygen plant breaks water balance");
+        }
+        for(const auto kind:{HabitatKind::Factory,HabitatKind::Manufactory,HabitatKind::ProcessingFacility,HabitatKind::Laboratory,HabitatKind::CantineDome}){
+            PlacedHabitat h;h.kind=kind;h.rotation_degrees=37;h.construction.finish();app.placed_habitats_={h};
+            for(int n=0;n<int(InteriorUnitKind::Count);++n){const auto type=InteriorUnitKind(n);if(!interior_unit_allowed(kind,type)||!interior_unit_wall_aligned(type))continue;
+                InteriorUnit u;u.kind=type;require(app.find_interior_unit_bay(0,u),"A processing unit has no service bay");
+                require(app.interior_unit_position_clear(0,u,error),error);require(std::abs(u.position.y-app.habitat_models_.mesh(h).walkable_floor_y)<.001f,"Machine is not level with the deck");
+            }
+        }
+        {
+            PlacedHabitat small;small.kind=HabitatKind::ProcessingFacility;small.size=HabitatSizeTier::Small;small.construction.finish();app.placed_habitats_={small};
+            InteriorUnit refinery;refinery.kind=InteriorUnitKind::OreRefinery;
+            require(app.find_interior_unit_bay(0,refinery),"Small processing facility still has no legal ore-refinery bay");
+            require(app.interior_unit_position_clear(0,refinery,error),error);
+            InteriorUnit plastic;plastic.kind=InteriorUnitKind::PlasticFabricator;
+            require(app.find_interior_unit_bay(0,plastic),"Processing facility has no legal plastic-processing bay");
+            require(app.interior_unit_position_clear(0,plastic,error),error);
+        }
+        const auto& small=app.habitat_models_.mesh(HabitatKind::OxygenGeneratorDome,HabitatSizeTier::Small);const auto& standard=app.habitat_models_.mesh(HabitatKind::OxygenGeneratorDome,HabitatSizeTier::Standard);
+        require(std::abs(small.footprint_x/standard.footprint_x-.76f)<.0001f,"Oxygen dome is still enlarged");
+        require(std::string(habitat_size_name(HabitatKind::OxygenGeneratorDome,HabitatSizeTier::Standard))=="STANDARD","Dome label still describes the generator size");
+        for(std::size_t i=0;i<app.build_catalog_.items().size();++i)if(app.build_catalog_.items()[i].kind==BuildObjectKind::Habitat&&app.build_catalog_.items()[i].habitat_kind==HabitatKind::OxygenGeneratorDome)app.build_catalog_.select(int(i));
+        app.placement_habitat_size_=HabitatSizeTier::Small;InputState wheel;wheel.wheel=1;
+        for(const auto expected:{HabitatSizeTier::Standard,HabitatSizeTier::Mid,HabitatSizeTier::Big,HabitatSizeTier::Small})require(app.update_placement_controls(wheel)&&app.placement_habitat_size_==expected,"Original dome size selection was not restored");
+        PlacedHabitat h;h.kind=HabitatKind::OxygenGeneratorDome;h.size=HabitatSizeTier::Small;h.construction.finish();app.placed_habitats_={h};app.on_resize(1920,1080);app.selection_kind_=GameApp::SelectionKind::Habitat;app.selected_habitat_=0;
+        Recorder ui;ui.set_2d(1);app.render_interior_unit_panel(ui,0,20,100,350);const auto button=ui.button("VERY SMALL");
+        app.ui_input_.mouse_x=int(button.x+button.w*.5f);app.ui_input_.mouse_y=int(button.y+button.h*.5f);app.ui_input_.left_pressed=true;app.render_interior_unit_panel(ui,0,20,100,350);app.ui_input_={};
+        require(app.interior_unit_size_==InteriorUnitSize::VerySmall&&app.placed_habitats_[0].size==HabitatSizeTier::Small,"Generator selector changed the dome instead of the machine");
+        std::cout<<"Restored dome sizing; three generator meshes/costs/output/water balances; schema55 roundtrip and schema53 medium migration; internal size UI passed\n";
+    }
+
+
+
+    static void autosave(){
+        namespace fs=std::filesystem;using namespace runtime;
+        const auto folder=fs::temp_directory_path()/fs::path(u8"lunar autosaves ü")/std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        struct Scope {
+            fs::path folder;
+#ifdef _WIN32
+            std::wstring previous=_wgetenv(L"GAME_SAVE_DIR")?_wgetenv(L"GAME_SAVE_DIR"):L"";
+#else
+            std::string previous=std::getenv("GAME_SAVE_DIR")?std::getenv("GAME_SAVE_DIR"):"";
+#endif
+            ~Scope(){
+#ifdef _WIN32
+                _wputenv_s(L"GAME_SAVE_DIR",previous.c_str());
+#else
+                if(previous.empty())unsetenv("GAME_SAVE_DIR");else setenv("GAME_SAVE_DIR",previous.c_str(),1);
+#endif
+                std::error_code ec;fs::remove_all(folder,ec);
+            }
+        } scope{folder};
+#ifdef _WIN32
+        _wputenv_s(L"GAME_SAVE_DIR",folder.c_str());
+#else
+        setenv("GAME_SAVE_DIR",folder.c_str(),1);
+#endif
+        GameHost host;GameApp app(host);app.playfield_size_=64;app.start_new_game();
+        app.game_speed_=GameApp::GameSpeed::Normal;
+        require(app.autosave_minutes_==10,"Autosave default is not ten minutes");
+        std::string error;require(app.save_game_to_name("Autosave 1",error),error);
+        const auto manual=app.save_games_.front().path;std::ifstream before_file(jsd::utf8_path(manual),std::ios::binary);
+        const std::string before{std::istreambuf_iterator<char>(before_file),{}};before_file.close();
+        app.update_autosave(599);require(!fs::exists(folder/"autosaves"),"Autosave ran before the real ten-minute deadline");
+        app.game_speed_=GameApp::GameSpeed::Pause;app.update_autosave(900);require(app.autosave_elapsed_==599,"Paused play advances autosave");
+        app.game_speed_=GameApp::GameSpeed::Fast;app.screen_=GameApp::Screen::Settings;app.update_autosave(900);require(app.autosave_elapsed_==599,"Menu time advances autosave");
+        app.screen_=GameApp::Screen::Playfield;app.update_autosave(1);require(app.autosave_elapsed_==0,"Autosave did not run exactly at deadline");
+        app.refresh_save_games();require(app.save_games_.size()==2,"Autosave missing from ordinary load list");
+        for(int i=0;i<5;++i)app.update_autosave(600);
+        int automatic=0;for(const auto& save:app.save_games_)if(jsd::utf8_path(save.path).parent_path()==folder/"autosaves")++automatic;
+        require(automatic==3&&app.save_games_.size()==4,"Automatic rotation is not bounded to three separate slots");
+        std::ifstream after_file(jsd::utf8_path(manual),std::ios::binary);require(std::string(std::istreambuf_iterator<char>(after_file),{})==before,"Autosave overwrote a manual save with the same name");after_file.close();
+        const auto auto_entry=std::find_if(app.save_games_.begin(),app.save_games_.end(),[&](const auto& save){return jsd::utf8_path(save.path).parent_path()==folder/"autosaves";});
+        GameApp restored(host);restored.autosave_minutes_=25;restored.autosave_elapsed_=99;
+        require(restored.load_game_from_file(auto_entry->path,error),error);
+        require(restored.autosave_minutes_==25&&restored.autosave_elapsed_==0,"Loading progress overwrites autosave settings or retains another session's timer");
+        app.autosave_minutes_=0;app.update_autosave(900);require(app.autosave_elapsed_==0,"Disabled autosave ran");
+        app.autosave_minutes_=1;InputState real;real.frame_seconds=60;app.update(0,real);
+        require(app.autosave_elapsed_==0,"Autosave uses clamped simulation delta instead of the actual frame duration");
+        fs::remove_all(folder/"autosaves");{std::ofstream blocked(folder/"autosaves");blocked<<"blocked";}
+        app.update_autosave(60);require(app.autosave_notice_.find("FAILED")!=std::string::npos,"Failed autosave was silently reported as success");
+        require(fs::exists(jsd::utf8_path(manual)),"Failed autosave removed manual progress");
+        std::cout<<"Autosave default/deadline, real-time speed independence, pause/menus, three-slot rotation, manual-save isolation, load/reset, disable and failure reporting passed\n";
+    }
+
+    static void airlock_access(){
+        using namespace runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        struct Capture:Recorder {
+            std::size_t upper{},alloy{};
+            void draw_lunar_surface(const std::vector<Vec3>& p,LunarMaterial m,Color)override{
+                if(m==LunarMaterial::SolarShield)upper+=p.size();
+                if(m==LunarMaterial::Alloy)alloy+=p.size();
+            }
+        };
+        for(auto tier:{HabitatSizeTier::Small,HabitatSizeTier::Standard})for(float rotation:{0.f,37.f,90.f}){
+            app.corridor_network_.clear();PlacedHabitat h;h.kind=HabitatKind::AirLock;h.size=tier;h.rotation_degrees=rotation;h.construction.finish();app.placed_habitats_={h};
+            const auto& m=app.habitat_models_.mesh(h);const auto doors=app.habitat_doors(0);
+            app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;Capture plain,selected,cut;
+            app.render_habitat_mesh(plain,m,{},rotation,false,true,false,kConstructionSteps,&doors,false,HabitatKind::AirLock);
+            app.render_habitat_mesh(selected,m,{},rotation,false,true,true,kConstructionSteps,&doors,false,HabitatKind::AirLock);
+            require(plain.upper>0&&selected.upper==plain.upper&&selected.alloy==plain.alloy,"Selecting airlock hides its full hull or load frames");
+            app.habitat_view_mode_=GameApp::HabitatViewMode::None;app.render_habitat_mesh(cut,m,{},rotation,false,true,true,kConstructionSteps,&doors,false,HabitatKind::AirLock);
+            require(cut.upper==0&&cut.alloy<plain.alloy,"Explicit airlock no-hull mode retains upper surface/frame");
+            for(int sign:{-1,1}){
+                const auto d=airlock::end_door(h,m,sign);require(app.airlock_access_enabled(0,d),"Isolated airlock end lacks built access");
+                const auto collar=airlock::fitted_collar(d);require(collar.size()>100,"Fixed hatch has no skin-to-frame collar");
+                bool reaches_skin=false,reaches_seat=false;for(const auto p:collar){const auto q=world_math::rotate_y(p-h.position,-rotation);
+                    reaches_skin|=std::abs(q.x)<m.dome_radii.x-.03f;reaches_seat|=std::abs(q.x)>m.dome_radii.x;}
+                require(reaches_skin&&reaches_seat,"Door collar does not bridge the pressure wall and jamb");
+                const float run=.32f*std::ceil(m.walkable_floor_y/.16f);
+                const auto top=d.wall_position+d.normal*.08f,bottom=d.wall_position+d.normal*(run-.08f);
+                require(std::abs(app.first_person_floor_height(top)-m.walkable_floor_y)<.001f&&app.first_person_floor_height(bottom)<.17f,"Built airlock stair floor does not match its tread tops");
+            }
+            const auto d=airlock::end_door(h,m,1);CorridorBuildAnchor a{CorridorEndpointKind::Habitat,0,d.wall_position},b{CorridorEndpointKind::OpenDoor,0,d.wall_position+d.normal*15};
+            require(app.corridor_network_.build_corridor(a,b,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"Airlock access fixture connection");
+            require(app.airlock_access_enabled(0,d),"Blueprint corridor removed the stairs before being built");
+            app.corridor_network_.mutable_connections().front().construction.finish();require(!app.airlock_access_enabled(0,d)&&app.airlock_access_enabled(0,airlock::end_door(h,m,-1)),"Connected sleeve duplicates stair or removes opposite access");
+        }
+        for(float y:{0.f,.6f,1.8f}){
+            CorridorMesh m;corridor_detail::append_ring(m,{0,y,0},{1,0,0});
+            bool ground=false,top=false;for(auto p:m.details){ground|=p.y<=.001f&&std::abs(p.z)>1.05f;top|=std::abs(p.y-y-.17f)<.1f&&std::abs(p.z)>1.05f;}
+            require(ground&&top,"Elevated corridor support does not join ground and deck");
+        }
+        std::cout<<"Airlock full-hull selection, explicit cutaway, fitted pressure-wall collars, built stair floor, completed sleeve handoff and elevated ground-bearing corridor supports passed\n";
+    }
+
+    static void battery_doors(){
+        using namespace runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        auto clock=app.status_.state();clock.hour=0;clock.crew_current=0;app.status_.restore(clock);
+        PlacedHabitat h;h.kind=HabitatKind::AirLock;h.construction.finish();app.placed_habitats_={h};
+        PlacedResource battery;battery.kind=ResourceKind::PowerStorage;battery.position={12,0,0};battery.construction.finish();battery.supply.energy_kwh=2;
+        app.placed_resources_={battery};
+        UtilityConnection feed;feed.kind=UtilityKind::SupplyChannel;feed.construction.finish();feed.endpoint_a.kind=UtilityEndpointKind::Habitat;feed.endpoint_a.index=0;
+        feed.endpoint_b.kind=UtilityEndpointKind::Resource;feed.endpoint_b.index=0;feed.path={{0,0,0},{12,0,0}};app.utility_network_.restore_connections({feed});
+        app.update_supply_simulation(0);require(app.airlock_powered(0),"Battery-fed airlock turns unpowered at night without charging");
+        app.update_pressure_doors(.1f);require(app.pressure_doors_.size()==4,"Battery door fixture missing seals");
+        for(const auto& door:app.pressure_doors_)require(door.powered,"Battery-fed hatch is marked manual/unpowered");
+        // A high grid load reduces allocation, but low-power door control remains available.
+        std::vector<UtilityConnection> feeds{feed};
+        for(int i=0;i<4;++i){PlacedResource driller;driller.kind=ResourceKind::OreDriller;driller.position={float(20+i*6),0,0};driller.construction.finish();app.placed_resources_.push_back(driller);
+            auto link=feed;link.endpoint_a.kind=UtilityEndpointKind::Resource;link.endpoint_a.index=0;link.endpoint_b.index=i+1;link.path={battery.position,driller.position};feeds.push_back(std::move(link));}
+        app.utility_network_.restore_connections(std::move(feeds));
+        app.update_supply_simulation(0);require(app.placed_habitats_[0].supply.power_fraction>0&&app.placed_habitats_[0].supply.power_fraction<.99,"Brownout fixture has no partial allocation");
+        require(app.airlock_powered(0),"Partial grid load disables battery-backed door automation");
+        require(app.interior_light_level(0)>.17f,"Night lighting lost under battery-only brownout");
+        const auto before=app.placed_resources_[0].supply.energy_kwh;app.update_supply_simulation(1);
+        require(app.placed_resources_[0].supply.energy_kwh<before,"Lighting does not draw stored energy");
+        app.placed_habitats_[0].power_enabled=false;require(!app.airlock_powered(0),"Disabled airlock still powers doors");app.placed_habitats_[0].power_enabled=true;
+        app.placed_resources_[0].supply.energy_kwh=0;app.update_supply_simulation(0);require(!app.airlock_powered(0),"Empty grid still powers doors");require(app.interior_light_level(0)==0,"Empty grid still powers lights");
+        app.placed_resources_[0].supply.energy_kwh=2;app.utility_network_.clear();app.update_supply_simulation(0);require(!app.airlock_powered(0),"Disconnected battery remotely powers door");require(app.interior_light_level(0)==0,"Disconnected battery remotely powers light");
+        std::cout<<"Battery-only night doors, partial grid allocation, disabled power, depleted battery and disconnected-grid behavior passed\n";
+    }
+
+    static void robot_crew(){
+        using namespace runtime;GameHost host;
+        const auto setup=[&](GameApp& app,int builders,int carriers){
+            app.playfield_.rebuild(128);app.starting_robot_count_=std::max(1,builders);app.starting_carrier_count_=std::max(1,carriers);
+            app.reset_builder_robot_and_starter_stash();app.ground_resource_piles_.clear();
+            std::erase_if(app.builder_robots_,[&](const auto& r){return (r.role==RobotRole::Constructor&&!builders)||(r.role==RobotRole::Carrier&&!carriers);});
+            for(std::size_t i=0;i<app.builder_robots_.size();++i){auto& r=app.builder_robots_[i];r.position={-28,0,-18+float(i)*5};r.visual_initialized=false;}
+            app.ground_resource_piles_={{MaterialResource::Iron,300,{-18,0,-4},.4f,1},{MaterialResource::Copper,300,{-18,0,4},.4f,2}};
+            for(int i=0;i<3;++i){PlacedResource job;job.kind=ResourceKind::SolarPanel;job.position={12+float(i)*14,0,18};job.placement_sequence=10+i;
+                job.resource_plan.total_steps=kConstructionSteps;for(auto& step:job.resource_plan.steps)step.iron=10;app.placed_resources_.push_back(job);}
+        };
+        {
+            GameApp app(host);setup(app,0,2);app.update_builder_robot(1.f/60);
+            const auto& a=app.builder_robots_[0];const auto& b=app.builder_robots_[1];
+            require(a.target.valid()&&b.target.valid()&&!a.target.same_as(b.target),"Carriers serialized behind the same reserved blueprint");
+            require(a.logistics_reservation.iron>0&&b.logistics_reservation.iron>0,"Independent carriers did not publish physical material leases");
+            std::int64_t leased=0;for(const auto& r:app.builder_robots_)leased+=r.logistics_reservation.iron;
+            require(leased<=300,"Crew reserved more source iron than exists");
+        }
+        {
+            GameApp app(host);setup(app,0,2);auto& active=app.builder_robots_[0];active.target={ConstructionTargetKind::Resource,0};
+            active.mode=BuilderRobotMode::Fetching;active.logistics_reservation=app.placed_resources_[0].resource_plan.remaining(0);active.cargo_committed_to_build=true;
+            active.route_resolution_elapsed=3;active.blocked_elapsed=3;app.update_builder_robot(1.f/60);
+            require(app.builder_robots_[1].target.same_as({ConstructionTargetKind::Resource,1}),"Slow path resolution silently released a peer's live material lease");
+        }
+        {
+            GameApp app(host);setup(app,0,1);app.placed_resources_[0].kind=ResourceKind::StorageDome;
+            app.placed_resources_[1].kind=ResourceKind::StorageGate;app.placed_resources_[1].storage_parent_index=0;
+            app.toggle_construction_priority({ConstructionTargetKind::Resource,1});app.update_builder_robot(1.f/60);
+            require(app.builder_robots_[0].target.same_as({ConstructionTargetKind::Resource,0}),"Prioritized dependent job starved its unfinished prerequisite");
+        }
+        {
+            GameApp app(host);setup(app,0,1);for(auto& step:app.placed_resources_[0].resource_plan.steps){step.iron=0;step.plastic=10;}
+            app.update_builder_robot(1.f/60);
+            require(app.builder_robots_[0].target.same_as({ConstructionTargetKind::Resource,1}),"Unavailable first-job material blocked useful later work");
+        }
+        {
+            GameApp app(host);setup(app,2,1);
+            app.placed_resources_[0].site_buffer.iron=60;app.placed_resources_[1].site_buffer.iron=60;
+            auto& carrier=app.builder_robots_[2];carrier.target={ConstructionTargetKind::Resource,0};carrier.mode=BuilderRobotMode::Fetching;
+            carrier.logistics_reservation.iron=50;carrier.cargo_committed_to_build=true;
+            app.update_builder_robot(1.f/60);
+            require(app.builder_robots_[0].target.valid()&&app.builder_robots_[1].target.valid()&&
+                !app.builder_robots_[0].target.same_as(app.builder_robots_[1].target),"Builders waited for a remote material trip or shared one job");
+        }
+        {
+            GameApp app(host);setup(app,1,0);app.update_builder_robot(1.f/60);const auto& r=app.builder_robots_[0];
+            require(r.target.valid()&&r.mode==BuilderRobotMode::Fetching&&r.logistics_reservation.iron>0,"Free constructor cannot self-haul without a carrier");
+        }
+        {
+            GameApp app(host);setup(app,2,0);app.placed_resources_[0].site_buffer.iron=60;app.placed_resources_[1].site_buffer.iron=60;
+            auto& blocked=app.builder_robots_[0];blocked.target={ConstructionTargetKind::Resource,0};blocked.mode=BuilderRobotMode::AwaitingMaterials;blocked.blocked_elapsed=5;blocked.safety.block_reason=robots::BlockReason::NoRoute;
+            const auto start=blocked.position;app.update_builder_robot(1.f/60);
+            require(blocked.crew_deferred_target.same_as({ConstructionTargetKind::Resource,0})&&blocked.crew_deferred_seconds>0,"Blocked claim was not offered back to the crew");
+            require(app.builder_robots_[1].target.same_as({ConstructionTargetKind::Resource,0}),"Peer did not take the released work");
+            require(length(blocked.position-start)<.3f,"Crew exchange teleported a robot");
+        }
+        {
+            GameApp app(host);setup(app,0,2);app.update_builder_robot(.05f);
+            for(int frame=0;frame<420;++frame){
+                app.update_builder_robot(.05f);
+                std::int64_t iron=0;for(const auto& pile:app.ground_resource_piles_)if(pile.resource==MaterialResource::Iron)iron+=pile.amount;
+                for(const auto& r:app.builder_robots_){iron+=r.cargo.iron;require(r.safety.mode!=robots::SafetyMode::Fault,"Cooperative dispatch bypassed movement safety");}
+                for(const auto& job:app.placed_resources_)iron+=job.site_buffer.iron;
+                require(iron==300,"Concurrent crew pickup/delivery duplicated or lost physical iron");
+            }
+        }
+        {
+            GameApp app(host);setup(app,0,1);auto& r=app.builder_robots_[0];r.target={ConstructionTargetKind::Resource,0};
+            r.mode=BuilderRobotMode::Delivering;r.cargo.iron=30;r.logistics_reservation.iron=30;r.cargo_committed_to_build=true;r.blocked_elapsed=5;r.safety.block_reason=robots::BlockReason::NoRoute;
+            app.update_builder_robot(1.f/60);
+            require(r.target.same_as({ConstructionTargetKind::Resource,1})&&r.cargo.iron==30&&r.logistics_reservation.iron==30,"Blocked loaded rover did not exchange its job with cargo intact");
+        }
+        {
+            GameApp app(host);setup(app,2,2);app.ground_resource_piles_[0].amount=1000;
+            for(std::size_t i=0;i<app.placed_resources_.size();++i){app.placed_resources_[i].kind=ResourceKind::PowerStorage;app.placed_resources_[i].position={float(i)*20,0,25};}
+            bool complete=false;
+            for(int frame=0;frame<6000&&!complete;++frame){
+                app.update_builder_robot(.05f);std::int64_t iron=0,consumed=0;
+                for(const auto& pile:app.ground_resource_piles_)if(pile.resource==MaterialResource::Iron)iron+=pile.amount;
+                for(const auto& r:app.builder_robots_)iron+=r.cargo.iron;
+                complete=true;for(const auto& job:app.placed_resources_){iron+=job.site_buffer.iron;consumed+=job.resource_plan.remaining(0).iron-job.resource_plan.remaining(job.construction.step).iron;complete&=job.construction.complete();}
+                require(iron+consumed==1000,"Parallel construction lost or duplicated iron");
+                std::int64_t in_stock=0,outstanding=0;for(const auto& pile:app.ground_resource_piles_)if(pile.resource==MaterialResource::Iron)in_stock+=pile.amount;
+                for(const auto& r:app.builder_robots_)outstanding+=std::max<std::int64_t>(0,r.logistics_reservation.iron-r.cargo.iron);
+                require(outstanding<=in_stock,"Crew overbooked physical source iron while searching routes");
+            }
+            require(complete,"Four-robot crew did not finish three independently supplied projects");
+        }
+        std::cout<<"Crew parallel claims, unavailable-head bypass, independent builders, constructor self-haul, blocked-job exchange and physical-stock conservation passed\n";
+    }
+    static void rover_unfold(){
+        using namespace runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        app.lander_.phase=LanderPhase::Landed;app.lander_.builders=app.lander_.carriers=6;app.lander_.boxed=true;app.lander_.awaiting_site=false;
+        for(int ordinal=0;ordinal<12;++ordinal){
+            require(lunar_lander_robot_unfold(app.lander_,ordinal)==0,"Landed robot is not stowed");
+            float previous=0;app.lander_.phase=LanderPhase::OpeningRamp;
+            for(float t=0;t<=kLanderRampSeconds;t+=.017f){app.lander_.elapsed=t;const auto p=lunar_lander_robot_unfold(app.lander_,ordinal);
+                require(p>=previous&&p>=0&&p<=1,"Unfold clock jumps or reverses");previous=p;}
+            app.lander_.elapsed=kLanderRampSeconds;require(lunar_lander_robot_unfold(app.lander_,ordinal)==1,"Rover did not unfold before ramp exit");
+            app.lander_.phase=LanderPhase::Landed;
+        }
+        struct Capture:Recorder {std::vector<Vec3> metal;void draw_mapped_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color,const LunarSurfaceMapping&)override{
+            if(m==LunarMaterial::RobotPaint||m==LunarMaterial::Rubber||m==LunarMaterial::Alloy)metal.insert(metal.end(),v.begin(),v.end());}};
+        const auto capture=[&](LanderPhase phase,float time){app.lander_.phase=phase;app.lander_.elapsed=time;Capture r;app.render_builder_robot(r);return r.metal;};
+        const auto folded=capture(LanderPhase::OpeningRamp,kLanderRampMotionSeconds),middle=capture(LanderPhase::OpeningRamp,7.75f),ready=capture(LanderPhase::OpeningRamp,kLanderRampSeconds),rolling=capture(LanderPhase::DeployingRobots,0);
+        require(folded.size()>10000&&folded.size()==middle.size()&&middle.size()==ready.size()&&ready.size()==rolling.size(),"Rover switches from placeholder blocks to a different model");
+        float changed=0,jump=0;for(std::size_t i=0;i<ready.size();++i){changed=std::max(changed,length(ready[i]-folded[i]));jump=std::max(jump,length(ready[i]-rolling[i]));}
+        require(changed>.25f&&jump<.001f,"Mechanical unfolding missing or discontinuous at ramp deployment");
+        app.active_game_phase_=GameApp::GamePhase::RobotPreparation;
+        bool independent=false;const float duration=lunar_lander_deployment_seconds(app.lander_,0);
+        for(int tick=0;tick<1500&&app.lander_.phase!=LanderPhase::Ready;++tick){app.update_lunar_lander(.05f);
+            if(!app.builder_robots_.empty()&&app.builder_robots_.size()<12)independent=true;}
+        require(independent&&app.builder_robots_.size()==12&&app.lander_.phase==LanderPhase::Ready,"Robots were held aboard until every rover finished unloading");
+        require(duration<75,"Unfolding added an unbounded deployment delay");
+        app.lander_.phase=LanderPhase::DeployingRobots;app.lander_.site={};
+        require(!lunar_lander_segment_blocked(app.lander_,{6.65f,0,6.7f},{10,0,6.7f},.65f,1),"Released rover cannot leave its parked bay");
+        require(lunar_lander_segment_blocked(app.lander_,{2,0,10},{6,0,10},.65f,4),"Active worker can cross an incoming rover's reserved bay route");
+
+        std::cout<<"Twelve rover clock/geometry unfolding, continuous ramp transition and independent parking release passed\n";
+    }
+
+    static void airlock_factory_fit(){
+        using namespace runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        app.corridor_network_.set_playfield_half_extent(64);int cases=0;
+        for(auto tier:{HabitatSizeTier::Small,HabitatSizeTier::Standard})for(float rotation:{0.f,37.f,90.f})for(int end:{-1,1}){
+            app.corridor_network_.clear();app.walkway_network_.clear();app.pressure_doors_.clear();
+            PlacedHabitat h;h.kind=HabitatKind::AirLock;h.size=tier;h.rotation_degrees=rotation;h.construction.finish();h.supply.power_fraction=1;app.placed_habitats_={h};
+            const auto& mesh=app.habitat_models_.mesh(h);const auto& fitted=app.habitat_runtime_mesh(0);
+            require(mesh.entrances.size()==2&&app.habitat_doors(0).size()==4,"Finished isolated airlock lacks its four seals");
+            require(fitted.service_metal.size()>1000&&fitted.screens.size()==2&&!fitted.fabric.empty()&&!fitted.lamps.empty(),"Pressure recovery/filter/control/light equipment not fitted with construction");
+            require(fitted.service_metal.size()==mesh.service_metal.size(),"Runtime optional-machine filtering removed integral airlock fit");
+            InteriorUnit terminal;terminal.kind=InteriorUnitKind::ServiceTerminal;terminal.position={0,mesh.walkable_floor_y,0};std::string error;
+            require(!app.place_interior_unit(0,terminal,error),"Fixed airlock accepted optional floor machinery");
+            const auto world=[&](float x,float z=0.f){return world_math::rotate_y(Vec3{x,mesh.walkable_floor_y,z},rotation);};
+            const auto original=app.habitat_doors(0);const auto n=world_math::rotate_y(Vec3{float(end),0,0},rotation);
+            const auto at=world(end*mesh.dome_radii.x);
+            require(!app.first_person_move_allowed(at-n*.5f,at+n*.5f),"Isolated airlock end seal is not physical");
+            CorridorBuildAnchor a{CorridorEndpointKind::Habitat,0,world(end*mesh.footprint_x*.49f,.65f)},b{CorridorEndpointKind::OpenDoor,0,at+n*15};
+            require(app.corridor_network_.build_corridor(a,b,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"Fixed off-center port did not snap");
+            auto& c=app.corridor_network_.mutable_connections().front();
+            require(length(c.endpoint_a.door.wall_position-at)<1e-4f&&dot(c.endpoint_a.door.normal,n)>.999f,"Corridor created an off-axis fifth airlock hatch");
+            require(app.habitat_doors(0).size()==4,"Blueprint corridor changed fixed seal count");c.construction.finish();
+            auto current=app.habitat_doors(0);require(current.size()==original.size(),"Completed corridor changed fixed seal count");
+            for(const auto& d:original){bool found=false;for(const auto& q:current)found|=length(d.wall_position-q.wall_position)<1e-4f;require(found,"Connecting moved an airlock pressure door");}
+            for(const auto& d:current){PressureDoorState state;state.door=d;state.open_fraction=1;app.pressure_doors_.push_back(state);}
+            for(float lane:{-.25f,0.f,.25f})for(float x=-mesh.dome_radii.x+.18f;x<mesh.dome_radii.x-.20f;x+=.065f){
+                const auto a=world(x,lane),b=world(x+.065f,lane);
+                require(app.first_person_move_allowed(a,b)&&app.first_person_move_allowed(b,a),"Fixed airlock transfer lane blocked");
+            }
+            // Docking ramp and hull throat must be reversible at actual deck Y.
+            const auto sample=[&](Vec3 start,Vec3 finish){
+                const int count=std::max(1,int(std::ceil(length(finish-start)/.06f)));
+                auto p=start;p.y=app.first_person_floor_height(p);
+                for(int i=1;i<=count;++i){auto q=start+(finish-start)*(float(i)/count);q.y=app.first_person_floor_height(q);
+                    require(app.first_person_move_allowed(p,q)&&app.first_person_move_allowed(q,p),"Fixed port/corridor floor has an invisible movement barrier");p=q;}
+            };
+            sample(at-n*.6f,c.endpoint_a.position+n*1.0f);
+            // Saved oblique ports migrate to the fixed axis, then remain stable.
+            c.endpoint_a.door.wall_position+=world_math::rotate_y(Vec3{0,0,.35f},rotation);
+            app.corridor_network_.synchronize_structure_interfaces(app.placed_habitats_,app.habitat_models_,{},app.resource_models_);
+            const auto repaired=app.corridor_network_.connections().front().endpoint_a;
+            require(length(repaired.door.wall_position-at)<1e-4f,"Legacy airlock port was not aligned");
+            app.corridor_network_.synchronize_structure_interfaces(app.placed_habitats_,app.habitat_models_,{},app.resource_models_);
+            require(length(app.corridor_network_.connections().front().endpoint_a.position-repaired.position)<1e-4f,"Airlock save migration drifts on repeated load");
+            ++cases;
+        }
+        std::cout<<cases<<" fixed airlock sizes/rotations/end orientations: four pre-fitted seals, pressure equipment, clear lanes, corridor snapping/ramp and stable old-port migration passed\n";
+    }
+
+    static void no_hull_boundaries(){
+        using namespace runtime;GameHost host;GameApp app(host);
+        struct Capture:Recorder {std::vector<Vec3> hull,metal,inside;void draw_mapped_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color,const LunarSurfaceMapping&)override{
+            auto* out=m==LunarMaterial::Hull?&hull:m==LunarMaterial::Alloy?&metal:m==LunarMaterial::Interior?&inside:nullptr;if(out)out->insert(out->end(),v.begin(),v.end());}};
+        app.habitat_view_mode_=GameApp::HabitatViewMode::None;
+        for(int k=0;k<int(HabitatKind::Count);++k){const auto kind=HabitatKind(k);const auto& model=app.habitat_models_.mesh(kind);
+            Capture cut;app.render_habitat_mesh(cut,model,{},0,false,true,false,kConstructionSteps,nullptr,false,kind);
+            require(!cut.hull.empty()&&!cut.inside.empty(),"Cutaway lost lower enclosure or interior");
+            for(auto p:cut.hull)require(p.y<=model.walkable_floor_y+.721f,"Cutaway retained an upper wall");
+            for(auto p:cut.metal)require(p.y<model.walkable_floor_y+2.81f,"Cutaway retained the overhead circular ring");
+            require(!model.overhead_services.empty(),"Full hull lost its original overhead service assembly");
+        }
+        for(auto kind:{ResourceKind::StorageDome,ResourceKind::RobotWorkshop}){const auto& model=app.resource_models_.mesh(kind);Capture cut;app.render_resource_mesh(cut,model,{},0,false,true,false,kConstructionSteps,nullptr,kind);require(!cut.hull.empty(),"Enterable resource cutaway lost its lower perimeter");for(auto p:cut.hull)require(p.y<=model.walkable_floor_y+.721f,"Resource roof remains in cutaway");}
+        const std::vector<Vec3> path{{0,2,0},{0,4,8}},wall{{-1,2,0},{-1,7,0},{-1,7,8},{-1,2,0},{-1,7,8},{-1,4,8}};
+        const auto& low=hull_surface::lower_run(wall,path,.75f);require(!low.empty(),"Raised corridor lost its low wall");for(auto p:low)require(p.y<=2+p.z*.25f+.751f,"Low corridor wall ignores local deck slope");
+        {
+            CorridorEndpoint a,b;a.kind=CorridorEndpointKind::Habitat;b.kind=CorridorEndpointKind::Habitat;
+            a.position={0,0,0};a.tangent={1,0,0};a.door.position={-1.6f,0,0};a.door.wall_position={-2.2f,0,0};a.door.normal={-1,0,0};
+            b.position={8,0,0};b.tangent={-1,0,0};b.door.position={9.6f,0,0};b.door.wall_position={10.2f,0,0};b.door.normal={1,0,0};
+            const auto mesh=corridor_detail::build_mesh(a,b,{{0,0,0},{8,0,0}},{},corridor_detail::NONE_INDEX);require(!mesh.details.empty(),"Synthetic corridor lost its detail mesh");
+            const auto lower=[&]{std::vector<Vec3> out;for(std::size_t v=0;v+2<mesh.details.size();v+=3){const auto& p0=mesh.details[v];const auto& p1=mesh.details[v+1];const auto& p2=mesh.details[v+2];
+                    if(std::max({p0.y,p1.y,p2.y})<=geometry::kCorridorDeckY+.20f)out.insert(out.end(),{p0,p1,p2});}return out;}();
+            require(!lower.empty(),"No-hull corridor connection lost all lower deck/support geometry");
+            bool reaches_left=false,reaches_right=false;for(const auto& p:lower){reaches_left|=p.x<-1.0f;reaches_right|=p.x>9.0f;}
+            require(reaches_left&&reaches_right,"Corridor connector sleeves still miss walkway/support geometry near structures");
+        }
+        {
+            // Synthetic, correctly oriented hatches at differing heights: the
+            // visible deck must cover every centerline sample in BOTH hull modes.
+            CorridorConnection c;c.construction.finish();c.path={{0,.60f,0},{8,.60f,0}};
+            c.endpoint_a.kind=c.endpoint_b.kind=CorridorEndpointKind::Habitat;
+            c.endpoint_a.position=c.path.front();c.endpoint_b.position=c.path.back();
+            c.endpoint_a.tangent={1,0,0};c.endpoint_b.tangent={-1,0,0};
+            c.endpoint_a.door.normal={1,0,0};c.endpoint_b.door.normal={-1,0,0};
+            c.endpoint_a.door.position={-1.75f,1.4f,0};c.endpoint_a.door.wall_position={-3.45f,1.4f,0};
+            c.endpoint_b.door.position={9.75f,.8f,0};c.endpoint_b.door.wall_position={11.45f,.8f,0};
+            c.mesh=corridor_detail::build_mesh(c.endpoint_a,c.endpoint_b,c.path,{},corridor_detail::NONE_INDEX);
+            app.corridor_network_.restore_connections({c});
+            struct DeckCapture:Recorder{std::vector<Vec3> deck;void draw_mapped_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color,const LunarSurfaceMapping&)override{if(m==LunarMaterial::CorridorDeck)deck.insert(deck.end(),v.begin(),v.end());}
+                void draw_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color)override{if(m==LunarMaterial::Alloy)deck.insert(deck.end(),v.begin(),v.end());}};
+            for(auto mode:{GameApp::HabitatViewMode::FullHull,GameApp::HabitatViewMode::None}){
+                app.habitat_view_mode_=mode;DeckCapture draw;app.render_corridors(draw);
+                for(float x=-3.35f;x<11.35f;x+=.07f){const float y=app.first_person_floor_height({x,0,0});bool covered=false;
+                    for(std::size_t j=0;j+2<draw.deck.size();j+=3){auto a=draw.deck[j],b=draw.deck[j+1],d=draw.deck[j+2];const auto n=cross(b-a,d-a);if(n.y<=.000001f)continue;
+                        const Vec3 q{x,0,0};const float t0=cross(b-a,q-a).y,t1=cross(d-b,q-b).y,t2=cross(a-d,q-d).y;
+                        if(std::min({t0,t1,t2})<-.00001f)continue;
+                        const float top=a.y-(n.x*(x-a.x)-n.z*a.z)/n.y;if(std::abs(top-y)<.025f){covered=true;break;}}
+                    require(covered,"Missing rendered walking surface at x="+std::to_string(x)+" y="+std::to_string(y));
+                }
+            }
+            require(corridor_detail::docking_step_count(c.endpoint_a.door.position,c.path.front()+Vec3{0,geometry::kCorridorDeckY,0})>1,"Steep adapter has no stairs");
+            app.corridor_network_.clear();
+        }
+        std::cout<<"Ten rectangular habitats, storage/workshop, cutaway boundaries and continuous rendered stair/deck surfaces passed\n";
+    }
+    static void suit_refill(){
+        using namespace runtime;GameHost host;
+        const auto run=[&](double level,bool power,bool outside,bool full){GameApp app(host);app.playfield_.rebuild(128);app.astronaut_views_[0].present=true;for(auto& a:app.test_astronauts_)a.health=0;
+            PlacedHabitat room;room.kind=HabitatKind::CrewQuarters;room.construction.finish();room.power_enabled=power;app.placed_habitats_={room};
+            app.update_supply_simulation(0);auto& air=app.placed_habitats_[0].supply;air.oxygen_kg=air.volume_m3*kOxygenKgPerM3*level;
+            auto& actor=app.test_astronauts_[0];actor.position=outside?Vec3{45,0,45}:Vec3{0,app.habitat_models_.mesh(room).walkable_floor_y,0};actor.health=1;actor.suit_oxygen_kg=full?kSuitOxygenCapacityKg:.1;
+            auto clock=app.status_.state();clock.crew_current=0;app.status_.restore(clock);const double before_air=air.oxygen_kg,before_suit=actor.suit_oxygen_kg;
+            app.update_supply_simulation(1);const double loss=before_air-air.oxygen_kg,gain=actor.suit_oxygen_kg-before_suit,metabolic=kCrewOxygenKgPerDay/kGameDaySeconds;
+            require(actor.suit_oxygen_kg>=0&&actor.suit_oxygen_kg<=kSuitOxygenCapacityKg,"Suit refill exceeded its finite tank");
+            if(!outside)require(std::abs(loss-gain-metabolic)<1e-7,"Suit refill created cabin oxygen or lost mass");
+            else require(loss==0&&gain<0,"Vacuum refilled the suit");
+            if(level==0)require(loss==0&&gain<0,"Empty cabin created suit oxygen");
+            return loss;
+        };
+        const auto low=run(.5,false,false,false),high=run(1,false,false,false);require(high>low*1.8,"Suit refill does not scale with cabin oxygen");
+        run(0,false,false,false);run(1,true,true,false);run(1,false,false,true);
+        std::cout<<"Oxygen-scaled suit refill in unpowered cabins, finite stock, no vacuum/empty-room refill, tank cap and oxygen conservation passed\n";
+    }
+    static void dome_save_probe(const std::string& path){
+        using namespace runtime;GameHost host;GameApp app(host);std::string error;require(app.load_game_from_file(path,error),error);
+        for(std::size_t i=0;i<app.placed_habitats_.size();++i){auto& h=app.placed_habitats_[i];
+            std::cout<<"habitat "<<i<<" kind="<<int(h.kind)<<" size="<<int(h.size)<<" units="<<h.units.size()<<" fitted="<<h.oxygen_unit_fitted<<" pos="<<h.position.x<<","<<h.position.z<<"\n";
+            if(h.kind!=HabitatKind::OxygenGeneratorDome)continue;
+            const auto& m=app.habitat_models_.mesh(h);std::map<std::string,int> reasons;int valid=0;
+            for(float z=-4;z<=4;z+=.5f)for(float x=-4;x<=4;x+=.5f){InteriorUnit u;u.kind=InteriorUnitKind::OxygenGenerator;u.position={x,m.walkable_floor_y,z};u.rotation_degrees=interior_unit_wall_yaw(m,u.position);
+                if(app.interior_unit_position_clear(i,u,error)){++valid;if(valid==1)std::cout<<" first legal "<<x<<","<<z<<"\n";}else ++reasons[error];}
+            std::cout<<" legal placements="<<valid<<"\n";for(const auto& [reason,n]:reasons)std::cout<<" "<<n<<" "<<reason<<"\n";
+        }
+    }
+    static void fpv_save_probe(const std::string& path){
+        using namespace runtime;GameHost host;GameApp app(host);std::string error;require(app.load_game_from_file(path,error),error);
+        std::cout<<"last FPV "<<app.last_fpv_astronaut_<<" mode "<<int(app.first_person_mode_)<<"\n";
+        for(std::size_t i=0;i<app.test_astronauts_.size();++i)if(app.astronaut_present(i)){const auto& a=app.test_astronauts_[i];
+            app.controlled_astronaut_=int(i);std::cout<<"actor "<<i<<" feet "<<a.position.x<<","<<a.position.y<<","<<a.position.z<<" health "<<a.health<<" activity "<<int(a.activity)<<" clear "<<app.first_person_move_allowed(a.position,a.position)<<" floor "<<app.first_person_floor_height(a.position)<<" ceiling "<<app.first_person_ceiling_height(a.position)<<" yaw "<<app.astronaut_views_[i].yaw<<"\n";
+            for(const auto delta:{Vec3{.08f,0,0},Vec3{-.08f,0,0},Vec3{0,0,.08f},Vec3{0,0,-.08f}})std::cout<<" direction "<<delta.x<<","<<delta.z<<" "<<app.first_person_move_allowed(a.position,a.position+delta)<<"\n";
+        }
+        app.controlled_astronaut_=-1;app.enter_first_person_mode();const auto before=app.first_person_.feet_position();
+        std::cout<<"entered "<<before.x<<","<<before.y<<","<<before.z<<" clear "<<app.first_person_move_allowed(before,before)<<"\n";
+        InputState input;input.key_w_down=true;
+        for(int frame=0;frame<120;++frame){app.input_=input;app.update_pressure_doors(1.f/60);app.update_first_person(1.f/60,input);}
+        const auto after=app.first_person_.feet_position();std::cout<<"after W "<<after.x<<","<<after.y<<","<<after.z<<" moved "<<length(after-before)<<"\n";
+    }
+    static void settings_boundary(){
+        namespace fs=std::filesystem;using namespace runtime;
+        const auto existing=load_preferences();
+        struct Restore{Preferences value;~Restore(){save_preferences(value);}} restore{existing};
+        GameHost host;GameApp app(host);app.playfield_.rebuild(128);app.builder_robots_.resize(1);
+        auto clock=app.status_.state();clock.day=9;clock.hour=6.25f;app.status_.restore(clock);
+        app.active_game_phase_=GameApp::GamePhase::RobotPreparation;
+        PlacedHabitat building;building.kind=HabitatKind::OxygenGeneratorDome;building.position={12,0,14};building.construction.finish();app.placed_habitats_={building};
+        app.astronaut_views_[0].present=app.astronaut_views_[0].visited=true;app.test_astronauts_[0].position={25,0,25};app.test_astronauts_[0].health=.73f;app.astronaut_views_[0].yaw=137;
+        app.graphics_.render_scale=85;app.ui_scale_index_=1;app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;app.show_fps_=false;app.soundscape_.set_volume(.22f);app.soundscape_.set_music_enabled(false);app.first_person_.set_fov(62);
+        const auto path=fs::path(app.save_game_directory())/"settings-boundary.gmsave";
+        const auto legacy=fs::path(app.save_game_directory())/"settings-boundary-legacy.gmsave";
+        struct Remove{fs::path a,b;~Remove(){std::error_code e;fs::remove(a,e);fs::remove(b,e);}} remove{path,legacy};
+        const auto bytes=[](const fs::path& p){std::ifstream f(p,std::ios::binary);return std::vector<char>(std::istreambuf_iterator<char>(f),{});};
+        std::string error;require(app.save_game_to_name("settings-boundary",error),error);const auto first=bytes(path);
+        app.graphics_.render_scale=100;app.ui_scale_index_=4;app.habitat_view_mode_=GameApp::HabitatViewMode::None;app.show_fps_=true;app.soundscape_.set_volume(.83f);app.soundscape_.set_music_enabled(true);app.first_person_.set_fov(104);app.debug_frame_enabled_=false;app.world_layout_mode_=GameApp::WorldLayoutMode::Mesh;
+        app.placement_rotation_degrees_=73;app.placement_habitat_size_=HabitatSizeTier::Big;app.placement_storage_size_=StorageDomeSize::Huge;app.build_catalog_.set_category(BuildCategory::Structures);
+        require(app.save_game_to_name("settings-boundary",error),error);
+        require(bytes(path)==first,"Settings or build tools are still serialized in savegame progress");
+        app.persist_preferences();require(!app.preferences_save_failed_,"Game-wide settings were not saved");
+        const auto preferences=load_preferences();
+        require(preferences.ui_scale_index==4&&preferences.faded_hulls&&preferences.sound_volume_percent==83&&!preferences.debug_frame_enabled&&preferences.first_person_fov==104&&preferences.show_fps&&preferences.mesh_layout&&preferences.music_enabled,"Game-wide preference round trip omitted a setting");
+        GameApp restarted(host);restarted.on_start();
+        const auto unchanged=[&]{return restarted.ui_scale_index_==4&&restarted.habitat_view_mode_==GameApp::HabitatViewMode::None&&restarted.graphics_.render_scale==100&&restarted.first_person_.fov()==104&&restarted.show_fps_&&restarted.world_layout_mode_==GameApp::WorldLayoutMode::Mesh&&!restarted.debug_frame_enabled_&&std::abs(restarted.soundscape_.volume()-.83f)<.001f&&restarted.soundscape_.music_enabled();};
+        require(unchanged(),"Restart did not restore game-wide settings");
+        require(restarted.load_game_from_file(path.string(),error),error);require(unchanged(),"Schema52 load changed preferences");
+        require(restarted.status_.state().day==9&&std::abs(restarted.status_.state().hour-6.25f)<.001f&&restarted.placed_habitats_.size()==1&&restarted.astronaut_present(0)&&restarted.test_astronauts_[0].health==.73f&&restarted.astronaut_views_[0].yaw==137,"Progress or astronaut view was lost while separating settings");
+        // Reconstruct a schema51 header with deliberately conflicting display,
+        // hull and tool values. Its body has the same colony schema as 52.
+        std::size_t offset=12;const auto u32=[&](std::size_t i){std::uint32_t n;std::memcpy(&n,first.data()+i,4);return n;};
+        require(u32(8)==55,"New save schema was not advanced");offset+=4+u32(offset);offset+=4+u32(offset);offset+=4;
+        std::vector<char> older(first.begin(),first.begin()+offset);const std::uint32_t schema=51;std::memcpy(older.data()+8,&schema,4);
+        const auto append=[&](auto value){const auto p=reinterpret_cast<const char*>(&value);older.insert(older.end(),p,p+sizeof(value));};
+        append(std::int32_t{640});append(std::int32_t{480});append(std::uint8_t{0});append(std::int32_t{0});append(std::uint8_t{0});append(std::uint8_t{0});append(0.f);append(std::uint8_t{0});append(std::uint8_t{0});append(std::uint8_t{0});
+        older.insert(older.end(),first.begin()+offset,first.end());{std::ofstream f(legacy,std::ios::binary);f.write(older.data(),older.size());}
+        require(restarted.load_game_from_file(legacy.string(),error),error);require(unchanged(),"Legacy save reinstalled its display/UI preferences");
+        require(restarted.load_game_from_file((fs::path(GAME_SOURCE_ROOT)/"game/tests/fixtures/schema48-lander-depot.gmsave").string(),error),error);require(unchanged(),"Schema48 load changed game-wide settings");
+        require(restarted.load_game_from_file((fs::path(GAME_SOURCE_ROOT)/"game/tests/fixtures/schema29-stage1-contracts.gmsave").string(),error),error);require(unchanged(),"Legacy noncompact load changed settings");
+        restarted.new_game_phase_selection_=GameApp::GamePhase::Planning;restarted.start_new_game();require(unchanged(),"New Game reset game-wide settings");
+        GameApp controls(host);controls.on_start();controls.screen_=GameApp::Screen::Settings;controls.ui_scale_index_=1;Recorder widgets;controls.render(widgets);
+        const auto click=[&](const Rect& rect){controls.input_.mouse_x=int((rect.x+rect.w*.5f)*widgets.scale);controls.input_.mouse_y=int((rect.y+rect.h*.5f)*widgets.scale);controls.input_.left_pressed=true;controls.render(widgets);controls.input_={};};
+        click(widgets.button(">"));require(load_preferences().ui_scale_index==2,"UI scale control did not persist");
+        controls.render(widgets);click(widgets.button("MUTE"));require(load_preferences().sound_volume_percent==0,"Mute control did not persist");
+        controls.render(widgets);click(widgets.button("UNMUTE"));require(load_preferences().sound_volume_percent==72,"Unmute control did not persist");
+        Recorder hull;hull.set_2d(1);controls.ui_input_={};controls.render_view_selector(hull,0,1280);const auto full=hull.button("FULL HULL");
+        controls.ui_input_.mouse_x=int(full.x+full.w*.5f);controls.ui_input_.mouse_y=int(full.y+full.h*.5f);controls.ui_input_.left_pressed=true;controls.render_view_selector(hull,0,1280);
+        require(!load_preferences().faded_hulls,"Hull view control did not persist");
+        std::cout<<"Progress-only schema52 bytes, legacy schema51/48/29 preference isolation, game-wide UI/hull/audio/graphics/FOV settings and astronaut continuity passed\n";
+    }
+
     static void recent_saves(){
         namespace fs=std::filesystem;
         game::runtime::GameHost engine;
@@ -1882,6 +2739,7 @@ struct UiRegression {
 
             GameApp restarted(engine);
             restarted.on_start();
+            const auto global_view=restarted.habitat_view_mode_;
             require(!restarted.save_games_.empty() && restarted.save_games_.front().name==debug,"save list is out of date order");
             Recorder recorder;
             restarted.render(recorder);
@@ -1894,10 +2752,10 @@ struct UiRegression {
                     restarted.save_game_name_==(build::debug_features?debug:second) &&
                     restarted.playfield_.size()==(build::debug_features?256:192),
                     "Continue did not load the newest compatible save");
-            require(restarted.habitat_view_mode_==GameApp::HabitatViewMode::None,"save did not restore the hidden hull view");
+            require(restarted.habitat_view_mode_==global_view,"Continue replaced the game-wide hull view");
             require(restarted.load_game_from_file(paths[0].string(),error) && restarted.playfield_.size()==64 &&
-                    restarted.habitat_view_mode_==GameApp::HabitatViewMode::FullHull,
-                    "saving a colliding name changed the earlier colony");
+                    restarted.habitat_view_mode_==global_view,
+                    "Loading an earlier colony changed its progress or game-wide view");
         }catch(...){
             for(const auto& path:paths) fs::remove(path);
             throw;
@@ -3018,8 +3876,10 @@ int main(int argc,char** argv){
     const auto preferences=std::filesystem::temp_directory_path()/
         ("lunar-ui-regression-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".cfg");
 #ifdef _WIN32
+    _wputenv_s(L"GAME_SETTINGS_CONFIG",L"");
     if(_wputenv_s(L"GAME_GRAPHICS_CONFIG",preferences.c_str())!=0) return 1;
 #else
+    unsetenv("GAME_SETTINGS_CONFIG");
     if(setenv("GAME_GRAPHICS_CONFIG",preferences.c_str(),1)!=0) return 1;
 #endif
     int result=0;
@@ -3036,9 +3896,30 @@ int main(int argc,char** argv){
         else if(out=="gates-layout-solar") game::UiRegression::gates_layout_solar();
         else if(out=="station-visuals") game::UiRegression::station_visuals();
         else if(out=="fpv-building") game::UiRegression::fpv_building();
+        else if(out=="corridor-airlock-fpv") game::UiRegression::corridor_airlock_fpv();
+        else if(out=="structural-frames") game::UiRegression::structural_frames();
         else if(out=="player-control") game::UiRegression::player_control();
         else if(out=="runtime-paths") game::UiRegression::runtime_paths();
         else if(out=="fov-interiors") game::UiRegression::fov_and_station_interiors();
+        else if(out=="removal-controls") game::UiRegression::removal_controls();
+        else if(out=="save-editor") game::UiRegression::save_editor();
+        else if(out=="airlock-transfers") game::UiRegression::airlock_transfers();
+        else if(out=="fpv-saved-recovery"&&argc>2) game::UiRegression::saved_fpv_recovery(argv[2]);
+        else if(out=="fpv-alerts") game::UiRegression::fpv_alerts();
+        else if(out=="hatch-interaction") game::UiRegression::hatch_interaction();
+        else if(out=="interior-surfaces") game::UiRegression::interior_surfaces();
+        else if(out=="fpv-save-probe"&&argc>2) game::UiRegression::fpv_save_probe(argv[2]);
+        else if(out=="dome-save-probe"&&argc>2) game::UiRegression::dome_save_probe(argv[2]);
+        else if(out=="autosave") game::UiRegression::autosave();
+        else if(out=="airlock-access") game::UiRegression::airlock_access();
+        else if(out=="battery-doors") game::UiRegression::battery_doors();
+        else if(out=="robot-crew") game::UiRegression::robot_crew();
+        else if(out=="rover-unfold") game::UiRegression::rover_unfold();
+        else if(out=="airlock-factory-fit") game::UiRegression::airlock_factory_fit();
+        else if(out=="no-hull-boundaries") game::UiRegression::no_hull_boundaries();
+        else if(out=="suit-refill") game::UiRegression::suit_refill();
+        else if(out=="habitat-domes"&&argc>2) game::UiRegression::habitat_domes(argv[2]);
+        else if(out=="settings-boundary") game::UiRegression::settings_boundary();
         else if(out=="graphics-quality") game::UiRegression::graphics_quality();
         else if(out=="build-order") game::UiRegression::build_order_panel();
         else if(out=="activity-log") game::UiRegression::activity_log_and_blueprint_progress();

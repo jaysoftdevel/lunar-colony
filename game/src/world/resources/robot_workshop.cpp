@@ -3,7 +3,7 @@
 
 namespace game::resources {
 ResourceMesh make_robot_workshop(){
-    Builder b;b.mesh.footprint_x=11.0f;b.mesh.footprint_z=10.0f;b.mesh.height=4.8f;b.mesh.walkable_floor_y=workshop::kDeck;
+    Builder b;b.mesh.footprint_x=11.0f;b.mesh.footprint_z=10.0f;b.mesh.height=6.0f;b.mesh.walkable_floor_y=workshop::kDeck;
     b.box(b.mesh.foundation,{0,0.20f,0},{11.0f,0.40f,10.0f});
 
     // Compact, full-width approach ramp.  It remains wide enough for a rover
@@ -18,39 +18,38 @@ ResourceMesh make_robot_workshop(){
 
     for(const auto& box:workshop::kSolids){
         const bool equipment=std::abs(box.center.x)>4.2f && box.half_z<1.5f;
-        b.box(equipment?b.mesh.details:b.mesh.body,box.center+Vec3{0,equipment?1.05f:1.60f,0},
-              {box.half_x*2,equipment?1.30f:2.40f,box.half_z*2});
+        b.box(equipment?b.mesh.details:b.mesh.body,box.center+Vec3{0,equipment?1.05f:2.15f,0},
+              {box.half_x*2,equipment?1.30f:3.50f,box.half_z*2});
     }
 
-    // Barrel roof keeps the full internal drive aisle unobstructed.  Reducing
+    // Doubly curved dome roof keeps the full internal drive aisle unobstructed.  Reducing
     // the hall footprint does not reduce headroom or the rover service envelope.
     for(float z:{-4.8f,-2.4f,0.0f,2.4f,4.8f}) for(int i=0;i<12;++i){
         const float p=PI*(float)i/12,q=PI*(float)(i+1)/12;
-        const Vec3 u{5.30f*std::cos(p),2.80f+1.85f*std::sin(p),z};
-        const Vec3 v{5.30f*std::cos(q),2.80f+1.85f*std::sin(q),z};
+        const Vec3 u{5.30f*std::cos(p),workshop::roof_height(5.30f*std::cos(p),z),z};
+        const Vec3 v{5.30f*std::cos(q),workshop::roof_height(5.30f*std::cos(q),z),z};
         b.cylinder_between(b.mesh.details,u,v,0.065f,6,true,true);
         if(z==4.8f) continue;
-        const Vec3 w=v+Vec3{0,0,2.4f},t=u+Vec3{0,0,2.4f};
+        const Vec3 w{v.x,workshop::roof_height(v.x,z+2.4f),z+2.4f},t{u.x,workshop::roof_height(u.x,z+2.4f),z+2.4f};
         Builder::tri(b.mesh.glazing,u,v,w);Builder::tri(b.mesh.glazing,u,w,t);
     }
 
     // Every arch has two grounded stanchions. Keep these in the detail layer
     // so disabling hull rendering still leaves a continuous load path.
     for(float z:{-4.8f,-2.4f,0.f,2.4f,4.8f})for(float x:{-5.30f,5.30f}){
-        b.box(b.mesh.details,{x,1.60f,z},{.14f,2.40f,.16f});
+        b.box(b.mesh.details,{x,2.15f,z},{.14f,3.50f,.16f});
         b.box(b.mesh.details,{x,.46f,z},{.30f,.12f,.32f});
     }
     // Longitudinal glazing mullions and pressure seals meet each transverse rib.
-    for(int i=0;i<=12;++i){
-        const float a=PI*i/12;
-        b.cylinder_between(b.mesh.details,{5.30f*std::cos(a),2.80f+1.85f*std::sin(a),-4.8f},
-            {5.30f*std::cos(a),2.80f+1.85f*std::sin(a),4.8f},.038f,6);
+    for(int i=0;i<=12;++i){const float a=PI*i/12,x=5.30f*std::cos(a);
+        for(int j=0;j<16;++j){const float z=-4.8f+9.6f*j/16,next=-4.8f+9.6f*(j+1)/16;
+            b.cylinder_between(b.mesh.details,{x,workshop::roof_height(x,z),z},{x,workshop::roof_height(x,next),next},.038f,6);}
     }
 
     // Suspended task-light housings are physically tied to the transverse ribs.
     for(float x:{-3.25f,3.25f})for(float z:{-2.4f,2.4f}){
         for(float offset:{-.38f,.38f}){
-            const float roof=2.8f+1.85f*std::sqrt(1.f-(x+offset)*(x+offset)/(5.3f*5.3f));
+            const float roof=workshop::roof_height(x+offset,z);
             b.cylinder_between(b.mesh.details,{x+offset,3.60f,z},{x+offset,roof,z},.024f,6);
         }
         b.box(b.mesh.details,{x,3.63f,z},{1.18f,.10f,.26f});
@@ -63,8 +62,8 @@ ResourceMesh make_robot_workshop(){
     std::sort(cuts.begin(),cuts.end());
     for(float z:{-4.80f,4.80f})for(std::size_t i=1;i<cuts.size();++i){
         const float a=cuts[i-1],c=cuts[i];
-        const auto top=[](float x){return 2.80f+1.85f*std::sqrt(std::max(0.f,1.f-x*x/(5.30f*5.30f)));};
-        const float bottom=z<0 && std::abs((a+c)*.5f)<workshop::kGateHalf?3.30f:2.80f;
+        const auto top=[&](float x){return workshop::roof_height(x,z);};
+        const float bottom=z<0 && std::abs((a+c)*.5f)<workshop::kGateHalf?3.30f:3.90f;
         Builder::tri(b.mesh.body,{a,bottom,z},{c,bottom,z},{c,top(c),z});
         Builder::tri(b.mesh.body,{a,bottom,z},{c,top(c),z},{a,top(a),z});
     }

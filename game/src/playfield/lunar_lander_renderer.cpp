@@ -242,14 +242,11 @@ void GameApp::render_lunar_lander(game::runtime::SceneRenderer& r){
             tanks.beam({x*4.78f,3.0f+i*.20f,-3.64f},{x*4.78f,3.0f+i*.20f,-2.6f},.08f,blue);
     }
 
-    const int aboard=lander_.phase<LanderPhase::DeployingRobots?lander_.builders+lander_.carriers:0;
-    for(int i=0;i<aboard;++i){
-        const auto berth=lunar_lander_robot_berth(i);
-        const float x=berth.x,z=berth.z;
-        frame.box({x,2.78f,z},{.75f,.37f,.65f},white);
-        for(float side:{-.45f,.45f}) for(float dz:{-.23f,.23f})
-            frame.cylinder({x+side,2.55f,z+dz},.13f,.25f,dark);
-    }
+    if(lander_.phase==LanderPhase::OpeningRamp||lander_.phase==LanderPhase::DeployingRobots)
+        for(float z:{-1.4f,1.4f}){
+            frame.box({0,4.32f,z},{.72f,.10f,.32f},metal);
+            if(solid)lights.box({0,4.263f,z},{.62f,.018f,.24f},{.84f,.91f,1.f,1});
+        }
 
     // Closed command cabin and a compact communications antenna.
     const Vec3 cabin_lower[]={{-1.65f,4.91f,.52f},{1.65f,4.91f,.52f},{1.65f,4.91f,-2.29f},{-1.65f,4.91f,-2.29f}};
@@ -301,7 +298,7 @@ void GameApp::render_lunar_lander(game::runtime::SceneRenderer& r){
     // Two hinged ramp sections fold back onto each other when stowed.
     float ramp=0;
     if((int)lander_.phase>(int)LanderPhase::OpeningRamp)ramp=1;
-    else if(lander_.phase==LanderPhase::OpeningRamp)ramp=smooth(lander_.elapsed/kLanderRampSeconds);
+    else if(lander_.phase==LanderPhase::OpeningRamp)ramp=smooth(lander_.elapsed/kLanderRampMotionSeconds);
     constexpr float half_length=3.7f;
     const float a=(90.0f-108.925f*ramp)*pi/180,b=(-90.0f+71.075f*ramp)*pi/180;
     Vec3 hinge{0,2.4f,3.6f},mid=hinge+Vec3{0,half_length*std::sin(a),half_length*std::cos(a)},tip=mid+Vec3{0,half_length*std::sin(b),half_length*std::cos(b)};

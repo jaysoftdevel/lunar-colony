@@ -65,10 +65,14 @@ void add_segment_prism(MeshBits& m,Vec3 a,Vec3 b,float width,float depth){
     for(const auto& q:e){ m.edges.push_back(p[q[0]]); m.edges.push_back(p[q[1]]); }
 }
 
-std::vector<Vec3> transform(const std::vector<Vec3>& in,Vec3 position,float heading,float pitch=0){
-    std::vector<Vec3> out; out.reserve(in.size());
-    const float a=pitch*3.14159265359f/180,c=std::cos(a),s=std::sin(a);
-    for(const auto& v:in) out.push_back(world_math::rotate_y({v.x,v.y*c-v.z*s,v.y*s+v.z*c},heading)+position);
+Vec3 oriented(Vec3 v,float heading,float pitch,float roll){
+    const float a=radians(pitch),c=std::cos(a),s=std::sin(a);
+    const auto p=world_math::rotate_y({v.x,v.y*c-v.z*s,v.y*s+v.z*c},heading);
+    const float r=radians(roll);return {p.x*std::cos(r)-p.y*std::sin(r),p.x*std::sin(r)+p.y*std::cos(r),p.z};
+}
+std::vector<Vec3> transform(const std::vector<Vec3>& in,Vec3 position,float heading,float pitch=0,float roll=0){
+    std::vector<Vec3> out;out.reserve(in.size());
+    for(const auto p:in)out.push_back(oriented(p,heading,pitch,roll)+position);
     return out;
 }
 
@@ -339,24 +343,36 @@ void GameApp::render_builder_robot(SceneRenderer& r){
 
     const bool deploying=lander_.phase==LanderPhase::DeployingRobots;
     const auto parked=builder_robots_.size();
-    const auto rendered=deploying?(std::size_t)(lander_.builders+lander_.carriers):parked;
+    const bool aboard=lander_.active()&&!lander_.awaiting_site&&lander_.phase<LanderPhase::DeployingRobots;
+    const auto rendered=deploying||aboard?(std::size_t)(lander_.builders+lander_.carriers):parked;
     for(std::size_t robot_index=0;robot_index<rendered;++robot_index){
         auto robot=robot_index<parked?builder_robots_[robot_index]:lander_robot((int)robot_index);
-        float pitch=0;
+        float pitch=0,roll=0,unfold=1;
         if(robot_index>=parked){
-            const auto pose=lunar_lander_robot_pose(lander_,(int)robot_index,(int)parked);
-            robot.position=robot.visual_position=pose.position;
-            robot.heading_degrees=robot.visual_heading_degrees=pose.heading;
-            pitch=pose.pitch;
-            robots::roll_rover_wheels(robot.wheels,pose.distance_travelled,0);
+            const int first=lander_.legacy_parking?(int)parked:0;
+            unfold=lunar_lander_robot_unfold(lander_,(int)robot_index,first);
+            if(deploying){
+                const auto pose=lunar_lander_robot_pose(lander_,(int)robot_index,first);
+                robot.position=robot.visual_position=pose.position;
+                robot.heading_degrees=robot.visual_heading_degrees=pose.heading;pitch=pose.pitch;
+                robots::roll_rover_wheels(robot.wheels,pose.distance_travelled,0);
+            }else{
+                const auto flight=lunar_lander_flight(lander_.in_flight()?lander_.elapsed:kLanderDescentSeconds);
+                roll=flight.roll_degrees;
+                robot.position=robot.visual_position=lander_.site+flight.offset+
+                    oriented(lunar_lander_robot_berth((int)robot_index-first),0,0,roll);
+                robot.heading_degrees=robot.visual_heading_degrees=0;
+            }
         }
         const float phase=action_fraction(robot);
         MeshBits cargo,arm,gripper,lamps,tires,hubs;
         for(std::size_t i=0;i<robot.wheels.size();++i){
-            const Vec3 center=robots::kRoverWheelCenters[i];
-            append_wheel_vertices(tires.tris,tire.tris,center,robot.wheels[i]);
-            append_wheel_vertices(hubs.tris,hub.tris,center,robot.wheels[i]);
-            append_wheel_vertices(hubs.edges,hub.edges,center,robot.wheels[i]);
+            auto center=robots::kRoverWheelCenters[i];
+            center.x*=.62f+.38f*unfold;center.z*=.76f+.24f*unfold;center.y+=.14f*(1-unfold);
+            auto wheel=robot.wheels[i];wheel.steer_degrees+=(1-unfold)*std::copysign(90.f,center.x);
+            append_wheel_vertices(tires.tris,tire.tris,center,wheel);
+            append_wheel_vertices(hubs.tris,hub.tris,center,wheel);
+            append_wheel_vertices(hubs.edges,hub.edges,center,wheel);
         }
         const bool cargo_in_bay=robot.cargo.total_amount()>0 &&
             !(robot.action==BuilderRobotAction::PutDown && phase>0.18f);
@@ -370,7 +386,10 @@ void GameApp::render_builder_robot(SceneRenderer& r){
 
         // The chassis follows its smoothed driving heading, while the arm sits
         // on a rotating turret and can keep facing the resource/build focus.
-        const RobotArmPose pose=robot_arm_pose(robot);
+        auto pose=robot_arm_pose(robot);
+        pose.root=Vec3{0,.88f,.08f}+(pose.root-Vec3{0,.88f,.08f})*unfold;
+        pose.elbow=Vec3{0,.88f,-.22f}+(pose.elbow-Vec3{0,.88f,-.22f})*unfold;
+        pose.tool=Vec3{0,.88f,.12f}+(pose.tool-Vec3{0,.88f,.12f})*unfold;
         add_box(arm,pose.root,{0.46f,0.15f,0.40f});
         add_segment_prism(arm,pose.root,pose.elbow,0.22f,0.18f);
         add_segment_prism(arm,pose.elbow,pose.tool,0.18f,0.15f);
@@ -392,23 +411,28 @@ void GameApp::render_builder_robot(SceneRenderer& r){
 
         const bool carrier=robot.role==RobotRole::Carrier;
         const auto& chassis=carrier?carrier_body:body;
-        const auto& sensor_mesh=carrier?carrier_sensors:sensors;
+        auto sensor_mesh=carrier?carrier_sensors:sensors;
+        const Vec3 hinge=carrier?Vec3{0,.72f,-.56f}:Vec3{0,.81f,.52f};
+        for(auto* vertices:{&sensor_mesh.tris,&sensor_mesh.edges})for(auto& point:*vertices)
+            point=hinge+oriented(point-hinge,0,(1-unfold)*-90.f,0);
+        auto suspension_mesh=suspension;
+        for(auto* vertices:{&suspension_mesh.tris,&suspension_mesh.edges})for(auto& point:*vertices)
+            point.x*=.62f+.38f*unfold;
         const bool working=robot.action!=BuilderRobotAction::None;
         const bool loaded=cargo_in_bay || robot.ore_haul.loaded;
         const Color lamp=working || robot.route_waiting_for_clearance?Color{1.f,.63f,.24f,1.f}:
             loaded?Color{.29f,.90f,.56f,1.f}:robot.route_active?Color{.36f,.81f,.97f,1.f}:Color{.44f,.49f,.54f,1.f};
         for(float x:{-.31f,.31f})add_box(lamps,{x,.54f,.65f},{.14f,.08f,.07f});
         const auto draw=[&](const std::vector<Vec3>& points,float yaw,LunarMaterial material,Color tint){
-            const float angle=radians(pitch),c=std::cos(angle),s=std::sin(angle);
-            const LunarSurfaceMapping mapping{pos,world_math::rotate_y({1,0,0},yaw),
-                world_math::rotate_y({0,c,s},yaw),world_math::rotate_y({0,-s,c},yaw),unsigned(1000+robot_index)};
-            r.draw_mapped_lunar_surface(transform(points,pos,yaw,pitch),material,tint,mapping);
+            const LunarSurfaceMapping mapping{pos,oriented({1,0,0},yaw,pitch,roll),
+                oriented({0,1,0},yaw,pitch,roll),oriented({0,0,1},yaw,pitch,roll),unsigned(1000+robot_index)};
+            r.draw_mapped_lunar_surface(transform(points,pos,yaw,pitch,roll),material,tint,mapping);
         };
         draw(lamps.tris,heading,LunarMaterial::Emissive,lamp);
         draw(chassis.tris,heading,LunarMaterial::RobotPaint,carrier?Color{.34f,.48f,.56f,1}:Color{.58f,.61f,.60f,1});
         draw(tires.tris,heading,LunarMaterial::Rubber,{.08f,.10f,.11f,1});
         draw(hubs.tris,heading,LunarMaterial::Alloy,{.37f,.42f,.43f,1});
-        draw(suspension.tris,heading,LunarMaterial::Alloy,{.35f,.37f,.36f,1});
+        draw(suspension_mesh.tris,heading,LunarMaterial::Alloy,{.35f,.37f,.36f,1});
         draw(arm.tris,arm_heading,LunarMaterial::RobotPaint,carrier?Color{.28f,.56f,.68f,1}:Color{.72f,.46f,.14f,1});
         draw(gripper.tris,arm_heading,LunarMaterial::Alloy,{.23f,.25f,.24f,1});
         draw(sensor_mesh.tris,heading,LunarMaterial::RobotPaint,carrier?Color{.18f,.50f,.62f,1}:Color{.30f,.40f,.43f,1});
@@ -421,13 +445,13 @@ void GameApp::render_builder_robot(SceneRenderer& r){
             draw(cargo.tris,heading,LunarMaterial::Hull,resource_color(material));
         }
         const Color edge{0.04f,0.06f,0.07f,1.0f};
-        r.draw_lines_3d(transform(chassis.edges,pos,heading,pitch),edge,1.15f);
-        r.draw_lines_3d(transform(hubs.edges,pos,heading,pitch),{0.40f,0.45f,0.46f,1.0f},1.0f);
-        r.draw_lines_3d(transform(suspension.edges,pos,heading,pitch),edge,1.0f);
-        r.draw_lines_3d(transform(arm.edges,pos,arm_heading,pitch),edge,1.10f);
-        r.draw_lines_3d(transform(gripper.edges,pos,arm_heading,pitch),edge,0.95f);
-        r.draw_lines_3d(transform(sensor_mesh.edges,pos,heading,pitch),carrier?Color{0.24f,0.84f,0.96f,1.0f}:Color{0.18f,0.76f,0.92f,1.0f},1.25f);
-        if(!cargo.edges.empty()) r.draw_lines_3d(transform(cargo.edges,pos,heading,pitch),{0.12f,0.22f,0.24f,1.0f},1.0f);
+        r.draw_lines_3d(transform(chassis.edges,pos,heading,pitch,roll),edge,1.15f);
+        r.draw_lines_3d(transform(hubs.edges,pos,heading,pitch,roll),{0.40f,0.45f,0.46f,1.0f},1.0f);
+        r.draw_lines_3d(transform(suspension_mesh.edges,pos,heading,pitch,roll),edge,1.0f);
+        r.draw_lines_3d(transform(arm.edges,pos,arm_heading,pitch,roll),edge,1.10f);
+        r.draw_lines_3d(transform(gripper.edges,pos,arm_heading,pitch,roll),edge,0.95f);
+        r.draw_lines_3d(transform(sensor_mesh.edges,pos,heading,pitch,roll),carrier?Color{0.24f,0.84f,0.96f,1.0f}:Color{0.18f,0.76f,0.92f,1.0f},1.25f);
+        if(!cargo.edges.empty()) r.draw_lines_3d(transform(cargo.edges,pos,heading,pitch,roll),{0.12f,0.22f,0.24f,1.0f},1.0f);
 
         const Vec3 tool_world=world_math::rotate_y(pose.tool,arm_heading)+pos;
         const bool carrying_handled=
@@ -438,14 +462,14 @@ void GameApp::render_builder_robot(SceneRenderer& r){
             const float half=resource_package_half_width(robot.action_material,robot.action_amount)*0.72f;
             const float height=resource_package_height(robot.action_material,robot.action_amount)*0.72f;
             add_box(handled,pose.tool+Vec3{0,-height*0.58f,0.10f},{half*2.0f,height,half*2.0f});
-            r.draw_triangles_3d(transform(handled.tris,pos,arm_heading,pitch),resource_color(robot.action_material));
-            r.draw_lines_3d(transform(handled.edges,pos,arm_heading,pitch),edge,0.9f);
+            r.draw_triangles_3d(transform(handled.tris,pos,arm_heading,pitch,roll),resource_color(robot.action_material));
+            r.draw_lines_3d(transform(handled.edges,pos,arm_heading,pitch,roll),edge,0.9f);
         }
         if(robot.ore_haul.loaded && robot.ore_haul.active() && robot.action!=BuilderRobotAction::PutDown){
             MeshBits crate;
             add_box(crate,{0,.98f,.10f},{.46f,.34f,.46f});
-            r.draw_triangles_3d(transform(crate.tris,pos,heading,pitch),ore::colors[robot.ore_haul.kind]);
-            r.draw_lines_3d(transform(crate.edges,pos,heading,pitch),edge,1.3f);
+            r.draw_triangles_3d(transform(crate.tris,pos,heading,pitch,roll),ore::colors[robot.ore_haul.kind]);
+            r.draw_lines_3d(transform(crate.edges,pos,heading,pitch,roll),edge,1.3f);
         }
         if(robot.action==BuilderRobotAction::ApplyResources){
             const Vec3 nozzle=tool_world+world_math::rotate_y({0,0,pose.tool_extension},arm_heading);
@@ -479,8 +503,8 @@ void GameApp::render_builder_robot(SceneRenderer& r){
             MeshBits lifted;
             if(phase>0.12f && phase<0.82f){
                 add_box(lifted,pose.tool+Vec3{0,-0.10f,0.12f},{0.52f,0.12f,0.38f});
-                r.draw_triangles_3d(transform(lifted.tris,pos,arm_heading,pitch),{0.52f,0.58f,0.57f,0.96f});
-                r.draw_lines_3d(transform(lifted.edges,pos,arm_heading,pitch),edge,1.0f);
+                r.draw_triangles_3d(transform(lifted.tris,pos,arm_heading,pitch,roll),{0.52f,0.58f,0.57f,0.96f});
+                r.draw_lines_3d(transform(lifted.edges,pos,arm_heading,pitch,roll),edge,1.0f);
             }
             const Vec3 guide_a=tool_world+world_math::rotate_y({-0.20f,-0.38f,0},arm_heading);
             const Vec3 guide_b=tool_world+world_math::rotate_y({0.20f,-0.38f,0},arm_heading);

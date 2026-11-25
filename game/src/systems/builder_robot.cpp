@@ -1352,17 +1352,9 @@ ResourceBundle GameApp::construction_site_reserved(const ConstructionTargetRef& 
         // route blockage an empty robot's reservation is treated as released so
         // another CR-01 or the BR-02 fallback hauler can claim the shortage.
         if(robot.mode!=BuilderRobotMode::Fetching && robot.mode!=BuilderRobotMode::Delivering) continue;
-        // A reservation is only useful while its rover can actually progress.
-        // After the same 2 s route-resolution window used by navigation, a
-        // carrier with no executable route no longer suppresses BR-02 fallback
-        // hauling. deliver_reserved_cargo() still clamps any later arrival to
-        // the site's real outstanding need, so this cannot overfund a build.
-        const bool unresolved_carrier=robot.role==RobotRole::Carrier &&
-            !robot.route_active && robot.action==BuilderRobotAction::None &&
-            robot.current_speed_mps<0.05f && robot.route_resolution_elapsed>=2.0f;
-        if(unresolved_carrier) continue;
-        if(robot.role==RobotRole::Carrier && robot.cargo.empty() && robot.blocked_elapsed>11.5f &&
-           !robot.route_active && robot.action==BuilderRobotAction::None) continue;
+        // Release ownership only through the crew handoff transaction.
+        // A slow/live path search must not silently make leased kilograms
+        // available to a second rover while the first still owns the trip.
         add_bundle(reserved,robot.logistics_reservation);
     }
     return reserved;
@@ -1445,6 +1437,10 @@ void GameApp::update_builder_robot(float dt){
     for(std::size_t i=0;i<placed_resources_.size();++i) if(workshop_operational(i)){has_workshop=true;break;}
     if(dt<=0.0f || builder_robots_.empty()) return;
     const auto build_queue=construction_queue();
+    for(auto& rover:builder_robots_){
+        rover.crew_deferred_seconds=std::max(0.f,rover.crew_deferred_seconds-dt);
+        if(rover.crew_deferred_seconds==0)rover.crew_deferred_target={};
+    }
 
     // Battery use is accounted from authoritative before/after poses, not from
     // requested routes, so waiting/rejected safety proposals never consume fake
@@ -1470,7 +1466,9 @@ void GameApp::update_builder_robot(float dt){
             const float fraction=robot.battery_charge_kwh/std::max(0.001f,robot.battery_capacity_kwh);
             const bool safe_to_interrupt=robot.action==BuilderRobotAction::None &&
                 !robot.stage_commit_pending && !robot.drop_exit_pending;
-            if(fraction<=kRobotBatteryReserveFraction && safe_to_interrupt)
+            const bool idle_carrier=robot.role==RobotRole::Carrier && robot.cargo.empty() && !robot.target.valid() && !robot.ore_haul.active();
+            if(safe_to_interrupt && (fraction<=kRobotBatteryReserveFraction ||
+               (idle_carrier && fraction<=kRobotBootstrapDispatchFraction)))
                 robot.starter_charge_active=true;
         }
     }
@@ -1481,6 +1479,7 @@ void GameApp::update_builder_robot(float dt){
         // keep it there until the pack is substantially restored instead of
         // oscillating across the threshold every simulation tick.
         return fraction<=kRobotBatteryReserveFraction ||
+               (robot.role==RobotRole::Carrier && robot.cargo.empty() && !robot.target.valid() && !robot.ore_haul.active() && fraction<=kRobotBootstrapDispatchFraction) ||
                (robot.workshop_parked && fraction<0.95f);
     };
 
@@ -1645,27 +1644,22 @@ void GameApp::update_builder_robot(float dt){
         const auto* plan=construction_target_plan(target);
         const auto* staged=construction_site_buffer(target);
         if(!plan || !staged) return false;
-        // Construction is now stage-fed by CR-01. A BR-02 may start as soon as
-        // the NEXT stage bundle is physically present at the blueprint; it no
-        // longer waits for the complete remaining project to be delivered.
-        // This keeps builders productive while carriers independently seed all
-        // other placed blueprints in the background.
-        return contains_bundle(*staged,plan->next_step_cost(construction_target_step(target)));
+        // Finish the material handoff before growing the structure: otherwise
+        // a new wall can sever the next supply route. Free crew members claim
+        // other ready projects or help stage this bill instead of waiting.
+        return contains_bundle(*staged,plan->remaining(construction_target_step(target)));
     };
     auto construction_site_logistics_clear=[&](const ConstructionTargetRef& target){
         if(!target.valid()) return false;
-        // The final CR-01 owns the apron until it has unloaded and physically
-        // exited. Starting a corridor while that carrier is still beside it can
-        // erect a permanent obstacle behind the rover and strand it on the
-        // wrong side of the new tube. BR-02 therefore waits for the transaction
-        // AND the departure to finish, not merely for the site-buffer count.
-        for(const auto& fleet_robot:builder_robots_){
-            if(fleet_robot.role!=RobotRole::Carrier || !fleet_robot.target.valid() ||
-               !fleet_robot.target.same_as(target)) continue;
-            if(fleet_robot.mode==BuilderRobotMode::Fetching ||
-               fleet_robot.mode==BuilderRobotMode::Delivering ||
-               fleet_robot.drop_exit_pending || fleet_robot.cargo_committed_to_build)
-                return false;
+        // Distant material trips do not lock a supplied construction stage.
+        // Keep the local unloading throat clear; stage-commit safety still
+        // checks the entire fleet before introducing any permanent geometry.
+        const auto drop=construction_drop_position(target);
+        for(const auto& rover:builder_robots_){
+            if(rover.role!=RobotRole::Carrier||!rover.target.same_as(target))continue;
+            if(rover.drop_exit_pending || rover.action==BuilderRobotAction::PutDown ||
+               ((rover.mode==BuilderRobotMode::Fetching||rover.mode==BuilderRobotMode::Delivering)&&
+                dist_xz(rover.position,drop)<3.0f))return false;
         }
         return true;
     };
@@ -2070,6 +2064,10 @@ void GameApp::update_builder_robot(float dt){
         if(lander_.active()){
             nav.solids.push_back(make_nav_rect(lander_.site,0,10.7f,10.7f,kLanderBlockerSequence));
             nav.solids.push_back(make_nav_rect(lander_.site+Vec3{0,0,7.15f},0,4.24f,7.1f,kLanderBlockerSequence));
+            lunar_lander_reserved_unload_paths(lander_,(int)builder_robots_.size(),[&](Vec3 a,Vec3 b){
+                const auto d=b-a;const float run=dist_xz(a,b),heading=std::atan2(d.x,d.z)*180.f/PI;
+                nav.solids.push_back(make_nav_rect((a+b)*.5f,heading,1.5f,run+1.5f,kLanderBlockerSequence));
+            });
         }
         for(const auto& h:placed_habitats_){
             if(!h.construction.complete()) continue;
@@ -2340,7 +2338,7 @@ void GameApp::update_builder_robot(float dt){
         // A circumscribed hull radius is conservative for path planning and
         // guarantees every heading remains structure-clear.
         const float structure_radius=robot_safety_corridor_radius(robot.role);
-        if(lunar_lander_segment_blocked(lander_,candidate,candidate,structure_radius))return false;
+        if(lunar_lander_segment_blocked(lander_,candidate,candidate,structure_radius,(int)builder_robots_.size()))return false;
 
         // A completed habitat/resource remains a solid rover footprint. Earlier
         // revisions removed the conservative footprint as soon as construction
@@ -2505,7 +2503,7 @@ void GameApp::update_builder_robot(float dt){
         // footprints, so sample those same simple volumes along the segment.
         const float radius=robot_safety_corridor_radius(robot.role);
         const float structure_radius=radius+std::max(0.0f,extra_structure_margin);
-        if(lunar_lander_segment_blocked(lander_,from,to,structure_radius))return false;
+        if(lunar_lander_segment_blocked(lander_,from,to,structure_radius,(int)builder_robots_.size()))return false;
         const float half=(float)playfield_.size()*0.5f-radius;
         if(from.x<-half || from.x>half || from.z<-half || from.z>half ||
            to.x<-half || to.x>half || to.z<-half || to.z>half) return false;
@@ -4453,20 +4451,7 @@ void GameApp::update_builder_robot(float dt){
             const auto& other=builder_robots_[i];
             if(!other.cargo_committed_to_build ||
                (other.mode!=BuilderRobotMode::Fetching && other.mode!=BuilderRobotMode::Delivering)) continue;
-            // Match the site-demand ledger exactly. A BR-02 self-haul has no
-            // time-based lease expiry, and a CR-01 reservation remains physical
-            // stock ownership until the carrier reaches the explicit 12 s
-            // cancellation condition. Using a shorter source-only timeout lets
-            // a second rover reserve kilograms that the first one still owns.
-            // Mirror construction_site_reserved(): an unresolved carrier must
-            // not monopolize the global source ledger after its 2 s route
-            // resolution window has expired.
-            if(other.role==RobotRole::Carrier && other.cargo.empty() &&
-               !other.route_active && other.action==BuilderRobotAction::None &&
-               other.current_speed_mps<0.05f && other.route_resolution_elapsed>=2.0f) continue;
-            if(other.role==RobotRole::Carrier && other.cargo.empty() &&
-               other.blocked_elapsed>11.5f && !other.route_active &&
-               other.action==BuilderRobotAction::None) continue;
+            // The source and site ledgers use the same explicit lease lifetime.
             const std::int64_t assigned=other.logistics_reservation.amount(material);
             const std::int64_t loaded=other.cargo.amount(material);
             amount+=std::max<std::int64_t>(0,assigned-loaded);
@@ -4501,29 +4486,8 @@ void GameApp::update_builder_robot(float dt){
         if(robot_index>=builder_robots_.size() || !target.valid()) return assignment;
         auto& robot=builder_robots_[robot_index];
 
-        // CR-01 is the primary shipper. If it becomes available while a BR-02
-        // has only RESERVED a fallback load (nothing picked up yet), transfer
-        // ownership back to the carrier before calculating demand. This avoids
-        // two robots reserving different chunks of the same pallet and then
-        // deadlocking the single-lane starter-depot queue.
-        if(robot.role==RobotRole::Carrier){
-            for(std::size_t bi=0;bi<builder_robots_.size();++bi){
-                if(bi==robot_index) continue;
-                auto& builder=builder_robots_[bi];
-                if(builder.role!=RobotRole::Constructor || !builder.target.valid() || !builder.target.same_as(target)) continue;
-                if(builder.mode!=BuilderRobotMode::Fetching || !builder.cargo.empty() || builder.logistics_reservation.empty()) continue;
-                builder.logistics_reservation={};
-                builder.cargo_committed_to_build=false;
-                builder.mode=BuilderRobotMode::AwaitingMaterials;
-                builder.idle_elapsed=0.0f;
-                builder.pickup_lane_claimed=false;
-                builder.pickup_queue_age=0.0f;
-                clear_action(builder);
-                clear_interaction_station(builder);
-                clear_route(builder);
-            }
-        }
-
+        // Every rover publishes its own material lease. Claim only the
+        // unreserved deficit; never cancel a peer's valid pickup to take it.
         const ResourceBundle need=logistics_remaining(target,all_remaining_steps,true,robot_index);
         std::int64_t capacity=std::max<std::int64_t>(0,robot.payload_capacity_kg-robot.cargo.total_amount());
         for(std::size_t i=0;i<kMaterialResourceCount && capacity>0;++i){
@@ -4718,11 +4682,51 @@ void GameApp::update_builder_robot(float dt){
     // blueprint, then releases the site again if the following stage is not yet
     // supplied. This keeps construction moving without making builders haul or
     // wait for the entire project inventory to arrive first.
+    // Completed structures have a larger collision envelope than a blueprint.
+    // Search exterior work bays against the real certified rover footprint.
+    const auto demolition_station=[&](std::size_t i,const ConstructionTargetRef& target)->std::optional<Vec3>{
+        Vec3 center=construction_target_position(target);float hx=0,hz=0,rotation=0;
+        if(target.kind==ConstructionTargetKind::Habitat){const auto& h=placed_habitats_[target.index];const auto& m=habitat_models_.mesh(h);center=h.position;hx=m.footprint_x*.5f;hz=m.footprint_z*.5f;rotation=h.rotation_degrees;}
+        if(target.kind==ConstructionTargetKind::Resource){const auto& h=placed_resources_[target.index];const auto& m=resource_models_.mesh(h);center=h.position;hx=m.footprint_x*.5f;hz=m.footprint_z*.5f;rotation=h.rotation_degrees;}
+        if(target.kind==ConstructionTargetKind::Corridor)center=point_along_path(corridor_network_.connections()[target.index].path,.5f);
+        if(target.kind==ConstructionTargetKind::Utility)center=point_along_path(utility_network_.connections()[target.index].path,.5f);
+        if(target.kind==ConstructionTargetKind::Walkway)center=point_along_path(walkway_network_.connections()[target.index].path,.5f);
+        const auto& rover=builder_robots_[i];
+        std::optional<Vec3> best;float score=std::numeric_limits<float>::max();
+        for(float extra:{1.6f,2.3f,3.2f,4.5f,6.f}){
+            for(int n=0;n<32;++n){const float a=2*PI*n/32.f;const float x=std::sin(a),z=std::cos(a);
+                const float edge=hx>0&&hz>0?std::min(std::abs(x)>.0001f?hx/std::abs(x):1e6f,std::abs(z)>.0001f?hz/std::abs(z):1e6f):1.f;
+                Vec3 candidate=center+world_math::rotate_y({x*(edge+extra),0,z*(edge+extra)},rotation);candidate.y=rover_floor_height(candidate);
+                if(!robot_position_clear(i,candidate)||!robot_structure_move_allowed(rover,candidate,candidate)||!fleet_position_clear(i,candidate))continue;
+                const float d=dist_xz(rover.position,candidate)+extra*2.f;if(d<score){score=d;best=candidate;}
+            }
+            if(best)return best;
+        }
+        return best;
+    };
+    // Reuse the certified rover motion and lander cutting action.
+    const auto demolition=deconstruction_jobs_.empty()?ConstructionTargetRef{}:deconstruction_target(deconstruction_jobs_.front().sequence);
+    if(!demolition.valid() || deconstruction_worker_>=builder_robots_.size()){
+        deconstruction_worker_=kNoRobotIndex;deconstruction_station_.reset();
+    }
+    if(demolition.valid() && deconstruction_worker_==kNoRobotIndex){
+        float best=std::numeric_limits<float>::max();
+        for(std::size_t i=0;i<builder_robots_.size();++i){
+            auto& rover=builder_robots_[i];
+            if(rover.role!=RobotRole::Constructor||rover.mode!=BuilderRobotMode::Idle||rover.target.valid()||!rover.cargo.empty()||
+               rover.action!=BuilderRobotAction::None||rover.debug_move_active||rover.starter_charge_active||battery_service_required(rover)||
+               trader_robot_busy(i)||lander_.salvage_uses_robot(i)||safety_repositioning[i])continue;
+            const auto station=demolition_station(i,demolition);
+            if(!station)continue;
+            const float d=dist_xz(rover.position,*station);
+            if(d<best){best=d;deconstruction_worker_=i;deconstruction_station_=station;}
+        }
+    }
     if(lander_.salvage_requested&&lander_.salvage_worker<0&&lander_.salvage_seconds<kLanderSalvageSeconds){
         float nearest=std::numeric_limits<float>::infinity();
         for(std::size_t i=0;i<builder_robots_.size();++i){
             auto& robot=builder_robots_[i];
-            if(robot.role!=RobotRole::Constructor||robot.target.valid()||robot.mode!=BuilderRobotMode::Idle||
+            if(deconstruction_uses_robot(i)||robot.role!=RobotRole::Constructor||robot.target.valid()||robot.mode!=BuilderRobotMode::Idle||
                robot.action!=BuilderRobotAction::None||!robot.cargo.empty()||robot.debug_move_active||
                robot.starter_charge_active||battery_service_required(robot)||trader_robot_busy(i)) continue;
             for(std::size_t port=0;port<kLanderSalvagePortCount;++port){
@@ -4745,8 +4749,36 @@ void GameApp::update_builder_robot(float dt){
         if(safety_repositioning[robot_index]) continue;
         // Bootstrap charging temporarily owns locomotion but preserves the
         // construction state; the same target can resume after the pack recovers.
-        if(robot.starter_charge_active) continue;
+        if(robot.starter_charge_active){
+            if(deconstruction_uses_robot(robot_index)){deconstruction_worker_=kNoRobotIndex;deconstruction_station_.reset();clear_action(robot);}
+            continue;
+        }
 
+        if(deconstruction_uses_robot(robot_index)){
+            robot.workshop_parked=false;robot.workshop_returning=false;
+            if(battery_service_required(robot)||robot.battery_charge_kwh<=.0001f){
+                clear_action(robot);clear_route(robot);deconstruction_worker_=kNoRobotIndex;deconstruction_station_.reset();continue;
+            }
+            if(!deconstruction_station_ || !robot_position_clear(robot_index,*deconstruction_station_))
+                deconstruction_station_=demolition_station(robot_index,demolition);
+            if(!deconstruction_station_){clear_action(robot);clear_route(robot);deconstruction_worker_=kNoRobotIndex;continue;}
+            const auto station=*deconstruction_station_;
+            if(!robot_position_clear(robot_index,station)||!robot_structure_move_allowed(robot,station,station)){
+                clear_action(robot);clear_route(robot);deconstruction_worker_=kNoRobotIndex;deconstruction_station_.reset();continue;
+            }
+            if(dist_xz(robot.position,station)>.22f||std::abs(robot.current_speed_mps)>.045f){
+                clear_action(robot);move_towards(robot_index,station,.16f,.8f);
+            }else if(deconstruction_safe(demolition)&&robot.safety.mode!=robots::SafetyMode::Fault){
+                auto& job=deconstruction_jobs_.front();
+                Vec3 focus=construction_target_position(demolition);
+                if(demolition.kind==ConstructionTargetKind::Habitat)focus=placed_habitats_[demolition.index].position;
+                if(demolition.kind==ConstructionTargetKind::Resource)focus=placed_resources_[demolition.index].position;
+                if(robot.action!=BuilderRobotAction::Dismantle)start_action(robot,BuilderRobotAction::Dismantle,3.f,MaterialResource::Iron,0,focus);
+                job.progress=std::min(1.f,job.progress+dt/18.f);
+                robot.action_elapsed=std::fmod(job.progress*18.f,3.f);
+            }else clear_action(robot);
+            continue;
+        }
         if(lander_.salvage_uses_robot(robot_index)){
             robot.workshop_parked=false;
             robot.workshop_returning=false;
@@ -4771,26 +4803,34 @@ void GameApp::update_builder_robot(float dt){
             continue;
         }
 
-        // Role separation from v0.40.16 onward: a constructor never transports
-        // construction stock. Legacy saves can still contain an in-flight BR-02
-        // logistics state; put that cargo back into the world and release the
-        // reservation so a CR-01 can finish the site cleanly.
-        if(robot.mode==BuilderRobotMode::Fetching || robot.mode==BuilderRobotMode::Delivering ||
-           robot.mode==BuilderRobotMode::DepotTransfer){
+        // Release an unproductive claim without moving or teleporting the
+        // rover. The shared job/material ledger lets another crew member
+        // resume the site; this rover tries other work during its cooldown.
+        if(robot.target.valid() && robot.cargo.empty() && robot.action==BuilderRobotAction::None &&
+           !robot.stage_commit_pending && robot.blocked_elapsed>=4.f &&
+           robot.safety.block_reason==robots::BlockReason::NoRoute &&
+           !robot.safety.incremental_path.global_search){
+            robot.crew_deferred_target=robot.target;robot.crew_deferred_seconds=8.f;
+            robot.target={};robot.support_robot_index=kNoRobotIndex;
+            robot.logistics_reservation={};robot.cargo_committed_to_build=false;
+            robot.site_buffer={};robot.stage_materials_picked=false;
+            robot.interaction_position_valid=false;robot.pickup_lane_claimed=false;
+            robot.mode=BuilderRobotMode::Idle;robot.blocked_elapsed=0;clear_route(robot);
+        }
+        // A legacy cargo-return state has no construction destination.
+        if(robot.mode==BuilderRobotMode::DepotTransfer){
             if(!robot.cargo.empty()){
-                const ResourceBundle spilled=spill_bundle_to_ground(robot.cargo,robot.position,nullptr);
+                const auto spilled=spill_bundle_to_ground(robot.cargo,robot.position,nullptr);
                 subtract_bundle(robot.cargo,spilled);
             }
-            robot.logistics_reservation={};
-            robot.cargo_committed_to_build=false;
-            robot.target={};
-            robot.support_robot_index=kNoRobotIndex;
-            robot.site_buffer={};
-            robot.stage_materials_picked=false;
-            robot.interaction_position_valid=false;
-            clear_action(robot);
-            clear_route(robot);
-            robot.mode=BuilderRobotMode::Idle;
+            robot.target={};robot.logistics_reservation={};robot.cargo_committed_to_build=false;
+            clear_action(robot);clear_route(robot);robot.mode=BuilderRobotMode::Idle;
+        }
+
+        if(robot.target.valid()&&construction_target_complete(robot.target)&&!robot.cargo.empty()){
+            const auto returned=spill_bundle_to_ground(robot.cargo,robot.position,nullptr);
+            subtract_bundle(robot.cargo,returned);
+            if(!robot.cargo.empty())continue;
         }
 
         // A constructor that reaches its reserve between physical operations
@@ -4812,7 +4852,9 @@ void GameApp::update_builder_robot(float dt){
         // physically delivered the whole remaining plan. A builder already in
         // the middle of a stage may finish that stage before this gate applies.
         if(robot.target.valid() && !construction_target_complete(robot.target) &&
-           robot.mode!=BuilderRobotMode::Building && !construction_stage_supplied(robot.target)){
+           robot.mode!=BuilderRobotMode::Building && robot.mode!=BuilderRobotMode::Fetching &&
+           robot.mode!=BuilderRobotMode::Delivering && robot.cargo.empty() &&
+           !construction_stage_supplied(robot.target)){
             robot.target={};
             robot.support_robot_index=kNoRobotIndex;
             robot.logistics_reservation={};
@@ -4826,12 +4868,24 @@ void GameApp::update_builder_robot(float dt){
         }
 
         auto choose_target=[&](bool only_earlier){
+            const auto eligible=[&](const ConstructionTargetRef& target){
+                return construction_target_dependencies_ready(target)&&
+                    !target.same_as(robot.crew_deferred_target)&&
+                    constructor_team_count(target)<constructor_team_capacity(target);
+            };
             for(const auto& job:build_queue){
-                const auto& target=job.target;
-                if(only_earlier && target.same_as(robot.target)) break;
-                if(!construction_queue_allows(job) || !construction_target_dependencies_ready(target)) continue;
-                if(construction_stage_supplied(target) && construction_site_logistics_clear(target) &&
-                   constructor_team_count(target)<constructor_team_capacity(target)) return target;
+                const auto target=job.target;
+                if(only_earlier&&target.same_as(robot.target))break;
+                if(construction_queue_allows(job)&&eligible(target)&&
+                   construction_stage_supplied(target)&&construction_site_logistics_clear(target))return target;
+            }
+            // A free constructor can fetch its next stage instead of waiting
+            // for a carrier. Source/site leases prevent duplicate hauling.
+            if(!only_earlier)for(const auto& job:build_queue){
+                const auto target=job.target;
+                if(!construction_queue_allows(job)||!eligible(target))continue;
+                const auto need=logistics_remaining(target,true,true,robot_index);
+                if(!need.empty()&&choose_source(robot_index,need).valid)return target;
             }
             return ConstructionTargetRef{};
         };
@@ -4948,22 +5002,19 @@ void GameApp::update_builder_robot(float dt){
         if(robot.mode==BuilderRobotMode::Idle) robot.mode=BuilderRobotMode::AwaitingMaterials;
 
         if(robot.mode==BuilderRobotMode::AwaitingMaterials){
-            // This state is a stage handoff. The next stage bundle must already
-            // be present before the constructor starts work. If it is not yet
-            // staged, release the site and let CR-01 continue shipping; BR-02
-            // never self-hauls construction stock.
+            // Material-dependent work is not an idle state: claim a real
+            // unreserved pickup, or release the job for a peer and scan again.
             if(!construction_stage_supplied(robot.target)){
-                robot.target={};
-                robot.support_robot_index=kNoRobotIndex;
-                robot.logistics_reservation={};
-                robot.cargo_committed_to_build=false;
-                robot.stage_materials_picked=false;
-                robot.idle_elapsed=0.0f;
-                clear_action(robot);
-                clear_interaction_station(robot);
-                clear_route(robot);
-                robot.mode=BuilderRobotMode::Idle;
-                continue;
+                if(!reserve_trip(robot_index,robot.target,true).empty()){
+                    robot.mode=BuilderRobotMode::Fetching;robot.cargo_committed_to_build=true;
+                    clear_interaction_station(robot);clear_action(robot);clear_route(robot);
+                }else{
+                    robot.target={};robot.support_robot_index=kNoRobotIndex;
+                    robot.logistics_reservation={};robot.cargo_committed_to_build=false;
+                    robot.stage_materials_picked=false;robot.mode=BuilderRobotMode::Idle;
+                    clear_action(robot);clear_interaction_station(robot);clear_route(robot);
+                    continue;
+                }
             }
             if(contains_bundle(*shared_site_buffer,step_cost)){
                 // Re-check immediately before the first work action. A rover may
@@ -4985,35 +5036,10 @@ void GameApp::update_builder_robot(float dt){
         }
 
         if(robot.mode==BuilderRobotMode::Fetching){
-            // Save-compatible deadlock repair: older/runtime states may already
-            // contain a BR-02 fallback reservation and a CR-01 reservation for
-            // the same site. If the builder has not physically picked anything
-            // up yet, release its reservation immediately and let logistics own
-            // the shipment. This directly repairs 0-40-10.gmsave on load.
-            if(robot.cargo.empty() && !robot.logistics_reservation.empty()){
-                bool carrier_servicing_site=false;
-                for(const auto& fleet_robot:builder_robots_){
-                    if(fleet_robot.role!=RobotRole::Carrier || !fleet_robot.target.valid() || !fleet_robot.target.same_as(robot.target)) continue;
-                    if((fleet_robot.mode==BuilderRobotMode::Fetching || fleet_robot.mode==BuilderRobotMode::Delivering) &&
-                       (!fleet_robot.logistics_reservation.empty() || !fleet_robot.cargo.empty())){
-                        carrier_servicing_site=true;
-                        break;
-                    }
-                }
-                if(carrier_servicing_site){
-                    clear_logistics_assignment(robot);
-                    clear_action(robot);
-                    clear_interaction_station(robot);
-                    clear_route(robot);
-                    robot.pickup_lane_claimed=false;
-                    robot.pickup_queue_age=0.0f;
-                    robot.mode=BuilderRobotMode::AwaitingMaterials;
-                    robot.idle_elapsed=0.0f;
-                    continue;
-                }
-            }
+            // Keep a valid constructor lease while carriers claim other
+            // materials/jobs; a peer arrival never restarts this pickup.
             if(robot.logistics_reservation.empty()){
-                if(reserve_trip(robot_index,robot.target,false).empty()){
+                if(reserve_trip(robot_index,robot.target,true).empty()){
                     robot.mode=BuilderRobotMode::AwaitingMaterials;
                     robot.idle_elapsed=0.0f;
                     continue;
@@ -5112,6 +5138,16 @@ void GameApp::update_builder_robot(float dt){
         }
 
         if(robot.mode==BuilderRobotMode::Delivering){
+            // A resumed/partly delivered load can contain stock for later
+            // stages. Lease that useful remainder, or return genuine excess
+            // physically; never loop an empty reservation's put-down forever.
+            if(robot.logistics_reservation.empty()&&!robot.cargo.empty()&&
+               !reserve_loaded_cargo_for_site(robot,robot.target,true)){
+                const auto returned=spill_bundle_to_ground(robot.cargo,robot.position,nullptr);
+                subtract_bundle(robot.cargo,returned);
+                if(robot.cargo.empty())robot.cargo_committed_to_build=false;
+                clear_action(robot);
+            }
             // BR-02 fallback hauling joins the SAME site drop queue as CR-01s.
             // A self-hauling builder may therefore never race a carrier into the
             // one unloading apron; it stages outside until it owns the bay.
@@ -5142,7 +5178,7 @@ void GameApp::update_builder_robot(float dt){
                     start_action(robot,BuilderRobotAction::PutDown,kPutDownSeconds,handled,handled_amount,drop_zone);
                 }else if(tick_action(robot,dt)){
                     bool delivery_deferred=false;
-                    const auto delivered=deliver_reserved_cargo(robot,robot.target,false,&delivery_deferred);
+                    const auto delivered=deliver_reserved_cargo(robot,robot.target,true,&delivery_deferred);
                     record_robot_operation_result(robot,!delivered.empty());
                     if(delivery_deferred||robot.operation_retry.replan_pending()){
                         clear_action(robot);
@@ -5375,15 +5411,6 @@ void GameApp::update_builder_robot(float dt){
     // reservation in kilograms. Site demand is therefore always:
     // required - delivered - fleet reservations. This is the authoritative
     // synchronization point shared with fallback BR-02 hauling.
-    auto any_unfinished_blueprint=[&](){
-        for(const auto& h:placed_habitats_) if(!h.construction.complete()) return true;
-        for(const auto& r:placed_resources_) if(!r.construction.complete()) return true;
-        for(const auto& c:corridor_network_.connections()) if(!c.construction.complete()) return true;
-        for(const auto& u:utility_network_.connections()) if(!u.construction.complete()) return true;
-        for(const auto& w:walkway_network_.connections()) if(!w.construction.complete()) return true;
-        return false;
-    };
-
     for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
         auto& carrier=builder_robots_[robot_index];
         if(carrier.role!=RobotRole::Carrier || trader_robot_busy(robot_index) || carrier.ore_haul.active()) continue;
@@ -5416,8 +5443,11 @@ void GameApp::update_builder_robot(float dt){
              starter_lane_queue_rank(robot_index,carrier.interaction_material)>0 ||
              starter_depot_admission_rank(robot_index)>=3u);
         if(carrier.mode==BuilderRobotMode::Fetching && carrier.cargo.empty() &&
-           !carrier.logistics_reservation.empty() && carrier.blocked_elapsed>12.0f &&
-           !carrier.route_active && carrier.action==BuilderRobotAction::None && !protected_starter_pickup){
+           !carrier.logistics_reservation.empty() && carrier.blocked_elapsed>=4.0f &&
+           !carrier.route_active && carrier.action==BuilderRobotAction::None && !protected_starter_pickup &&
+           carrier.safety.block_reason==robots::BlockReason::NoRoute &&
+           !carrier.safety.incremental_path.global_search){
+            carrier.crew_deferred_target=carrier.target;carrier.crew_deferred_seconds=8.f;
             carrier.logistics_reservation={};
             carrier.cargo_committed_to_build=false;
             carrier.target={};
@@ -5452,52 +5482,32 @@ void GameApp::update_builder_robot(float dt){
             return false;
         };
 
-        // Physically stage the whole remaining bill before advancing to the
-        // next item. A connection moved ahead of its prerequisites leaves
-        // those jobs available for delivery first.
-        auto fifo_front_target=[&](){
+        auto choose_support=[&](bool loaded_only){
             for(const auto& job:build_queue){
-                if(!construction_queue_allows(job)) continue;
-                if((!construction_order_.empty() || job.manual_priority) &&
-                   !construction_target_dependencies_ready(job.target)) continue;
-                if(!logistics_remaining(job.target,true,false,kNoRobotIndex).empty()) return job.target;
+                const auto target=job.target;
+                if(!construction_queue_allows(job)||target.same_as(carrier.crew_deferred_target))continue;
+                if((!construction_order_.empty()||job.manual_priority)&&!construction_target_dependencies_ready(target))continue;
+                const auto need=logistics_remaining(target,true,true,robot_index);
+                if(need.empty()||!site_serviceable(need,loaded_only))continue;
+                if(!loaded_only&&!choose_source(robot_index,need).valid)continue;
+                return target;
             }
             return ConstructionTargetRef{};
         };
 
-        auto choose_support=[&](bool loaded_only){
-            const ConstructionTargetRef target=fifo_front_target();
-            if(!target.valid()) return ConstructionTargetRef{};
-
-            // Other carriers may already have reserved the rest of this FIFO
-            // target. In that case this rover waits; it must not jump ahead to
-            // a newer blueprint before the first one is physically full.
-            const ResourceBundle need=logistics_remaining(target,true,true,robot_index);
-            if(need.empty() || !site_serviceable(need,loaded_only)) return ConstructionTargetRef{};
-            if(!loaded_only){
-                const SourceChoice source=choose_source(robot_index,need);
-                if(!source.valid) return ConstructionTargetRef{};
-            }
-            return target;
-        };
-
-        // Enforce the FIFO queue immediately for an empty carrier, including
-        // carriers restored from a pre-schema-13 save with an older target. An
-        // already loaded rover finishes/reassigns its physical cargo normally,
-        // but an empty PICK-UP transaction may be cancelled without material
-        // loss and restarted at the true queue front.
-        const ConstructionTargetRef queue_front=fifo_front_target();
-        if(carrier.cargo.empty() && carrier.target.valid() && queue_front.valid() &&
-           !carrier.target.same_as(queue_front)){
-            clear_logistics_assignment(carrier);
-            carrier.target={};
-            carrier.support_robot_index=kNoRobotIndex;
-            carrier.mode=BuilderRobotMode::Idle;
-            carrier.drop_exit_pending=false;
-            carrier.post_delivery_hold=false;
-            clear_action(carrier);
-            clear_interaction_station(carrier);
-            clear_route(carrier);
+        // Priority may preempt a safe, empty trip, but never forces every
+        // carrier back to the same already-reserved blueprint.
+        const auto preferred=carrier.cargo.empty()?choose_support(false):ConstructionTargetRef{};
+        if(carrier.cargo.empty()&&carrier.target.valid()&&preferred.valid()&&
+           !preferred.same_as(carrier.target)&&carrier.action==BuilderRobotAction::None&&
+           !carrier.pickup_lane_claimed&&!carrier.drop_exit_pending&&
+           [&]{
+               std::size_t next=build_queue.size(),current=build_queue.size();
+               for(std::size_t i=0;i<build_queue.size();++i){if(build_queue[i].target.same_as(preferred))next=i;if(build_queue[i].target.same_as(carrier.target))current=i;}
+               return next<current;
+           }()){
+            clear_logistics_assignment(carrier);carrier.target={};carrier.support_robot_index=kNoRobotIndex;
+            carrier.mode=BuilderRobotMode::Idle;clear_interaction_station(carrier);clear_route(carrier);
         }
 
         auto assign_empty_carrier=[&](){
@@ -5544,6 +5554,15 @@ void GameApp::update_builder_robot(float dt){
             return true;
         };
 
+        if(!carrier.cargo.empty()&&carrier.target.valid()&&carrier.blocked_elapsed>=4.f&&
+           carrier.action==BuilderRobotAction::None&&!carrier.drop_exit_pending&&
+           carrier.safety.block_reason==robots::BlockReason::NoRoute&&!carrier.safety.incremental_path.global_search){
+            const auto old_deferred=carrier.crew_deferred_target;const float old_delay=carrier.crew_deferred_seconds;
+            carrier.crew_deferred_target=carrier.target;carrier.crew_deferred_seconds=8.f;
+            if(choose_support(true).valid()&&reassign_loaded_carrier())carrier.blocked_elapsed=0;
+            else {carrier.crew_deferred_target=old_deferred;carrier.crew_deferred_seconds=old_delay;}
+        }
+
         // Reservations are target-specific. If a site disappears or completes,
         // immediately release its uncollected kilograms so the rest of the fleet
         // sees them as available on this same simulation tick.
@@ -5581,7 +5600,7 @@ void GameApp::update_builder_robot(float dt){
                 // CR-01 should park instead of launching unrelated A* searches
                 // on the main simulation thread. Ground-pile recovery resumes
                 // once the current construction queue is complete.
-                carrier.mode=any_unfinished_blueprint()?BuilderRobotMode::Idle:BuilderRobotMode::DepotTransfer;
+                carrier.mode=BuilderRobotMode::DepotTransfer;
                 carrier.cargo_committed_to_build=false;
                 // An idle carrier may still have a real workshop-return request
                 // later in this same update. Repeatedly clearing its route here
@@ -5941,7 +5960,9 @@ void GameApp::update_builder_robot(float dt){
     for(std::size_t robot_index=0;robot_index<builder_robots_.size();++robot_index){
         auto& robot=builder_robots_[robot_index];
         if(robot.role!=RobotRole::Carrier || robot.mode!=BuilderRobotMode::Idle ||
-           !robot.cargo.empty() || robot.target.valid()) continue;
+           !robot.cargo.empty() || robot.target.valid() || robot.starter_charge_active ||
+           robot.ore_haul.active() || trader_robot_busy(robot_index) || safety_repositioning[robot_index] ||
+           navigation_requests[robot_index].active) continue;
         clear_action(robot);
         clear_interaction_station(robot);
         if(has_workshop || robot.debug_move_active) continue;
@@ -5998,12 +6019,12 @@ void GameApp::update_builder_robot(float dt){
         auto incoming=[&](std::size_t i){
             if(i>=builder_robots_.size()) return false;
             const auto& r=builder_robots_[i];
-            return !lander_.salvage_uses_robot(i) && !r.debug_move_active && r.workshop_index==home && r.mode==BuilderRobotMode::Idle && !r.target.valid() && r.cargo.empty() &&
+            return !lander_.salvage_uses_robot(i) && !deconstruction_uses_robot(i) && !r.debug_move_active && r.workshop_index==home && r.mode==BuilderRobotMode::Idle && !r.target.valid() && r.cargo.empty() &&
                 !r.drop_exit_pending && (dist_xz(r.position,workshop::bay(item,r.workshop_bay))>=0.22f || std::abs(r.current_speed_mps)>=0.04f);
         };
         bool exiting=false;
         for(const auto& r:builder_robots_)
-            if(workshop::inside(item,r.position) && (r.target.valid() || r.ore_haul.active())) exiting=true;
+            if(workshop::inside(item,r.position) && (r.target.valid() || r.ore_haul.active() || deconstruction_uses_robot((std::size_t)(&r-builder_robots_.data())))) exiting=true;
         if(exiting) item.workshop_entry_owner=-1;
         else if(item.workshop_entry_owner<0 || !incoming((std::size_t)item.workshop_entry_owner)){
             item.workshop_entry_owner=-1;float best=std::numeric_limits<float>::max();
@@ -6015,7 +6036,7 @@ void GameApp::update_builder_robot(float dt){
     }
     for(std::size_t i=0;i<builder_robots_.size();++i){
         auto& robot=builder_robots_[i];
-        if(lander_.salvage_uses_robot(i) || robot.debug_move_active || robot.workshop_index==kNoRobotIndex || robot.mode!=BuilderRobotMode::Idle || robot.target.valid() ||
+        if(lander_.salvage_uses_robot(i) || deconstruction_uses_robot(i) || robot.debug_move_active || robot.workshop_index==kNoRobotIndex || robot.mode!=BuilderRobotMode::Idle || robot.target.valid() ||
            !robot.cargo.empty() || robot.action!=BuilderRobotAction::None || robot.drop_exit_pending){
             robot.workshop_entry_started=false;continue;
         }
@@ -6121,7 +6142,7 @@ void GameApp::update_builder_robot(float dt){
         if(robot.safety.yielding_for_traffic && robot.action==BuilderRobotAction::None){
             const bool delivery_admitted=robot.mode==BuilderRobotMode::Delivering && robot.interaction_position_valid &&
                 dist_xz(robot.interaction_position,robot.interaction_focus_position)<0.55f;
-            const bool resume_job=lander_.salvage_uses_robot(i) || trader_robot_busy(i) || robot.ore_haul.active() || robot.workshop_returning || (robot.target.valid() &&
+            const bool resume_job=robot.starter_charge_active || lander_.salvage_uses_robot(i) || deconstruction_uses_robot(i) || trader_robot_busy(i) || robot.ore_haul.active() || robot.workshop_returning || (robot.target.valid() &&
                 (robot.role==RobotRole::Constructor || delivery_admitted || robot.mode!=BuilderRobotMode::Delivering));
             if(!robot.safety.temporary_goal_valid && resume_job) robot.safety.yielding_for_traffic=false;
             else navigation_requests[i].active=false;
@@ -6137,7 +6158,7 @@ void GameApp::update_builder_robot(float dt){
         // return trip the lowest priority so CR-01 deliveries always win shared
         // passage arbitration while the builder is waiting for materials.
         if(robot.mode==BuilderRobotMode::Idle &&
-           !robot.target.valid() && !lander_.salvage_uses_robot(i) && navigation_requests[i].active)
+           !robot.target.valid() && !lander_.salvage_uses_robot(i) && !deconstruction_uses_robot(i) && navigation_requests[i].active)
             navigation_requests[i].task_priority=0u;
         else
             navigation_requests[i].task_priority=robot.role==RobotRole::Constructor?2u:1u;
@@ -6315,7 +6336,7 @@ void GameApp::update_builder_robot(float dt){
         if(robot.watchdog_elapsed<kOperationWatchdogSeconds) continue;
         record_robot_operation_result(robot,false,trader_robot_busy(robot_index)?trader_.pad_sequence:0);
         if(robot.operation_retry.replan_pending()) continue;
-        if(trader_robot_busy(robot_index)||robot.ore_haul.active()||lander_.salvage_uses_robot(robot_index)||
+        if(trader_robot_busy(robot_index)||robot.ore_haul.active()||lander_.salvage_uses_robot(robot_index)||deconstruction_uses_robot(robot_index)||
            safety_repositioning[robot_index]||robot.safety.mode==robots::SafetyMode::Fault){
             clear_route(robot);
             clear_action(robot);

@@ -124,37 +124,40 @@ void GameApp::render_astronaut_status(SceneRenderer& r,const Mat4& view_projecti
     const int index=first_person_mode_==FirstPersonMode::Active?controlled_astronaut_:selected_astronaut_;
     if(index<0||!astronaut_present(std::size_t(index)))return;
     auto& actor=test_astronauts_[index];const auto& role=kAstronautRoles[index];
-    const Rect panel=astronaut_status_rect();const float scale=std::min(1.f,panel.h/216.f);
+    const Rect panel=astronaut_status_rect();const float scale=std::min(1.f,panel.h/252.f);
     r.draw_rect(panel,{.025f,.045f,.060f,.75f});
     r.draw_line({panel.x,panel.y},{panel.x+panel.w,panel.y},theme_.accent,1.5f);
     const float x=panel.x+11,w=panel.w-22;
-    game_label_fitted(r,{x,panel.y+8*scale,w-62,16*scale},role.name,.52f*scale,theme_);
+    game_label_fitted(r,{x,panel.y+8*scale,w-62,19.2f*scale},role.name,.52f*scale,theme_);
     int count=0;for(std::size_t i=0;i<astronaut_views_.size();++i)count+=astronaut_present(i);
     if(ui::button(r,ui_input_,{panel.x+panel.w-65,panel.y+7*scale,54,22*scale},"NEXT",theme_,count>1)){cycle_astronaut_control();return;}
-    game_label_fitted(r,{x,panel.y+28*scale,w,14*scale},std::string(role.job)+(actor.suited?" / EVA SUIT":" / CABIN AIR"),.40f*scale,theme_,true);
+    game_label_fitted(r,{x,panel.y+28*scale,w,16.8f*scale},std::string(role.job)+(actor.suited?" / EVA SUIT":" / CABIN AIR"),.40f*scale,theme_,true);
     const auto bar=[&](int row,const char* label,double value,bool high_good){
-        value=std::clamp(value,0.,1.);const float y=panel.y+(49+row*22)*scale;
-        game_label_fitted(r,{x,y,w,14*scale},std::string(label)+" "+std::to_string(int(std::lround(value*100)))+"%",.42f*scale,theme_);
+        value=std::clamp(value,0.,1.);const float y=panel.y+(50+row*25)*scale;
+        game_label_fitted(r,{x,y,w*.49f-4,16.8f*scale},std::string(label)+" "+std::to_string(int(std::lround(value*100)))+"%",.42f*scale,theme_);
         const float start=x+w*.49f,width=w*.51f;
         r.draw_rect({start,y+4*scale,width,7*scale},{.10f,.15f,.18f,.8f});
         const bool warning=high_good?value<.25:value>.75;
         r.draw_rect({start,y+4*scale,width*float(value),7*scale},warning?Color{.95f,.30f,.20f,1}:Color{.30f,.82f,.61f,1});
     };
     bool lock=false;const auto* air=astronaut_air_at(actor.position,lock);
-    const double oxygen=actor.suited?actor.suit_oxygen_kg/kSuitOxygenCapacityKg:air?air->breathability()/100.:0.;
-    bar(0,"HEALTH",actor.health,true);bar(1,"OXYGEN",oxygen,true);
+    const double oxygen=actor.suit_oxygen_kg/kSuitOxygenCapacityKg;
+    bar(0,"HEALTH",actor.health,true);bar(1,"SUIT O2",oxygen,true);
     bar(2,"HUNGER",actor.hunger,false);bar(3,"THIRST",actor.thirst,false);bar(4,"SLEEP NEED",actor.fatigue/kCrewExhausted,false);
-    std::string state=actor.health<=0?"DECEASED":actor.activity==AstronautActivity::Sleeping?"RESTING":actor.destination?"MOVING":first_person_mode_==FirstPersonMode::Active?"DIRECT CONTROL":"HOLDING POSITION";
-    game_label_fitted(r,{x,panel.y+162*scale,w,14*scale},state,.40f*scale,theme_,true);
+    std::string state=actor.health<=0?"DECEASED / CANNOT MOVE":actor.activity==AstronautActivity::Sleeping?"RESTING":actor.destination?"MOVING":first_person_mode_==FirstPersonMode::Active?"DIRECT CONTROL":"HOLDING POSITION";
+    game_label_fitted(r,{x,panel.y+180*scale,w,16.8f*scale},state,.40f*scale,theme_,true);
+    game_label_fitted(r,{x,panel.y+199*scale,w,16.8f*scale},"CABIN AIR "+std::to_string(air?int(std::lround(air->breathability())):0)+"%",.40f*scale,theme_,true);
     const bool cache=world_math::distance_xz(actor.position,crew_cache_position())<=kCrewCacheRadius;
     const bool may_rest=actor.health>0&&((air&&!lock&&air->breathability()>=95)||cache)&&
                         (first_person_mode_!=FirstPersonMode::Active||first_person_.grounded());
-    if(ui::button(r,ui_input_,{x,panel.y+184*scale,w*.48f,24*scale},actor.activity==AstronautActivity::Sleeping?"WAKE UP":"REST HERE",theme_,may_rest)){
+    if(actor.health<=0){
+        if(ui::button(r,ui_input_,{x,panel.y+222*scale,w*.48f,24*scale},"NEW EXPLORER",theme_,explorer_slot_available())){dispatch_explorer();return;}
+    }else if(ui::button(r,ui_input_,{x,panel.y+222*scale,w*.48f,24*scale},actor.activity==AstronautActivity::Sleeping?"WAKE UP":"REST HERE",theme_,may_rest)){
         actor.activity=actor.activity==AstronautActivity::Sleeping?AstronautActivity::Manual:AstronautActivity::Sleeping;
         actor.destination.reset();actor.route.clear();actor.bed_owner=0;actor.speed=0;
         if(first_person_mode_==FirstPersonMode::Active)first_person_.stop_motion();
     }
-    if(ui::button(r,ui_input_,{x+w*.52f,panel.y+184*scale,w*.48f,24*scale},first_person_mode_==FirstPersonMode::Active?"EXIT FPV [V]":"CONTROL [V]",theme_,actor.health>0)){
+    if(ui::button(r,ui_input_,{x+w*.52f,panel.y+222*scale,w*.48f,24*scale},first_person_mode_==FirstPersonMode::Active?"EXIT FPV [V]":"CONTROL [V]",theme_,actor.health>0)){
         if(first_person_mode_==FirstPersonMode::Active)exit_first_person_mode();
         else {selected_astronaut_=index;enter_first_person_mode();}
     }

@@ -38,15 +38,39 @@ const char* GameApp::game_phase_short_name(GamePhase phase){
 void GameApp::on_start(){
     const auto preferences=load_preferences();
     graphics_=preferences.graphics;
+    autosave_minutes_=preferences.autosave_minutes;
     show_fps_=preferences.show_fps;
     first_person_.set_fov(float(preferences.first_person_fov));
     world_layout_mode_=preferences.mesh_layout?WorldLayoutMode::Mesh:WorldLayoutMode::FullGraphics;
     soundscape_.set_music_enabled(preferences.music_enabled);
+    soundscape_.set_volume(preferences.sound_volume_percent/100.f);
+    ui_scale_index_=preferences.ui_scale_index;
+    habitat_view_mode_=preferences.faded_hulls?HabitatViewMode::None:HabitatViewMode::FullHull;
+    debug_frame_enabled_=preferences.debug_frame_enabled;
+    preferred_display_mode_={preferences.display_width,preferences.display_height,0};
+    if(preferences.display_width>0&&preferences.display_height>0)
+        app_.set_display_mode(preferences.display_width,preferences.display_height);
+    // Windowed is available during this session; every launch begins fullscreen.
+    app_.set_fullscreen(true);
+    on_resize(viewport_width_,viewport_height_);
     refresh_save_games();
 }
 
 void GameApp::persist_preferences(){
-    preferences_save_failed_=!save_preferences({graphics_,world_layout_mode_==WorldLayoutMode::Mesh,soundscape_.music_enabled(),int(std::lround(first_person_.fov())),show_fps_});
+    Preferences preferences;
+    preferences.graphics=graphics_;
+    preferences.autosave_minutes=autosave_minutes_;
+    preferences.mesh_layout=world_layout_mode_==WorldLayoutMode::Mesh;
+    preferences.music_enabled=soundscape_.music_enabled();
+    preferences.first_person_fov=int(std::lround(first_person_.fov()));
+    preferences.show_fps=show_fps_;
+    preferences.ui_scale_index=ui_scale_index_;
+    preferences.faded_hulls=habitat_view_mode_==HabitatViewMode::None;
+    preferences.sound_volume_percent=int(std::lround(soundscape_.volume()*100));
+    preferences.debug_frame_enabled=debug_frame_enabled_;
+    preferences.display_width=preferred_display_mode_.width;
+    preferences.display_height=preferred_display_mode_.height;
+    preferences_save_failed_=!save_preferences(preferences);
 }
 
 void GameApp::toggle_world_layout(){
@@ -134,6 +158,13 @@ void GameApp::render(SceneRenderer& r){
         r.draw_rect({10,y,124,25},{.015f,.025f,.035f,.88f});
         r.draw_text({17,y+6},"FPS "+std::to_string(int(std::lround(std::clamp(fps_,0.f,9999.f)))),2.0f,{1.f,.95f,.40f,1});
     }
+    if(screen_==Screen::Playfield && ui_time_seconds_<autosave_notice_until_){
+        r.set_2d(ui_scale_);
+        const Rect toast{std::max(8.f,(ui_width(r)-340.f)*.5f),STATUS_BAR_H+12.f,340.f,30.f};
+        r.draw_rect(toast,{.025f,.055f,.07f,.94f});
+        ui::label_fitted(r,{toast.x+10,toast.y+9,toast.w-20,16},autosave_notice_,.82f,theme_);
+    }
+    render_first_person_alerts(r);
     r.end_frame();
 }
 

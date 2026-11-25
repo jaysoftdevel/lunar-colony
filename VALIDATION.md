@@ -1,3 +1,32 @@
+# Version 0.88.1 — validation
+
+Native Linux Debug incremental compile/link using external JSD 0.5.22, headless build configuration. All eight selected CTest checks passed: corridor_airtight_pressure_shells, corridor_building_pressure_collars, game_airlock_built_access_supports, game_no_hull_lower_boundaries, game_airlock_transfer_clearance, game_corridor_airlock_fpv_recovery, game_structural_load_frames, game_saved_carriers_corridor. The pressure regression now checks connector frame contact and support geometry in six synthetic rotated/reversed/raised configurations. It also checks that the center lane stays clear and that the triangles are nondegenerate. The existing CMake cache retained an older compiled version string; normal configuration reads the new VERSION file. Exact screenshot save, interactive appearance, full intersection audit, Linux Release and native Windows are not verified. Engine and schema unchanged.
+
+---
+
+# Version 0.88.0 — validation
+
+Linux Debug native build against JSD 0.5.22 (headless configuration). 17 distinct targeted regressions passed, including software OpenGL sky rendering, pressure shells, corridor floor coverage in both hull modes, airlock access, saved-carrier recovery, room placement and interior services. Earth regression counted 707 and 576 blue pixels when aimed at the globe at hours 6 and 18, and 24 when it moved out of view. Windows and hardware GPU rendering were not tested. The current screenshots were used as references; their exact savegame was not supplied. Older save fixture tested; back up valuable saves before opening with new room geometry.
+
+---
+
+# Version 0.87.0 — validation
+
+- Targeted source validation completed for the touched gameplay/rendering files:
+  - `game/src/world/interior_units.cpp`
+  - `game/src/systems/first_person_mode.cpp`
+  - `game/src/world/corridor/fittings.cpp`
+  - `game/tests/ui_regression.cpp`
+- `g++ -std=c++20 -fsyntax-only` passed for the three modified game source files and for `ui_regression.cpp` with the same fixture macros the CMake target provides.
+- Regression coverage was extended for:
+  - small processing-facility ore-refinery placement
+  - processing-facility plastic-processing availability
+  - no-hull corridor connector lower deck/support geometry
+- A full workspace build was not possible in this container because the external engine's SDL/X11 configuration stops early on missing system development headers (`Xext.h` / `libxext-dev`).
+- Save schema unchanged. Engine version unchanged (JSD 0.5.22).
+
+---
+
 # Version 0.64.0 — corridor pressure sealing
 
 Linux Release: 27/27 CTest checks pass. Targeted Linux Debug/render: 15/15 pass,
@@ -624,3 +653,19 @@ reversed roots, locally edited sources, a corrupt payload, rollback after an
 injected partial write, preservation of saves/preferences and safe reapplication.
 The update requires game 0.65.0 and engine 0.5.15, and changes both source roots to
 0.66.0 / 0.5.16. Rebuild both configurations after applying it.
+
+## 0.85.0 — validation status
+
+- Portable Linux build-argument test: PASS.
+- Windows build-driver mock tests: 12/12 PASS.
+- Display outline generator: PASS, 3,591 triangles, all printable ASCII glyphs validated.
+- Supplied schema-54 save inspected offline. Regression fixture retained verbatim.
+- New docking datum regression added; native compilation, full CTest, renderer and interactive saved-game replay NOT RUN because JSD 0.5.22 source is absent. Older validation entries below/above apply only to their stated versions.
+
+## 0.85.1 — native follow-up
+
+See UPDATE-0.85.1.md for the completed native Debug build, actual-save full-charge simulation, 15 targeted tests and 12-frame offscreen replay. The previous missing-engine blocker is resolved.
+
+## Version 0.86.0
+
+Linux headless Debug native build with JSD 0.5.22 passed. Targeted regressions: battery-doors (including nighttime lighting, battery draw and empty/disconnected cases), interior-services, save-editor, settings-boundary, removal-controls (1–3, DEL, queue progress save/load, confirmed deletion), deconstruction (17.7641 m rover movement, cutting and complete removal) passed. Desktop hardware rendering, SDL physical key input, Windows native and Release builds not verified.

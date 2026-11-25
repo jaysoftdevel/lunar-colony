@@ -6,6 +6,7 @@
 #include <numeric>
 namespace game {
 void GameApp::render_gate_connection_frames(game::runtime::SceneRenderer& renderer) const {
+    if(habitat_view_mode_==HabitatViewMode::None&&!build_catalog_.selected())return;
     using namespace game::runtime;using namespace world_math;
     const auto& runs=corridor_network_.connections();
     std::vector<std::uint64_t> signature{runs.size()};

@@ -1,4 +1,5 @@
 #include "game/world/resource_mesh.hpp"
+#include "game/world/structural_model.hpp"
 #include "game/world/storage_loading_gate.hpp"
 #include "game/world/resources/resource_generators.hpp"
 #include "game/world/resource_builder.hpp"
@@ -92,6 +93,14 @@ ResourceModelLibrary::ResourceModelLibrary(){
         }else{
             small_meshes_[i]=(kind==ResourceKind::StorageDome || kind==ResourceKind::RobotWorkshop || kind==ResourceKind::StorageGate)?meshes_[i]:scale_xz(meshes_[i],0.76f);
         }
+    });
+    pool.parallel_for(meshes_.size(),[&](std::size_t i){
+        meshes_[i].reinforcement=structural::reinforce(meshes_[i],ResourceKind(i));
+        small_meshes_[i].reinforcement=structural::reinforce(small_meshes_[i],ResourceKind(i));
+    });
+    pool.parallel_for(storage_domes_.size(),[&](std::size_t i){
+        storage_domes_[i].reinforcement=structural::reinforce(storage_domes_[i],ResourceKind::StorageDome);
+        storage_gates_[i].reinforcement=structural::reinforce(storage_gates_[i],ResourceKind::StorageGate);
     });
 }
 

@@ -17,7 +17,7 @@
 
 namespace game::runtime {
 struct Color { float r{},g{},b{},a{1.0f}; };
-enum class LunarMaterial { Paint, Alloy, Regolith, Solar, Glass, Fabric, Pad, Emissive, Skin, Marking, Hair, Hull, Interior, Deck, RobotPaint, Textile, Display, Rubber, PressureDoor, DisplayText, SolarShield, CorridorDeck };
+enum class LunarMaterial { Paint, Alloy, Regolith, Solar, Glass, Fabric, Pad, Emissive, Skin, Marking, Hair, Hull, Interior, Deck, RobotPaint, Textile, Display, Rubber, PressureDoor, DisplayText, SolarShield, CorridorDeck, Celestial };
 
 struct LunarSurfaceMapping {
     Vec3 origin{};
@@ -82,11 +82,13 @@ struct InputState {
     bool key_m_pressed{};
     bool key_v_pressed{}, key_v_down{};
     bool key_w_down{}, key_a_down{}, key_s_down{}, key_d_down{};
-    bool key_shift_down{};
+    bool key_shift_down{},key_ctrl_down{};
+    bool edit_left{},edit_right{},edit_home{},edit_end{},edit_up{},edit_down{},edit_insert{};
+    bool edit_select_all{},edit_copy{},edit_cut{},edit_paste{},edit_undo{},edit_redo{};
     bool key_space_pressed{}, key_space_down{};
     bool key_j_pressed{}, key_j_down{};
-    bool key_tab_pressed{};
-    bool key_e_pressed{};
+    bool key_tab_pressed{}, key_l_pressed{};
+    bool key_e_pressed{},key_e_down{};
     bool key_alt_down{};
     std::uint8_t key_number_pressed{};
     bool delete_pressed{};
@@ -161,7 +163,7 @@ struct WindowConfig {
     int width=1600;
     int height=900;
     std::string title="Game";
-    bool fullscreen=false;
+    bool fullscreen=true;
 };
 
 class GameHost {
@@ -181,9 +183,12 @@ public:
     bool cursor_visible() const;
     void set_relative_mouse_mode(bool enabled);
     bool relative_mouse_mode() const;
+    std::string clipboard_text() const;
+    void set_clipboard_text(const std::string& text);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    std::string local_clipboard_;
 };
 
 namespace ui {

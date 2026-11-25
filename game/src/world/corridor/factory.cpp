@@ -583,6 +583,8 @@ std::optional<CorridorConnection> make_generic(const CorridorBuildAnchor& a_anch
         if(b->seamless_splice) path[path.size()-2]=b->position+b->tangent*terminal;
     }
 
+    align_docking_path(*a,*b,path);
+
     // Re-check after terminal tangent pinning.  If the small terminal edit
     // invalidates the chosen lane, fail rather than introducing an overlap.
     if(!route_is_valid(path,habitats,library,resources,resource_library,existing,*a,*b)) return std::nullopt;

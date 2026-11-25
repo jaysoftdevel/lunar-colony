@@ -1,9 +1,11 @@
 #include "game/world/habitat_mesh.hpp"
+#include "game/world/structural_model.hpp"
 #include "game/world/habitats/habitat_module.hpp"
 #include "game/world/geometry_standards.hpp"
 #include "game/world/habitat_builder.hpp"
 #include "game/world/mesh_portals.hpp"
 #include "game/world/habitats/screen_mounts.hpp"
+#include "game/world/interior_finish.hpp"
 #include <cmath>
 
 namespace game {
@@ -103,6 +105,9 @@ HabitatMesh scale_xz(const HabitatMesh& source,float scale){
         for(auto& v:vertices){ v.x*=scale; v.z*=scale; }
     };
     scale_vertices(out.shell);
+    scale_vertices(out.hull_frames);
+    scale_vertices(out.overhead_services);scale_vertices(out.overhead_lamps);
+    out.dome_radii.x*=scale;out.dome_radii.z*=scale;
     scale_vertices(out.foundation);
     scale_vertices(out.interior);
     scale_vertices(out.details);
@@ -143,18 +148,20 @@ HabitatModelLibrary::HabitatModelLibrary(){
     game::runtime::GameJobs::shared().parallel_for(meshes_.size(),[&](std::size_t i){
         const HabitatKind kind=(HabitatKind)i;
         HabitatMesh standard=base_mesh(kind);
-        // Crew entrances are no longer authored into a structure template.
-        // A pressure hatch is cut into the completed hull only when a real
+        // General habitats create crew ports with their corridor connection.
+        // Airlocks retain their two factory-fitted longitudinal end ports.
+        // For other habitats a hatch is cut into the hull only when a real
         // corridor/walkway connection is created.  Clearing the legacy author
         // metadata here also removes the fixed exterior stair sets before size
         // variants are generated.
-        standard.entrances.clear();
+        if(kind!=HabitatKind::AirLock)standard.entrances.clear();
         standard.entrance_access.clear();
         meshes_[i][(std::size_t)HabitatSizeTier::Standard]=standard;
         // SMALL is a horizontal-only variant for every habitat. Keep the full
         // authored height, floor Y and door clear height so colonists can walk
         // inside exactly as they can in STANDARD.
-        meshes_[i][(std::size_t)HabitatSizeTier::Small]=scale_xz(standard,i==std::size_t(HabitatKind::OxygenGeneratorDome)?.90f:.76f);
+        meshes_[i][(std::size_t)HabitatSizeTier::Small]=scale_xz(standard,.76f);
+        meshes_[i][(std::size_t)HabitatSizeTier::VerySmall]=scale_xz(standard,.76f);
         if(scalable(kind)){
             // Size tiers enlarge usable floor area while keeping the original
             // vertical dimensions/door height. This preserves the common
@@ -172,20 +179,36 @@ HabitatModelLibrary::HabitatModelLibrary(){
                 const float scale=variant.footprint_x/standard.footprint_x;
                 habitats::Builder furniture;
                 std::size_t bed_slot=0;
-                for(const auto& bed:variant.crew_bunks){
+                for(auto& bed:variant.crew_bunks){
+                    bed.feet.x+=.78f*scale-.78f;
                     interior_layout::StationScope station(variant,StationKind::Bed,bed_slot++);
-                    const float x=bed.feet.x+.78f*scale;
+                    const float x=bed.feet.x+.78f;
                     const float z=bed.feet.z;
-                    furniture.box(variant.interior,{x,1.28f,z},{1.94f*scale,.44f,.68f*scale},false);
-                    furniture.box(variant.interior,{x,1.52f,z},{1.91f*scale,.12f,.66f*scale},false);
-                    furniture.box(variant.interior,{x+.72f*scale,1.60f,z},{.34f*scale,.07f,.54f*scale},false);
-                    furniture.box(variant.fabric,{x,1.589f,z},{1.87f*scale,.018f,.63f*scale},false);
-                    furniture.box(variant.fabric,{x+.72f*scale,1.642f,z},{.35f*scale,.019f,.55f*scale},false);
-                    for(float sign:{-1.f,1.f})furniture.box(variant.service_metal,{x,1.39f,z+sign*.34f*scale},{1.95f*scale,.045f,.035f},false);
+                    furniture.box(variant.interior,{x,1.28f,z},{1.94f,.44f,.68f},false);
+                    furniture.box(variant.interior,{x,1.52f,z},{1.91f,.12f,.66f},false);
+                    furniture.box(variant.interior,{x+.72f,1.60f,z},{.34f,.07f,.54f},false);
+                    furniture.box(variant.fabric,{x,1.589f,z},{1.87f,.018f,.63f},false);
+                    furniture.box(variant.fabric,{x+.72f,1.642f,z},{.35f,.019f,.55f},false);
+                    for(float sign:{-1.f,1.f})furniture.box(variant.service_metal,{x,1.39f,z+sign*.34f},{1.95f,.045f,.035f},false);
                 }
             }
-            standardize_crew_interfaces(variant,kind==HabitatKind::AirLock);
-            habitats::finish_screen_mounts(variant);
+            variant.reinforcement=structural::reinforce(variant,kind);
+            if(kind==HabitatKind::AirLock){
+                // The cylindrical pressure body and end vestibules overlap.
+                // Their mating caps are construction surfaces, not extra seals.
+                // Cut both the skin AND its inset liner, after size scaling.
+                const float scale=variant.footprint_x/10.f;
+                for(float sign:{-1.f,1.f}){
+                    const mesh_portals::Aperture transfer{{sign*3.50f*scale,variant.walkable_floor_y,0},{1,0,0},.62f*scale,
+                        geometry::kCorridorDeckHalfWidth,variant.walkable_floor_y+.015f,variant.walkable_floor_y+geometry::kDoorClearHeight+.10f};
+                    for(auto* layer:{&variant.shell,&variant.lining,&variant.interior,&variant.details,&variant.service_metal,&variant.fabric,&variant.glazing})
+                        *layer=mesh_portals::subtract(*layer,transfer);
+                    variant.edges=mesh_portals::subtract_lines(variant.edges,transfer);
+                }
+            }
+            if(kind!=HabitatKind::AirLock)standardize_crew_interfaces(variant,false);
+            habitats::finish_screen_mounts(variant,kind);
+            interior_finish::finish(variant);
         }
     });
 }

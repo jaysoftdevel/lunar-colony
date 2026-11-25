@@ -66,7 +66,7 @@ inline const HabitatMesh& resolve(Cache& cache,const HabitatMesh& source,std::ve
     bool same=cache.source==&source&&cache.reserved.size()==reserved.size()&&cache.remove_machines==remove_machines;
     if(same)for(std::size_t i=0;i<reserved.size();++i)if(runtime::length(reserved[i].wall-cache.reserved[i].wall)>1e-5f||runtime::length(reserved[i].normal-cache.reserved[i].normal)>1e-5f){same=false;break;}
     if(same)return cache.mesh;
-    cache.source=&source;cache.reserved=std::move(reserved);cache.remove_machines=remove_machines;cache.mesh=source;auto& out=cache.mesh;out.blocked_grow_bays=0;
+    cache.source=&source;cache.reserved=std::move(reserved);cache.remove_machines=remove_machines;cache.mesh=source;auto& out=cache.mesh;out.blocked_grow_bays=source.blocked_grow_bays;
     for(auto& station:out.stations){station.active=can_place(cache.reserved,station.low,station.high)&&!(remove_machines&&(station.kind==StationKind::Equipment||station.kind==StationKind::Grow));
         if(!station.active&&station.kind==StationKind::Grow&&grow_bays)out.blocked_grow_bays|=std::uint16_t(1u<<(station.slot%grow_bays));
     }

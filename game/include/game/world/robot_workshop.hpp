@@ -5,6 +5,9 @@
 #include <cmath>
 
 namespace game::workshop {
+inline constexpr float kRoofSpring=3.9f,kRoofRise=1.85f;
+inline float roof_height(float x,float z){return kRoofSpring+kRoofRise*std::sqrt(std::max(0.f,1-x*x/(5.3f*5.3f)))*std::sqrt(std::max(0.f,1-z*z/(5.3f*5.3f)));}
+
 inline constexpr int kBays=4;
 // Compact four-rover workshop.  The 11 x 10 m hall still leaves more than a
 // rover diameter around every bay, a full central aisle and a 4.5 m gate.

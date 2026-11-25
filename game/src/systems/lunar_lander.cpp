@@ -54,7 +54,7 @@ const char* lunar_lander_phase_name(const LunarLanderState& l){
         case LanderPhase::Approach:return l.elapsed<40?"POWERED BRAKING":l.elapsed<56?"FINAL APPROACH":l.elapsed<64?"HOVER / SITE CHECK":"VERTICAL DESCENT";
         case LanderPhase::Settling:return "TOUCHDOWN / ENGINE SAFE";
         case LanderPhase::Landed:return "LANDED / AWAITING UNLOAD";
-        case LanderPhase::OpeningRamp:return "DEPLOYING BOARDING RAMP";
+        case LanderPhase::OpeningRamp:return l.elapsed<kLanderRampMotionSeconds?"DEPLOYING BOARDING RAMP":"UNFOLDING ROVERS";
         case LanderPhase::DeployingRobots:return "DEPLOYING ROBOTS VIA RAMP";
         case LanderPhase::UnloadingCargo:return "PLACING CARGO BOXES";
         case LanderPhase::Ready:return "DEPLOYMENT COMPLETE";
@@ -68,7 +68,8 @@ game::runtime::Vec3 lunar_lander_stash_position(const LunarLanderState& l,Materi
 game::runtime::Vec3 lunar_lander_robot_bay(const LunarLanderState& l,int ordinal){
     if(l.legacy_parking)
         return l.site+game::runtime::Vec3{12.6f-3.0f*(float)(ordinal%3),0,-5.4f+3.1f*(float)(ordinal/3)};
-    constexpr float sides[]={4.0f,-4.0f,6.65f,-6.65f};
+    // Fill the outboard bays first so released rovers have an outward exit.
+    constexpr float sides[]={6.65f,-6.65f,4.0f,-4.0f};
     return l.site+game::runtime::Vec3{sides[ordinal%4],0,6.7f+2.15f*(float)(ordinal/4)};
 }
 namespace {
@@ -115,6 +116,13 @@ game::runtime::Vec3 lunar_lander_robot_berth(int queue_index){
     return {columns[queue_index%3],2.4f,kFrontBerthZ-1.92f*(float)(queue_index/3)};
 }
 
+float lunar_lander_robot_unfold(const LunarLanderState& lander,int ordinal,int first){
+    if(lander.phase<LanderPhase::OpeningRamp)return 0;
+    if(lander.phase>LanderPhase::OpeningRamp)return 1;
+    const float t=std::clamp((lander.elapsed-kLanderRampMotionSeconds-.08f*std::max(0,ordinal-first))/3.5f,0.f,1.f);
+    return t*t*(3-2*t);
+}
+
 float lunar_lander_deployment_seconds(const LunarLanderState& lander,int first){
     float finish=0;
     for(int i=first;i<lander.builders+lander.carriers;++i)
@@ -147,8 +155,16 @@ bool lunar_lander_deployment_clear(const LunarLanderState& lander,game::runtime:
         && !overlaps(area,footprint(lander.site+Vec3{6.5f,0,11.85f},0,15.0f,2.3f),margin);
 }
 
-bool lunar_lander_segment_blocked(const LunarLanderState& l,game::runtime::Vec3 a,game::runtime::Vec3 b,float radius){
+bool lunar_lander_segment_blocked(const LunarLanderState& l,game::runtime::Vec3 a,game::runtime::Vec3 b,float radius,int pending_from){
     if(!l.active())return false;
+    bool reserved=false;
+    lunar_lander_reserved_unload_paths(l,pending_from,[&](auto p,auto q){
+        const auto delta=q-p;const float run=game::runtime::length(delta);const auto n=delta*(1.f/run);
+        const game::runtime::Vec3 side{-n.z,0,n.x},da=a-p,db=b-p;
+        const game::runtime::Vec3 x{game::runtime::dot(da,side),0,game::runtime::dot(da,n)},y{game::runtime::dot(db,side),0,game::runtime::dot(db,n)};
+        reserved|=slab(x,y,-.75f-radius,.75f+radius,-.75f-radius,run+.75f+radius);
+    });
+    if(reserved)return true;
     a=a-l.site;b=b-l.site;
     return slab(a,b,-5.35f-radius,5.35f+radius,-5.35f-radius,5.35f+radius)||
         slab(a,b,-2.12f-radius,2.12f+radius,3.6f-radius,10.7f+radius);
@@ -228,7 +244,7 @@ void GameApp::update_lunar_lander(float dt){
             case LanderPhase::Approach:duration=kLanderDescentSeconds;break;
             case LanderPhase::Settling:duration=kLanderSettleSeconds;break;
             case LanderPhase::OpeningRamp:duration=kLanderRampSeconds;break;
-            case LanderPhase::DeployingRobots:duration=lunar_lander_deployment_seconds(lander_,(int)builder_robots_.size());break;
+            case LanderPhase::DeployingRobots:duration=lunar_lander_deployment_seconds(lander_,lander_.legacy_parking?(int)builder_robots_.size():0);break;
             default:return;
         }
         const float playback=phase==LanderPhase::Approach || phase==LanderPhase::Settling?
@@ -250,6 +266,17 @@ void GameApp::update_lunar_lander(float dt){
                 camera_.restore(view);
             }
         }
+        if(phase==LanderPhase::DeployingRobots&&!lander_.legacy_parking){
+            const int total=lander_.builders+lander_.carriers;
+            while((int)builder_robots_.size()<total){
+                const int ordinal=(int)builder_robots_.size();
+                const auto pose=lunar_lander_robot_pose(lander_,ordinal,0);
+                if(!pose.parked)break;
+                auto rover=lander_robot(ordinal);
+                robots::roll_rover_wheels(rover.wheels,pose.distance_travelled,0);
+                builder_robots_.push_back(std::move(rover));
+            }
+        }
         if(lander_.elapsed+1e-5f<duration)return;
         lander_.elapsed=0;
         if(phase==LanderPhase::Approach){lander_.phase=LanderPhase::Settling;selection_kind_=SelectionKind::Lander;}
@@ -263,7 +290,7 @@ void GameApp::update_lunar_lander(float dt){
             const int first=static_cast<int>(builder_robots_.size());
             for(int i=first;i<total;++i){
                 auto rover=lander_robot(i);
-                robots::roll_rover_wheels(rover.wheels,RoverUnloadRoute(lander_,i,first).distance.back(),0);
+                robots::roll_rover_wheels(rover.wheels,RoverUnloadRoute(lander_,i,lander_.legacy_parking?first:0).distance.back(),0);
                 builder_robots_.push_back(std::move(rover));
             }
             lander_.phase=LanderPhase::Ready;
@@ -292,7 +319,7 @@ void GameApp::render_lunar_lander_panel(game::runtime::SceneRenderer& r){
     int parked=(int)builder_robots_.size();
     if(lander_.phase==LanderPhase::DeployingRobots){
         for(int i=parked;i<total;++i)
-            if(lunar_lander_robot_pose(lander_,i,(int)builder_robots_.size()).parked) ++parked;
+            if(lunar_lander_robot_pose(lander_,i,lander_.legacy_parking?(int)builder_robots_.size():0).parked) ++parked;
     }
     label(131,"PARKED "+std::to_string(parked)+" / "+std::to_string(total)+" ROVERS");
     label(152,"CARGO ABOARD "+std::to_string(lander_.remaining.total_amount())+" / "+std::to_string(lander_.manifest.total_amount())+" KG");

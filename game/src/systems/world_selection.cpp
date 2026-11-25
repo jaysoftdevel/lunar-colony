@@ -139,7 +139,7 @@ float GameApp::selection_panel_content_height() const {
     if(selection_kind_==SelectionKind::Stash)return landing_message_.empty()?245.f:267.f;
     float extra=0;
     const float warning_font=game::runtime::ui::font_scale(0.43f*GAME_FONT_BOOST,theme_);
-    if(selection_kind_==SelectionKind::Robot) return 484.0f;
+    if(selection_kind_==SelectionKind::Robot) return debug_mode_active()?484.0f:300.0f;
     if(selection_kind_==SelectionKind::Habitat){
         HabitatKind kind=HabitatKind::CrewQuarters;
         if(selected_habitat_>=0 && (std::size_t)selected_habitat_<placed_habitats_.size()){
@@ -969,6 +969,84 @@ void GameApp::remove_structure_routes(bool habitat,std::size_t index){
     remove_corridor_routes(roots);
 }
 
+ConstructionTargetRef GameApp::deconstruction_target(std::uint64_t sequence) const {
+    if(!sequence)return {};
+    const auto find=[&](const auto& items,ConstructionTargetKind kind)->ConstructionTargetRef{
+        for(std::size_t i=0;i<items.size();++i)if(items[i].placement_sequence==sequence)return {kind,i};
+        return {};
+    };
+    for(auto t:{find(placed_habitats_,ConstructionTargetKind::Habitat),find(placed_resources_,ConstructionTargetKind::Resource),
+                find(corridor_network_.connections(),ConstructionTargetKind::Corridor),find(utility_network_.connections(),ConstructionTargetKind::Utility),find(walkway_network_.connections(),ConstructionTargetKind::Walkway)})if(t.valid())return t;
+    return {};
+}
+const GameApp::DeconstructionJob* GameApp::deconstruction_job(const ConstructionTargetRef& target) const {
+    const auto sequence=construction_target_sequence(target);
+    for(const auto& job:deconstruction_jobs_)if(sequence&&job.sequence==sequence)return &job;
+    return nullptr;
+}
+bool GameApp::deconstruction_safe(const ConstructionTargetRef& target) const {
+    if(!target.valid() || !construction_target_sequence(target))return false;
+    if(target.kind==ConstructionTargetKind::Resource && trader_.active() && placed_resources_[target.index].placement_sequence==trader_.pad_sequence)return false;
+    const auto& corridors=corridor_network_.connections();
+    std::vector<bool> affected(corridors.size(),false);
+    for(std::size_t i=0;i<corridors.size();++i){
+        const auto attached=[&](const CorridorEndpoint& e){return (target.kind==ConstructionTargetKind::Habitat && e.kind==CorridorEndpointKind::Habitat && e.index==target.index)||
+            (target.kind==ConstructionTargetKind::Resource && e.kind==CorridorEndpointKind::Resource && e.index==target.index);};
+        affected[i]=(target.kind==ConstructionTargetKind::Corridor&&i==target.index)||attached(corridors[i].endpoint_a)||attached(corridors[i].endpoint_b);
+    }
+    bool changed=true;
+    while(changed){changed=false;for(std::size_t i=0;i<corridors.size();++i)if(!affected[i]){
+        const auto dependent=[&](const CorridorEndpoint& e){return e.kind==CorridorEndpointKind::Corridor && e.index<affected.size()&&affected[e.index];};
+        if(dependent(corridors[i].endpoint_a)||dependent(corridors[i].endpoint_b)){affected[i]=true;changed=true;}
+    }}
+    const auto near_path=[&](Vec3 p,const auto& path,float radius){for(std::size_t i=1;i<path.size();++i)if(distance_xz(p,closest_point_segment_xz(p,path[i-1],path[i]))<radius)return true;return false;};
+    const auto occupied=[&](Vec3 p,bool crew){
+        if(target.kind==ConstructionTargetKind::Habitat){const auto& h=placed_habitats_[target.index];const auto& m=habitat_models_.mesh(h);
+            if(rotated_rect_distance_xz(p,h.position,h.rotation_degrees,m.footprint_x,m.footprint_z)<.15f)return true;}
+        if(target.kind==ConstructionTargetKind::Resource){const auto& h=placed_resources_[target.index];const auto& m=resource_models_.mesh(h);
+            if(rotated_rect_distance_xz(p,h.position,h.rotation_degrees,m.footprint_x,m.footprint_z)<.15f)return true;}
+        if(crew)for(std::size_t i=0;i<corridors.size();++i)if(affected[i]&&near_path(p,corridors[i].path,geometry::kCorridorHalfWidth+.25f))return true;
+        if(crew&&target.kind==ConstructionTargetKind::Walkway&&near_path(p,walkway_network_.connections()[target.index].path,geometry::kWalkwayHalfWidth+.25f))return true;
+        return false;
+    };
+    if(first_person_mode_==FirstPersonMode::Active&&occupied(first_person_.feet_position(),true))return false;
+    for(std::size_t i=0;i<test_astronauts_.size();++i)if(astronaut_present(i)&&occupied(test_astronauts_[i].position,true))return false;
+    for(const auto& robot:builder_robots_)if(occupied(robot.position,false))return false;
+    return true;
+}
+void GameApp::request_selected_deconstruction(){
+    const auto target=selected_construction_target();
+    if(!target.valid()){delete_selected_world_object();return;}
+    const auto sequence=construction_target_sequence(target);
+    if(!sequence)return;
+    if(!construction_target_complete(target)){delete_selected_world_object();return;}
+    if(deconstruction_job(target))return;
+    deconstruction_jobs_.push_back({sequence,0});
+    if(game_session_active_)activity_log_.record(ui_time_seconds_,LogEvent::Note,construction_target_name(target)+" / deconstruction queued");
+}
+void GameApp::finish_deconstruction(){
+    if(deconstruction_jobs_.empty()||deconstruction_jobs_.front().progress<1)return;
+    const auto target=deconstruction_target(deconstruction_jobs_.front().sequence);
+    if(target.valid()&&!deconstruction_safe(target))return;
+    if(deconstruction_worker_<builder_robots_.size()){
+        auto& robot=builder_robots_[deconstruction_worker_];robot.action=BuilderRobotAction::None;robot.action_elapsed=robot.action_duration=0;
+    }
+    deconstruction_worker_=kNoRobotIndex;deconstruction_station_.reset();
+    deconstruction_jobs_.erase(deconstruction_jobs_.begin());
+    if(target.valid()){
+        clear_world_selection();
+        switch(target.kind){
+            case ConstructionTargetKind::Habitat:selection_kind_=SelectionKind::Habitat;selected_habitat_=(int)target.index;break;
+            case ConstructionTargetKind::Resource:selection_kind_=SelectionKind::Resource;selected_resource_=(int)target.index;break;
+            case ConstructionTargetKind::Corridor:selection_kind_=SelectionKind::Corridor;selected_corridor_=(int)target.index;break;
+            case ConstructionTargetKind::Utility:selection_kind_=SelectionKind::Utility;selected_utility_=(int)target.index;break;
+            case ConstructionTargetKind::Walkway:selection_kind_=SelectionKind::Walkway;selected_walkway_=(int)target.index;break;
+            default:break;
+        }
+        delete_selected_world_object();
+    }
+    deconstruction_jobs_.erase(std::remove_if(deconstruction_jobs_.begin(),deconstruction_jobs_.end(),[&](const auto& job){return !deconstruction_target(job.sequence).valid();}),deconstruction_jobs_.end());
+}
 void GameApp::delete_selected_world_object(){
     const auto target=selected_construction_target();
     const auto log_removal=game_session_active_ && construction_target_sequence(target)!=0;
@@ -1105,6 +1183,13 @@ void GameApp::delete_selected_world_object(){
             return;
     }
 
+    if(!deconstruction_jobs_.empty()&&!deconstruction_target(deconstruction_jobs_.front().sequence).valid()){
+        if(deconstruction_worker_<builder_robots_.size()){
+            auto& worker=builder_robots_[deconstruction_worker_];worker.action=BuilderRobotAction::None;worker.action_elapsed=worker.action_duration=0;
+        }
+        deconstruction_worker_=kNoRobotIndex;deconstruction_station_.reset();
+    }
+    deconstruction_jobs_.erase(std::remove_if(deconstruction_jobs_.begin(),deconstruction_jobs_.end(),[&](const auto& job){return !deconstruction_target(job.sequence).valid();}),deconstruction_jobs_.end());
     if(log_removal)activity_log_.record(ui_time_seconds_,LogEvent::Note,removed_name+" / removed");
 
     // Any operation that stores world indices must be cancelled after a delete;

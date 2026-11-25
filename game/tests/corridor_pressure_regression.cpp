@@ -25,6 +25,51 @@ void sealed(const std::vector<CorridorConnection>& network,Vec3 p,const std::str
 CorridorConnection tube(std::vector<Vec3> p){CorridorConnection c;c.path=std::move(p);c.construction.finish();c.endpoint_a.position=c.path.front();c.endpoint_b.position=c.path.back();c.endpoint_a.kind=c.endpoint_b.kind=CorridorEndpointKind::OpenDoor;c.endpoint_a.tangent=flat_normal(c.path[1]-c.path[0]);c.endpoint_b.tangent=flat_normal(c.path[c.path.size()-2]-c.path.back());return c;}
 }
 int main(){try{
+ // Older saves have an airlock endpoint at zero and its next ring at .60 m.
+ auto damaged=tube({{0,0,0},{.12f,.60f,0},{3.78f,.60f,0},{3.9f,.60f,0}});
+ auto& da=damaged.endpoint_a;auto& db=damaged.endpoint_b;
+ da.kind=db.kind=CorridorEndpointKind::Habitat;
+ da.door.position={-1,.80f,0};db.door.position={4.9f,1.19f,0};
+ da.door.normal={1,0,0};db.door.normal={-1,0,0};
+ align_docking_path(da,db,damaged.path);
+ for(const auto p:damaged.path)require(std::abs(p.y-(.80f-WALKWAY_Y))<.001f,"Airlock docking deck retained a drop");
+ require(length(da.position-damaged.path.front())<.001f && length(db.position-damaged.path.back())<.001f,"Docking endpoints detached");
+ const auto fixed=damaged.path;align_docking_path(da,db,damaged.path);
+ for(std::size_t i=0;i<fixed.size();++i)require(length(fixed[i]-damaged.path[i])<.001f,"Docking repair is not idempotent");
+
+ // The sleeve's frame must use the same rounded skin profile, not a freestanding
+ // rectangular gate or oversized ring. Verify both endpoint orientations, a
+ // raised sloping adapter, and the ground-to-flange load path.
+ for(float yaw:{0.f,37.f,180.f})for(float rise:{0.f,.45f}){
+    const Vec3 dir=rotate_y({1,0,0},yaw),side=perp_xz(dir);
+    CorridorEndpoint ep;ep.kind=CorridorEndpointKind::Habitat;ep.tangent=dir*-1.f;
+    ep.door.generated=true;ep.door.normal=dir;ep.door.wall_position={4,1.0f,-6};
+    ep.door.position=ep.door.wall_position+dir*1.7f;
+    ep.position=ep.door.position+dir*1.75f-Vec3{0,WALKWAY_Y-rise,0};
+    const auto mesh=build_endpoint_fitting(ep);
+    const auto door=doorway_cross_section(GENERATED_ENTRANCE_HALF_WIDTH,GENERATED_ENTRANCE_HEIGHT);
+    const auto tube_profile=corridor_cross_section();
+    require(door[7].y-door[2].y>.20f,"Sleeve still has a flat rectangular roof");
+    const auto base=ep.door.position-Vec3{0,WALKWAY_Y,0};
+    const auto crown=[&](float t){return base+(ep.position-base)*t+Vec3{0,std::lerp(door[7].y,tube_profile[7].y,t),0};};
+    // The middle bay's flange begins at exactly this skin station. Its outer
+    // crown must protrude, but the pressure-skin contact edge must still match.
+    const auto skin=crown(.5f-.065f/1.75f);
+    bool contact=false,outer=false,left_pad=false,right_pad=false;
+    for(auto p:mesh.details){
+        require(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&p.y>=-.001f,"Invalid or buried connector member");
+        contact|=length(p-skin)<.002f;
+        outer|=std::abs(dot(p-skin,dir))<.003f&&std::abs(dot(p-skin,side))<.003f&&p.y>skin.y+.055f;
+        const float along=dot(p-base,dir),lateral=dot(p-base,side);
+        if(std::abs(p.y)<.001f&&std::abs(along-.875f)<.18f){left_pad|=lateral<-.85f;right_pad|=lateral>.85f;}
+    }
+    require(contact&&outer,"Rounded flange does not follow the skin crown");
+    require(left_pad&&right_pad,"Rounded connector frame has no ground-bearing pair");
+    for(std::size_t i=0;i+2<mesh.details.size();i+=3)
+        require(length(cross(mesh.details[i+1]-mesh.details[i],mesh.details[i+2]-mesh.details[i]))>1e-9f,"Degenerate connector structural face");
+    CorridorConnection detail_only;detail_only.construction.finish();detail_only.mesh.shell=mesh.details;
+    require(!hit(ep.door.wall_position+dir*.15f+Vec3{0,1.0f,0},ep.position+Vec3{0,WALKWAY_Y+1.f,0},{detail_only}),"A new frame blocks the walking lane");
+ }
  std::vector<CorridorConnection> n;
  for(auto p:{std::vector<Vec3>{{-20,0,0},{20,0,0}},std::vector<Vec3>{{-12,0,0},{0,0,0},{0,0,12}},std::vector<Vec3>{{-12,0,0},{-.12f,0,0},{0,0,.12f},{0,0,12}},std::vector<Vec3>{{-12,0,0},{0,.2f,0},{7,.4f,9}}}){
   n={tube(p)};rebuild_pressure_shells(n);sealed(n,p.front()+flat_normal(p[1]-p.front())*3+Vec3{0,1.1f,0},"Bend/slope");

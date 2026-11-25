@@ -177,6 +177,12 @@ bool GameApp::handle_astronaut_click(const InputState& input){
     Vec3 hit{};
     if(!camera_.intersect_playfield(input.mouse_x,input.mouse_y,viewport_width_,viewport_height_,
                                     playfield_.size(),hit))return false;
+    // A structure click belongs to its inspector. Shift-click explicitly keeps
+    // the crew move command, including indoor destinations.
+    if(!input.key_shift_down && (pick_habitat(hit)>=0 || pick_resource(hit)>=0 || pick_corridor(hit)>=0)){
+        selected_astronaut_=-1;
+        return false;
+    }
     const float half=playfield_.size()*.5f-kAstronautFieldMargin;
     hit.x=std::clamp(hit.x,-half,half);
     hit.z=std::clamp(hit.z,-half,half);

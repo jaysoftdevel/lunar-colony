@@ -14,6 +14,7 @@
 #include "game/util/mesh_wireframe.hpp"
 #include "game/world/construction_sequence.hpp"
 #include "game/world/geometry_standards.hpp"
+#include "game/world/corridor/detail.hpp"
 #include "game/world/world_labels.hpp"
 #include "game/version.hpp"
 #include <algorithm>
@@ -32,6 +33,10 @@ using namespace world_labels;
 
 namespace {
 const std::vector<Vec3> empty_mesh_layer;
+Color cutaway_accent(unsigned kind){
+    constexpr Color colors[]{{.84f,.55f,.20f,1},{.22f,.65f,.77f,1},{.77f,.57f,.31f,1},{.30f,.66f,.43f,1},{.32f,.51f,.80f,1},{.82f,.69f,.26f,1},{.83f,.45f,.19f,1},{.65f,.45f,.31f,1},{.83f,.29f,.32f,1},{.57f,.43f,.76f,1}};
+    return colors[kind%10];
+}
 LunarSurfaceMapping station_mapping(Vec3 position,float rotation,unsigned category){
     const auto x=static_cast<unsigned>(static_cast<int>(std::lround(position.x*10)));
     const auto z=static_cast<unsigned>(static_cast<int>(std::lround(position.z*10)));
@@ -43,6 +48,16 @@ bool resource_has_hull(ResourceKind kind){
     return kind==ResourceKind::StorageDome || kind==ResourceKind::StorageGate || kind==ResourceKind::RobotWorkshop;
 }
 
+// Dismantling progressively removes rendered parts while the collision and
+// pressure topology remain valid until the builder finishes the job.
+void draw_remaining_layer(SceneRenderer& r,const std::vector<Vec3>& layer,Vec3 origin,float rotation,float remain,bool solid,LunarMaterial material,Color color){
+    if(remain<=0)return;
+    const auto vertices=transformed_vertices(construction_sequence::reveal_triangles(layer,remain),origin,rotation);
+    if(solid)r.draw_lunar_surface(vertices,material,color);
+    else mesh_wireframe::draw_layer(r,vertices,color,1.8f);
+}
+float dismantle_shell(float p){return std::clamp(1.f-p*1.5f,0.f,1.f);}
+float dismantle_floor(float p){return std::clamp((1.f-p)/.25f,.08f,1.f);}
 void draw_structure_ground_reservation(SceneRenderer& r,float physical_x,float physical_z,Vec3 position,float rotation_degrees,Color color,float width){
     const float hx=geometry::structure_ground_extent(physical_x)*0.5f;
     const float hz=geometry::structure_ground_extent(physical_z)*0.5f;
@@ -296,8 +311,7 @@ void draw_pressure_box(SceneRenderer& r,Vec3 center,Vec3 side,Vec3 normal,Vec3 s
         r.draw_lines_3d(b.mesh.edges,color,2.1f);
     }
 }
-void draw_generated_airlock_access(SceneRenderer& r,const CorridorDoor& door,float deck_y,Color color,bool solid){
-    if(door.entrance_index!=-4) return;
+void draw_generated_airlock_access(SceneRenderer& r,const CorridorDoor& door,float deck_y,Color color,bool solid,float progress){
     Vec3 n=door.normal;n.y=0;n=normalize(n);if(length(n)<0.001f)return;
     const Vec3 side{-n.z,0,n.x};
     const int steps=std::max(1,(int)std::ceil(deck_y/0.16f));
@@ -308,10 +322,16 @@ void draw_generated_airlock_access(SceneRenderer& r,const CorridorDoor& door,flo
         const Vec3 center=door.wall_position+n*(tread*((float)i+0.5f))+Vec3{0,top-0.05f-door.wall_position.y,0};
         b.oriented_box(b.mesh.body,center,side,{0,1,0},n,{1.76f,0.10f,tread});
     }
-    if(solid) r.draw_lunar_surface(b.mesh.body,LunarMaterial::Pad,{0.54f,0.57f,0.59f,1});
+    // Underside stringers and bearing pads make the access self-supporting.
+    for(float sign:{-1.f,1.f}){
+        const auto near=door.wall_position+side*(sign*.72f)+Vec3{0,-.12f,0};
+        const auto far=door.wall_position+n*(tread*steps)+side*(sign*.72f)+Vec3{0,.04f-door.wall_position.y,0};
+        b.cylinder_between(b.mesh.body,near,far,.045f,8,true,false);
+    }
+    if(solid && progress>=.9999f)r.draw_lunar_surface(b.mesh.body,LunarMaterial::Pad,{.54f,.57f,.59f,1});
     else{
-        mesh_wireframe::draw_layer(r,b.mesh.body,color,2.35f);
-        r.draw_lines_3d(b.mesh.edges,color,2.1f);
+        const auto installed=construction_sequence::reveal_triangles(b.mesh.body,progress);
+        mesh_wireframe::draw_layer(r,installed,color,2.35f);
     }
 }
 const ResourceMesh& cargo_port_mesh(const ResourceMesh& source,const PlacedResource& owner){
@@ -336,22 +356,41 @@ const ResourceMesh& cargo_port_mesh(const ResourceMesh& source,const PlacedResou
     }
     cache.push_back(std::move(entry));return cache.back().mesh;
 }
-void draw_sliding_door(SceneRenderer& r,const CorridorDoor& door,float open_fraction,bool solid,float progress=1){
+void draw_sliding_door(SceneRenderer& r,const CorridorDoor& door,float open_fraction,bool solid,float progress=1,bool airlock_hatch=false){
     Vec3 n=door.normal;n.y=0;n=normalize(n);if(length(n)<0.001f)n={1,0,0};
     const Vec3 side{-n.z,0,n.x};
     const float w=geometry::kDoorClearWidth,h=geometry::kDoorClearHeight;
     const Vec3 base{door.wall_position.x,door.position.y,door.wall_position.z};
     const float slide=pressure_door::kSlide*std::clamp(open_fraction,0.0f,1.0f);
+    if(airlock_hatch && !door.wall_profile.empty()){
+        const auto collar=airlock::fitted_collar(door);
+        if(solid)r.draw_lunar_surface(construction_sequence::reveal_triangles(collar,progress),LunarMaterial::Alloy,{.46f,.52f,.55f,1});
+        else mesh_wireframe::draw_layer(r,collar,{.28f,.91f,.55f,1},2.f);
+    }
     resources::Builder b;
     auto box=[&](Vec3 center,Vec3 size){b.oriented_box(b.mesh.body,center,side,{0,1,0},n,size);};
     for(int sign:{-1,1}){
-        box(base+side*((float)sign*(w*0.5f+0.08f))+Vec3{0,h*0.5f,0},{0.16f,h+0.16f,0.24f});
+        box(base+side*((float)sign*(w*0.5f+0.08f))+Vec3{0,h*0.5f,0},{0.16f,h,0.24f});
         const auto center=base+side*((float)sign*(w*.25f+slide))+Vec3{0,h*.5f,0};
-        if(solid&&progress>=.9999f)pressure_hardware::leaf(r,center,side,n,2*pressure_door::kPanelHalfWidth,h+.10f,pressure_door::kThickness);
+        if(solid&&progress>=.9999f)pressure_hardware::leaf(r,center,side,n,w*.5f,h+.10f,pressure_door::kThickness);
         else box(center,{2*pressure_door::kPanelHalfWidth,h+.10f,pressure_door::kThickness});
+        if(airlock_hatch&&solid&&progress>=.9999f)
+            pressure_hardware::airlock_gear(r,center,side,n,2*pressure_door::kPanelHalfWidth,h+.10f,open_fraction);
     }
     box(base+Vec3{0,h+0.08f,0},{w+0.50f,0.16f,0.28f});
     box(base+Vec3{0,0.005f,0},{w+0.25f,0.03f,0.24f});
+    if(solid){
+        resources::Builder seals;
+        // Two independent gasket beads on both faces of the fixed seat.
+        for(float face:{-1.f,1.f})for(float offset:{0.f,.035f}){
+            const auto origin=base+n*(face*.13f);const float half=w*.5f+.015f+offset,low=-offset,high=h+offset;
+            const std::array<Vec2,8> rim{{{-half+.10f,low},{half-.10f,low},{half,low+.10f},{half,high-.10f},
+                {half-.10f,high},{-half+.10f,high},{-half,high-.10f},{-half,low+.10f}}};
+            for(int k=0;k<8;++k){const auto a=rim[k],c=rim[(k+1)%8];
+                seals.cylinder_between(seals.mesh.details,origin+side*a.x+Vec3{0,a.y,0},origin+side*c.x+Vec3{0,c.y,0},.010f,6,true,false);}
+        }
+        r.draw_lunar_surface(seals.mesh.details,LunarMaterial::Rubber,{.035f,.045f,.05f,1});
+    }
     draw_extension_mesh(r,b.mesh,progress,solid,false);
     const Color light=pressure_door::sealed(open_fraction)?Color{1,0.57f,0.12f,1}:Color{0.24f,1,0.56f,1};
     r.draw_lines_3d({base+side*0.25f+Vec3{0,h+0.085f,0}+n*0.15f,base-side*0.25f+Vec3{0,h+0.085f,0}+n*0.15f},light,3.5f);
@@ -384,7 +423,7 @@ void draw_loading_gate(SceneRenderer& r,const PlacedResource& item,float opening
     resources::Builder leaves;
     for(int sign:{-1,1}){
         const Vec3 c=mouth+side*((float)sign*(w*0.5f+opening*(w+0.06f)))+Vec3{0,h*0.5f+0.15f,0}+n*0.08f;
-        if(solid&&!preview&&progress>=.9999f)pressure_hardware::leaf(r,c,side,n,w+.04f,h,.10f);
+        if(solid&&!preview&&progress>=.9999f)pressure_hardware::leaf(r,c,side,n,w,h,.10f);
         else leaves.oriented_box(leaves.mesh.body,c,side,{0,1,0},n,{w+.04f,h,.10f});
     }
     draw_extension_mesh(r,leaves.mesh,progress,solid,preview);
@@ -425,6 +464,7 @@ void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 
         mesh_wireframe::draw_layer(r,shell,line,1.35f);
         mesh_wireframe::draw_layer(r,interior,faint,1.05f);
         mesh_wireframe::draw_layer(r,details,faint,1.15f);
+        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.hull_frames,position,rotation_degrees),line,1.35f);
         mesh_wireframe::draw_layer(r,glazing,{line.r,line.g,line.b,0.62f},1.0f);
         r.draw_lines_3d(edges,line,1.8f);
         for(const auto& access:mesh.entrance_access){
@@ -438,17 +478,8 @@ void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 
         return;
     }
 
-    const bool show_hull=habitat_view_mode_==HabitatViewMode::FullHull && !selected;
-    if(!show_hull){
-        const float installed=construction_step<kConstructionSteps?construction_sequence::habitat_visibility(construction_step).shell:1.f;
-        // Each portal lookup may grow/trim its cache. Own the three layers
-        // before passing them together, so later lookups cannot invalidate them.
-        const auto faded_shell=portal_layer(mesh.shell,position,rotation_degrees,fpv_doors);
-        const auto faded_glass=portal_layer(mesh.glazing,position,rotation_degrees,fpv_doors);
-        const auto faded_edges=portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true);
-        draw_faded_hull(r,faded_shell,faded_glass,faded_edges,position,rotation_degrees,!mesh_layout_active(),installed);
-    }
-    const auto& shell_layer=show_hull?mesh.shell:empty_mesh_layer;
+    const bool show_hull=habitat_view_mode_==HabitatViewMode::FullHull && (!selected || kind==HabitatKind::AirLock);
+    const auto& shell_layer=show_hull?mesh.shell:hull_surface::split(mesh.shell,mesh.walkable_floor_y+.72f).lower;
     const auto& glass_layer=show_hull?mesh.glazing:empty_mesh_layer;
     const auto& edge_layer=show_hull?mesh.edges:empty_mesh_layer;
     if(construction_step<kConstructionSteps){
@@ -479,6 +510,10 @@ void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 
         mesh_wireframe::draw_layer(r,shell,installed,2.20f*boost);
         mesh_wireframe::draw_layer(r,interior,installed_dim,1.85f*boost);
         mesh_wireframe::draw_layer(r,details,installed,1.95f*boost);
+        if(show_hull){
+            mesh_wireframe::draw_layer(r,transformed_vertices(mesh.hull_frames,position,rotation_degrees),blueprint,1.30f*boost);
+            mesh_wireframe::draw_layer(r,transformed_vertices(construction_sequence::reveal_triangles(mesh.hull_frames,visibility.details),position,rotation_degrees),installed,1.95f*boost);
+        }
         mesh_wireframe::draw_layer(r,glazing,{1.00f,0.76f,0.20f,0.94f},1.80f*boost);
         if(!edges.empty()) r.draw_lines_3d(edges,installed,selected?3.45f:2.45f);
         if(construction_step==0 || (selected && !show_hull)){
@@ -522,19 +557,21 @@ void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 
         }
         const Color glass=greenhouse_dark?Color{0.14f,0.25f,0.27f,0.68f}:Color{0.27f,0.51f,0.63f,0.58f};
         const auto mapping=station_mapping(position,rotation_degrees,unsigned(kind)+1);
+        if(show_hull)r.draw_mapped_lunar_surface(transformed_vertices(portal_layer(mesh.hull_frames,position,rotation_degrees,fpv_doors),position,rotation_degrees),LunarMaterial::Alloy,{.44f,.49f,.51f,1},mapping);
         r.draw_mapped_lunar_surface(foundation,LunarMaterial::Pad,{.48f,.49f,.50f,1},mapping);
         r.draw_mapped_lunar_surface(interior,LunarMaterial::Interior,{.73f,.76f,.77f,1},mapping);
         r.draw_mapped_lunar_surface(details,LunarMaterial::Alloy,fittings,mapping);
         const auto& panels=hull_surface::split(shell_layer,mesh.walkable_floor_y+1.0f);
-        r.draw_mapped_lunar_surface(transformed_vertices(portal_layer(panels.lower,position,rotation_degrees,fpv_doors),position,rotation_degrees),LunarMaterial::Hull,cladding,mapping);
+        r.draw_mapped_lunar_surface(transformed_vertices(portal_layer(panels.lower,position,rotation_degrees,fpv_doors),position,rotation_degrees),LunarMaterial::Hull,show_hull?cladding:cutaway_accent(unsigned(kind)),mapping);
         r.draw_mapped_lunar_surface(transformed_vertices(portal_layer(panels.upper,position,rotation_degrees,fpv_doors),position,rotation_degrees),LunarMaterial::SolarShield,{.38f,.59f,.65f,.28f},mapping);
         r.draw_mapped_lunar_surface(glazing,LunarMaterial::SolarShield,{glass.r,glass.g,glass.b,.28f},mapping);
         const auto layer=[&](const std::vector<Vec3>& points,LunarMaterial material,Color tint,bool portal=true){
             const auto local=portal?portal_layer(points,position,rotation_degrees,fpv_doors):points;
             r.draw_mapped_lunar_surface(transformed_vertices(local,position,rotation_degrees),material,tint,mapping);
         };
-        if(show_hull && first_person_mode_==FirstPersonMode::Active)layer(hull_surface::split(mesh.lining,mesh.walkable_floor_y+1.0f).lower,LunarMaterial::Interior,{.79f,.81f,.80f,1});
-        layer(mesh.deck,LunarMaterial::Deck,{.27f,.31f,.34f,1});
+        if(!show_hull || first_person_mode_==FirstPersonMode::Active)layer(hull_surface::split(mesh.lining,mesh.walkable_floor_y+(show_hull?1.f:.72f)).lower,LunarMaterial::Interior,{.79f,.81f,.80f,1});
+        if(show_hull){layer(mesh.overhead_services,LunarMaterial::Alloy,{.43f,.48f,.51f,1});layer(mesh.overhead_lamps,light_level>0?LunarMaterial::Emissive:LunarMaterial::Alloy,light_level>0?Color{.77f*light_level,.88f*light_level,.96f*light_level,1}:Color{.09f,.10f,.11f,1});}
+        layer(mesh.deck,LunarMaterial::Deck,{.40f,.46f,.48f,1});
         layer(mesh.service_metal,LunarMaterial::Alloy,{.43f,.48f,.51f,1});
         layer(mesh.fabric,LunarMaterial::Textile,{.25f,.39f,.46f,1},false);
         layer(mesh.displays,powered?LunarMaterial::Display:LunarMaterial::Glass,powered?Color{.20f,.67f,.80f,1}:Color{.025f,.04f,.05f,1});
@@ -554,8 +591,11 @@ void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 
     mesh_wireframe::draw_layer(r,foundation,foundation_color,2.40f*selected_boost);
     mesh_wireframe::draw_layer(r,interior,interior_color,2.20f*selected_boost);
     mesh_wireframe::draw_layer(r,details,detail_color,2.30f*selected_boost);
+    for(const auto* layer:{&mesh.deck,&mesh.service_metal,&mesh.fabric,&mesh.displays,&mesh.lamps,&mesh.markings})mesh_wireframe::draw_layer(r,transformed_vertices(*layer,position,rotation_degrees),detail_color,1.65f);
+    if(show_hull){mesh_wireframe::draw_layer(r,transformed_vertices(mesh.overhead_services,position,rotation_degrees),detail_color,1.5f);mesh_wireframe::draw_layer(r,transformed_vertices(mesh.overhead_lamps,position,rotation_degrees),detail_color,1.5f);}
     mesh_wireframe::draw_layer(r,glazing,glass_color,2.10f*selected_boost);
     mesh_wireframe::draw_layer(r,shell,shell_color,2.65f*selected_boost);
+    if(show_hull)mesh_wireframe::draw_layer(r,transformed_vertices(portal_layer(mesh.hull_frames,position,rotation_degrees,fpv_doors),position,rotation_degrees),detail_color,2.f);
     r.draw_lines_3d(edges,edge_color,selected?3.65f:2.90f);
 }
 
@@ -563,7 +603,7 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
     if(preview){
         const auto body=transformed_vertices(portal_layer(mesh.body,position,rotation_degrees,fpv_doors),position,rotation_degrees);
         const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
-        const auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+            const auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
         const auto edges=transformed_vertices(portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
         const Color line=valid?Color{0.34f,1.00f,0.72f,0.96f}:Color{1.00f,0.38f,0.30f,0.96f};
         const Color faint=valid?Color{0.18f,0.78f,0.56f,0.78f}:Color{0.92f,0.25f,0.20f,0.78f};
@@ -577,24 +617,24 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
         return;
     }
 
-    const bool show_hull=true; // Exterior equipment ignores the habitat cutaway selector.
-    if(!show_hull){
-        const float installed=construction_step<kConstructionSteps?construction_sequence::resource_visibility(construction_step).body:1.f;
-        // Each portal lookup may grow/trim its cache. Own the three layers
-        // before passing them together, so later lookups cannot invalidate them.
-        const auto faded_shell=portal_layer(mesh.body,position,rotation_degrees,fpv_doors);
-        const auto faded_glass=portal_layer(mesh.glazing,position,rotation_degrees,fpv_doors);
-        const auto faded_edges=portal_layer(mesh.edges,position,rotation_degrees,fpv_doors,true);
-        draw_faded_hull(r,faded_shell,faded_glass,faded_edges,position,rotation_degrees,!mesh_layout_active(),installed);
-    }
+    const bool interior=kind==ResourceKind::StorageDome||kind==ResourceKind::RobotWorkshop;
+    const bool show_hull=!interior||(habitat_view_mode_==HabitatViewMode::FullHull&&!selected);
     const auto& glass_layer=show_hull?mesh.glazing:empty_mesh_layer;
-    const auto& body_layer=show_hull?mesh.body:empty_mesh_layer;
+    const auto& body_layer=show_hull?mesh.body:hull_surface::split(mesh.body,mesh.walkable_floor_y+.72f).lower;
     const auto& edge_layer=show_hull?mesh.edges:empty_mesh_layer;
+    std::vector<Vec3> internal_details;
+    if(!show_hull)for(std::size_t i=0;i+2<mesh.details.size();i+=3){
+        const auto center=(mesh.details[i]+mesh.details[i+1]+mesh.details[i+2])*(1.f/3);
+        bool keep=std::max({mesh.details[i].y,mesh.details[i+1].y,mesh.details[i+2].y})<=mesh.walkable_floor_y+.18f;
+        for(const auto& station:mesh.stations)if(station.active)keep|=center.x>=station.low.x&&center.x<=station.high.x&&center.z>=station.low.z&&center.z<=station.high.z&&center.y>=station.low.y&&center.y<=station.high.y;
+        if(keep)internal_details.insert(internal_details.end(),mesh.details.begin()+i,mesh.details.begin()+i+3);
+    }
+    const auto& detail_layer=show_hull?mesh.details:internal_details;
     if(construction_step<kConstructionSteps){
         const auto visibility=construction_sequence::resource_visibility(construction_step);
         const auto foundation=transformed_vertices(construction_sequence::reveal_triangles(mesh.foundation,visibility.foundation),position,rotation_degrees);
         const auto body=transformed_vertices(construction_sequence::reveal_triangles(body_layer,visibility.body),position,rotation_degrees);
-        const auto details=transformed_vertices(construction_sequence::reveal_triangles(mesh.details,visibility.details),position,rotation_degrees);
+        const auto details=transformed_vertices(construction_sequence::reveal_triangles(detail_layer,visibility.details),position,rotation_degrees);
         const auto edges=transformed_vertices(construction_sequence::reveal_lines(edge_layer,visibility.edges),position,rotation_degrees);
         const float boost=selected?1.28f:1.0f;
         const Color blueprint{0.08f,0.36f,0.96f,0.46f};
@@ -602,7 +642,7 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
         const Color installed_dim{0.96f,0.56f,0.08f,0.96f};
         mesh_wireframe::draw_layer(r,transformed_vertices(mesh.foundation,position,rotation_degrees),blueprint,1.35f*boost);
         mesh_wireframe::draw_layer(r,transformed_vertices(body_layer,position,rotation_degrees),blueprint,1.55f*boost);
-        mesh_wireframe::draw_layer(r,transformed_vertices(mesh.details,position,rotation_degrees),blueprint,1.30f*boost);
+        mesh_wireframe::draw_layer(r,transformed_vertices(detail_layer,position,rotation_degrees),blueprint,1.30f*boost);
         const auto ghost_edges=transformed_vertices(portal_layer(edge_layer,position,rotation_degrees,fpv_doors,true),position,rotation_degrees);
         if(!ghost_edges.empty()) r.draw_lines_3d(ghost_edges,{0.12f,0.50f,1.00f,0.62f},1.65f*boost);
 
@@ -622,7 +662,7 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
     const bool solid=!mesh_layout_active();
     const auto body=transformed_vertices(portal_layer(body_layer,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
-    const auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
+    const auto details=transformed_vertices(portal_layer(detail_layer,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto edges=selected || !solid?
         transformed_vertices(portal_layer(edge_layer,position,rotation_degrees,fpv_doors,true),position,rotation_degrees):std::vector<Vec3>{};
     if(selected && !show_hull)
@@ -646,6 +686,7 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
         r.draw_mapped_lunar_surface(details,pad?LunarMaterial::Hull:LunarMaterial::Alloy,trim,mapping);
         r.draw_mapped_lunar_surface(transformed_vertices(glass_layer,position,rotation_degrees),LunarMaterial::SolarShield,{.38f,.59f,.65f,.28f},mapping);
         if(pad) draw_pad_markings(r,mesh,position,rotation_degrees);
+        if(interior&&!show_hull)structure_display::paint(r,{{0,mesh.walkable_floor_y+.042f,0},{1,0,0},{0,0,-1},2.6f,.32f},position,rotation_degrees,kind==ResourceKind::StorageDome?"STORAGE":"WORKSHOP",{.91f,.89f,.74f,1});
         if(selected) r.draw_lines_3d(edges,{0.98f,0.85f,0.46f,0.88f},2.0f);
         return;
     }
@@ -673,7 +714,7 @@ void GameApp::render_ground_resources(SceneRenderer& r){
 }
 
 void GameApp::render_storage_loading_gate(SceneRenderer& r,const PlacedResource& item,float opening,bool preview) const {
-    draw_loading_gate(r,item,opening,!mesh_layout_active(),true,preview);
+    if(preview||habitat_view_mode_==HabitatViewMode::FullHull)draw_loading_gate(r,item,opening,!mesh_layout_active(),true,preview);
 }
 
 void GameApp::render_storage_gate_shutters(SceneRenderer& r,const PlacedResource& owner,int face,float opening,float progress,bool preview) const {
@@ -682,13 +723,14 @@ void GameApp::render_storage_gate_shutters(SceneRenderer& r,const PlacedResource
     resources::Builder leaves;
     for(float sign:{-1.0f,1.0f}){
         const Vec3 center=mouth+side*(sign*(w*0.5f+opening*(w+0.06f)))+Vec3{0,h*0.5f+0.15f,0}+n*0.08f;
-        if(!mesh_layout_active()&&!preview&&progress>=.9999f)pressure_hardware::leaf(r,center,side,n,w+.04f,h,.10f);
+        if(!mesh_layout_active()&&!preview&&progress>=.9999f)pressure_hardware::leaf(r,center,side,n,w,h,.10f);
         else leaves.oriented_box(leaves.mesh.body,center,side,{0,1,0},n,{w+.04f,h,.10f});
     }
     draw_extension_mesh(r,leaves.mesh,progress,!mesh_layout_active(),preview);
 }
 
 void GameApp::render_workshop_gate(SceneRenderer& r,const PlacedResource& item,bool preview,bool valid) const {
+    if(!preview&&habitat_view_mode_==HabitatViewMode::None)return;
     const Vec3 side=rotate_y({1,0,0},item.rotation_degrees),n=rotate_y({0,0,-1},item.rotation_degrees);
     const Vec3 base=workshop::world(item,{0,workshop::kDeck,-workshop::kHalfZ});
     const float open=item.construction.complete()?item.workshop_gate_open:0;
@@ -706,7 +748,7 @@ void GameApp::render_workshop_gate(SceneRenderer& r,const PlacedResource& item,b
             for(float edge:{-1.f,1.f})rails.oriented_box(rails.mesh.body,center+side*(edge*(workshop::kGateHalf*.5f-.065f))+n*.105f,side,{0,1,0},n,{.055f,2.85f,.035f},false);
             for(int stripe=0;stripe<6;++stripe)marks.oriented_box(marks.mesh.body,center+side*(-.94f+stripe*.37f)+Vec3{0,-1.27f,0}+n*.13f,side,{0,1,0},n,{.19f,.16f,.015f},false);
             LunarSurfaceMapping mapping;mapping.origin=center;mapping.x=side;mapping.y={0,1,0};mapping.z=n;mapping.seed=sign<0?3101:3102;
-            pressure_hardware::leaf(r,center,side,n,workshop::kGateHalf+.06f,2.90f,.18f);
+            pressure_hardware::leaf(r,center,side,n,workshop::kGateHalf,2.90f,.18f);
             r.draw_mapped_lunar_surface(rails.mesh.body,LunarMaterial::Alloy,{.20f,.25f,.28f,1},mapping);
             r.draw_mapped_lunar_surface(marks.mesh.body,LunarMaterial::Marking,{.95f,.65f,.12f,1},mapping);
         }
@@ -869,6 +911,14 @@ void GameApp::render_resources(SceneRenderer& r){
         const bool selected=selection_kind_==SelectionKind::Resource && selected_resource_==(int)i;
         const auto& base_mesh=resource_runtime_mesh(i);
         const auto& mesh=instance.kind==ResourceKind::StorageDome?cargo_port_mesh(base_mesh,instance):base_mesh;
+        if(const auto* job=deconstruction_job({ConstructionTargetKind::Resource,i});job&&job->progress>0){
+            const float p=job->progress;const bool hull=!resource_has_hull(instance.kind)||habitat_view_mode_==HabitatViewMode::FullHull;
+            const auto body=hull?mesh.body:hull_surface::split(mesh.body,mesh.walkable_floor_y+.72f).lower;
+            draw_remaining_layer(r,body,instance.position,instance.rotation_degrees,dismantle_shell(p),solid,LunarMaterial::Hull,{.66f,.69f,.72f,1});
+            draw_remaining_layer(r,mesh.details,instance.position,instance.rotation_degrees,1-p,solid,LunarMaterial::Alloy,{.48f,.50f,.52f,1});
+            draw_remaining_layer(r,mesh.foundation,instance.position,instance.rotation_degrees,dismantle_floor(p),solid,LunarMaterial::Alloy,{.44f,.46f,.48f,1});
+            continue;
+        }
         std::vector<CorridorDoor> fpv_doors;
         const std::vector<CorridorDoor>* fpv_ptr=nullptr;
         if(instance.kind==ResourceKind::StorageDome && instance.construction.complete()){
@@ -894,6 +944,20 @@ void GameApp::render_resources(SceneRenderer& r){
         if(instance.kind==ResourceKind::RobotWorkshop){render_workshop_gate(r,instance,!instance.construction.complete());render_workshop_services(r,i);}
         if(instance.kind==ResourceKind::StorageGate && instance.storage_parent_index<placed_resources_.size()){
             const auto& owner=placed_resources_[instance.storage_parent_index];
+            if(habitat_view_mode_==HabitatViewMode::FullHull){
+                const auto n=storage_loading::normal(owner,instance.storage_loading_face),wall=storage_loading::wall(owner,instance.storage_loading_face);
+                const Vec3 side{-n.z,0,n.x};const float sy=storage_dome_height_m(owner.storage_size)/7.f;
+                const float radius=storage_dome_diameter_m(owner.storage_size)*(5.20f/13.f),r0=storage_dome_diameter_m(owner.storage_size)*(5.35f/13.f);
+                const float roof=storage_loading::kHeight+.18f,w=storage_loading::kHalfWidth+.10f;
+                std::vector<Vec3> collar;const auto quad=[&](Vec3 a,Vec3 b,Vec3 c,Vec3 d){collar.insert(collar.end(),{a,b,c,a,c,d,c,b,a,d,c,a});};
+                const auto at=[&](float u,float y){const float f=std::max(0.f,(y-.95f*sy)/(4.784f*sy));const float r=f>0?radius*std::sqrt(std::max(0.f,1-f*f)):r0;
+                    return owner.position+n*(std::sqrt(std::max(0.f,r*r-u*u))-.12f)+side*u+Vec3{0,y,0};};
+                for(int j=0;j<12;++j){float u=std::lerp(-w,w,j/12.f),v=std::lerp(-w,w,(j+1)/12.f);
+                    quad(at(u,roof),at(v,roof),wall+side*v+n*.14f+Vec3{0,roof,0},wall+side*u+n*.14f+Vec3{0,roof,0});}
+                for(float sign:{-1.f,1.f})for(int j=0;j<10;++j){const float y=std::lerp(.18f,roof,j/10.f),z=std::lerp(.18f,roof,(j+1)/10.f),u=sign*w;
+                    quad(at(u,y),wall+side*u+n*.14f+Vec3{0,y,0},wall+side*u+n*.14f+Vec3{0,z,0},at(u,z));}
+                draw_remaining_layer(r,collar,{},0,instance.construction.progress(),solid,LunarMaterial::Alloy,{.50f,.57f,.60f,1});
+            }
             render_storage_gate_shutters(r,owner,instance.storage_loading_face,instance.storage_extension_open,instance.construction.progress());
         }
 
@@ -944,6 +1008,10 @@ void GameApp::render_utilities(SceneRenderer& r){
         const bool selected=selection_kind_==SelectionKind::Utility && selected_utility_==(int)i;
         const float boost=selected?1.55f:1.0f;
 
+        if(const auto* job=deconstruction_job({ConstructionTargetKind::Utility,i});job&&job->progress>0){
+            draw_remaining_layer(r,link.mesh.shell,{},0,1-job->progress,!mesh_layout_active(),LunarMaterial::Alloy,{.56f,.58f,.61f,1});
+            draw_remaining_layer(r,link.mesh.details,{},0,1-job->progress,!mesh_layout_active(),LunarMaterial::Alloy,{.38f,.40f,.42f,1});continue;
+        }
         if(!link.construction.complete()){
             const float fraction=link.construction.progress();
             const Color build_main{1.00f,0.68f,0.12f,0.99f};
@@ -989,6 +1057,10 @@ void GameApp::render_walkways(SceneRenderer& r){
         const auto& w=links[i];
         const bool selected=selection_kind_==SelectionKind::Walkway && selected_walkway_==(int)i;
         const float boost=selected?1.55f:1.0f;
+        if(const auto* job=deconstruction_job({ConstructionTargetKind::Walkway,i});job&&job->progress>0){
+            draw_remaining_layer(r,w.mesh.deck,{},0,dismantle_floor(job->progress),!mesh_layout_active(),LunarMaterial::Pad,{.46f,.49f,.51f,1});
+            draw_remaining_layer(r,w.mesh.details,{},0,1-job->progress,!mesh_layout_active(),LunarMaterial::Alloy,{.44f,.46f,.48f,1});continue;
+        }
         if(!w.construction.complete()){
             const float fraction=w.construction.progress();
             const Color build_main{1.00f,0.68f,0.12f,0.99f};
@@ -1032,12 +1104,31 @@ void GameApp::render_corridors(SceneRenderer& r){
         const bool link_source=corridor_link_source_==(int)i;
         const Color edge_color=(selected||link_source)?theme_.accent:Color{0.18f,1.00f,0.38f,1.0f};
         const float boost=(selected||link_source)?1.55f:1.0f;
-        if(!show_hull)draw_faded_hull(r,connection.mesh.shell,empty_mesh_layer,connection.mesh.edges,{},0,solid,connection.construction.progress());
-        const auto& shell_layer=show_hull?connection.mesh.shell:empty_mesh_layer;
+        const auto floor_route=corridor_detail::extended_floor_path(connection.endpoint_a,connection.endpoint_b,connection.path);
+        const auto& shell_layer=show_hull?connection.mesh.shell:hull_surface::lower_run(connection.mesh.shell,floor_route,geometry::kCorridorDeckY+.55f);
         const auto& edge_layer=show_hull?connection.mesh.edges:empty_mesh_layer;
 
+        const auto keep_lower=[&](Vec3 a,Vec3 b,Vec3 c){
+            const Vec3 p=(a+b+c)/3.f;float base=0,best=std::numeric_limits<float>::max();
+            for(std::size_t j=1;j<floor_route.size();++j){
+                const auto q=corridor_detail::closest_point_segment_xz(p,floor_route[j-1],floor_route[j]);
+                const float d=world_math::distance_xz(p,q);if(d<best){best=d;base=q.y;}
+            }
+            // Preserve complete bearing legs and pads, including elevated runs.
+            return std::max({a.y,b.y,c.y})<=base+geometry::kCorridorDeckY+.19f;
+        };
+        std::vector<Vec3> floor_details;
+        if(!show_hull)for(std::size_t v=0;v+2<connection.mesh.details.size();v+=3)
+            if(keep_lower(connection.mesh.details[v],connection.mesh.details[v+1],connection.mesh.details[v+2]))
+                floor_details.insert(floor_details.end(),connection.mesh.details.begin()+v,connection.mesh.details.begin()+v+3);
+        const auto& details_layer=show_hull?connection.mesh.details:floor_details;
+
+        if(const auto* job=deconstruction_job({ConstructionTargetKind::Corridor,i});job&&job->progress>0){
+            draw_remaining_layer(r,shell_layer,{},0,dismantle_shell(job->progress),solid,LunarMaterial::Hull,{.65f,.67f,.69f,1});
+            draw_remaining_layer(r,details_layer,{},0,dismantle_floor(job->progress),solid,LunarMaterial::Alloy,{.48f,.50f,.52f,1});continue;
+        }
         if(!connection.construction.complete()){
-            for(const auto* endpoint:{&connection.endpoint_a,&connection.endpoint_b})
+            if(show_hull)for(const auto* endpoint:{&connection.endpoint_a,&connection.endpoint_b})
                 if(endpoint->kind==CorridorEndpointKind::Habitat || endpoint->kind==CorridorEndpointKind::Resource)
                     draw_sliding_door(r,endpoint->door,0,solid,connection.construction.progress());
             const float fraction=connection.construction.progress();
@@ -1045,14 +1136,14 @@ void GameApp::render_corridors(SceneRenderer& r){
             const Color build_detail{0.96f,0.56f,0.08f,0.96f};
             const Color ghost{0.10f,0.40f,0.90f,0.46f};
             mesh_wireframe::draw_layer(r,shell_layer,ghost,1.55f*boost);
-            mesh_wireframe::draw_layer(r,connection.mesh.details,ghost,1.30f*boost);
+            mesh_wireframe::draw_layer(r,details_layer,ghost,1.30f*boost);
             if(!edge_layer.empty()) r.draw_lines_3d(edge_layer,{0.14f,0.54f,1.00f,0.58f},1.70f*boost);
             if(fraction<=0.0001f || (!show_hull && (selected || link_source))){
                 r.draw_lines_3d(construction_path_lines(connection.path),Color{0.12f,0.58f,1.00f,0.92f},(selected||link_source)?3.3f:2.4f);
             }
             if(fraction>0.0001f){
                 const auto shell=construction_sequence::reveal_triangles(shell_layer,fraction);
-                const auto details=construction_sequence::reveal_triangles(connection.mesh.details,fraction);
+                const auto details=construction_sequence::reveal_triangles(details_layer,fraction);
                 const auto edges=construction_sequence::reveal_lines(edge_layer,fraction);
                 mesh_wireframe::draw_layer(r,details,build_detail,1.80f*boost);
                 mesh_wireframe::draw_layer(r,shell,build_main,2.05f*boost);
@@ -1062,22 +1153,25 @@ void GameApp::render_corridors(SceneRenderer& r){
         }
 
         if(solid){
-            std::vector<Vec3> deck,fittings;
-            for(std::size_t v=0;v+2<connection.mesh.details.size();v+=3){
-                const auto a=connection.mesh.details[v],b=connection.mesh.details[v+1],c=connection.mesh.details[v+2];
-                const auto n=normalize(cross(b-a,c-a));
-                auto& layer=std::abs(n.y)>.80f&&(a.y+b.y+c.y)/3.f<geometry::kCorridorDeckY+.12f?deck:fittings;
-                layer.insert(layer.end(),{a,b,c});
-            }
+            connection.mesh.prepare_surfaces(floor_route);
             Vec3 forward=connection.path.size()>1?normalize(connection.path[1]-connection.path[0]):Vec3{0,0,1};forward.y=0;forward=normalize(forward);
             const LunarSurfaceMapping mapping{connection.path.empty()?Vec3{}:connection.path.front(),{forward.z,0,-forward.x},{0,1,0},forward,1891};
-            r.draw_mapped_lunar_surface(deck,LunarMaterial::CorridorDeck,{.30f,.36f,.39f,1},mapping);
-            r.draw_lunar_surface(fittings,LunarMaterial::Alloy,{0.60f,0.63f,0.64f,1});
+            r.draw_mapped_lunar_surface(connection.mesh.deck_surface,LunarMaterial::CorridorDeck,{.30f,.36f,.39f,1},mapping);
+            if(show_hull)r.draw_lunar_surface(connection.mesh.metal_surface,LunarMaterial::Alloy,{0.60f,0.63f,0.64f,1});
+            else {
+                std::vector<Vec3> floor_trim;
+                for(std::size_t v=0;v+2<connection.mesh.metal_surface.size();v+=3){
+                    if(keep_lower(connection.mesh.metal_surface[v],connection.mesh.metal_surface[v+1],connection.mesh.metal_surface[v+2]))
+                        floor_trim.insert(floor_trim.end(),connection.mesh.metal_surface.begin()+v,connection.mesh.metal_surface.begin()+v+3);
+                }
+                r.draw_lunar_surface(floor_trim,LunarMaterial::Alloy,{.60f,.63f,.64f,1});
+            }
+            r.draw_lunar_surface(connection.mesh.grip_surface,LunarMaterial::Rubber,{.055f,.070f,.075f,1});
             const auto& panels=hull_surface::split(shell_layer,geometry::kCorridorDeckY+1.0f);
             r.draw_lunar_surface(panels.lower,LunarMaterial::Hull,{.76f,.78f,.73f,1});
             r.draw_lunar_surface(panels.upper,LunarMaterial::SolarShield,{.38f,.59f,.65f,.28f});
         }else{
-            mesh_wireframe::draw_layer(r,connection.mesh.details,{0.22f,0.92f,0.40f,0.99f},2.35f*boost);
+            mesh_wireframe::draw_layer(r,details_layer,{0.22f,0.92f,0.40f,0.99f},2.35f*boost);
             mesh_wireframe::draw_layer(r,shell_layer,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
         }
         if(selected || link_source)
@@ -1093,6 +1187,15 @@ void GameApp::render_habitats(SceneRenderer& r){
         const auto& instance=placed_habitats_[i];
         const auto& mesh=habitat_runtime_mesh(i);
         const bool selected=selection_kind_==SelectionKind::Habitat && selected_habitat_==(int)i;
+        if(const auto* job=deconstruction_job({ConstructionTargetKind::Habitat,i});job&&job->progress>0){
+            const float p=job->progress;const bool hull=habitat_view_mode_==HabitatViewMode::FullHull;
+            const auto shell=hull?mesh.shell:hull_surface::split(mesh.shell,mesh.walkable_floor_y+.72f).lower;
+            draw_remaining_layer(r,shell,instance.position,instance.rotation_degrees,dismantle_shell(p),solid,LunarMaterial::Hull,{.70f,.72f,.74f,1});
+            draw_remaining_layer(r,mesh.details,instance.position,instance.rotation_degrees,1-p,solid,LunarMaterial::Alloy,{.49f,.52f,.54f,1});
+            draw_remaining_layer(r,mesh.interior,instance.position,instance.rotation_degrees,1-p,solid,LunarMaterial::Interior,{.62f,.64f,.66f,1});
+            draw_remaining_layer(r,mesh.foundation,instance.position,instance.rotation_degrees,dismantle_floor(p),solid,LunarMaterial::Alloy,{.44f,.46f,.48f,1});
+            continue;
+        }
         std::vector<CorridorDoor> fpv_doors;
         const std::vector<CorridorDoor>* fpv_ptr=nullptr;
         if(instance.construction.complete()){
@@ -1106,15 +1209,41 @@ void GameApp::render_habitats(SceneRenderer& r){
             lunar_look::Fixture light{instance.position+Vec3{0,mesh.walkable_floor_y+2.05f,0},{.80f,.08f,.30f},{.80f*level,.89f*level,level,1},9,25*level};
             if(level>0)lunar_look::draw_fixture(r,light,instance.rotation_degrees);
         }
+        if(instance.construction.complete() && solid && (habitat_view_mode_==HabitatViewMode::None||selected)){
+            constexpr const char* codes[]{"AIRLOCK","OXYGEN","FOOD","BIO","CREW","PROCESS","FACTORY","MFG","MED","LAB"};
+            structure_display::paint(r,{{0,mesh.walkable_floor_y+.042f,0},{1,0,0},{0,0,-1},2.0f,.32f},instance.position,instance.rotation_degrees,codes[unsigned(instance.kind)%10],{.91f,.89f,.74f,1});
+        }
         render_habitat_screens(r,i);
         render_interior_unit_screens(r,i);
         if(r.lunar_scene_active() && instance.construction.complete() && lunar_look::powered(instance.supply,instance.power_enabled))
             lunar_look::draw_fixture(r,lunar_look::habitat_fixture(instance,mesh),instance.rotation_degrees);
-        if(fpv_ptr) for(const auto& door:fpv_doors){
-            draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position),solid);
-            if(instance.kind==HabitatKind::AirLock && door.entrance_index==-4)
-                draw_generated_airlock_access(r,door,mesh.walkable_floor_y,
-                    selected?Color{1.0f,0.94f,0.55f,1.0f}:Color{0.24f,0.96f,0.42f,1.0f},solid);
+        if(fpv_ptr&&(instance.kind==HabitatKind::AirLock||(habitat_view_mode_==HabitatViewMode::FullHull&&!selected))) for(const auto& door:fpv_doors){
+            draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position),solid,1,instance.kind==HabitatKind::AirLock);
+            if(instance.kind==HabitatKind::AirLock&&solid){
+                const auto n=normalize(door.normal);const Vec3 side{-n.z,0,n.x};
+                const bool powered=door_power_available(instance.supply,instance.power_enabled);
+                const auto fraction=first_person_door_open_fraction(door.wall_position);
+                const auto& cycle=airlock_cycles_.size()>i?airlock_cycles_[i]:airlock::Cycle{};
+                const structure_display::Content content{"HATCH CONTROL",{
+                    fraction>.99f?"OPEN / KEEP CLEAR":pressure_door::sealed(fraction)?"LATCHED / SEALED":"SEAL IN MOTION",
+                    "CENTER "+structure_display::value(cycle.pressure*100)+"%",
+                    powered?(cycle.equalizing?"EQUALIZING":cycle.sealing?"SEALING / WAIT":"E / OPEN-CLOSE"):"HOLD E / CRANK"},{.44f,.87f,.91f,1}};
+                for(float face:{-1.f,1.f}){
+                    const structure_display::Mount mount{door.wall_position+side*1.03f+Vec3{0,1.36f,0}+n*(face*.17f),side*(-face),{0,1,0},.46f,.32f};
+                    std::vector<Vec3> casing,display;
+                    structure_display::casing(casing,display,mount);
+                    r.draw_lunar_surface(casing,LunarMaterial::Alloy,{.26f,.31f,.34f,1});
+                    r.draw_lunar_surface(display,LunarMaterial::Display,{.025f,.055f,.062f,1});
+                    structure_display::draw(r,mount,{},0,content,powered,first_person_mode_==FirstPersonMode::Active?first_person_.eye_position():camera_.eye_position());
+                }
+            }
+
+        }
+
+        if(instance.kind==HabitatKind::AirLock)for(int sign:{-1,1}){
+            const auto door=airlock::end_door(instance,mesh,sign);
+            if(airlock_access_enabled(i,door))draw_generated_airlock_access(r,door,instance.position.y+mesh.walkable_floor_y,
+                selected?Color{1,.94f,.55f,1}:Color{.24f,.96f,.42f,1},solid,instance.construction.progress());
         }
 
         // Legacy authored access arrays are normally empty from v0.43.17 onward.

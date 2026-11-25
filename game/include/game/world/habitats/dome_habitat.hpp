@@ -1,0 +1,48 @@
+#pragma once
+#include "game/world/habitats/habitat_interior_builder.hpp"
+#include "game/world/habitats/habitat_module.hpp"
+namespace game::habitats {
+inline void ellipse_layer(std::vector<Vec3>& dst,const std::vector<Vec3>& src,float rx,float rz){for(auto p:src){p.x*=rx;p.z*=rz;dst.push_back(p);}}
+inline void build_dome_habitat(Builder& b,HabitatKind kind,float floor){
+    // Preserve placement bounds and docking elevations; crew rooms now use
+    // rectangular pressure walls and a flat roof.
+    constexpr float widths[]{10,10.5f,11,13.5f,14,17,18,21,13,15};
+    constexpr float depths[]{5.8f,10,10.5f,9.5f,7,9,10,12,11,8};
+    const int k=int(kind);auto& m=b.mesh;m.footprint_x=widths[k];m.footprint_z=depths[k];m.walkable_floor_y=floor;
+    const float rx=kind==HabitatKind::AirLock?4.8f:widths[k]*.445f;
+    const float rz=kind==HabitatKind::AirLock?2.5f:depths[k]*.445f;
+    m.dome_radii={rx,0,rz};m.dome_spring_y=floor+3.35f;m.height=m.dome_spring_y+.18f;
+    const float bottom=floor-.10f,top=m.dome_spring_y;
+    b.box(m.shell,{0,(bottom+top)*.5f,0},{2*rx,top-bottom,2*rz},false);
+    b.box(m.foundation,{0,bottom*.5f,0},{2*(rx+.12f),bottom,2*(rz+.12f)},false);
+    b.box(m.interior,{0,floor-.08f,0},{2*(rx-.025f),.16f,2*(rz-.025f)},false);
+    if(kind==HabitatKind::AirLock){
+        // Four fixed hatches and three pressure chambers remain unchanged.
+        // Build the two transverse partitions to the actual rectangular skin.
+        for(float x:{-1.6f,1.6f})b.box(m.hull_frames,{x,(floor+top)*.5f,0},{.13f,top-floor,2*rz},false);
+    }
+    if(kind==HabitatKind::CrewQuarters){
+        constexpr std::array<Vec2,8> bays{{{-1.08f,-2.10f},{1.08f,2.10f},{-1.08f,2.10f},{1.08f,-2.10f},{-3.30f,-2.10f},{3.30f,2.10f},{-3.30f,2.10f},{3.30f,-2.10f}}};
+        for(const auto& bay:bays)m.crew_bunks.push_back({{bay.x,floor,std::copysign(.42f,bay.y)},{bay.x-.78f,1.59f,bay.y}});
+    }
+    if(kind==HabitatKind::AirLock)
+        for(float sign:{-1.f,1.f})m.entrances.push_back({{sign*rx,floor,0},{sign,0,0}});
+    if(kind!=HabitatKind::AirLock)interior_detail::console(b,{0,floor+.34f,rz*.85f},.90f,-1.f);
+    if(kind==HabitatKind::BioDome)m.blocked_grow_bays=0xff;
+    // Perimeter services and lights leave the central circulation core clear.
+    const float service_height=kind==HabitatKind::OxygenGeneratorDome?3.15f:2.85f;
+    for(int i=0;i<24;++i){const float a=2*PI*i/24,c=2*PI*(i+1)/24;
+        const auto perimeter=[&](float t){const float x=std::cos(t),z=std::sin(t),s=m.dome_radii.y==0?1.f/std::max(std::abs(x),std::abs(z)):1.f;return Vec3{rx*.91f*x*s,floor+service_height,rz*.91f*z*s};};
+        const Vec3 p=perimeter(a),q=perimeter(c);
+        b.cylinder_between(m.overhead_services,p,q,.038f,8,true,false);
+        if(i%3==0)b.cylinder_between(m.overhead_lamps,p+Vec3{0,.12f,0},q+Vec3{0,.12f,0},.020f,8,true,false);
+    }
+    for(int i=0;i<48;++i){const float a=2*PI*i/48,c=2*PI*(i+1)/48;
+        b.cylinder_between(m.markings,{1.30f*std::cos(a),floor+.025f,1.30f*std::sin(a)},{1.30f*std::cos(c),floor+.025f,1.30f*std::sin(c)},.010f,6,true,false);
+    }
+    // Paint and services follow the same conceptual zones as real habitat
+    // studies: accessible circulation, perimeter equipment, overhead utilities.
+    m.lining=m.shell;
+    for(auto& p:m.lining){p.x*=.982f;p.z*=.982f;}
+}
+} // namespace game::habitats

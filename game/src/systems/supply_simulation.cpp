@@ -8,7 +8,7 @@ namespace game {
 namespace {
 double scale(const PlacedResource& r){return r.size==ResourceSizeTier::Small?0.5:1.0;}
 double habitat_scale(const PlacedHabitat& h){
-    return h.size==HabitatSizeTier::Small?0.5:h.size==HabitatSizeTier::Mid?1.5:h.size==HabitatSizeTier::Big?2.0:1.0;
+    return h.size==HabitatSizeTier::VerySmall?.5:h.size==HabitatSizeTier::Small?0.5:h.size==HabitatSizeTier::Mid?1.5:h.size==HabitatSizeTier::Big?2.0:1.0;
 }
 double battery_capacity(const PlacedResource& r){return power_storage_capacity_kwh(r.size);}
 double solar_buffer_capacity(const PlacedResource& r){return solar_panel_buffer_capacity_kwh(r.size);}
@@ -33,7 +33,7 @@ double load_kw(const PlacedResource& r,float light=0){
 }
 double load_kw(const PlacedHabitat& h,float light){
     double load=.20+.10*light;
-    for(const auto& unit:h.units)if(unit.enabled&&!unit.gate_reserved)load+=interior_unit_profile(unit.kind).power_kw;
+    for(const auto& unit:h.units)if(unit.enabled&&!unit.gate_reserved)load+=interior_unit_profile(unit).power_kw;
     return load;
 }
 double hydroponics_power_kw(const PlacedHabitat& h,bool light_phase){
@@ -61,7 +61,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
     services=topology;
     const auto sun=status_.sun_pose();
     const bool hydroponics_light_phase=hydroponics_lights_on(status_.hour());
-    struct Component {std::vector<std::size_t> tanks,batteries,solars,drillers,hydrogen_generators,hydrogen_tanks,oxygen_tanks,workshops,habitats,resources;double solar_kw=0,load_kw=0,power=0;bool bus_live=false;};
+    struct Component {std::vector<std::size_t> tanks,batteries,solars,drillers,hydrogen_generators,hydrogen_tanks,oxygen_tanks,workshops,habitats,resources;double solar_kw=0,load_kw=0,light_kw=0,lighting=0,power=0;bool bus_live=false;};
     std::map<std::size_t,Component> groups;
     // Charging is a real network load. Clear transient telemetry before this
     // dispatch pass; powered workshop bays set it again only when energy is
@@ -87,7 +87,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
     nodes.reserve(node_count);
     initial_oxygen.reserve(node_count);
     const auto add_node=[&](SupplyState& s,double volume){
-        s.volume_m3=volume;s.warnings=0;s.power_fraction=0;
+        s.volume_m3=volume;s.warnings=0;s.power_fraction=0;s.lighting_fraction=0;
         s.oxygen_kg=std::clamp(s.oxygen_kg,0.0,volume*kOxygenKgPerM3);
         s.oxygen_produced_kg_per_day=0;s.water_processed_litres_per_day=0;
         s.hydrogen_produced_kg_per_day=0;s.hydrogen_vented_kg_per_day=0;
@@ -114,6 +114,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
                 h.supply.water_demand_litres_per_day=hydroponics_water_litres_per_day(h,hydroponics_light_phase);
             }
             auto& g=groups[services.habitats[i].connected?services.habitats[i].component:2000000+i];g.habitats.push_back(i);g.load_kw+=h.supply.power_demand_kw;
+            if(h.power_enabled)g.light_kw+=.10*interior_light_level(i,false,false);
         }
     }
     for(std::size_t i=0;i<placed_resources_.size();++i){
@@ -153,6 +154,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             r.supply.power_demand_kw+=workshop_charge_request_kw(i);
         }
         g.load_kw+=r.supply.power_demand_kw;
+        g.light_kw+=load_kw(r,interior_light_level(i,true,false))-load_kw(r,0);
         if(r.kind==ResourceKind::PowerStorage){r.supply.energy_kwh=std::clamp(r.supply.energy_kwh,0.0,battery_capacity(r));g.batteries.push_back(i);}
         if(r.kind==ResourceKind::SolarPanel){r.supply.energy_kwh=std::clamp(r.supply.energy_kwh,0.0,solar_buffer_capacity(r));g.solars.push_back(i);}
         if(r.kind==ResourceKind::WaterStorage){r.supply.water_litres=std::clamp(r.supply.water_litres,0.0,tank_capacity(r));g.tanks.push_back(i);}
@@ -233,6 +235,15 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
         }
         return wanted-remaining;
     };
+    // Interior emergency/occupancy lights are a small priority load. A charged
+    // battery must not black out a cabin just because industrial loads saturate
+    // the bus. Allocate actual delivered energy, never imaginary reserve power.
+    const auto distribute_power=[](Component& g,double available_kw){
+        const double lights=std::min(g.light_kw,std::max(0.0,available_kw));
+        g.lighting=g.light_kw>1e-12?lights/g.light_kw:0;
+        const double other=std::max(0.0,g.load_kw-g.light_kw);
+        g.power=other>1e-12?std::clamp((available_kw-lights)/other,0.0,1.0):1.0;
+    };
     // A zero-time refresh restores volume/percentages and input availability
     // immediately after loading a paused save, without processing any resources.
     for(auto& [key,g]:groups){
@@ -241,7 +252,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
         for(auto i:g.solars)if(placed_resources_[i].supply.energy_kwh>0)available_kw+=kSolarPeakKw*scale(placed_resources_[i]);
         for(auto i:g.batteries)if(placed_resources_[i].supply.energy_kwh>0)available_kw+=10.0*scale(placed_resources_[i]);
         g.bus_live=available_kw>1e-9;
-        g.power=g.load_kw>0?std::clamp(available_kw/g.load_kw,0.0,1.0):1.0;
+        distribute_power(g,available_kw);
     }
     std::size_t occupied=0;for(auto& h:placed_habitats_)if(h.construction.complete() && h.kind!=HabitatKind::OxygenGeneratorDome)++occupied;
     const double crew_per_occupied=occupied?(double)abstract_crew_count()/(double)occupied:0.0;
@@ -335,7 +346,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             double supplied=std::min(generation,demand);generation-=supplied;
             for(auto i:g.batteries){auto& r=placed_resources_[i];const double q=std::min({r.supply.energy_kwh,demand-supplied,10.0*scale(r)*hours});r.supply.energy_kwh-=q;supplied+=q;}
             supplied_energy+=supplied;
-            g.power=demand>0?std::clamp(supplied/demand,0.0,1.0):1.0;
+            distribute_power(g,supplied/hours);
 
             // Workshop chargers are ordinary consumers inside the dispatched
             // component. They receive the same brown-out fraction as every
@@ -411,7 +422,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
                 if(h.kind==HabitatKind::OxygenGeneratorDome){
                     if(!h.power_enabled)continue;
                     const double deficit=h.supply.volume_m3*kOxygenKgPerM3-h.supply.oxygen_kg;
-                    double capacity=0;for(const auto& unit:h.units)if(unit.kind==InteriorUnitKind::OxygenGenerator&&unit.enabled&&!unit.gate_reserved)capacity+=18.0;
+                    double capacity=0;for(const auto& unit:h.units)if(unit.kind==InteriorUnitKind::OxygenGenerator&&unit.enabled&&!unit.gate_reserved)capacity+=oxygen_unit_capacity(unit);
                     // Once a trader has been called, bottle genuine surplus
                     // electrolysis output separately from breathable cabin air.
                     // Filling the entire connected atmosphere takes priority.
@@ -505,13 +516,16 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             double air=breathable && !actor.suited?cabin_oxygen(air_need):0.0;
             if(source.at_cache){
                 actor.suit_oxygen_kg+=take(astronaut_cache_.oxygen_kg,kSuitOxygenCapacityKg-actor.suit_oxygen_kg);
-            }else if(breathable && powered){
-                double refill=std::min(kSuitOxygenCapacityKg-actor.suit_oxygen_kg,4.0*air_need);
-                for(auto tank:source.service->oxygen_tanks){
+            }else if(source.air){
+                // The suit's refill pump follows available cabin oxygen. At
+                // full air this is the existing 40-second empty-to-full rate.
+                const double level=std::clamp(source.air->breathability()/100.0,0.0,1.0);
+                double refill=std::min(std::max(0.0,kSuitOxygenCapacityKg-actor.suit_oxygen_kg),4.0*air_need*level);
+                if(powered)for(auto tank:source.service->oxygen_tanks){
                     const double amount=take(placed_resources_[tank].stored_oxygen_kg,refill);
                     actor.suit_oxygen_kg+=amount;refill-=amount;
                 }
-                actor.suit_oxygen_kg+=cabin_oxygen(refill);
+                actor.suit_oxygen_kg+=take(source.air->oxygen_kg,refill);
             }
             air+=take(actor.suit_oxygen_kg,std::max(0.0,air_need-air));
 
@@ -548,10 +562,10 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
     for(auto& [key,g]:groups){
         (void)key;const bool water=water_total(g)>1e-6;
         instantaneous_load+=g.load_kw;
-        instantaneous_delivered+=g.load_kw*g.power;
+        instantaneous_delivered+=(g.load_kw-g.light_kw)*g.power+g.light_kw*g.lighting;
         for(auto i:g.habitats){auto& h=placed_habitats_[i];
             if(!h.power_enabled)continue;
-            h.supply.power_fraction=g.power;
+            h.supply.power_fraction=g.power;h.supply.lighting_fraction=g.lighting;
             services.habitats[i].power=g.power>=0.99;services.habitats[i].water=water;
             if(g.power<0.99)h.supply.warnings|=NoPower;
             if(!water)h.supply.warnings|=NoWater;
@@ -563,7 +577,7 @@ const UtilityServiceSnapshot& GameApp::update_supply_simulation(float dt){
             if(r.kind==ResourceKind::PowerStorage){stored_power+=r.supply.energy_kwh;power_capacity+=battery_capacity(r);}
             if(r.kind==ResourceKind::WaterStorage){stored_water+=r.supply.water_litres;water_capacity+=tank_capacity(r);}
             if(!r.power_enabled)continue;
-            r.supply.power_fraction=g.power;
+            r.supply.power_fraction=g.power;r.supply.lighting_fraction=g.lighting;
             services.resources[i].power=g.power>=0.99;services.resources[i].water=water;
             if(load_kw(r)>0 && g.power<0.99)r.supply.warnings|=NoPower;
             if(r.kind==ResourceKind::WaterPurifier && !water)r.supply.warnings|=NoWater;

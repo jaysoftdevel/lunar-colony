@@ -15,7 +15,8 @@ bool GameApp::interior_unit_pointer(InteriorUnit& unit) const {
     if(t<=0)return false;
     auto local=world_math::rotate_y(eye+ray*t-host.position,-host.rotation_degrees);
     local.x=std::round(local.x*4.f)*.25f;local.z=std::round(local.z*4.f)*.25f;local.y=model.walkable_floor_y;
-    unit={};unit.kind=*interior_unit_tool_;unit.position=local;unit.rotation_degrees=interior_unit_rotation_;return true;
+    unit={};unit.kind=*interior_unit_tool_;unit.size=unit.kind==InteriorUnitKind::OxygenGenerator?interior_unit_size_:InteriorUnitSize::Medium;unit.position=local;
+    unit.rotation_degrees=interior_unit_rotation_+(interior_unit_wall_aligned(unit.kind)?interior_unit_wall_yaw(model,local):0);return true;
 }
 bool GameApp::update_interior_unit_placement(const runtime::InputState& in){
     if(!interior_unit_tool_)return false;
@@ -35,20 +36,21 @@ bool GameApp::update_interior_unit_placement(const runtime::InputState& in){
 void GameApp::render_interior_unit_preview(runtime::SceneRenderer& renderer){
     if(!interior_unit_tool_||mouse_over_selection_panel(input_)||mouse_over_playfield_overlay(input_))return;
     InteriorUnit candidate;if(!interior_unit_pointer(candidate))return;
-    std::string reason;const bool valid=interior_unit_position_clear(interior_unit_host_,candidate,reason)&&resources_.can_consume(interior_unit_profile(candidate.kind).cost);
-    const auto& host=placed_habitats_[interior_unit_host_];const auto& model=interior_unit_mesh(candidate.kind);
+    std::string reason;const bool valid=interior_unit_position_clear(interior_unit_host_,candidate,reason)&&resources_.can_consume(interior_unit_profile(candidate).cost);
+    const auto& host=placed_habitats_[interior_unit_host_];const auto& model=interior_unit_mesh(candidate);
     std::vector<runtime::Vec3> triangles;
     for(const auto p:model.interior)triangles.push_back(host.position+world_math::rotate_y(candidate.position+world_math::rotate_y(p,candidate.rotation_degrees),host.rotation_degrees));
     mesh_wireframe::draw_layer(renderer,triangles,valid?runtime::Color{.20f,.95f,.65f,.85f}:runtime::Color{1,.20f,.15f,.85f},2.f);
-    placement_tip_title_=interior_unit_profile(candidate.kind).name;
+    placement_tip_title_=interior_unit_profile(candidate).name;
     placement_tip_detail_=valid?"LMB INSTALL / N-M ROTATE / SHIFT REPEAT / RMB CANCEL":reason.empty()?"NOT ENOUGH CONSTRUCTION MATERIAL":reason;
-    placement_tip_cost_=interior_unit_profile(candidate.kind).cost;
+    placement_tip_cost_=interior_unit_profile(candidate).cost;
 }
 float GameApp::interior_unit_panel_height(std::size_t index) const {
     if(index>=placed_habitats_.size()||!placed_habitats_[index].construction.complete())return 0;
     const auto& h=placed_habitats_[index];
+    if(h.kind==HabitatKind::AirLock)return 0;
     int count=0;for(int i=0;i<int(InteriorUnitKind::Count);++i)count+=interior_unit_allowed(h.kind,static_cast<InteriorUnitKind>(i));
-    return 106.f+64.f*count+58.f*h.units.size();
+    return 106.f+64.f*count+58.f*h.units.size()+(h.kind==HabitatKind::OxygenGeneratorDome?30.f:0.f);
 }
 void GameApp::render_interior_unit_panel(runtime::SceneRenderer& r,std::size_t index,float x,float y,float width){
     using namespace runtime;using namespace layout;auto& host=placed_habitats_[index];
@@ -58,19 +60,26 @@ void GameApp::render_interior_unit_panel(runtime::SceneRenderer& r,std::size_t i
     const auto label=[&](float row,const std::string& text,float scale=.40f){if(visible(row,15))game_label_fitted(r,{x,row,width,15},text,scale,theme_,true);};
     const auto button=[&](Rect box,const std::string& text,bool enabled=true){return visible(box.y,box.h)&&ui::button(r,ui_input_,box,text,theme_,enabled);};
     label(y,"INTERNAL UNITS / "+std::to_string(host.units.size())+" INSTALLED",.50f);y+=21;
-    label(y,"SELECT UNIT, THEN CLICK ITS POSITION ON THE DECK");y+=20;
+    label(y,"LEVEL DECK / AUTO HULL ALIGN / N-M ANGLE OFFSET");y+=20;
     for(int n=0;n<int(InteriorUnitKind::Count);++n){const auto kind=static_cast<InteriorUnitKind>(n);if(!interior_unit_allowed(host.kind,kind))continue;
-        const auto& profile=interior_unit_profile(kind);
+        if(kind==InteriorUnitKind::OxygenGenerator){
+            constexpr InteriorUnitSize sizes[]{InteriorUnitSize::VerySmall,InteriorUnitSize::Small,InteriorUnitSize::Medium};
+            for(int i=0;i<3;++i){const auto size=sizes[i];const auto caption=std::string(interior_unit_size_==size?"> ":"")+interior_unit_size_name(size);
+                if(button({x+i*width/3,y,width/3-3,24},caption))interior_unit_size_=size;
+            }y+=30;
+        }
+        const auto chosen=kind==InteriorUnitKind::OxygenGenerator?interior_unit_size_:InteriorUnitSize::Medium;
+        const auto& profile=interior_unit_profile(kind,chosen);
         if(button({x,y,width,26},std::string(interior_unit_tool_==kind?"PLACING / ":"PLACE / ")+profile.name)){
             build_catalog_.clear_selection();interior_unit_tool_=kind;interior_unit_host_=index;interior_unit_rotation_=0;interior_unit_message_.clear();
         }
-        std::ostringstream cost;cost<<"FE "<<profile.cost.iron<<" / CU "<<profile.cost.copper<<" / SI "<<profile.cost.silicon<<" / P "<<profile.cost.plastic<<" / ";
+        std::ostringstream cost;cost<<"FE "<<profile.cost.iron<<" / CU "<<profile.cost.copper<<" / SI "<<profile.cost.silicon<<" / P "<<profile.cost.plastic<<" / AL "<<profile.cost.aluminum<<" / ";
         if(kind==InteriorUnitKind::HydroponicRack)cost<<"CROP LOAD";else cost<<profile.power_kw<<" KW";
-        label(y+29,cost.str(),.34f);label(y+45,interior_unit_recipe(kind),.32f);y+=64;
+        label(y+29,cost.str(),.34f);label(y+45,interior_unit_recipe(kind,chosen),.32f);y+=64;
     }
     std::ostringstream ore;ore<<"ORE INPUT FE/CU/SI/AL  ";for(double kg:host.unit_ore_kg)ore<<int(kg)<<" ";label(y,ore.str(),.34f);y+=20;
     label(y,interior_unit_message_.empty()?"CLEAR CENTER AISLE AND DOOR APPROACHES ARE RESERVED":interior_unit_message_,.34f);y+=21;
-    for(std::size_t n=0;n<host.units.size();++n){auto& unit=host.units[n];const auto& profile=interior_unit_profile(unit.kind);
+    for(std::size_t n=0;n<host.units.size();++n){auto& unit=host.units[n];const auto& profile=interior_unit_profile(unit);
         label(y,std::to_string(n+1)+" / "+profile.name,.42f);y+=16;
         label(y,interior_unit_status(index,unit),.34f);y+=15;
         const bool passive=unit.kind==InteriorUnitKind::DiningTable||unit.kind==InteriorUnitKind::SeatingBench;

@@ -50,7 +50,7 @@ struct EngineIntegrationRegression {
         app.builder_robots_.resize(1);app.builder_robots_[0].position={-6,0,3};
         app.ground_resource_piles_={{MaterialResource::Iron,500,{-3,0,4},.5f,1}};
         vl::GL gl;gl.load([&](const char* name){return platform.resolve(name);});
-        const std::array names{"menu","orbit","first-person-exterior","first-person-interior","campus","graphics-menu","lab-interior","airlock-interior","biodome-interior","robot-closeup","fov-options","sky-east","sky-west","workshop-front","workshop-rear","workshop-open","workshop-glass-roof","workshop-service-interior","workshop-grounded-frame","corridor-T-exterior","corridor-X-interior","corridor-dome-collar","faded-hulls","fpv-build-preview","solar-filter-hulls","oxygen-terminal","pressure-door-detail","workshop-terminal","gate-unused-no-frame","gate-connected-green","solar-collector-morning","solar-collector-noon","gate-unpowered-red","empty-factory","configured-factory","corridor-deck-detail","furnished-canteen-day","canteen-night-idle","canteen-night-occupied","placeable-oxygen-generator","storage-no-unused-doors","fpv-astronaut-vitals","classified-solid-packages"};
+        const std::array names{"menu","orbit","first-person-exterior","first-person-interior","campus","graphics-menu","lab-interior","airlock-interior","biodome-interior","robot-closeup","fov-options","sky-east","sky-west","workshop-front","workshop-rear","workshop-open","workshop-glass-roof","workshop-service-interior","workshop-grounded-frame","corridor-T-exterior","corridor-X-interior","corridor-dome-collar","faded-hulls","fpv-build-preview","solar-filter-hulls","oxygen-terminal","pressure-door-detail","workshop-terminal","gate-unused-no-frame","gate-connected-green","solar-collector-morning","solar-collector-noon","gate-unpowered-red","empty-factory","configured-factory","corridor-deck-detail","furnished-canteen-day","canteen-night-idle","canteen-night-occupied","placeable-oxygen-generator","storage-no-unused-doors","fpv-astronaut-vitals","classified-solid-packages","frame-airlock","frame-oxygen","frame-canteen","frame-biodome","frame-crew","frame-processing","frame-factory","frame-manufactory","frame-sickbay","frame-lab","inside-frame-airlock","inside-frame-oxygen","inside-frame-canteen","inside-frame-biodome","inside-frame-crew","inside-frame-processing","inside-frame-factory","inside-frame-manufactory","inside-frame-sickbay","inside-frame-lab","frame-storage","frame-workshop","frame-corridor","frame-junction","frame-exterior-equipment","airlock-seal-closed","airlock-seal-open","corridor-bend-grounded","corridor-cassette-close","oxygen-clear-service-layout","save-name-editor","save-existing-sidebar","airlock-open-transfer","deceased-player-recovery","fpv-oxygen-critical","fpv-multiple-critical","fpv-critical-dim","fpv-critical-max-zoom","hatch-powered-E","hatch-manual-progress","hatch-manual-interlock","hatch-common-layout","oxygen-generator-very-small","oxygen-generator-small","oxygen-generator-medium","saved-oxygen-clear-cutaway","factory-tangent-machines","crew-dome-habitat","laboratory-dome-habitat","cutaway-crew-low-walls","cutaway-biodome-low-walls","cutaway-storage-low-walls","cutaway-workshop-low-walls","fitted-airlock-cutaway","fitted-airlock-pressure-system","fixed-airlock-corridor","small-airlock-clear-transfer","rover-stowed-model","rover-unfold-start","rover-unfold-middle","rover-unfold-complete","rover-ramp-traffic","robot-independent-crew","selected-airlock-full-hull","airlock-built-free-stairs","airlock-fitted-end-collar","elevated-corridor-ground-supports","autosave-gameplay-options"};
         for(std::size_t scene=0;scene<names.size();++scene){
             app.screen_=scene==0?GameApp::Screen::MainMenu:GameApp::Screen::Playfield;
             app.first_person_mode_=GameApp::FirstPersonMode::Off;
@@ -224,11 +224,160 @@ struct EngineIntegrationRegression {
                 app.input_.mouse_x=480;app.input_.mouse_y=270;
             }
 
+            if(scene>=43){
+                app.screen_=GameApp::Screen::Playfield;app.input_={};
+                app.reset_first_person_crew();app.lander_={};app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();app.utility_network_.clear();app.builder_robots_.clear();app.ground_resource_piles_.clear();app.clear_world_selection();
+                app.first_person_mode_=GameApp::FirstPersonMode::Off;app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;
+                auto clock=app.status_.state();clock.hour=10;app.status_.restore(clock);
+                app.camera_.restore({25,35,38,{0,2,0}});
+                if(scene<=62){
+                    auto h=room;h.kind=HabitatKind((scene-43)%10);h.size=HabitatSizeTier::Standard;app.placed_habitats_={h};
+                    if(scene>=53){app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,app.habitat_models_.mesh(h).walkable_floor_y,0},45);app.first_person_.restore_view(45,24);}
+                }
+                if(scene==63||scene==64){auto h=hangar;h.kind=scene==63?ResourceKind::StorageDome:ResourceKind::RobotWorkshop;h.position={0,0,0};app.placed_resources_={h};app.camera_.restore({23,35,38,{0,2,0}});}
+                if(scene==65||scene==66){
+                    const auto run=[](game::runtime::Vec3 a,game::runtime::Vec3 b){CorridorConnection c;c.path={a,b};c.construction.finish();c.endpoint_a.kind=c.endpoint_b.kind=CorridorEndpointKind::OpenDoor;c.endpoint_a.position=a;c.endpoint_b.position=b;c.endpoint_a.tangent=game::runtime::normalize(a-b);c.endpoint_b.tangent=game::runtime::normalize(b-a);return c;};
+                    std::vector<CorridorConnection> links{run({0,0,-12},{0,0,12})};if(scene==66)links.push_back(run({-12,0,0},{12,0,0}));corridor_detail::rebuild_all_meshes(links);app.corridor_network_.restore_connections(links);
+                    if(scene==65){app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,geometry::kCorridorDeckY,7},0);app.first_person_.restore_view(0,12);}
+                    else app.camera_.restore({32,42,38,{0,1,0}});
+                }
+                if(scene==67){
+                    int j=0;for(auto kind:{ResourceKind::WaterDriller,ResourceKind::PowerStorage,ResourceKind::WaterStorage,ResourceKind::OreDriller,ResourceKind::WaterPurifier,ResourceKind::HydrogenGenerator,ResourceKind::HydrogenTank,ResourceKind::OxygenTank,ResourceKind::SolarPanel,ResourceKind::Antenna}){
+                        auto h=panel;h.kind=kind;h.position={float(j%5-2)*17,0,float(j/5)*18-9};h.construction.finish();app.placed_resources_.push_back(h);++j;}
+                    app.camera_.restore({76,50,32,{0,3,0}});
+                }
+                if(scene==68||scene==69){
+                    auto h=room;h.kind=HabitatKind::AirLock;h.supply.power_fraction=1;app.placed_habitats_={h};app.pressure_doors_.clear();app.airlock_cycles_.clear();
+                    const float y=app.habitat_models_.mesh(h).walkable_floor_y;
+                    app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({-.55f,y,-.16f},90);app.first_person_.restore_view(90,-8);
+                    app.airlock_cycles_.resize(1);app.airlock_cycles_[0].pressure=1;
+                    for(const auto& door:app.habitat_doors(0)){PressureDoorState state;state.door=door;state.powered=true;state.open_fraction=scene==69&&door.entrance_index==-3?1.f:0.f;app.pressure_doors_.push_back(state);}
+                }
+                if(scene==70||scene==71){
+                    CorridorConnection c;c.path={{-9,0,-8},{-3,0,-8},{0,0,-5},{0,0,12}};c.construction.finish();c.supply.power_fraction=1;
+                    c.endpoint_a.kind=c.endpoint_b.kind=CorridorEndpointKind::OpenDoor;c.endpoint_a.position=c.path.front();c.endpoint_b.position=c.path.back();c.endpoint_a.tangent={-1,0,0};c.endpoint_b.tangent={0,0,1};
+                    std::vector<CorridorConnection> links{c};corridor_detail::rebuild_all_meshes(links);app.corridor_network_.restore_connections(links);
+                    app.camera_.restore({30,18,62,{-2,.6f,0}});
+                    if(scene==71){app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({.12f,geometry::kCorridorDeckY,6},0);app.first_person_.restore_view(0,-44);}
+                }
+                if(scene==72){
+                    auto h=room;h.kind=HabitatKind::OxygenGeneratorDome;h.size=HabitatSizeTier::Small;h.supply.power_fraction=1;app.placed_habitats_={h};app.fit_oxygen_units();
+                    app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,app.habitat_models_.mesh(h).walkable_floor_y,-1},180);app.first_person_.restore_view(180,6);
+                }
+                if(scene==73||scene==74){
+                    app.screen_=GameApp::Screen::SaveGame;app.game_session_active_=true;app.save_games_.clear();
+                    for(int i=0;i<12;++i){GameApp::SaveGameEntry entry;entry.name="Lunar colony - Sol "+std::to_string(i+1);entry.version="0.75.0";app.save_games_.push_back(entry);}
+                    app.save_game_name_=scene==73?"Lunar colony - Sol 13":"Research base - pressure test";app.save_name_editor_.reset(app.save_game_name_);
+                    if(scene==74){app.save_name_editor_.anchor=0;app.save_name_editor_.caret=13;}
+                    app.save_caret_epoch_=app.ui_time_seconds_;app.save_name_focus_=true;app.save_name_scroll_=0;
+                }
+                if(scene==75){
+                    auto lock=room;lock.kind=HabitatKind::AirLock;lock.supply.power_fraction=1;auto oxygen=room;oxygen.kind=HabitatKind::OxygenGeneratorDome;oxygen.position={20,0,0};app.placed_habitats_={lock,oxygen};
+                    const CorridorBuildAnchor a{CorridorEndpointKind::Habitat,0,{5,0,0}},b{CorridorEndpointKind::Habitat,1,{15,0,0}};
+                    auto link=app.corridor_network_.preview_built_corridor(a,b,app.placed_habitats_,app.habitat_models_,app.placed_resources_,app.resource_models_);if(!link)throw std::runtime_error("Airlock transfer has no connection");
+                    link->construction.finish();std::vector<CorridorConnection> links{*link};corridor_detail::rebuild_all_meshes(links);app.corridor_network_.restore_connections(links);
+                    app.pressure_doors_.clear();for(const auto& door:app.habitat_doors(0)){PressureDoorState state;state.door=door;state.open_fraction=1;state.powered=true;app.pressure_doors_.push_back(state);}
+                    app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({-3,app.habitat_models_.mesh(lock).walkable_floor_y,0},90);app.first_person_.restore_view(90,-4);
+                }
+                if(scene==76){
+                    std::string error;if(!app.load_game_from_file(GAME_STUCK_FPV_FIXTURE,error))throw std::runtime_error(error);
+                    app.screen_=GameApp::Screen::Playfield;app.enter_first_person_mode();app.input_={};
+                }
+                if(scene>=77&&scene<=80){
+                    app.placed_habitats_={room};app.first_person_mode_=GameApp::FirstPersonMode::Active;
+                    app.first_person_.spawn({0,0,14},0);app.controlled_astronaut_=0;app.astronaut_views_[0].present=true;
+                    auto& actor=app.test_astronauts_[0];actor={};actor.position=app.first_person_.feet_position();
+                    actor.suit_oxygen_kg=kSuitOxygenCapacityKg*.12;
+                    if(scene>=78){actor.health=.15f;actor.hunger=.93f;actor.thirst=.91f;actor.fatigue=kCrewExhausted*.94f;}
+                    app.show_fps_=true;app.ui_scale_index_=scene==80?4:0;app.ui_time_seconds_=scene==79?.70:.20;
+                }
+                if(scene>=81&&scene<=84){
+                    auto cabin=room;cabin.kind=HabitatKind::CrewQuarters;cabin.supply.power_fraction=scene==82?0:1;app.placed_habitats_={cabin};
+                    const float deck=app.habitat_models_.mesh(cabin).walkable_floor_y;
+                    CorridorConnection c;c.construction.finish();c.endpoint_a.kind=CorridorEndpointKind::Habitat;c.endpoint_a.index=0;
+                    c.endpoint_a.door.wall_position=c.endpoint_a.door.position={0,deck,-2.6f};c.endpoint_a.door.normal={0,0,-1};c.endpoint_a.position=c.endpoint_a.door.position;
+                    c.endpoint_b.kind=CorridorEndpointKind::OpenDoor;c.endpoint_b.position={0,deck,-9};c.path={c.endpoint_a.position,c.endpoint_b.position};app.corridor_network_.restore_connections({c});
+                    app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({0,deck,-.5f},0);app.ui_scale_index_=scene==84?4:0;app.door_hold_={};
+                    app.update_pressure_doors(0);app.game_speed_=GameApp::GameSpeed::Normal;
+                    if(scene==82){game::runtime::InputState held;held.key_e_down=true;for(int i=0;i<15;++i)app.update_door_interaction(.1f,held);}
+                    if(scene==83){
+                        cabin.kind=HabitatKind::AirLock;cabin.supply.power_fraction=0;app.placed_habitats_={cabin};app.corridor_network_.clear();app.pressure_doors_.clear();
+                        const float floor=app.habitat_models_.mesh(cabin).walkable_floor_y;app.first_person_.spawn({.3f,floor,0},90);app.update_pressure_doors(0);
+                        app.pressure_doors_[0].open_fraction=1;game::runtime::InputState held;held.key_e_down=true;app.update_door_interaction(.1f,held);
+                    }
+                    if(scene==84){app.first_person_.spawn({0,deck,-1.f},0);app.first_person_.restore_view(0,0);}
+                }
+                if(scene>=85){
+                    app.ui_scale_index_=0;app.screen_=GameApp::Screen::Playfield;app.game_speed_=GameApp::GameSpeed::Pause;
+                    auto h=room;h.kind=HabitatKind::OxygenGeneratorDome;h.supply.power_fraction=1;h.size=HabitatSizeTier::Small;
+                    if(scene==89)h.kind=HabitatKind::Factory;if(scene==90)h.kind=HabitatKind::CrewQuarters;if(scene==91)h.kind=HabitatKind::Laboratory;
+                    app.placed_habitats_={h};app.habitat_view_mode_=scene<=89?GameApp::HabitatViewMode::None:GameApp::HabitatViewMode::FullHull;
+                    app.camera_.restore({22,38,35,{0,2,0}});app.first_person_mode_=GameApp::FirstPersonMode::Off;
+                    if(scene==88){std::string error;if(!app.load_game_from_file(GAME_OXYGEN_FIT_FIXTURE,error))throw std::runtime_error(error);
+                        app.screen_=GameApp::Screen::Playfield;app.habitat_view_mode_=GameApp::HabitatViewMode::None;app.camera_.restore({20,48,32,app.placed_habitats_[1].position+game::runtime::Vec3{0,1.7f,0}});
+                    }
+                    const std::size_t host=scene==88?1:0;
+                    if(scene<=88){InteriorUnit u;u.kind=InteriorUnitKind::OxygenGenerator;u.size=scene==85?InteriorUnitSize::VerySmall:scene==86?InteriorUnitSize::Small:InteriorUnitSize::Medium;if(!app.find_interior_unit_bay(host,u))throw std::runtime_error("Dome render has no oxygen bay");app.placed_habitats_[host].units.push_back(u);}
+                    if(scene==89||scene==91)for(int i=0;i<3;++i){InteriorUnit u;u.kind=scene==91?InteriorUnitKind::MedicalSynthesizer:i%2?InteriorUnitKind::PlasticFabricator:InteriorUnitKind::MetalFabricator;
+                        if(app.find_interior_unit_bay(host,u)){u.progress=.43;u.batch_active=true;app.placed_habitats_[host].units.push_back(u);}
+                    }
+                }
+                if(scene>=92&&scene<=95){
+                    app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();app.habitat_view_mode_=GameApp::HabitatViewMode::None;
+                    app.first_person_mode_=GameApp::FirstPersonMode::Off;app.camera_.restore({20,42,35,{0,1,0}});
+                    if(scene<94){auto h=room;h.kind=scene==92?HabitatKind::CrewQuarters:HabitatKind::BioDome;h.size=HabitatSizeTier::Standard;h.units.clear();app.placed_habitats_={h};}
+                    else {PlacedResource cabin;cabin.kind=scene==94?ResourceKind::StorageDome:ResourceKind::RobotWorkshop;cabin.construction.finish();app.placed_resources_={cabin};}
+                }
+                if(scene>=96&&scene<=99){
+                    app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();app.pressure_doors_.clear();
+                    auto h=room;h.kind=HabitatKind::AirLock;h.size=scene==99?HabitatSizeTier::Small:HabitatSizeTier::Standard;h.units.clear();h.supply.power_fraction=1;h.construction.finish();app.placed_habitats_={h};
+                    app.habitat_view_mode_=scene==96?GameApp::HabitatViewMode::None:GameApp::HabitatViewMode::FullHull;
+                    app.first_person_mode_=GameApp::FirstPersonMode::Off;app.camera_.restore({15,42,35,{0,1,0}});
+                    const auto& m=app.habitat_models_.mesh(h);
+                    if(scene==98){CorridorBuildAnchor a{CorridorEndpointKind::Habitat,0,{m.dome_radii.x,0,.65f}},b{CorridorEndpointKind::OpenDoor,0,{18,0,0}};
+                        if(!app.corridor_network_.build_corridor(a,b,app.placed_habitats_,app.habitat_models_,{},app.resource_models_))throw std::runtime_error("Fixed airlock render corridor failed");
+                        app.corridor_network_.mutable_connections().back().construction.finish();app.camera_.restore({23,39,35,{4,1,0}});}
+                    if(scene==97||scene==99){app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_.spawn({scene==99?-2.2f:0,m.walkable_floor_y,0},scene==99?90:0);}
+                    for(const auto& d:app.habitat_doors(0)){PressureDoorState state;state.door=d;state.open_fraction=scene>=98?1:0;app.pressure_doors_.push_back(state);}
+                }
+                if(scene>=100&&scene<=105){
+                    app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();app.builder_robots_.clear();app.ground_resource_piles_.clear();
+                    app.first_person_mode_=GameApp::FirstPersonMode::Off;app.selection_kind_=GameApp::SelectionKind::None;
+                    app.lander_={};app.lander_.phase=scene==100?LanderPhase::Landed:scene==104?LanderPhase::DeployingRobots:LanderPhase::OpeningRamp;
+                    app.lander_.builders=app.lander_.carriers=3;app.lander_.boxed=true;
+                    app.lander_.elapsed=scene==101?kLanderRampMotionSeconds:scene==102?7.75f:scene==103?kLanderRampSeconds:scene==104?12.f:0;
+                    app.camera_.restore({15,22,0,{0,2.9f,0.5f}});
+                    if(scene==105){app.lander_={};app.starting_robot_count_=app.starting_carrier_count_=2;app.reset_builder_robot_and_starter_stash();
+                        app.ground_resource_piles_.clear();for(std::size_t i=0;i<app.builder_robots_.size();++i){auto& r=app.builder_robots_[i];r.position=r.visual_position={float(i%2)*5-2.5f,0,float(i/2)*5-2.5f};r.visual_initialized=true;r.heading_degrees=r.visual_heading_degrees=float(i)*85;}
+                        app.camera_.restore({15,35,35,{0,.5f,0}});}
+                }
+                if(scene>=106){
+                    app.placed_habitats_.clear();app.placed_resources_.clear();app.corridor_network_.clear();app.builder_robots_.clear();app.ground_resource_piles_.clear();app.pressure_doors_.clear();app.lander_={};
+                    auto h=room;h.kind=HabitatKind::AirLock;h.construction.finish();h.size=HabitatSizeTier::Standard;h.supply.power_fraction=1;app.placed_habitats_={h};
+                    app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;app.first_person_mode_=GameApp::FirstPersonMode::Off;
+                    app.selection_kind_=scene==106?GameApp::SelectionKind::Habitat:GameApp::SelectionKind::None;app.selected_habitat_=0;
+                    app.camera_.restore({15,38,40,{0,1.6f,0}});
+                    if(scene==108)app.camera_.restore({7,12,-90,{-4.8f,1.6f,0}});
+                    if(scene==109){app.placed_habitats_.clear();CorridorConnection c;c.path={{-10,.5f,0},{0,1,0},{8,1.7f,5}};c.construction.finish();c.endpoint_a.kind=c.endpoint_b.kind=CorridorEndpointKind::OpenDoor;c.endpoint_a.position=c.path.front();c.endpoint_b.position=c.path.back();c.endpoint_a.tangent=game::runtime::normalize(c.path[1]-c.path[0]);c.endpoint_b.tangent=game::runtime::normalize(c.path[c.path.size()-2]-c.path.back());app.corridor_network_.restore_connections({c});app.corridor_network_.synchronize_structure_interfaces({},app.habitat_models_,{},app.resource_models_);app.camera_.restore({23,18,35,{0,.4f,0}});}
+                    if(scene==110){app.screen_=GameApp::Screen::Settings;app.autosave_minutes_=10;}
+                }
+                app.input_.mouse_x=app.input_.mouse_y=-100;
+            }
+
             for(int frame=0;frame<3;++frame){app.ui_time_seconds_+=1./60;app.render(*renderer);}
             std::vector<unsigned char> pixels(960*540*4);gl.ReadPixels(0,0,960,540,vl::GL_RGBA,vl::GL_UNSIGNED_BYTE,pixels.data());
             unsigned low=255,high=0;
             for(int y=100;y<440;++y)for(int x=100;x<860;++x){const auto i=(y*960+x)*4;const unsigned value=(unsigned(pixels[i])+pixels[i+1]+pixels[i+2])/3;low=std::min(low,value);high=std::max(high,value);}
             if(high-low<12)throw std::runtime_error(std::string("Scene has no rendered contrast: ")+names[scene]);
+            if(scene>=77&&scene<=80){
+                for(const auto p:std::array<std::pair<int,int>,4>{{{0,270},{959,270},{480,0},{480,539}}}){
+                    const auto at=(p.second*960+p.first)*4;
+                    if(scene!=79&&(pixels[at]<180||pixels[at+1]>100))throw std::runtime_error("Critical FPV border is hidden at a screen edge");
+                    // A translucent dim border can still have a bright red
+                    // channel over sunlit ground: test red tint, not luminance.
+                    if(scene==79&&int(pixels[at])-int(pixels[at+1])>130)throw std::runtime_error("Critical FPV border failed to dim");
+                }
+            }
             if(scene==28 || scene==29 || scene==32){
                 int border_pixels=0;int low_y=540,high_y=0;
                 for(int y=80;y<460;++y)for(int x=300;x<660;++x){const auto i=(y*960+x)*4;

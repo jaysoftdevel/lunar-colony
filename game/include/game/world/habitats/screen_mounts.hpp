@@ -19,13 +19,16 @@ inline std::optional<game::runtime::Vec3> screen_wall(const HabitatMesh& mesh,fl
     if(nearest>1e5f)return std::nullopt;
     return origin+ray*nearest;
 }
-inline void finish_screen_mounts(HabitatMesh& mesh){
+inline void finish_screen_mounts(HabitatMesh& mesh,HabitatKind kind=HabitatKind::Count){
     using namespace game::runtime;
     const auto& skin=mesh.shell.empty()?mesh.glazing:mesh.shell;
     if(skin.empty())return;
     float min_x=skin.front().x,max_x=min_x;
     for(auto p:skin){min_x=std::min(min_x,p.x);max_x=std::max(max_x,p.x);}
-    for(float sign:{-1.f,1.f})for(float x:{std::lerp(min_x,max_x,.26f),std::lerp(min_x,max_x,.74f)}){
+    if(kind==HabitatKind::AirLock)return; // Runtime hatch controls own the airlock displays.
+    const std::vector<float> positions=kind==HabitatKind::OxygenGeneratorDome?
+        std::vector<float>{(min_x+max_x)*.5f}:std::vector<float>{std::lerp(min_x,max_x,.26f),std::lerp(min_x,max_x,.74f)};
+    for(float sign:{-1.f,1.f})for(float x:positions){
         constexpr float w=.90f,h=.48f;
         const float y=mesh.walkable_floor_y+1.72f;
         std::array<Vec3,4> anchors;float inset=1e5f;int index=0;bool valid=true;

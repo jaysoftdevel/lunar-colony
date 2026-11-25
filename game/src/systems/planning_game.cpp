@@ -853,6 +853,7 @@ bool GameApp::planning_double_clicked(int group,int item){
 }
 
 void GameApp::reset_planning_game(){
+    reset_deconstruction();
     planning_=default_planning_game_state();
     planning_structure_page_=-1;
     planning_seed_page_=false;
@@ -1080,6 +1081,7 @@ void GameApp::deploy_lunar_base_from_mission(){
     new_game_phase_selection_=GamePhase::RobotPreparation;
     new_game_mode_selection_=active_game_mode_;
     game_session_active_=true;
+    reset_autosave();
     screen_=Screen::Playfield;
     update_supply_simulation(0.0f);
 }

@@ -1,5 +1,5 @@
 #include "game/world/structure_display.hpp"
-#include "game/runtime/ui_font.hpp"
+
 #include "game/util/world_math.hpp"
 #include <iomanip>
 #include <map>
@@ -11,22 +11,29 @@ std::string value(double number,int decimals){
     std::ostringstream out;out<<std::fixed<<std::setprecision(decimals)<<number;return out.str();
 }
 namespace {
+#include "display_glyphs.inc"
 const std::vector<Vec3>& glyphs(const std::string& text){
     static std::map<std::string,std::vector<Vec3>> cache;
     if(const auto it=cache.find(text);it!=cache.end())return it->second;
     if(cache.size()>512)cache.clear();
     auto& out=cache[text];
     for(std::size_t character=0;character<text.size();++character){
-        const auto it=runtime::ui::kBitmapFont.find(char(std::toupper(static_cast<unsigned char>(text[character]))));
-        if(it==runtime::ui::kBitmapFont.end())continue;
-        for(int y=0;y<7;++y)for(int x=0;x<5;){
-            if(!(it->second[y]&(1<<(4-x)))){++x;continue;}
-            const int start=x;while(x<5&&(it->second[y]&(1<<(4-x))))++x;
-            quad(out,{float(character*6+start)+(x-start)*.5f,6.5f-y,0},{1,0,0},{0,1,0},float(x-start),1);
-        }
+        const unsigned code=static_cast<unsigned char>(text[character]);
+        const unsigned glyph=(code>=32&&code<=126?code:unsigned('?'))-32;
+        for(unsigned i=kDisplayOffsets[glyph];i<kDisplayOffsets[glyph+1];++i)
+            out.push_back({float(character*6)+kDisplayVertices[i][0],kDisplayVertices[i][1],0.f});
     }
     return out;
 }
+}
+void paint(runtime::SceneRenderer& r,const Mount& m,Vec3 position,float rotation,const std::string& text,runtime::Color color){
+    if(text.empty())return;
+    const auto& source=glyphs(text);
+    const float scale=std::min(m.width/std::max(1.f,float(text.size()*6)),m.height/7.f);
+    const auto right=world_math::rotate_y(m.right,rotation),up=world_math::rotate_y(m.up,rotation);
+    const auto origin=position+world_math::rotate_y(m.center,rotation)-right*(text.size()*3.f*scale)-up*(3.5f*scale);
+    std::vector<Vec3> vertices;vertices.reserve(source.size());for(auto p:source)vertices.push_back(origin+right*(p.x*scale)+up*(p.y*scale));
+    r.draw_lunar_surface(vertices,runtime::LunarMaterial::Marking,color);
 }
 void draw(runtime::SceneRenderer& r,const Mount& m,Vec3 position,float rotation,const Content& content,bool powered,Vec3 eye){
     const Vec3 center=world_math::rotate_y(m.center,rotation)+position;

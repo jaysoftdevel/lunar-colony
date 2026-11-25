@@ -1,15 +1,17 @@
 #include "game/game_app.hpp"
 #include "game/world/interior_unit_mesh.hpp"
+#include "game/world/habitat_builder.hpp"
 #include <bit>
 #include "game/world/gas_flow.hpp"
 namespace game {
 bool GameApp::interior_unit_reserved(std::size_t index,const InteriorUnit& unit) const {
-    const auto& host=placed_habitats_[index];const auto [low,high]=interior_unit_bounds(unit);
+    const auto& host=placed_habitats_[index];
+    if(host.kind==HabitatKind::AirLock)return true; // Integral fit replaces legacy optional terminals.
     for(const auto& run:corridor_network_.connections())for(const auto* e:{&run.endpoint_a,&run.endpoint_b}){
         if(e->kind!=CorridorEndpointKind::Habitat||e->index!=index)continue;
         auto wall=world_math::rotate_y(e->door.wall_position-host.position,-host.rotation_degrees);wall.y=habitat_models_.mesh(host).walkable_floor_y;
         auto normal=world_math::rotate_y(e->door.normal,-host.rotation_degrees);normal.y=0;
-        if(runtime::length(normal)>.01f&&interior_layout::Reservation{wall,runtime::normalize(normal)}.hits(low,high))return true;
+        if(runtime::length(normal)>.01f&&interior_unit_reservation_hits(unit,wall,runtime::normalize(normal)))return true;
     }
     return false;
 }
@@ -19,13 +21,13 @@ const HabitatMesh& GameApp::assemble_interior_units(std::size_t index,const Habi
     auto& cache=interior_unit_meshes_[index];std::vector<std::uint64_t> signature{std::uint64_t(host.kind),std::uint64_t(host.size),source.blocked_grow_bays};
     for(const auto& station:source.stations)signature.push_back(station.active);
     for(const auto& u:host.units){
-        signature.insert(signature.end(),{std::uint64_t(u.kind),std::bit_cast<std::uint32_t>(u.position.x),std::bit_cast<std::uint32_t>(u.position.y),std::bit_cast<std::uint32_t>(u.position.z),std::bit_cast<std::uint32_t>(u.rotation_degrees),std::uint64_t(u.enabled),u.grow_bay,std::uint64_t(interior_unit_reserved(index,u))});
+        signature.insert(signature.end(),{std::uint64_t(u.kind),std::uint64_t(u.size),std::bit_cast<std::uint32_t>(u.position.x),std::bit_cast<std::uint32_t>(u.position.y),std::bit_cast<std::uint32_t>(u.position.z),std::bit_cast<std::uint32_t>(u.rotation_degrees),std::uint64_t(u.enabled),u.grow_bay,std::uint64_t(interior_unit_reserved(index,u))});
     }
     if(cache.source==&source&&cache.signature==signature)return cache.mesh;
     cache.source=&source;cache.signature=std::move(signature);cache.mesh=source;
     for(const auto& unit:host.units){
         if(interior_unit_reserved(index,unit))continue;
-        const auto& model=interior_unit_mesh(unit.kind);
+        const auto& model=interior_unit_mesh(unit);
         const auto append=[&](std::vector<runtime::Vec3>& dst,const std::vector<runtime::Vec3>& src){
             for(const auto p:src)dst.push_back(unit.position+world_math::rotate_y(p,unit.rotation_degrees));
         };
@@ -36,6 +38,19 @@ const HabitatMesh& GameApp::assemble_interior_units(std::size_t index,const Habi
             // Disabled unit lamps keep their fixtures, without emission.
             if(layer==5&&!unit.enabled)append(cache.mesh.service_metal,*src[layer]);
             else append(*dst[layer],*src[layer]);
+        }
+        if(interior_unit_wall_aligned(unit.kind)&&source.dome_radii.x>0){
+            const auto r=source.dome_radii,size=interior_unit_profile(unit).size;
+            const auto back=world_math::rotate_y(runtime::Vec3{0,0,1},unit.rotation_degrees);
+            habitats::Builder bracket;
+            for(float side:{-.34f,.34f})for(float height:{.35f,.70f}){
+                const auto start=unit.position+world_math::rotate_y(runtime::Vec3{side*size.x,height*size.y,size.z*.5f},unit.rotation_degrees);
+                const float a=back.x*back.x/(r.x*r.x)+back.z*back.z/(r.z*r.z),b=2*(start.x*back.x/(r.x*r.x)+start.z*back.z/(r.z*r.z));
+                const float c=start.x*start.x/(r.x*r.x)+start.z*start.z/(r.z*r.z)-1,disc=b*b-4*a*c;
+                if(r.y!=0&&(disc<0||a<1e-7f))continue;
+                const float reach=r.y==0?(std::abs(back.x)>.5f?(std::copysign(r.x,back.x)-start.x)/back.x:(std::copysign(r.z,back.z)-start.z)/back.z)-.045f:(-b+std::sqrt(disc))/(2*a)-.045f;
+                if(reach>.03f&&reach<.85f)bracket.cylinder_between(cache.mesh.service_metal,start,start+back*reach,.025f,8,true,false);
+            }
         }
         if(unit.kind==InteriorUnitKind::HydroponicRack&&unit.enabled&&unit.grow_bay<hydroponics_bay_count(host.size))
             cache.mesh.blocked_grow_bays&=~std::uint16_t(1u<<unit.grow_bay);
@@ -50,7 +65,7 @@ void GameApp::focus_interior(std::size_t index){
 }
 bool GameApp::place_interior_unit(std::size_t index,InteriorUnit unit,std::string& error){
     if(!interior_unit_position_clear(index,unit,error))return false;
-    auto& host=placed_habitats_[index];const auto& profile=interior_unit_profile(unit.kind);
+    auto& host=placed_habitats_[index];const auto& profile=interior_unit_profile(unit);
     if(!resources_.can_consume(profile.cost)){error="NOT ENOUGH CONSTRUCTION MATERIAL";return false;}
     if(unit.kind==InteriorUnitKind::HydroponicRack){
         std::size_t bay=0;for(;bay<hydroponics_bay_count(host.size);++bay){
@@ -74,8 +89,8 @@ std::string GameApp::interior_unit_status(std::size_t host_index,const InteriorU
     if(unit.kind==InteriorUnitKind::DrinkingWell)return "DRINKING WATER "+structure_display::value(unit.water_litres,1)+" / 10 L";
     if(unit.kind==InteriorUnitKind::FoodProcessor&&unit.food_kg>=20)return "PREPARED MEALS FULL / 20 KG";
     if(unit.kind==InteriorUnitKind::OxygenGenerator){
-        const auto count=std::count_if(host.units.begin(),host.units.end(),[&](const auto& u){return u.kind==InteriorUnitKind::OxygenGenerator&&u.enabled&&!interior_unit_reserved(host_index,u);});
-        return "ELECTROLYSIS / "+structure_display::value(host.supply.oxygen_produced_kg_per_day/std::max<std::ptrdiff_t>(1,count),1)+" KG O2/DAY";
+        double capacity=0;for(const auto& u:host.units)if(u.enabled&&!interior_unit_reserved(host_index,u))capacity+=oxygen_unit_capacity(u);
+        return "ELECTROLYSIS / "+structure_display::value(host.supply.oxygen_produced_kg_per_day*oxygen_unit_capacity(unit)/std::max(.001,capacity),1)+" KG O2/DAY";
     }
     if(unit.kind==InteriorUnitKind::ServiceTerminal)return "SERVICES ONLINE";
     if(unit.kind==InteriorUnitKind::HydroponicRack){
@@ -86,17 +101,36 @@ std::string GameApp::interior_unit_status(std::size_t host_index,const InteriorU
     if(unit.batch_active)return unit.progress>=1?"OUTPUT WAITING FOR CLEARANCE":"PROCESSING "+std::to_string(int(unit.progress*100))+"%";
     return "WAITING FOR INPUT";
 }
+bool GameApp::find_interior_unit_bay(std::size_t index,InteriorUnit& unit) const {
+    const auto& model=habitat_models_.mesh(placed_habitats_[index]);std::string error;
+    for(float ratio:{.58f,.565f,.56f,.55f,.68f,.76f,.48f,.84f})for(int sector=0;sector<32;++sector){
+        const float angle=6.2831853f*sector/32;
+        const float x=std::sin(angle),z=std::cos(angle),scale=model.dome_radii.y==0?1.f/std::max(std::abs(x),std::abs(z)):1.f;
+        unit.position={model.dome_radii.x*ratio*x*scale,model.walkable_floor_y,model.dome_radii.z*ratio*z*scale};
+        if(interior_unit_wall_aligned(unit.kind))unit.rotation_degrees=interior_unit_wall_yaw(model,unit.position);
+        if(interior_unit_position_clear(index,unit,error))return true;
+    }return false;
+}
+void GameApp::align_saved_interior_units(){
+    const auto prior_mode=first_person_mode_;first_person_mode_=FirstPersonMode::Off;
+    for(std::size_t i=0;i<placed_habitats_.size();++i){auto& h=placed_habitats_[i];if(h.units.empty())continue;
+        auto original=std::move(h.units);h.units.clear();
+        for(auto unit:original){const auto saved=unit;const auto& model=habitat_models_.mesh(h);
+            unit.position.y=model.walkable_floor_y;
+            if(interior_unit_wall_aligned(unit.kind))unit.rotation_degrees=interior_unit_wall_yaw(model,unit.position);
+            std::string error;
+            if(!interior_unit_position_clear(i,unit,error)&&!find_interior_unit_bay(i,unit))unit=saved;
+            h.units.push_back(unit); // Never discard an installed unit or its inventory/batch.
+        }
+    }
+    first_person_mode_=prior_mode;
+}
 void GameApp::fit_oxygen_units(){
     for(std::size_t i=0;i<placed_habitats_.size();++i){auto& host=placed_habitats_[i];
         if(host.kind!=HabitatKind::OxygenGeneratorDome||!host.construction.complete()||host.oxygen_unit_fitted)continue;
         if(std::any_of(host.units.begin(),host.units.end(),[](const auto& u){return u.kind==InteriorUnitKind::OxygenGenerator;})){host.oxygen_unit_fitted=true;continue;}
         InteriorUnit unit;unit.kind=InteriorUnitKind::OxygenGenerator;unit.position.y=habitat_models_.mesh(host).walkable_floor_y;
-        bool fitted=false;std::string error;
-        for(float angle:{0.f,90.f})for(float z:{2.15f,-2.15f,2.40f,-2.40f,1.90f,-1.90f})for(float x:{0.f,-.5f,.5f,-1.f,1.f}){
-            if(fitted)break;
-            unit.position.x=x;unit.position.z=z;unit.rotation_degrees=angle;
-            if(interior_unit_position_clear(i,unit,error)){host.units.push_back(unit);fitted=true;}
-        }
+        if(find_interior_unit_bay(i,unit))host.units.push_back(unit);
         host.oxygen_unit_fitted=true; // Never retry a blocked fit every frame.
     }
 }
@@ -104,7 +138,7 @@ void GameApp::update_interior_units(float dt){
     if(dt<=0)return;
     for(std::size_t index=0;index<placed_habitats_.size();++index){auto& host=placed_habitats_[index];
         if(!host.construction.complete()||!host.power_enabled||host.supply.power_fraction<=0||host.supply.breathability()<95)continue;
-        for(auto& unit:host.units){const auto& recipe=interior_unit_profile(unit.kind);
+        for(auto& unit:host.units){const auto& recipe=interior_unit_profile(unit);
             if(!unit.enabled||interior_unit_reserved(index,unit)||recipe.cycle_days<=0)continue;
             if(unit.kind==InteriorUnitKind::FoodProcessor&&!unit.batch_active&&unit.food_kg>18)continue;
             if(!unit.batch_active){
@@ -139,15 +173,15 @@ void GameApp::render_interior_unit_screens(runtime::SceneRenderer& renderer,std:
     const auto eye=first_person_mode_==FirstPersonMode::Active?first_person_.eye_position():camera_.eye_position();
     for(const auto& unit:host.units){if(interior_unit_reserved(index,unit))continue;
         if(unit.kind==InteriorUnitKind::HydroponicRack&&unit.enabled&&hydroponics_lights_on(status_.hour())&&door_power_available(host.supply,host.power_enabled)){
-            std::vector<Vec3> lamps;for(const auto p:interior_unit_mesh(unit.kind).lamps)
+            std::vector<Vec3> lamps;for(const auto p:interior_unit_mesh(unit).lamps)
                 lamps.push_back(host.position+world_math::rotate_y(unit.position+world_math::rotate_y(p,unit.rotation_degrees),host.rotation_degrees));
             renderer.draw_lunar_surface(lamps,LunarMaterial::Emissive,{.90f,.76f,.92f,1});
         }
-        const auto& screens=interior_unit_mesh(unit.kind).screens;if(screens.empty())continue;
+        const auto& screens=interior_unit_mesh(unit).screens;if(screens.empty())continue;
         auto mount=screens.front();mount.center=unit.position+world_math::rotate_y(mount.center,unit.rotation_degrees);
         mount.right=world_math::rotate_y(mount.right,unit.rotation_degrees);
-        const auto& profile=interior_unit_profile(unit.kind);
-        structure_display::Content content{profile.name,{interior_unit_status(index,unit),interior_unit_recipe(unit.kind),"LOAD "+structure_display::value(profile.power_kw,1)+" KW / BATCHES "+std::to_string(unit.batches)}};
+        const auto& profile=interior_unit_profile(unit);
+        structure_display::Content content{profile.name,{interior_unit_status(index,unit),interior_unit_recipe(unit),"LOAD "+structure_display::value(profile.power_kw,1)+" KW / BATCHES "+std::to_string(unit.batches)}};
         if(unit.kind==InteriorUnitKind::FoodProcessor)content.rows={interior_unit_status(index,unit),"PREPARED MEALS "+structure_display::value(unit.food_kg,1)+" / 20 KG","2 FOOD + 1 WATER / BATCH"};
         if(unit.kind==InteriorUnitKind::DrinkingWell)content.rows={interior_unit_status(index,unit),"CONNECTED WATER / MANUAL TAP","PUMP 0.08 KW / 10 L RESERVE"};
         if(unit.kind==InteriorUnitKind::OxygenGenerator)content.rows={interior_unit_status(index,unit),"ROOM WATER "+structure_display::value(host.supply.water_processed_litres_per_day,1)+" L/DAY","ROOM H2 "+structure_display::value(host.supply.hydrogen_produced_kg_per_day,2)+" KG/DAY"};

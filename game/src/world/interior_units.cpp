@@ -17,6 +17,28 @@ const InteriorUnitProfile& interior_unit_profile(InteriorUnitKind kind){
     }};
     return profiles.at(static_cast<std::size_t>(kind));
 }
+const InteriorUnitProfile& interior_unit_profile(InteriorUnitKind kind,InteriorUnitSize size){
+    if(kind!=InteriorUnitKind::OxygenGenerator)return interior_unit_profile(kind);
+    static const auto variants=[] {
+        std::array<InteriorUnitProfile,3> out;
+        constexpr float scales[]{.55f,.75f,1.f};
+        constexpr const char* names[]{"VERY SMALL OXYGEN GENERATOR","SMALL OXYGEN GENERATOR","MEDIUM OXYGEN GENERATOR"};
+        for(std::size_t i=0;i<out.size();++i){auto p=interior_unit_profile(InteriorUnitKind::OxygenGenerator);const auto tier=InteriorUnitSize(i);const auto factor=oxygen_unit_factor(tier);
+            p.name=names[i];p.size=p.size*scales[i];p.power_kw*=factor;
+            for(std::size_t m=0;m<kMaterialResourceCount;++m){auto& n=p.cost.amount(MaterialResource(m));n=std::int64_t(std::ceil(double(n)*factor));}
+            out[i]=p;
+        }return out;
+    }();
+    return variants.at(std::size_t(size));
+}
+const char* interior_unit_recipe(InteriorUnitKind kind,InteriorUnitSize size){
+    if(kind!=InteriorUnitKind::OxygenGenerator)return interior_unit_recipe(kind);
+    switch(size){
+        case InteriorUnitSize::VerySmall:return "4.5 KG O2/D / 5.06 L WATER/D / 1.5 KW";
+        case InteriorUnitSize::Small:return "9 KG O2/D / 10.13 L WATER/D / 3 KW";
+        default:return "18 KG O2/D / 20.25 L WATER/D / 6 KW";
+    }
+}
 const char* interior_unit_recipe(InteriorUnitKind kind){
     switch(kind){
         case InteriorUnitKind::MetalFabricator:return "5 KG RAW ORE -> 3 KG REFINED / 0.25 DAY";
@@ -34,8 +56,10 @@ const char* interior_unit_recipe(InteriorUnitKind kind){
     }
 }
 bool interior_unit_allowed(HabitatKind host,InteriorUnitKind kind){
+    if(host==HabitatKind::AirLock)return false; // Fixed pressure-system fit.
     switch(kind){
-        case InteriorUnitKind::MetalFabricator:case InteriorUnitKind::PlasticFabricator:return host==HabitatKind::Factory||host==HabitatKind::Manufactory;
+        case InteriorUnitKind::MetalFabricator:return host==HabitatKind::Factory||host==HabitatKind::Manufactory;
+        case InteriorUnitKind::PlasticFabricator:return host==HabitatKind::Factory||host==HabitatKind::Manufactory||host==HabitatKind::ProcessingFacility;
         case InteriorUnitKind::OreRefinery:return host==HabitatKind::ProcessingFacility;
         case InteriorUnitKind::MedicalSynthesizer:return host==HabitatKind::Laboratory||host==HabitatKind::SickBay;
         case InteriorUnitKind::HydroponicRack:return host==HabitatKind::BioDome;
@@ -124,5 +148,16 @@ const HabitatMesh& interior_unit_mesh(InteriorUnitKind kind){
         return result;
     }();
     return models.at(static_cast<std::size_t>(kind));
+}
+const HabitatMesh& interior_unit_mesh(InteriorUnitKind kind,InteriorUnitSize size){
+    if(kind!=InteriorUnitKind::OxygenGenerator)return interior_unit_mesh(kind);
+    static const auto variants=[] {
+        std::array<HabitatMesh,3> out;constexpr float scales[]{.55f,.75f,1.f};
+        for(std::size_t i=0;i<out.size();++i){auto mesh=interior_unit_mesh(InteriorUnitKind::OxygenGenerator);const float scale=scales[i];
+            for(auto* layer:{&mesh.foundation,&mesh.interior,&mesh.details,&mesh.service_metal,&mesh.fabric,&mesh.displays,&mesh.lamps,&mesh.markings,&mesh.edges})for(auto& p:*layer)p=p*scale;
+            for(auto& screen:mesh.screens){screen.center=screen.center*scale;screen.width*=scale;screen.height*=scale;}
+            mesh.footprint_x*=scale;mesh.footprint_z*=scale;mesh.height*=scale;out[i]=std::move(mesh);
+        }return out;
+    }();return variants.at(std::size_t(size));
 }
 }

@@ -113,7 +113,8 @@ void GameApp::render_menu(SceneRenderer& r){
             return;
         }
         if(menu_button("SAVE GAME")){
-            save_status_message_.clear();
+            save_status_message_.clear();refresh_save_games();save_list_scroll_=0;save_list_selected_=-1;
+            save_name_editor_.reset(save_game_name_,true);save_name_focus_=true;save_name_drag_=false;save_name_scroll_=0;save_caret_epoch_=ui_time_seconds_;
             screen_=Screen::SaveGame;
         }
     }else if(can_continue){

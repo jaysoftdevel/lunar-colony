@@ -445,6 +445,35 @@ struct Recorder:game::runtime::SceneRenderer {
     std::string gpu_vendor()const override{return "TEST";}std::string gpu_renderer()const override{return "SCALING RECORDER";}std::string gpu_version()const override{return "TEST";}
 };
 struct NavigationRegression {
+    static void saved_carriers_corridor(const std::string& path){
+        runtime::GameHost engine; GameApp app(engine); std::string error;
+        require(app.load_game_from_file(path,error),error);
+        const auto& links=app.corridor_network_.connections();
+        require(!links.empty(),"Missing saved airlock corridor");
+        const auto& c=links.front();
+        require(c.endpoint_a.kind==CorridorEndpointKind::Habitat && c.endpoint_b.kind==CorridorEndpointKind::Habitat && c.path.size()>=2,"Wrong saved corridor");
+        for(const auto p:c.path) require(std::abs(p.y-c.path.front().y)<.001f,"Saved airlock corridor retained height discontinuity");
+        require(runtime::length(c.endpoint_a.position-c.path.front())<.001f && runtime::length(c.endpoint_b.position-c.path.back())<.001f,"Saved corridor detached from endpoints");
+        std::vector<Vec3> initial;std::vector<float> charge;
+        for(const auto& r:app.builder_robots_){initial.push_back(r.position);charge.push_back(r.battery_charge_kwh);}
+        require(initial.size()==3,"Unexpected saved fleet size");
+        std::vector<float> travel(initial.size(),0.f);std::vector<bool> charging(initial.size(),false),recharging(initial.size(),false),recovered(initial.size(),false);
+        for(int tick=0;tick<90*180;++tick){
+            app.update_builder_robot(1.f/90);
+            for(std::size_t i=0;i<initial.size();++i){const auto& r=app.builder_robots_[i];
+                travel[i]=std::max(travel[i],ground_distance(r.position,initial[i]));
+                charging[i]=charging[i]||r.starter_charge_active||r.battery_charging;
+                recharging[i]=recharging[i]||r.battery_charging;
+                recovered[i]=recovered[i]||(recharging[i]&&!r.starter_charge_active&&r.battery_charge_kwh>=r.battery_capacity_kwh*(kStarterRobotChargeReleaseFraction-.001f));
+            }
+            if(recovered[1] && recovered[2])break;
+        }
+        for(std::size_t i=0;i<initial.size();++i){const auto& r=app.builder_robots_[i];
+            std::cout<<"Saved robot "<<i<<" travel="<<travel[i]<<" charging_requested="<<charging[i]<<" reached_charger="<<recharging[i]<<" charge_completed="<<recovered[i]<<" battery="<<charge[i]<<" -> "<<r.battery_charge_kwh<<" safety="<<(int)r.safety.mode<<" block="<<(int)r.safety.block_reason<<std::endl;
+            if(r.role==RobotRole::Carrier){require(charging[i],"Saved carrier never requested charging");require(travel[i]>.5f || r.battery_charge_kwh>charge[i],"Saved carrier neither moved nor charged");require(recharging[i],"Saved carrier never reached charger");require(recovered[i],"Saved carrier did not complete bootstrap charging");}
+        }
+        std::cout<<"Saved corridor continuous and both carriers made progress\n";
+    }
     static void profile(const std::string& path){
         game::runtime::GameHost engine;GameApp app(engine);std::string error;require(app.load_game_from_file(path,error),error);
         Recorder r;app.screen_=GameApp::Screen::Playfield;
@@ -1305,7 +1334,7 @@ struct NavigationRegression {
         power.path={{-5.5f,0,0},{-17,0,0}};app.utility_network_.restore_connections({power});
         const auto& mesh=app.resource_models_.mesh(home);
         require(!mesh.glazing.empty(),"Workshop roof has no glazing");
-        require(segment_hits_mesh({0,4,0},{0,5,0},mesh.glazing),"Glass roof has an overhead gap");
+        require(segment_hits_mesh({0,workshop::kRoofSpring,0},{0,workshop::roof_height(0,0)+.3f,0},mesh.glazing),"Glass roof has an overhead gap");
         for(float z:{-4.8f,-2.4f,0.f,2.4f,4.8f})for(float x:{-5.3f,5.3f})for(float y:{.55f,1.6f,2.7f})
             require(segment_hits_mesh({x-.3f,y,z},{x+.3f,y,z},mesh.details),"Roof stanchion is not continuous to foundation");
         GeometryRecorder full,cut;app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;
@@ -1313,9 +1342,9 @@ struct NavigationRegression {
         require(full.glass.size()>=mesh.glazing.size(),"Full hull does not submit transparent roof");
         app.habitat_view_mode_=GameApp::HabitatViewMode::None;
         app.render_resource_mesh(cut,mesh,{},0,false,true,false,kConstructionSteps,nullptr,home.kind);
-        require(cut.glass.size()==full.glass.size() && cut.triangles.size()==full.triangles.size(),"Exterior workshop changed with the habitat cutaway option");
+        require(cut.glass.empty() && cut.triangles.size()<full.triangles.size(),"Workshop cutaway retains its roof or structural frame");
         app.first_person_.spawn({0,workshop::kDeck,0});
-        require(app.first_person_ceiling_height({0,workshop::kDeck,0})<4.7f,"Transparent roof lost physical ceiling");
+        require(std::abs(app.first_person_ceiling_height({0,workshop::kDeck,0})-workshop::roof_height(0,0))<.15f,"Transparent dome roof lost physical ceiling");
         app.builder_robots_.resize(4);
         for(int slot=0;slot<4;++slot){auto& bot=app.builder_robots_[slot];bot.workshop_index=0;bot.workshop_bay=slot;bot.workshop_parked=true;bot.condition=.6f;bot.battery_capacity_kwh=10;bot.battery_charge_kwh=2;bot.position=workshop::bay(home,slot);}
         require(app.workshop_operational(0),"Service fixture is not powered");
@@ -1517,10 +1546,13 @@ struct NavigationRegression {
         PlacedResource store;store.kind=ResourceKind::StorageDome;store.position={24,0,-20};store.construction.finish();store.placement_sequence=3;
         parked.placed_resources_={home,source,store};parked.next_blueprint_placement_sequence_=4;
         require(parked.add_storage_gate_at(2,0),"Parked-carrier fixture gate rejected");
+        for(auto& item:parked.placed_resources_)if(item.kind==ResourceKind::StorageGate)item.construction.finish();
+        parked.synchronize_storage_gates();
         const auto solar=parked.placed_resources_.size();
         for(int i=0;i<3;++i){PlacedResource power;power.kind=i==2?ResourceKind::PowerStorage:ResourceKind::SolarPanel;power.position={42.f+i*7,0,42};power.construction.finish();power.placement_sequence=20+i;parked.placed_resources_.push_back(power);}
         for(auto pair:{std::pair<std::size_t,std::size_t>{0,solar},{solar,solar+1},{solar+1,solar+2}}){UtilityConnection link;link.kind=UtilityKind::SupplyChannel;link.endpoint_a.kind=link.endpoint_b.kind=UtilityEndpointKind::Resource;link.endpoint_a.index=pair.first;link.endpoint_b.index=pair.second;link.construction.finish();parked.utility_network_.mutable_connections().push_back(link);}
-        require(parked.workshop_operational(0),"Parked-carrier workshop has no power fixture");
+        parked.update_supply_simulation(0);
+        require(parked.workshop_operational(0)&&parked.placed_resources_[0].supply.power_fraction>=.999,"Parked-carrier workshop has no power fixture");
         BuilderRobotState idle;idle.role=RobotRole::Carrier;idle.position=workshop::bay(parked.placed_resources_[0],0);idle.workshop_parked=true;idle.workshop_index=0;idle.workshop_bay=0;idle.starter_exit_completed=true;idle.battery_capacity_kwh=kCarrierRobotBatteryCapacityKwh;idle.battery_charge_kwh=idle.battery_capacity_kwh;idle.move_speed_mps=kCarrierRobotTransitSpeedMps;parked.builder_robots_={idle};
         for(int tick=0;tick<900 && !parked.builder_robots_[0].ore_haul.active();++tick){parked.update_pressure_doors(1.f/90);parked.update_builder_robot(1.f/90);}
         require(parked.builder_robots_[0].ore_haul.active() && !parked.builder_robots_[0].workshop_parked && parked.placed_resources_[0].workshop_gate_open>=.999f,"Closed workshop gate prevented ore dispatch");
@@ -1622,6 +1654,29 @@ struct NavigationRegression {
                 mined[cargo]==before+ore::box_kg,
                 "removing a conveyor lost its in-flight crate");
         std::cout<<"Ore production, rover-only pickup, legacy conveyor delivery, deletion and save/load passed\n";
+    }
+
+    static void deconstruction(){
+        runtime::GameHost host;GameApp app(host);app.playfield_.rebuild(128);
+        app.starting_robot_count_=1;app.starting_carrier_count_=1;app.reset_builder_robot_and_starter_stash();
+        app.ground_resource_piles_.clear();
+        std::erase_if(app.builder_robots_,[](const auto& rover){return rover.role!=RobotRole::Constructor;});
+        auto& rover=app.builder_robots_.front();rover.position={-15,0,10};rover.visual_initialized=false;
+        PlacedResource item;item.kind=ResourceKind::SolarPanel;item.position={10,0,10};item.placement_sequence=101;item.construction.finish();app.placed_resources_={item};
+        app.selection_kind_=GameApp::SelectionKind::Resource;app.selected_resource_=0;
+        app.request_selected_deconstruction();app.request_selected_deconstruction();
+        require(app.deconstruction_jobs_.size()==1&&app.placed_resources_.size()==1,"Deconstruction did not queue once or removed immediately");
+        bool cutting=false;float travel=0;const auto start=rover.position;
+        for(int i=0;i<4800&&!app.placed_resources_.empty();++i){
+            app.update_builder_robot(1.f/60);travel=std::max(travel,world_math::distance_xz(start,rover.position));
+            cutting|=rover.action==BuilderRobotAction::Dismantle;
+            app.finish_deconstruction();
+        }
+        std::cout<<"travel="<<travel<<" cutting="<<cutting<<" worker="<<app.deconstruction_worker_<<" pos="<<rover.position.x<<","<<rover.position.z<<" safety="<<int(rover.safety.mode)<<" reason="<<int(rover.safety.block_reason)<<" battery="<<rover.battery_charge_kwh<<" remaining="<<app.placed_resources_.size()<<"\n";
+        if(app.deconstruction_station_)std::cout<<"station="<<app.deconstruction_station_->x<<","<<app.deconstruction_station_->z<<" speed="<<rover.current_speed_mps<<" progress="<<app.deconstruction_jobs_.front().progress<<" safe="<<app.deconstruction_safe({ConstructionTargetKind::Resource,0})<<"\n";
+        require(cutting&&travel>1,"Builder did not travel and cut the structure");
+        require(app.placed_resources_.empty()&&app.deconstruction_jobs_.empty(),"Builder did not complete deconstruction");
+        std::cout<<"Builder traveled "<<travel<<" m, cut and completed deconstruction\n";
     }
 
     static void structure_routes(){
@@ -2115,7 +2170,7 @@ struct NavigationRegression {
         app.builder_robots_[0].position={24,0,20};app.builder_robots_[1].position={-24,0,20};
         app.toggle_construction_priority({ConstructionTargetKind::Resource,2});app.toggle_construction_priority({ConstructionTargetKind::Resource,1});
         require(app.construction_priority_rank({ConstructionTargetKind::Resource,2})==0 && app.construction_priority_rank({ConstructionTargetKind::Resource,1})==1,"first queued priority did not stay first");
-        app.update_construction(1.f/60);require(app.builder_robots_[1].target.same_as({ConstructionTargetKind::Resource,2}),"carrier FIFO ignored priority");
+        app.update_construction(1.f/60);require(std::any_of(app.builder_robots_.begin(),app.builder_robots_.end(),[](const auto& r){return r.target.same_as({ConstructionTargetKind::Resource,2});}),"crew ignored the highest-priority job");
         app.toggle_construction_priority({ConstructionTargetKind::Resource,2});app.update_construction(1.f/60);require(app.builder_robots_[1].target.same_as({ConstructionTargetKind::Resource,1}),"empty carrier failed to follow restored queue order");
         // Builder dispatch has its own distance/cooperation scoring; priority
         // must dominate it once the real material/dependency gates are met.
@@ -2133,7 +2188,7 @@ struct NavigationRegression {
         for(auto size:{HabitatSizeTier::Small,HabitatSizeTier::Standard})for(float rotation:{0.f,37.f,90.f,180.f})for(int inside:{-1,1}){
             GameApp app(engine);app.playfield_.rebuild(128);app.corridor_network_.set_playfield_half_extent(64);
             PlacedHabitat air;air.kind=HabitatKind::AirLock;air.size=size;air.rotation_degrees=rotation;air.construction.step=kConstructionSteps;air.placement_sequence=1;air.supply.power_fraction=1.0;app.placed_habitats_={air};
-            const auto& mesh=app.habitat_models_.mesh(air);require(mesh.entrances.empty() && mesh.entrance_access.empty(),"air lock retained authored entrance");const float end=mesh.footprint_x*0.5f;
+            const auto& mesh=app.habitat_models_.mesh(air);require(mesh.entrances.size()==2 && mesh.entrance_access.empty(),"airlock fixed end ports missing");const float end=mesh.footprint_x*0.5f;
             const auto world=[&](float x,float z=0.f){return world_math::rotate_y(Vec3{x,mesh.walkable_floor_y,z},rotation);};
             const CorridorBuildAnchor start{CorridorEndpointKind::Habitat,0,world(inside*end)},finish{CorridorEndpointKind::OpenDoor,0,world(inside*(end+14))};
             require(app.corridor_network_.build_corridor(start,finish,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"airlock cycle corridor rejected");
@@ -2152,6 +2207,12 @@ struct NavigationRegression {
                     if((destination-x)*direction<0.045f)return;
                     const auto old_pressure=app.airlock_cycles_.empty()?1:app.airlock_cycles_[0].pressure;
                     bool previously_sealed=true;for(const auto& door:app.pressure_doors_)previously_sealed&=pressure_door::sealed(door.open_fraction);
+                    // Simulate the operator pressing E for each newly reached
+                    // hatch. Approach and movement alone must not open seals.
+                    const auto target=app.manual_door_target();
+                    if(target&&!target->first){const auto& door=app.pressure_doors_[target->second];
+                        if(door.player_request_seconds<=0&&pressure_door::sealed(door.open_fraction))require(app.manual_door_interaction(true),"Explicit E airlock request rejected");
+                    }
                     app.update_pressure_doors(0.05f);
                     const auto& cycle=app.airlock_cycles_[0];min_pressure=std::min(min_pressure,cycle.pressure);max_pressure=std::max(max_pressure,cycle.pressure);equalizing+=cycle.equalizing;
                     if(std::abs(cycle.pressure-old_pressure)>1e-6f)require(previously_sealed,"pressure changed before all doors sealed");
@@ -2253,6 +2314,11 @@ struct NavigationRegression {
             app.placed_resources_,app.resource_models_),"crew pressure route placement failed");
         auto& corridor=app.corridor_network_.mutable_connections().front();
         commission(corridor);
+        const auto& lock_mesh=app.habitat_models_.mesh(lock);
+        require(std::abs(world_math::rotate_y(corridor.endpoint_a.door.wall_position,-rotation).x-lock_mesh.dome_radii.x)<.015f,"Airlock collar attached to its foundation instead of the pressure wall");
+        const auto& collar=corridor.endpoint_a.door;const Vec3 collar_side{-collar.normal.z,0,collar.normal.x};
+        for(float side:{-.35f,.35f}){auto p=collar.wall_position-collar.normal*.02f+collar_side*side;bool in_lock=false;
+            require(app.astronaut_air_at(p,in_lock)!=nullptr,"Curved collar throat contains a fictitious vacuum gap");}
         const auto& door=corridor.endpoint_b.door;
         Vec3 goal=door.wall_position-door.normal*1.35f;
         goal.y=app.first_person_floor_height(goal);
@@ -2277,7 +2343,8 @@ struct NavigationRegression {
         };
         travel(400);
         require(!app.airlock_powered(0) && crew.waiting_for_door && crew.suited &&
-                world_math::rotate_y(crew.position,-rotation).x<-end,"crew passed an unpowered air lock");
+                world_math::rotate_y(crew.position,-rotation).x<-end,"unpowered crew access: local x="+std::to_string(world_math::rotate_y(crew.position,-rotation).x)+" end="+std::to_string(end)+" waiting="+std::to_string(crew.waiting_for_door)+" route="+std::to_string(crew.route.size())+" entry="+std::to_string(crew.entry_step));
+        std::cerr<<"Crew held outside the unpowered airlock\n";
 
         PlacedResource battery;
         battery.kind=ResourceKind::PowerStorage;
@@ -2296,7 +2363,8 @@ struct NavigationRegression {
         require(guide_lights.size()>1,"powered corridor omitted its guide lights");
         travel(1300);
         require(!crew.destination && ground_distance(crew.position,goal)<.04f && crew.suited,
-                "crew did not walk through the air lock to the unpressurized habitat");
+                "powered crew access: local x="+std::to_string(world_math::rotate_y(crew.position,-rotation).x)+" z="+std::to_string(world_math::rotate_y(crew.position,-rotation).z)+" goal="+std::to_string(world_math::rotate_y(goal,-rotation).x)+" waiting="+std::to_string(crew.waiting_for_door)+" route="+std::to_string(crew.route.size())+" phase="+(app.airlock_cycles_.empty()?std::string("none"):airlock::phase(app.airlock_cycles_[0])));
+        std::cerr<<"Crew entered the powered airlock and connected dome\n";
         auto& supply=app.placed_habitats_[1].supply;
         supply.oxygen_kg=.999*supply.volume_m3*kOxygenKgPerM3;
         app.update_astronaut_suits();
@@ -2440,7 +2508,7 @@ struct NavigationRegression {
         for(auto size:{HabitatSizeTier::Small,HabitatSizeTier::Standard})for(float rotation:{0.f,37.f,90.f,180.f})for(int end:{-1,1}){
             GameApp app(engine);app.playfield_.rebuild(128);app.corridor_network_.set_playfield_half_extent(64);app.utility_network_.set_playfield_half_extent(64);
             PlacedHabitat air;air.kind=HabitatKind::AirLock;air.size=size;air.position={3,0,4};air.rotation_degrees=rotation;air.construction.step=kConstructionSteps;air.placement_sequence=1;app.placed_habitats_={air};
-            const auto& mesh=app.habitat_models_.mesh(air);require(mesh.entrances.empty() && mesh.entrance_access.empty(),"air lock retained authored entrance");
+            const auto& mesh=app.habitat_models_.mesh(air);require(mesh.entrances.size()==2 && mesh.entrance_access.empty(),"airlock fixed end ports missing");
             const float half=mesh.footprint_x*0.5f;
             const Vec3 local_hatch{(float)end*half,mesh.walkable_floor_y,0},local_normal{(float)end,0,0};
             const Vec3 local_outer{-(float)end*half,mesh.walkable_floor_y,0},local_outer_normal{-(float)end,0,0};
@@ -2461,7 +2529,7 @@ struct NavigationRegression {
             bool mirrored=false;for(const auto& d:air_doors)mirrored=mirrored || game::runtime::dot(d.normal,outer_normal)>0.95f;
             require(mirrored,"inside connection did not create the opposite exterior air-lock seal");
             WalkwayBuildAnchor w{WalkwayEndpointKind::Habitat,0,outer},wo{WalkwayEndpointKind::Open,0,outer+outer_normal*14};
-            require(!app.walkway_network_.preview_connection(w,wo,app.corridor_network_,app.utility_network_,app.placed_habitats_,app.habitat_models_,{},app.resource_models_),"walkway occupied the reserved exterior hatch");
+            require(app.walkway_network_.preview_connection(w,wo,app.corridor_network_,app.utility_network_,app.placed_habitats_,app.habitat_models_,{},app.resource_models_).has_value(),"walkway cannot reach the fixed exterior hatch");
             app.corridor_network_.remove_corridor(0);
             require(app.corridor_network_.preview_anchor(blocked,other.position,app.placed_habitats_,app.habitat_models_).has_value(),"removing final connection did not release side");
             UtilityBuildAnchor u{UtilityEndpointKind::Habitat,0,hatch},uo{UtilityEndpointKind::Open,0,hatch+normal*14},ub{UtilityEndpointKind::Habitat,0,outer},ubend{UtilityEndpointKind::Open,0,outer+outer_normal*14};
@@ -2646,7 +2714,7 @@ struct NavigationRegression {
         app.toggle_construction_priority({ConstructionTargetKind::Resource,1});app.toggle_construction_priority({ConstructionTargetKind::Resource,2});
         app.placed_resources_[1].site_buffer.iron=60;app.update_construction(1.f/60);
         require(app.builder_robots_[0].target.same_as({ConstructionTargetKind::Resource,1}),"builder skipped FIFO head");
-        require(app.construction_dispatch_rank({ConstructionTargetKind::Resource,2})==3 && !app.builder_robots_[1].target.same_as({ConstructionTargetKind::Resource,2}),"fully supplied but unfinished head released follower early");
+        require(app.builder_robots_[1].target.same_as({ConstructionTargetKind::Resource,2}),"Free carrier did not stage the next job while the builder works on the supplied head");
         app.placed_resources_[1].construction.step=kConstructionSteps;app.update_construction(1.f/60);require(app.construction_priority_.size()==1 && app.construction_priority_.front()==3,"finished FIFO head did not leave queue");require(app.builder_robots_[1].target.same_as({ConstructionTargetKind::Resource,2}),"next FIFO item did not activate");
         app.toggle_construction_priority({ConstructionTargetKind::Resource,2});require(app.construction_priority_.empty(),"remove priority did not remove queue item");
         for(int i=0;i<2;++i){PlacedResource r;r.kind=ResourceKind::PowerStorage;r.position={(float)(i*40-20),0,0};r.construction.step=kConstructionSteps;r.placement_sequence=i+4;app.placed_resources_.push_back(r);}
@@ -3122,7 +3190,7 @@ struct NavigationRegression {
         app.placed_resources_.clear();app.pressure_doors_.clear();
         PlacedHabitat air;air.kind=HabitatKind::AirLock;air.construction.step=kConstructionSteps;
         air.supply.power_fraction=1.0;
-        app.placed_habitats_={air};const auto& mesh=app.habitat_models_.mesh(air);require(mesh.entrances.empty(),"air lock retained authored hatch");
+        app.placed_habitats_={air};const auto& mesh=app.habitat_models_.mesh(air);require(mesh.entrances.size()==2,"airlock fixed hatches missing");
         app.corridor_network_.set_playfield_half_extent(64);
         const float air_end=mesh.footprint_x*0.5f;
         CorridorBuildAnchor hatch_anchor{CorridorEndpointKind::Habitat,0,{air_end,mesh.walkable_floor_y,0}},open_anchor{CorridorEndpointKind::OpenDoor,0,{air_end+14,0,0}};
@@ -3514,6 +3582,7 @@ int main(int argc,char** argv){
         else if(argc>2 && std::string(argv[1])=="saved-colony-recovery") game::NavigationRegression::saved_route(argv[2],true);
         else if(argc>2 && std::string(argv[1])=="saved-aisle") game::NavigationRegression::saved_route(argv[2],true,true);
         else if(argc>2 && std::string(argv[1])=="saved-route") game::NavigationRegression::saved_route(argv[2]);
+        else if(argc>2 && std::string(argv[1])=="saved-carriers-corridor") game::NavigationRegression::saved_carriers_corridor(argv[2]);
         else if(argc>2 && std::string(argv[1])=="profile") game::NavigationRegression::profile(argv[2]);
         else if(argc>1 && std::string(argv[1])=="operation-replan") game::NavigationRegression::operation_replan();
         else if(argc>1 && std::string(argv[1])=="fault-recovery"){
@@ -3531,6 +3600,7 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="ore-dispatch") game::NavigationRegression::ore_storage_dispatch();
         else if(argc>1 && std::string(argv[1])=="ore-carrier") game::NavigationRegression::ore_carrier();
         else if(argc>1 && std::string(argv[1])=="conveyor-ore") game::NavigationRegression::conveyor_ore();
+        else if(argc>1 && std::string(argv[1])=="deconstruction") game::NavigationRegression::deconstruction();
         else if(argc>1 && std::string(argv[1])=="structure-routes") game::NavigationRegression::structure_routes();
         else if(argc>1 && std::string(argv[1])=="interaction") game::NavigationRegression::interaction();
         else if(argc>1 && std::string(argv[1])=="oxygen") game::NavigationRegression::oxygen();
@@ -3542,6 +3612,7 @@ int main(int argc,char** argv){
         else if(argc>1 && std::string(argv[1])=="priority") game::NavigationRegression::build_priority();
         else if(argc>1 && std::string(argv[1])=="crew-waypoints") game::NavigationRegression::astronaut_waypoints();
         else if(argc>1 && std::string(argv[1])=="crew-autonomy") game::NavigationRegression::astronaut_autonomy();
+        else if(argc>1 && std::string(argv[1])=="crew-access") game::NavigationRegression::astronaut_access();
         else if(argc>1 && std::string(argv[1])=="airlock-cycle"){
             game::NavigationRegression::airlock_cycle();
             game::NavigationRegression::astronaut_access();

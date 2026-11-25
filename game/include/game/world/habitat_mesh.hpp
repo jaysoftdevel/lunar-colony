@@ -1,4 +1,5 @@
 #pragma once
+#include "game/world/structural_frame.hpp"
 #include "game/world/supply_state.hpp"
 #include "game/world/structure_display.hpp"
 #include "game/world/hydroponics.hpp"
@@ -33,6 +34,7 @@ enum class HabitatSizeTier {
     // Appended to preserve the serialized numeric values of all existing
     // 0.40.x saves. Small scales only X/Z; vertical dimensions stay unchanged.
     Small,
+    VerySmall, // Legacy 0.79 dome tier; no longer offered for new construction.
     Count
 };
 
@@ -49,7 +51,7 @@ inline bool habitat_has_size_tiers(HabitatKind){ return true; }
 
 inline std::size_t hydroponics_bay_count(HabitatSizeTier size){
     switch(size){
-        case HabitatSizeTier::Small: return 2;
+        case HabitatSizeTier::Small: case HabitatSizeTier::VerySmall: return 2;
         case HabitatSizeTier::Standard: return 4;
         case HabitatSizeTier::Mid: return 6;
         case HabitatSizeTier::Big: return 8;
@@ -63,8 +65,13 @@ inline const char* habitat_size_name(HabitatSizeTier size){
         case HabitatSizeTier::Mid: return "MID";
         case HabitatSizeTier::Big: return "BIG";
         case HabitatSizeTier::Small: return "SMALL";
+        case HabitatSizeTier::VerySmall: return "VERY SMALL";
         default: return "STANDARD";
     }
+}
+inline const char* habitat_size_name(HabitatKind kind,HabitatSizeTier size){
+    (void)kind;
+    return habitat_size_name(size);
 }
 
 struct HabitatEntrance {
@@ -79,7 +86,7 @@ struct HabitatEntranceAccess {
 
 inline constexpr int crew_quarters_bed_count(HabitatSizeTier size){
     switch(size){
-        case HabitatSizeTier::Small:return 2;
+        case HabitatSizeTier::Small:case HabitatSizeTier::VerySmall:return 2;
         case HabitatSizeTier::Standard:return 4;
         case HabitatSizeTier::Mid:return 6;
         case HabitatSizeTier::Big:return 8;
@@ -102,6 +109,11 @@ struct CrewBunk {
 };
 
 struct HabitatMesh {
+    structural::Metrics reinforcement;
+    std::vector<game::runtime::Vec3> hull_frames;
+    std::vector<game::runtime::Vec3> overhead_services,overhead_lamps; // Roof-mounted; hidden in cutaway.
+    game::runtime::Vec3 dome_radii{}; // X radius, roof rise, Z radius.
+    float dome_spring_y{};
     std::vector<game::runtime::Vec3> shell;
     std::vector<game::runtime::Vec3> foundation;
     std::vector<game::runtime::Vec3> interior;

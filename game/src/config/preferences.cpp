@@ -1,6 +1,8 @@
 #include "game/config/preferences.hpp"
 #include <algorithm>
 #include <charconv>
+#include <cmath>
+#include "game/ui/layout.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -19,17 +21,19 @@ namespace game {
 namespace {
 using namespace game::runtime;
 
-std::filesystem::path config_path(){
+std::filesystem::path config_path(bool legacy=false){
 #ifdef _WIN32
+    if(const wchar_t* path=_wgetenv(L"GAME_SETTINGS_CONFIG"); path && *path) return path;
     if(const wchar_t* path=_wgetenv(L"GAME_GRAPHICS_CONFIG"); path && *path) return path;
     if(const wchar_t* appdata=_wgetenv(L"APPDATA"); appdata && *appdata)
-        return std::filesystem::path(appdata)/"Lunar Frontier"/"graphics.cfg";
+        return std::filesystem::path(appdata)/"Lunar Frontier"/(legacy?"graphics.cfg":"settings.cfg");
 #else
+    if(const char* path=std::getenv("GAME_SETTINGS_CONFIG"); path && *path) return path;
     if(const char* path=std::getenv("GAME_GRAPHICS_CONFIG"); path && *path) return path;
     if(const char* xdg=std::getenv("XDG_CONFIG_HOME"); xdg && *xdg)
-        return std::filesystem::path(xdg)/"lunar-frontier"/"graphics.cfg";
+        return std::filesystem::path(xdg)/"lunar-frontier"/(legacy?"graphics.cfg":"settings.cfg");
     if(const char* home=std::getenv("HOME"); home && *home)
-        return std::filesystem::path(home)/".config"/"lunar-frontier"/"graphics.cfg";
+        return std::filesystem::path(home)/".config"/"lunar-frontier"/(legacy?"graphics.cfg":"settings.cfg");
 #endif
     return {};
 }
@@ -49,7 +53,12 @@ Preferences load_preferences(){
     Preferences preferences{game::runtime::graphics_settings_from_environment()};
     auto& settings=preferences.graphics;
     std::uint32_t explicit_quality{};
+    if(const char* level=std::getenv("GAME_SOUND_VOLUME")){
+        char* end=nullptr;const auto volume=std::strtof(level,&end);
+        if(end!=level&&!*end&&std::isfinite(volume))preferences.sound_volume_percent=int(std::lround(std::clamp(volume,0.f,100.f)));
+    }
     std::ifstream file(config_path());
+    if(!file&&config_path()!=config_path(true)){file.clear();file.open(config_path(true));}
     for(std::string line;std::getline(file,line);){
         if(!line.empty() && line.back()=='\r') line.pop_back();
         const auto separator=line.find('=');
@@ -60,7 +69,14 @@ Preferences load_preferences(){
         int value{};
         const auto parsed=std::from_chars(first,last,value);
         if(parsed.ec!=std::errc{} || parsed.ptr!=last) continue;
+        if(key=="ui_scale_index")preferences.ui_scale_index=std::clamp(value,0,layout::UI_SCALE_COUNT-1);
+        if(key=="faded_hulls")preferences.faded_hulls=value==1;
+        if(key=="sound_volume_percent")preferences.sound_volume_percent=std::clamp(value,0,100);
+        if(key=="debug_frame")preferences.debug_frame_enabled=value==1;
+        if(key=="display_width")preferences.display_width=value>=640&&value<=16384?value:0;
+        if(key=="display_height")preferences.display_height=value>=480&&value<=16384?value:0;
         if(key=="show_fps")preferences.show_fps=value==1;
+        if(key=="autosave_minutes")preferences.autosave_minutes=std::clamp(value,0,60);
         if(key=="first_person_fov")preferences.first_person_fov=std::clamp(value,50,110);
         if(key=="path" && value>=0 && value<=2) settings.path=static_cast<GraphicsPath>(value);
         if(key=="aa" && value>=0 && value<=2) settings.aa=static_cast<GraphicsAA>(value);
@@ -125,6 +141,13 @@ bool save_preferences(const Preferences& preferences){
         const int quality=(settings.low_quality&bit)?1:(settings.medium_quality&bit)?2:3;
         file<<graphics_feature_keys[static_cast<unsigned>(feature)]<<"_quality="<<quality<<'\n';
     }
+    file<<"ui_scale_index="<<std::clamp(preferences.ui_scale_index,0,layout::UI_SCALE_COUNT-1)<<'\n'
+        <<"faded_hulls="<<preferences.faded_hulls<<'\n'
+        <<"sound_volume_percent="<<std::clamp(preferences.sound_volume_percent,0,100)<<'\n'
+        <<"debug_frame="<<preferences.debug_frame_enabled<<'\n'
+        <<"display_width="<<preferences.display_width<<'\n'
+        <<"display_height="<<preferences.display_height<<'\n';
+    file<<"autosave_minutes="<<std::clamp(preferences.autosave_minutes,0,60)<<'\n';
     file<<"show_fps="<<preferences.show_fps<<'\n';
     file<<"first_person_fov="<<std::clamp(preferences.first_person_fov,50,110)<<'\n';
     file<<"vertical_sync="<<settings.vertical_sync<<'\n';

@@ -45,7 +45,7 @@ inline const char* resource_name(ResourceKind kind){
 
 inline std::string habitat_instance_name(const PlacedHabitat& placed){
     std::ostringstream out;
-    out<<habitat_name(placed.kind)<<" / "<<habitat_size_name(placed.size)<<" / #"
+    out<<habitat_name(placed.kind)<<" / "<<habitat_size_name(placed.kind,placed.size)<<" / #"
        <<std::setfill('0')<<std::setw(3)<<std::max<std::uint32_t>(1,placed.instance_serial);
     return out.str();
 }
