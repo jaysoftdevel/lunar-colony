@@ -63,8 +63,8 @@ bool GameApp::lander_site_valid(Vec3 p) const {
         if(p.x-6<-half||p.x+14>half||p.z-7<-half||p.z+13>half) return false;
         return stash_ground_clear(p+Vec3{4,0,3},20);
     }
-    if(p.x-8<-half||p.x+8>half||p.z-6<-half||p.z+14.9f>half) return false;
-    return stash_ground_clear(p+Vec3{0,0,4.45f},20.9f);
+    for(float x:{-8.f,8.f})for(float z:{-6.f,14.9f}){const auto q=p+lander_rotate({x,0,z},lander_.quarter_turns);if(std::abs(q.x)>half||std::abs(q.z)>half)return false;}
+    return stash_ground_clear(p+lander_rotate({0,0,4.45f},lander_.quarter_turns),20.9f);
 }
 
 bool GameApp::stash_site_valid(Vec3 p) const {
@@ -265,6 +265,7 @@ bool GameApp::salvage_lander(){
     if(!lander_.active()||lander_.phase!=LanderPhase::Ready||!lander_.remaining.empty()) return false;
     if(lander_.salvage_seconds>=kLanderSalvageSeconds) return complete_lander_salvage();
     if(lander_.salvage_requested) return false;
+    for(std::size_t i=0;i<test_astronauts_.size();++i)if(astronaut_present(i)&&lunar_lander_crew_floor(lander_,test_astronauts_[i].position)>.02f){landing_message_="CLEAR THE LANDER AND RAMP FIRST";return false;}
     lander_.salvage_requested=true;
     landing_message_="SALVAGE QUEUED / WAITING FOR A BUILDER";
     return true;
@@ -286,7 +287,8 @@ void GameApp::render_stash(game::runtime::SceneRenderer& r){
     if(!lander_.has_depot()) return;
     const auto rectangle=[&](Vec3 center,float x,float z,game::runtime::Color color){
         constexpr float y=.045f;
-        const Vec3 a=center+Vec3{-x,y,-z},b=center+Vec3{x,y,-z},c=center+Vec3{x,y,z},d=center+Vec3{-x,y,z};
+        const auto at=[&](Vec3 v){return center+lander_rotate(v,lander_.quarter_turns);};
+        const Vec3 a=at({-x,y,-z}),b=at({x,y,-z}),c=at({x,y,z}),d=at({-x,y,z});
         r.draw_lines_3d({a,b,b,c,c,d,d,a},color,1.5f);
     };
     Vec3 marker=lander_.stash_center;
@@ -294,7 +296,14 @@ void GameApp::render_stash(game::runtime::SceneRenderer& r){
     if(lander_.awaiting_site||lander_.awaiting_stash){
         if(!pick_lander_placement_ground(marker)) return;
         if(lander_.awaiting_site){
-            rectangle(marker+Vec3{0,0,2.6f},6.1f,8.7f,lander_site_valid(marker)?game::runtime::Color{.2f,.95f,.65f,1}:game::runtime::Color{1,.2f,.15f,1});
+            const auto at=[&](Vec3 v){return marker+lander_rotate(v,lander_.quarter_turns);};
+            const auto color=lander_site_valid(marker)?game::runtime::Color{.2f,.95f,.65f,1}:game::runtime::Color{1,.2f,.15f,1};
+            rectangle(marker,5.35f,5.35f,color);
+            rectangle(at({0,0,7.1f}),2.12f,3.5f,color);
+            rectangle(at({0,0,10.2f}),7.9f,4.7f,{color.r,color.g,color.b,.45f});
+            const game::runtime::Color ramp{1,.72f,.15f,1};
+            r.draw_lines_3d({at({0,.06f,4}),at({0,.06f,10.3f}),at({0,.06f,10.3f}),at({-1.25f,.06f,8.6f}),at({0,.06f,10.3f}),at({1.25f,.06f,8.6f})},ramp,3);
+            for(float z=5;z<10;z+=1)r.draw_lines_3d({at({-1.7f,.055f,z}),at({1.7f,.055f,z})},ramp,1.5f);
             return;
         }
         valid=stash_site_valid(marker);

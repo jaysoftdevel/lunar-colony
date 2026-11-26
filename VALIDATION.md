@@ -1,3 +1,51 @@
+# Version 0.93.0 — validation
+
+- C++20 syntax checks with generated CMake compiler flags passed: playfield_view.cpp, interior_units.cpp, supply_simulation.cpp, ui_regression.cpp and navigation_regression.cpp.
+- Compiled and executed a standalone check linked to the real interior unit profiles and resource bundle implementation. Verified all three oxygen output rates, unchanged electrical demand, water ratio, recipe labels and zero oxygen capacity for non-generator units.
+- Added a renderer-recorder regression for empty terrain, completed and unfinished habitats, outdoor structures, corridors, active building placement and HUD. Updated the real network oxygen regression and the sized-generator regression for the new rated outputs and mass conservation. These linked gameplay regressions have not been executed in this turn.
+- Full native game build/link, desktop pointer display and Windows execution were not tested. Cursor hit testing intentionally follows current footprint selection rather than visible roof geometry. No engine or save schema changes.
+
+---
+
+# Version 0.92.0 — validation
+
+- Portable Linux build-driver regression: passed (single configure/build, explicit ON/OFF/ON toggles, launcher selection, stale binary cleanup, invalid arguments, engine identity/version guards).
+- Windows build-driver mock suite: 14/14 passed, including compile-time option, one build/CTest pass, stale executable cleanup, paths, cached engine and wrong version/identity rejection.
+- Real Linux headless CMake/Ninja configuration with external JSD 0.5.22: both feature modes generate the same optimized Release `game` link target, no `game-debug` link target. All game translation units have matching feature definitions. Debug-frame source included only in ON. CTest inventory 93 with ON, 59 with OFF; debug-only tests registered only in ON. Both portable CTest tests passed.
+- Actual C++ syntax checks using generated compiler flags: main.cpp in both modes, debug_frame.cpp in ON. Real CMake staging adds and removes the known debug template on mode transitions. Game/engine sync check passed.
+- Native full link/build was not completed: an attempted targeted build reached SDL dependency compilation before the execution time limit. Full gameplay regression execution, Windows native compilation and launch were not performed. No engine or save format changes.
+
+---
+
+# Lunar Base 0.91.0
+
+Baseline 0.90.0; JSD 0.5.22 unchanged.
+
+- All astronaut roles have 0.56 kg oxygen tanks, up from 0.28 kg. Nominal vacuum endurance is 16 in-game hours instead of 8. Existing saves retain actual oxygen mass, not the old percentage; refill uses finite available oxygen. AI resupply cutoff remains the same fraction of capacity.
+- All eleven installable interior-unit types automatically face the interior with their backs parallel to the local hull tangent. Manual N/M angle overrides are removed for interior units only. Freestanding furniture and racks do not acquire mounting brackets. The existing fixed structural equipment remains as authored. Older saved units are rotated and, where required, moved to nearby legal bays. Units with no valid aligned location are retained unchanged rather than discarded or forced into obstructions.
+- Standard/small solar peak generation is 20/10 kW instead of 16/8 kW. Tracking, darkness, electrical dispatch and inspector share the rating; battery capacities, battery charge limits and solar local buffer capacities remain unchanged.
+- Schema 57 retains the schema 56 binary field layout but signals the larger supported oxygen amount and the interior alignment migration. New saves are not readable in earlier versions.
+
+Validation: seven affected game/test translation units passed C++20 syntax checks. A compiled standalone check passed for four crew roles, eleven unit alignment flags, 360 hull normal samples, oxygen endurance, solar ratings, day/night irradiance and unchanged storage capacities. Added full-game regression assertions for actual solar generation at both sizes and night shutdown, plus tank size and alignment coverage. Full native application build, linked gameplay regressions, save migration replay and Windows runtime testing were not performed. Existing synthetic legacy save tests were not rerun.
+
+---
+
+# Version 0.90.0 — validation
+
+Targeted GCC C++20 syntax checks passed for all 12 changed C++ translation units, including save migration and UI regression source. Standalone tests passed for all ten original curved elliptical hull profiles and 25 deployment phase/placement interlock cases. The linked UI regression `game_early_build_placement` was added but not executed. Full native build, interactive appearance, Windows execution and save migration replay remain unverified. Engine and schema 56 unchanged.
+
+---
+
+# Version 0.89.0 — validation
+
+- Reconstructed the exact 0.88.1 baseline by applying the supplied update chain to 0.84.0.
+- Changed C++ translation units passed targeted GCC C++20 syntax checks against the supplied JSD 0.5.22 headers, including the new UI regression source. Headless CMake configuration succeeded with SDL X11/Wayland disabled.
+- Compiled standalone tests against the actual lander and first-person controller sources: all four orientations passed bidirectional ramp/deck sampling, side blocking, rover reservation and parking endpoints. All eight actual controller walking/sprinting cycles (four orientations, two speeds) passed ascent and descent.
+- Compiled standalone habitat-builder test: all ten profiles passed curved roof height/radial sampling and rectangular-versus-oval ground shape checks.
+- Added game_rotatable_lander_fpv UI regression for N/M input, ramp traversal, rotated save roundtrip, exit click and ground-plane reticle; existing habitat profile regression updated. These linked game regressions were not executed. Full native compilation/link, interactive rendering, migrated-save replay and Windows testing remain outstanding. The original reference URL could not be opened.
+
+---
+
 # Version 0.88.1 — validation
 
 Native Linux Debug incremental compile/link using external JSD 0.5.22, headless build configuration. All eight selected CTest checks passed: corridor_airtight_pressure_shells, corridor_building_pressure_collars, game_airlock_built_access_supports, game_no_hull_lower_boundaries, game_airlock_transfer_clearance, game_corridor_airlock_fpv_recovery, game_structural_load_frames, game_saved_carriers_corridor. The pressure regression now checks connector frame contact and support geometry in six synthetic rotated/reversed/raised configurations. It also checks that the center lane stays clear and that the triangles are nondegenerate. The existing CMake cache retained an older compiled version string; normal configuration reads the new VERSION file. Exact screenshot save, interactive appearance, full intersection audit, Linux Release and native Windows are not verified. Engine and schema unchanged.

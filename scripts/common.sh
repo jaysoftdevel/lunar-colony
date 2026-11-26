@@ -4,11 +4,9 @@ set -euo pipefail
 GAME_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GAME_BUILD_DIR="$GAME_ROOT/build/linux"
 GAME_BIN="$GAME_BUILD_DIR/bin/game"
-GAME_DEBUG_BIN="$GAME_BUILD_DIR/bin/game-debug"
 
 normalize_config() {
     case "${1:-Release}" in
-        Debug|debug) echo Debug ;;
         Release|release) echo Release ;;
         RelWithDebInfo|relwithdebinfo|reldeb) echo RelWithDebInfo ;;
         MinSizeRel|minsizerel|minsize) echo MinSizeRel ;;
@@ -16,20 +14,12 @@ normalize_config() {
     esac
 }
 
-build_variants() {
-    if [[ "$1" == Debug ]]; then
-        printf '%s\n' Debug Release
-    else
-        printf '%s\n' "$1" Debug
-    fi
-}
-
 configure_variant() {
     local engine_flags=()
     if [[ -n "${JSD_GAME_ENGINE_DIR:-}" ]]; then engine_flags=("-DJSD_GAME_ENGINE_DIR=$JSD_GAME_ENGINE_DIR"); fi
     cmake -S "$GAME_ROOT" -B "$GAME_BUILD_DIR/$1" "${engine_flags[@]}" \
         -DCMAKE_BUILD_TYPE="$1" -DGAME_BIN_DIR="$GAME_BUILD_DIR/bin" \
-        -DGAME_BUILD_NAVIGATION_TESTS="$2"
+        -DGAME_BUILD_NAVIGATION_TESTS="$2" -DGAME_DEBUG_FEATURES="$3"
 }
 
 cpu_jobs() {

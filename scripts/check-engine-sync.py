@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import sys
 
-GAME = '0.85.0'
+GAME = '0.92.0'
 ENGINE = '0.5.22'
 
 def check(game: Path, engine: Path):

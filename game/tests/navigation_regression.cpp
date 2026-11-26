@@ -1842,7 +1842,7 @@ struct NavigationRegression {
         require(app.placed_habitats_[0].supply.volume_m3>0 && mass()==0,"zero-time air metadata refresh advanced the simulation");
         app.update_supply_simulation(0.1f);
         const auto& gen=app.placed_habitats_[0].supply;
-        require(gen.oxygen_produced_kg_per_day>17.99 && gen.oxygen_produced_kg_per_day<=18.00001,"generator does not report doubled oxygen output");
+        require(gen.oxygen_produced_kg_per_day>35.99 && gen.oxygen_produced_kg_per_day<=36.00001,"generator does not report doubled oxygen output");
         require(std::abs(gen.water_processed_litres_per_day-gen.oxygen_produced_kg_per_day*kWaterPerOxygen)<1e-9,"water processing and oxygen rate disagree");
         require(std::abs(gen.hydrogen_produced_kg_per_day-gen.oxygen_produced_kg_per_day*kHydrogenPerOxygen)<1e-9,"electrolysis hydrogen/oxygen mass ratio is not 1:8");
         require(gen.hydrogen_kg>0 && gen.hydrogen_kg<=kOxygenGeneratorHydrogenBufferKg,"oxygen generator did not retain hydrogen by-product in its local buffer");
@@ -1862,11 +1862,11 @@ struct NavigationRegression {
         clock.hour=12;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=s.volume_m3*kOxygenKgPerM3;});app.update_supply_simulation(1);
         require(gen.oxygen_produced_kg_per_day==0 && gen.water_processed_litres_per_day==0 && app.placed_resources_[1].supply.water_litres==100,"Intact full-pressure rooms consumed leak-replacement oxygen/water");
         clock.crew_current=6;app.status_.restore(clock);app.update_supply_simulation(1);
-        require(gen.oxygen_produced_kg_per_day>0 && gen.oxygen_produced_kg_per_day<18 && gen.water_processed_litres_per_day>0 && app.placed_resources_[1].supply.water_litres<100,"Life support failed to replace actual crew oxygen consumption");
+        require(gen.oxygen_produced_kg_per_day>0 && gen.oxygen_produced_kg_per_day<36 && gen.water_processed_litres_per_day>0 && app.placed_resources_[1].supply.water_litres<100,"Life support failed to replace actual crew oxygen consumption");
         clock.hour=0;clock.crew_current=6;app.status_.restore(clock);app.update_supply_simulation(1);
         require(app.placed_habitats_[2].supply.air_change_percentage_points_per_day<0,"depleting isolated interior did not report falling air");
         clock.hour=12;clock.crew_current=0;app.status_.restore(clock);each([](SupplyState& s){s.oxygen_kg=0;});app.placed_resources_[1].supply.water_litres=0.01;app.update_supply_simulation(10);
-        require(std::abs(mass()*kWaterPerOxygen-0.01)<1e-9 && app.placed_resources_[1].supply.water_litres>=0 && gen.oxygen_produced_kg_per_day<18,"nearly empty tank was overdrawn or reported nominal output");
+        require(std::abs(mass()*kWaterPerOxygen-0.01)<1e-9 && app.placed_resources_[1].supply.water_litres>=0 && gen.oxygen_produced_kg_per_day<36,"nearly empty tank was overdrawn or reported nominal output");
         const double saved_mass=mass();app.update_supply_simulation(0);
         require(mass()==saved_mass && gen.oxygen_produced_kg_per_day==0 && gen.oxygen_net_kg_per_day==0,"zero-time refresh consumed water or retained a stale rate");
         std::cout<<"Water electrolysis, measured output/intake and air-change rates, room/storage distribution, depletion, isolation and input/capacity limits passed\n";
@@ -1950,6 +1950,17 @@ struct NavigationRegression {
         auto clock=app.status_.state();clock.hour=0;clock.crew_current=0;app.status_.restore(clock);
         auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
         auto habitat=[](HabitatKind kind,Vec3 p){PlacedHabitat h;h.kind=kind;h.position=p;h.construction.step=kConstructionSteps;return h;};
+        // Measure actual energy generated independently of the battery charge-rate cap.
+        for(auto size:{ResourceSizeTier::Standard,ResourceSizeTier::Small}){
+            GameApp pv(engine);pv.playfield_.rebuild(128);auto day=clock;day.hour=12;pv.status_.restore(day);
+            auto panel=resource(ResourceKind::SolarPanel,{0,0,0});panel.size=size;panel.solar_tracking_enabled=true;
+            pv.placed_resources_={panel};pv.update_supply_simulation(1);
+            const double peak=size==ResourceSizeTier::Small?10.0:20.0;
+            require(std::abs(pv.placed_resources_[0].supply.energy_kwh-peak*noon.irradiance_fraction/kGameHourSeconds)<1e-6,"Solar generation did not increase by 25 percent");
+            day.hour=0;pv.status_.restore(day);pv.placed_resources_[0].supply.energy_kwh=0;pv.update_supply_simulation(1);
+            require(pv.placed_resources_[0].supply.energy_kwh==0,"Solar generates electricity at night");
+        }
+
         app.placed_habitats_={habitat(HabitatKind::OxygenGeneratorDome,{-10,0,0})};
         app.placed_habitats_[0].supply.hydrogen_kg=1.0;
         app.placed_habitats_[0].oxygen_unit_fitted=true; // Fuel-cell test without electrolyzer load.
@@ -2920,8 +2931,8 @@ struct NavigationRegression {
         GameApp solar(engine);clock.hour=12;solar.status_.restore(clock);PlacedResource panel;panel.kind=ResourceKind::SolarPanel;panel.construction.step=kConstructionSteps;PlacedResource battery=panel;battery.kind=ResourceKind::PowerStorage;solar.placed_resources_={panel,battery};
         UtilityConnection wire;wire.endpoint_a.kind=wire.endpoint_b.kind=UtilityEndpointKind::Resource;wire.endpoint_a.index=0;wire.endpoint_b.index=1;wire.path={{0,0,0},{5,0,0}};wire.construction.step=wire.construction.total_steps;solar.utility_network_.mutable_connections().push_back(wire);
         solar.update_supply_simulation(1);require(std::abs(solar.placed_resources_[1].supply.energy_kwh-9.5/kGameHourSeconds)<1e-6,"standard solar failed increased output/charge cap");
-        solar.placed_resources_[0].size=ResourceSizeTier::Small;solar.placed_resources_[1].supply.energy_kwh=0;solar.update_supply_simulation(1);require(std::abs(solar.placed_resources_[1].supply.energy_kwh-7.6/kGameHourSeconds)<1e-6,"small solar failed doubled output");
-        std::cout<<"All indoor types fill via mixed pipes/corridors and external manifolds; blueprint completion, solar doubling and ordered geometry streaming passed\n";
+        solar.placed_resources_[0].size=ResourceSizeTier::Small;solar.placed_resources_[1].supply.energy_kwh=0;solar.update_supply_simulation(1);require(std::abs(solar.placed_resources_[1].supply.energy_kwh-9.5/kGameHourSeconds)<1e-6,"small solar failed increased output/charge cap");
+        std::cout<<"All indoor types fill via mixed pipes/corridors and external manifolds; blueprint completion, increased solar output and ordered geometry streaming passed\n";
     }
     static void supply(){
         game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(192);app.builder_robots_.resize(1);app.builder_robots_[0].position={-80,0,80};

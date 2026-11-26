@@ -2,6 +2,7 @@
 # Shared argument handling for build.sh and configure.sh.
 parse_build_arguments() {
     CONFIG=Release
+    DEBUG_FEATURES=OFF
     TESTS="${GAME_BUILD_TESTS:-OFF}"
     build_flags=()
     local selected_engine="" argument
@@ -9,6 +10,8 @@ parse_build_arguments() {
         argument="$1"
         case "$argument" in
             --tests) TESTS=ON ;;
+            --debug) DEBUG_FEATURES=ON ;;
+            Debug|debug) echo "Use --debug to include debug features in the normal build." >&2; return 2 ;;
             --clean) build_flags=(--clean-first) ;;
             --engine)
                 shift
@@ -19,12 +22,12 @@ parse_build_arguments() {
                 [[ -z "$selected_engine" ]] || { echo 'Supply one engine directory.' >&2; return 2; }
                 selected_engine="${argument#--engine=}"
                 [[ -n "$selected_engine" ]] || { echo '--engine requires a directory.' >&2; return 2; } ;;
-            Release|release|Debug|debug|RelWithDebInfo|relwithdebinfo|reldeb|MinSizeRel|minsizerel|minsize)
+            Release|release|RelWithDebInfo|relwithdebinfo|reldeb|MinSizeRel|minsizerel|minsize)
                 CONFIG="$(normalize_config "$argument")" ;;
             -h|--help)
-                echo "Usage: $0 /path/to/3d-engine [Release|Debug] [--tests] [--clean]"
+                echo "Usage: $0 /path/to/3d-engine [Release|RelWithDebInfo|MinSizeRel] [--debug] [--tests] [--clean]"
                 echo 'The engine can also be supplied with --engine PATH or JSD_GAME_ENGINE_DIR.'
-                echo 'Later builds reuse the engine path cached by CMake.'
+                echo 'Later builds reuse the engine path cached by CMake. --debug enables gameplay tools, not a separate compiler configuration.'
                 exit 0 ;;
             -*) echo "Unknown option: $argument" >&2; return 2 ;;
             *)

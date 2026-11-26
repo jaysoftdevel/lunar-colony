@@ -114,6 +114,10 @@ struct HabitatMesh {
     std::vector<game::runtime::Vec3> overhead_services,overhead_lamps; // Roof-mounted; hidden in cutaway.
     game::runtime::Vec3 dome_radii{}; // X radius, roof rise, Z radius.
     float dome_spring_y{};
+    float radial_squared(float x,float z,float inset=0) const {
+        const float u=x/std::max(.01f,dome_radii.x-inset),v=z/std::max(.01f,dome_radii.z-inset);
+        return u*u+v*v;
+    }
     std::vector<game::runtime::Vec3> shell;
     std::vector<game::runtime::Vec3> foundation;
     std::vector<game::runtime::Vec3> interior;

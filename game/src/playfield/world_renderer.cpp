@@ -822,7 +822,7 @@ void GameApp::render_robot_blockers(SceneRenderer& r){
         drawn.push_back(sequence);
         if(sequence==kLanderBlockerSequence&&lander_.active()){
             outline(lander_.site,0,10.7f,10.7f);
-            outline(lander_.site+Vec3{0,0,7.15f},0,4.24f,7.1f);
+            outline(lander_world(lander_,{0,0,7.15f}),90.f*lander_.quarter_turns,4.24f,7.1f);
             continue;
         }
         for(const auto& h:placed_habitats_) if(h.placement_sequence==sequence){

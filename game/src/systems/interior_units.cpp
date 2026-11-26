@@ -39,7 +39,7 @@ const HabitatMesh& GameApp::assemble_interior_units(std::size_t index,const Habi
             if(layer==5&&!unit.enabled)append(cache.mesh.service_metal,*src[layer]);
             else append(*dst[layer],*src[layer]);
         }
-        if(interior_unit_wall_aligned(unit.kind)&&source.dome_radii.x>0){
+        if(interior_unit_wall_anchored(unit.kind)&&source.dome_radii.x>0){
             const auto r=source.dome_radii,size=interior_unit_profile(unit).size;
             const auto back=world_math::rotate_y(runtime::Vec3{0,0,1},unit.rotation_degrees);
             habitats::Builder bracket;
@@ -47,8 +47,8 @@ const HabitatMesh& GameApp::assemble_interior_units(std::size_t index,const Habi
                 const auto start=unit.position+world_math::rotate_y(runtime::Vec3{side*size.x,height*size.y,size.z*.5f},unit.rotation_degrees);
                 const float a=back.x*back.x/(r.x*r.x)+back.z*back.z/(r.z*r.z),b=2*(start.x*back.x/(r.x*r.x)+start.z*back.z/(r.z*r.z));
                 const float c=start.x*start.x/(r.x*r.x)+start.z*start.z/(r.z*r.z)-1,disc=b*b-4*a*c;
-                if(r.y!=0&&(disc<0||a<1e-7f))continue;
-                const float reach=r.y==0?(std::abs(back.x)>.5f?(std::copysign(r.x,back.x)-start.x)/back.x:(std::copysign(r.z,back.z)-start.z)/back.z)-.045f:(-b+std::sqrt(disc))/(2*a)-.045f;
+                if(disc<0||a<1e-7f)continue;
+                const float reach=(-b+std::sqrt(disc))/(2*a)-.045f;
                 if(reach>.03f&&reach<.85f)bracket.cylinder_between(cache.mesh.service_metal,start,start+back*reach,.025f,8,true,false);
             }
         }
@@ -64,6 +64,8 @@ void GameApp::focus_interior(std::size_t index){
                      host.position+runtime::Vec3{0,model.walkable_floor_y+.8f,0}});
 }
 bool GameApp::place_interior_unit(std::size_t index,InteriorUnit unit,std::string& error){
+    // Enforce the same orientation for programmatic installation as for the preview.
+    if(index<placed_habitats_.size())unit.rotation_degrees=interior_unit_wall_yaw(habitat_models_.mesh(placed_habitats_[index]),unit.position);
     if(!interior_unit_position_clear(index,unit,error))return false;
     auto& host=placed_habitats_[index];const auto& profile=interior_unit_profile(unit);
     if(!resources_.can_consume(profile.cost)){error="NOT ENOUGH CONSTRUCTION MATERIAL";return false;}
@@ -103,24 +105,40 @@ std::string GameApp::interior_unit_status(std::size_t host_index,const InteriorU
 }
 bool GameApp::find_interior_unit_bay(std::size_t index,InteriorUnit& unit) const {
     const auto& model=habitat_models_.mesh(placed_habitats_[index]);std::string error;
-    for(float ratio:{.58f,.565f,.56f,.55f,.68f,.76f,.48f,.84f})for(int sector=0;sector<32;++sector){
-        const float angle=6.2831853f*sector/32;
-        const float x=std::sin(angle),z=std::cos(angle),scale=model.dome_radii.y==0?1.f/std::max(std::abs(x),std::abs(z)):1.f;
-        unit.position={model.dome_radii.x*ratio*x*scale,model.walkable_floor_y,model.dome_radii.z*ratio*z*scale};
-        if(interior_unit_wall_aligned(unit.kind))unit.rotation_degrees=interior_unit_wall_yaw(model,unit.position);
+    for(float ratio:{.58f,.565f,.56f,.55f,.68f,.76f,.48f,.84f,.40f,.44f,.50f,.62f,.64f,.72f,.80f})for(int sector=0;sector<64;++sector){
+        const float angle=6.2831853f*sector/64;
+        unit.position={model.dome_radii.x*ratio*std::sin(angle),model.walkable_floor_y,model.dome_radii.z*ratio*std::cos(angle)};
+        unit.rotation_degrees=interior_unit_wall_yaw(model,unit.position);
         if(interior_unit_position_clear(index,unit,error))return true;
     }return false;
 }
 void GameApp::align_saved_interior_units(){
     const auto prior_mode=first_person_mode_;first_person_mode_=FirstPersonMode::Off;
     for(std::size_t i=0;i<placed_habitats_.size();++i){auto& h=placed_habitats_[i];if(h.units.empty())continue;
-        auto original=std::move(h.units);h.units.clear();
-        for(auto unit:original){const auto saved=unit;const auto& model=habitat_models_.mesh(h);
+        // Keep all other units reserved while rotating or relocating one. This
+        // prevents a repaired unit from occupying a later legacy unit's space.
+        for(std::size_t j=0;j<h.units.size();++j){
+            const auto saved=h.units[j];auto unit=saved;const auto& model=habitat_models_.mesh(h);
             unit.position.y=model.walkable_floor_y;
-            if(interior_unit_wall_aligned(unit.kind))unit.rotation_degrees=interior_unit_wall_yaw(model,unit.position);
+            unit.rotation_degrees=interior_unit_wall_yaw(model,unit.position);
+            h.units.erase(h.units.begin()+static_cast<std::ptrdiff_t>(j));
             std::string error;
-            if(!interior_unit_position_clear(i,unit,error)&&!find_interior_unit_bay(i,unit))unit=saved;
-            h.units.push_back(unit); // Never discard an installed unit or its inventory/batch.
+            if(!interior_unit_position_clear(i,unit,error)){
+                // Prefer a nearby valid bay over a large move across the room.
+                bool found=false;
+                for(float radius:{.25f,.5f,.75f,1.f,1.5f,2.f}){
+                    for(int sector=0;sector<32&&!found;++sector){
+                        const float angle=6.2831853f*sector/32;
+                        unit=saved;unit.position.y=model.walkable_floor_y;
+                        unit.position.x+=radius*std::sin(angle);unit.position.z+=radius*std::cos(angle);
+                        unit.rotation_degrees=interior_unit_wall_yaw(model,unit.position);
+                        found=interior_unit_position_clear(i,unit,error);
+                    }
+                    if(found)break;
+                }
+                if(!found&&!find_interior_unit_bay(i,unit))unit=saved;
+            }
+            h.units.insert(h.units.begin()+static_cast<std::ptrdiff_t>(j),unit);
         }
     }
     first_person_mode_=prior_mode;

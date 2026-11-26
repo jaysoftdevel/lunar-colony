@@ -12,7 +12,7 @@ namespace game {
 
 inline constexpr float kAstronautSeparation=0.90f;
 inline constexpr float kIndoorAstronautSeparation=.70f;
-inline constexpr double kSuitOxygenCapacityKg=.28; // Eight in-game hours at the nominal breathing rate.
+inline constexpr double kSuitOxygenCapacityKg=.56; // Sixteen in-game hours at the nominal breathing rate.
 inline constexpr double kCrewFoodKgPerDay=.85;
 inline constexpr float kCrewFullAir=99.95f;
 inline constexpr float kCrewBreathableAir=95.f;

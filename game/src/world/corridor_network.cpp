@@ -571,11 +571,9 @@ void CorridorNetwork::synchronize_structure_interfaces(const std::vector<PlacedH
                 ep->door.entrance_index=-1;
             }
             const auto old_position=ep->door.position;
-            const float run=std::max(DOCK_RUN,distance_xz(ep->position,old_position));
-            const bool projected=mesh.dome_radii.x>0&&reproject_habitat_door(ep->door,h,mesh);
+            if(mesh.dome_radii.x>0)reproject_habitat_door(ep->door,h,mesh);
             auto shift=ep->door.position-old_position;shift.y=0;
-            if(projected&&mesh.dome_radii.y==0){const float base=ep->position.y;ep->tangent=ep->door.normal;ep->position=ep->door.position+ep->tangent*run;ep->position.y=base;}
-            else ep->position=ep->position+shift;
+            ep->position=ep->position+shift;
             if(!c.path.empty()){if(ep==&c.endpoint_a)c.path.front()=ep->position;else c.path.back()=ep->position;}
             ep->door.position.y=h.position.y+mesh.walkable_floor_y;
             ep->door.wall_position.y=ep->door.position.y;

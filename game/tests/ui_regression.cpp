@@ -1255,7 +1255,7 @@ struct UiRegression {
             require(interior_unit_allowed(HabitatKind::CantineDome,kind)&&!interior_unit_allowed(HabitatKind::Factory,kind),"Canteen catalog compatibility");
             InteriorUnit unit;unit.kind=kind;bool fit=false;std::string reason;
             for(float z=-3;z<=3&&!fit;z+=.25f)for(float x=-3;x<=3&&!fit;x+=.25f){
-                unit.position={x,floor,z};if(app.interior_unit_position_clear(0,unit,reason))fit=true;
+                unit.position={x,floor,z};unit.rotation_degrees=interior_unit_wall_yaw(app.habitat_models_.mesh(room),unit.position);if(app.interior_unit_position_clear(0,unit,reason))fit=true;
             }
             require(fit,"Canteen unit has no valid placement: "+std::string(interior_unit_profile(kind).name)+" / "+reason);
             const auto stock=app.resources_.amount(MaterialResource::Iron),cost=interior_unit_profile(kind).cost.iron;
@@ -1355,7 +1355,7 @@ struct UiRegression {
         const auto empty_vertices=app.habitat_runtime_mesh(0).interior.size();
         const float floor=app.habitat_models_.mesh(hall).walkable_floor_y;InteriorUnit unit;unit.kind=InteriorUnitKind::PlasticFabricator;unit.position.y=floor;
         std::string reason;bool found=false;
-        for(float x=-4;x<=4&&!found;x+=1)for(float z:{-2.f,2.f}){unit.position={x,floor,z};if(app.interior_unit_position_clear(0,unit,reason)){found=true;break;}}
+        for(float x=-4;x<=4&&!found;x+=1)for(float z:{-2.f,2.f}){unit.position={x,floor,z};unit.rotation_degrees=interior_unit_wall_yaw(app.habitat_models_.mesh(hall),unit.position);if(app.interior_unit_position_clear(0,unit,reason)){found=true;break;}}
         require(found,"No usable factory unit position: "+reason);
         require(app.place_interior_unit(0,unit,reason),"Cannot install factory unit: "+reason);
         require(app.placed_habitats_[0].units.size()==1&&app.resources_.amount(MaterialResource::Iron)==rich.iron-10,"Unit installation did not consume its cost");
@@ -1460,6 +1460,70 @@ struct UiRegression {
 #endif
         fs::remove_all(folder);
         std::cout<<"Workspace-root save discovery and Unicode save/preferences roundtrip passed\n";
+    }
+
+    static void lander_boarding(){
+        using namespace runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);app.on_resize(1920,1080);
+        app.screen_=GameApp::Screen::Playfield;app.game_session_active_=true;app.active_game_phase_=GameApp::GamePhase::RobotPreparation;
+        app.lander_.phase=LanderPhase::Approach;app.lander_.awaiting_site=true;
+        InputState key;key.key_m_pressed=true;app.update_simulation(0,key);require(app.lander_.quarter_turns==1,"Landing M rotation failed");
+        key={};key.key_n_pressed=true;app.update_simulation(0,key);require(app.lander_.quarter_turns==0,"Landing N rotation failed");
+        app.lander_.awaiting_site=false;app.lander_.phase=LanderPhase::Ready;app.lander_.site={8,0,-7};
+        for(int turn=0;turn<4;++turn){
+            app.lander_.quarter_turns=static_cast<std::uint8_t>(turn);
+            const auto sample=[&](float z){auto p=lander_world(app.lander_,{0,0,z});p.y=app.first_person_floor_height(p);return p;};
+            auto prev=sample(11.f);for(float z=10.95f;z>=-2.f;z-=.05f){const auto p=sample(z);
+                require(app.first_person_move_allowed(prev,p)&&app.first_person_move_allowed(p,prev),"Lander ramp/hold blocked in rotation "+std::to_string(turn));prev=p;}
+            require(std::abs(sample(0).y-kLanderDeckY)<.001f,"Lander cargo bay lost deck");
+            require(!app.first_person_move_allowed(lander_world(app.lander_,{6,0,0}),lander_world(app.lander_,{0,0,0})),"Lander side can be walked through");
+            require(lunar_lander_segment_blocked(app.lander_,sample(8),sample(8),.35f),"Rover reservation lost ramp");
+            const auto bay=lander_local(app.lander_,lunar_lander_robot_bay(app.lander_,0));require(std::abs(bay.x-6.65f)<.001f&&std::abs(bay.z-6.7f)<.001f,"Rotated robot bay not aligned");
+        }
+        app.lander_.quarter_turns=3;app.builder_robots_.resize(2);
+        app.lander_.builders=1;app.lander_.carriers=1;app.lander_.boxed=true;app.lander_.stash_center={30,0,30};
+        app.builder_robots_[0]=app.lander_robot(0);app.builder_robots_[1]=app.lander_robot(1);
+        std::string error;require(app.save_game_to_name("rotated-lander-roundtrip",error),error);
+        const auto path=std::filesystem::path(app.save_game_directory())/"rotated-lander-roundtrip.gmsave";GameApp restored(host);
+        const bool loaded=restored.load_game_from_file(path.string(),error);std::filesystem::remove(path);require(loaded,error);
+        require(restored.lander_.quarter_turns==3,"Saved lander orientation was lost");
+        app.astronaut_views_[0].present=true;app.selected_astronaut_=app.controlled_astronaut_=0;app.test_astronauts_[0].position=lander_world(app.lander_,{0,kLanderDeckY,0});app.first_person_.spawn(app.test_astronauts_[0].position);
+        app.first_person_mode_=GameApp::FirstPersonMode::Active;app.first_person_cursor_=true;
+        const auto panel=app.astronaut_status_rect();const float scale=std::min(1.f,panel.h/252.f);
+        InputState click;click.left_pressed=true;click.mouse_x=int((panel.x+panel.w*.75f)*app.ui_scale_);click.mouse_y=int((panel.y+234*scale)*app.ui_scale_);
+        app.update_simulation(0,click);require(app.first_person_mode_==GameApp::FirstPersonMode::Off,"EXIT FPV click did not exit");
+        struct CrosshairCapture:Recorder {std::vector<Vec3> marks;void draw_lines_3d(const std::vector<Vec3>& v,Color c,float) override{if(c.r==.18f&&c.g==1.f&&c.b==.48f)marks=v;}} capture;
+        app.clear_world_selection();app.selected_astronaut_=-1;app.camera_.reset(128);app.input_={};app.input_.mouse_x=960;app.input_.mouse_y=540;
+        app.render_playfield_crosshair(capture);require(capture.marks.size()>=32,"Ground reticle not drawn");
+        for(const auto p:capture.marks)require(std::abs(p.y-.045f)<.001f,"Reticle is not on the ground plane");
+        std::cout<<"Four lander ramp orientations, bidirectional traversal, solid side walls, rover clearance, save orientation, FPV exit click and ground reticle passed\n";
+    }
+
+    static void structure_hover_cursor(){
+        using namespace runtime;
+        GameHost host;GameApp app(host);app.playfield_.rebuild(128);app.camera_.reset(128);
+        app.on_resize(1920,1080);app.screen_=GameApp::Screen::Playfield;
+        app.input_={};app.input_.mouse_x=960;app.input_.mouse_y=540;
+        app.lander_={};app.clear_world_selection();app.build_catalog_.clear_selection();
+        struct Capture:Recorder {
+            unsigned strokes{};
+            void draw_lines_3d(const std::vector<Vec3>& v,Color c,float)override{
+                if(c.r==.18f&&c.g==1.f&&c.b==.48f)strokes+=unsigned(v.size());
+            }
+        } capture;
+        Vec3 ground{};require(app.camera_.intersect_playfield(960,540,1920,1080,128,ground),"Missing test ground");
+        const auto reticle=[&](bool expected){capture.strokes=0;app.render_playfield_crosshair(capture);
+            require((capture.strokes>0)==expected,"Incorrect ground reticle / native pointer branch");};
+        reticle(true);
+        PlacedHabitat h;h.kind=HabitatKind::CrewQuarters;h.position=ground;h.rotation_degrees=37;app.placed_habitats_={h};
+        reticle(false);h.construction.finish();app.placed_habitats_={h};reticle(false);
+        app.placed_habitats_.clear();reticle(true);
+        PlacedResource solar;solar.kind=ResourceKind::SolarPanel;solar.position=ground;app.placed_resources_={solar};reticle(false);
+        app.placed_resources_.clear();reticle(true);
+        CorridorConnection c;c.path={ground+Vec3{-3,0,0},ground+Vec3{3,0,0}};app.corridor_network_.restore_connections({c});reticle(false);
+        app.corridor_network_.clear();reticle(true);
+        app.placed_habitats_={h};app.build_catalog_.select(0);reticle(true);app.build_catalog_.clear_selection();reticle(false);
+        app.input_.mouse_y=0;reticle(false);
+        std::cout<<"Ground / habitat / resource / corridor / blueprint tool / HUD reticle switching passed\n";
     }
 
     static void gameplay_options(){
@@ -2194,7 +2258,8 @@ struct UiRegression {
         require(app.placed_habitats_.size()==buildings&&oxygen.units.size()==1&&app.resources_.amount(MaterialResource::Iron)==iron-interior_unit_profile(generator.kind).cost.iron,"Generator placement lost buildings or charged incorrect materials");
         struct Capture:Recorder {std::size_t metal{},shield{};bool faded{};void draw_mapped_lunar_surface(const std::vector<Vec3>& v,LunarMaterial m,Color c,const LunarSurfaceMapping&) override{if(m==LunarMaterial::Alloy)metal+=v.size();if(m==LunarMaterial::SolarShield)shield+=v.size();faded|=!v.empty()&&c.a>0&&c.a<.99f;}};
         for(int k=0;k<int(HabitatKind::Count);++k){const auto& m=app.habitat_models_.mesh(HabitatKind(k));
-            require(m.dome_radii.x>0&&m.dome_radii.z>0&&!m.hull_frames.empty()&&m.dome_radii.y==0,"Incorrect pressure-room profile");
+            require(m.dome_radii.x>0&&m.dome_radii.z>0&&!m.hull_frames.empty()&&m.dome_radii.y>0,"Incorrect pressure-room profile");
+            for(const auto p:m.shell)require(m.radial_squared(p.x,p.z)<=1.001f,"Rectangular pressure shell remains after restoration");
             Capture full,cut;app.first_person_mode_=GameApp::FirstPersonMode::Off;app.habitat_view_mode_=GameApp::HabitatViewMode::FullHull;app.render_habitat_mesh(full,m,{},0,false,true,false,kConstructionSteps,nullptr,false,HabitatKind(k));
             app.habitat_view_mode_=GameApp::HabitatViewMode::None;app.render_habitat_mesh(cut,m,{},0,false,true,false,kConstructionSteps,nullptr,false,HabitatKind(k));
             require(full.metal-cut.metal==m.hull_frames.size()+m.overhead_services.size()+m.overhead_lamps.size()&&cut.shield==0&&!cut.faded,"Hide hulls retains structural frames or ghost hulls kind="+std::to_string(k));
@@ -2205,7 +2270,9 @@ struct UiRegression {
             PlacedHabitat h;h.kind=HabitatKind::OxygenGeneratorDome;h.size=HabitatSizeTier::Small;h.construction.finish();h.oxygen_unit_fitted=true;app.placed_habitats_={h};
             const auto& m=app.habitat_models_.mesh(h);generator={};generator.kind=InteriorUnitKind::OxygenGenerator;generator.size=size;
             require(app.find_interior_unit_bay(0,generator),"A generator size cannot fit the restored Small dome");
-            const auto& profile=interior_unit_profile(generator);require(profile.size.x>previous,"Generator physical sizes do not increase");previous=profile.size.x;
+            const double expected_output=size==InteriorUnitSize::VerySmall?9.:size==InteriorUnitSize::Small?18.:36.;
+            require(oxygen_unit_capacity(generator)==expected_output,"Generator capacity was not doubled");
+            const auto& profile=interior_unit_profile(generator);require(profile.power_kw==6.f*oxygen_unit_factor(size),"Generator power changed instead of efficiency");require(profile.size.x>previous,"Generator physical sizes do not increase");previous=profile.size.x;
             require(std::abs(interior_unit_mesh(generator).height-profile.size.y)<.001f,"Rendered generator and collision dimensions disagree");
             require(std::abs(interior_unit_wall_yaw(m,generator.position)-generator.rotation_degrees)<.01f,"Generator is not hull aligned");
             const auto iron=app.resources_.amount(MaterialResource::Iron);require(app.place_interior_unit(0,generator,error),error);
@@ -2215,7 +2282,7 @@ struct UiRegression {
             require(roundtrip.save_game_to_name("generator-size-roundtrip",error),error);
             const auto path=std::filesystem::path(roundtrip.save_game_directory())/"generator-size-roundtrip.gmsave";GameApp loaded(host);
             require(loaded.load_game_from_file(path.string(),error),error);
-            const auto& saved=loaded.placed_habitats_[0];require(saved.size==HabitatSizeTier::Small&&saved.units.size()==1&&saved.units[0].size==size&&saved.units[0].water_litres==3.75&&saved.units[0].progress==.37&&saved.units[0].batches==12&&saved.units[0].batch_active,"Schema55 lost unit size or inventory");
+            const auto& saved=loaded.placed_habitats_[0];require(saved.size==HabitatSizeTier::Small&&saved.units.size()==1&&saved.units[0].size==size&&saved.units[0].water_litres==3.75&&saved.units[0].progress==.37&&saved.units[0].batches==12&&saved.units[0].batch_active,"Schema56 lost unit size or inventory");
             if(size==InteriorUnitSize::Medium){
                 std::ifstream input(path,std::ios::binary);std::string bytes{std::istreambuf_iterator<char>(input),{}};
                 std::string record;const auto pod=[&](auto value){record.append(reinterpret_cast<const char*>(&value),sizeof(value));};
@@ -2264,7 +2331,7 @@ struct UiRegression {
         Recorder ui;ui.set_2d(1);app.render_interior_unit_panel(ui,0,20,100,350);const auto button=ui.button("VERY SMALL");
         app.ui_input_.mouse_x=int(button.x+button.w*.5f);app.ui_input_.mouse_y=int(button.y+button.h*.5f);app.ui_input_.left_pressed=true;app.render_interior_unit_panel(ui,0,20,100,350);app.ui_input_={};
         require(app.interior_unit_size_==InteriorUnitSize::VerySmall&&app.placed_habitats_[0].size==HabitatSizeTier::Small,"Generator selector changed the dome instead of the machine");
-        std::cout<<"Restored dome sizing; three generator meshes/costs/output/water balances; schema55 roundtrip and schema53 medium migration; internal size UI passed\n";
+        std::cout<<"Restored dome sizing; three generator meshes/costs/output/water balances; schema56 roundtrip and schema53 medium migration; internal size UI passed\n";
     }
 
 
@@ -2480,6 +2547,29 @@ struct UiRegression {
         }
         std::cout<<"Crew parallel claims, unavailable-head bypass, independent builders, constructor self-haul, blocked-job exchange and physical-stock conservation passed\n";
     }
+    static void early_build_placement(){
+        using namespace runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);app.on_resize(1920,1080);
+        app.active_game_phase_=GameApp::GamePhase::RobotPreparation;app.screen_=GameApp::Screen::Playfield;
+        app.game_session_active_=true;app.game_speed_=GameApp::GameSpeed::Pause;
+        app.lander_.site={};app.lander_.phase=LanderPhase::OpeningRamp;app.lander_.boxed=true;
+        app.resources_.restore({500,500,500,500,500,500,500,500});
+        Recorder r;r.set_2d(app.ui_scale_);app.render_build_bar(r);
+        require(std::any_of(r.draws.begin(),r.draws.end(),[](const Draw& d){return d.type=='T'&&d.text=="HABITATS";}),"Build catalog hidden during opening ramp");
+        for(int i=0;i<int(app.build_catalog_.items().size());++i){const auto& item=app.build_catalog_.items()[i];if(item.kind==BuildObjectKind::Habitat&&item.habitat_kind==HabitatKind::AirLock){app.build_catalog_.select(i);break;}}
+        require(app.build_catalog_.selected()!=nullptr,"No building selected");
+        app.camera_.restore({40,45,45,{28,0,-24}});
+        InputState in;in.mouse_x=960;in.mouse_y=540;in.key_m_pressed=true;
+        app.update_simulation(0,in);require(std::abs(app.placement_rotation_degrees_-15.f)<.001f,"Placement rotation disabled during unloading");
+        app.lander_.phase=LanderPhase::DeployingRobots;
+        in.key_m_pressed=false;in.left_pressed=true;app.update_simulation(0,in);
+        r.set_2d(app.ui_scale_);app.render_habitat_placement(r);
+        require(app.placed_habitats_.size()==1&&!app.placed_habitats_[0].construction.complete(),"Unable to queue an unfinished building during unloading");
+        require(app.construction_queue().size()==1,"Unloading blueprint absent from construction queue");
+        for(int turn=0;turn<4;++turn){app.lander_.quarter_turns=turn;require(!app.lander_placement_clear(lander_world(app.lander_,{0,0,13}),0,3,3),"Blueprint can obstruct unloading apron");}
+        app.lander_.phase=LanderPhase::Landed;app.lander_.awaiting_stash=true;
+        Vec3 hit{};require(!app.pick_build_ground(hit),"Stash placement permits a simultaneous building commit");
+        std::cout<<"Unloading build catalog, rotation, queued construction and reserved deployment apron passed\n";
+    }
     static void rover_unfold(){
         using namespace runtime;GameHost host;GameApp app(host);app.playfield_.rebuild(128);
         app.lander_.phase=LanderPhase::Landed;app.lander_.builders=app.lander_.carriers=6;app.lander_.boxed=true;app.lander_.awaiting_site=false;
@@ -2612,10 +2702,13 @@ struct UiRegression {
             require(corridor_detail::docking_step_count(c.endpoint_a.door.position,c.path.front()+Vec3{0,geometry::kCorridorDeckY,0})>1,"Steep adapter has no stairs");
             app.corridor_network_.clear();
         }
-        std::cout<<"Ten rectangular habitats, storage/workshop, cutaway boundaries and continuous rendered stair/deck surfaces passed\n";
+        std::cout<<"Ten curved-roof habitats, storage/workshop, cutaway boundaries and continuous rendered stair/deck surfaces passed\n";
     }
     static void suit_refill(){
         using namespace runtime;GameHost host;
+        require(std::abs(kSuitOxygenCapacityKg-.56)<1e-9,"Suit capacity not doubled");
+        require(std::abs(kSuitOxygenCapacityKg/kCrewOxygenKgPerDay*24.-16.)<1e-9,"Suit endurance is not 16 game hours");
+        for(std::size_t i=0;i<kAstronautRoles.size();++i){AstronautTestActor actor;require(actor.suit_oxygen_kg==kSuitOxygenCapacityKg,"New astronaut has incorrect oxygen stock");}
         const auto run=[&](double level,bool power,bool outside,bool full){GameApp app(host);app.playfield_.rebuild(128);app.astronaut_views_[0].present=true;for(auto& a:app.test_astronauts_)a.health=0;
             PlacedHabitat room;room.kind=HabitatKind::CrewQuarters;room.construction.finish();room.power_enabled=power;app.placed_habitats_={room};
             app.update_supply_simulation(0);auto& air=app.placed_habitats_[0].supply;air.oxygen_kg=air.volume_m3*kOxygenKgPerM3*level;
@@ -2686,7 +2779,7 @@ struct UiRegression {
         // Reconstruct a schema51 header with deliberately conflicting display,
         // hull and tool values. Its body has the same colony schema as 52.
         std::size_t offset=12;const auto u32=[&](std::size_t i){std::uint32_t n;std::memcpy(&n,first.data()+i,4);return n;};
-        require(u32(8)==55,"New save schema was not advanced");offset+=4+u32(offset);offset+=4+u32(offset);offset+=4;
+        require(u32(8)==57,"New save schema was not advanced");offset+=4+u32(offset);offset+=4+u32(offset);offset+=4;
         std::vector<char> older(first.begin(),first.begin()+offset);const std::uint32_t schema=51;std::memcpy(older.data()+8,&schema,4);
         const auto append=[&](auto value){const auto p=reinterpret_cast<const char*>(&value);older.insert(older.end(),p,p+sizeof(value));};
         append(std::int32_t{640});append(std::int32_t{480});append(std::uint8_t{0});append(std::int32_t{0});append(std::uint8_t{0});append(std::uint8_t{0});append(0.f);append(std::uint8_t{0});append(std::uint8_t{0});append(std::uint8_t{0});
@@ -3889,6 +3982,8 @@ int main(int argc,char** argv){
             game::UiRegression::build_mode();
             game::UiRegression::recent_saves();
         }
+        else if(out=="lander-boarding") game::UiRegression::lander_boarding();
+        else if(out=="structure-hover-cursor") game::UiRegression::structure_hover_cursor();
         else if(out=="gameplay-options") game::UiRegression::gameplay_options();
         else if(out=="airlock-ui") game::UiRegression::airlock_status();
         else if(out=="interior-services") game::UiRegression::interior_services();
@@ -3914,6 +4009,7 @@ int main(int argc,char** argv){
         else if(out=="airlock-access") game::UiRegression::airlock_access();
         else if(out=="battery-doors") game::UiRegression::battery_doors();
         else if(out=="robot-crew") game::UiRegression::robot_crew();
+        else if(out=="early-build-placement") game::UiRegression::early_build_placement();
         else if(out=="rover-unfold") game::UiRegression::rover_unfold();
         else if(out=="airlock-factory-fit") game::UiRegression::airlock_factory_fit();
         else if(out=="no-hull-boundaries") game::UiRegression::no_hull_boundaries();

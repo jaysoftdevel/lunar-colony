@@ -1,8 +1,18 @@
-# JSD Lunar Base v0.88.1
+# JSD Lunar Base v0.93.0
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
 The game renders through the external **JSD 3d-engine 0.5.22**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+
+Version 0.93.0 switches the ground reticle to a native pointer on selectable structures and doubles oxygen generator output at unchanged power. See [UPDATE-0.93.0.md](UPDATE-0.93.0.md).
+
+Version 0.92.0 uses one game executable; pass `--debug` to the build script to include debug gameplay tools. See [UPDATE-0.92.0.md](UPDATE-0.92.0.md).
+
+Version 0.91.0 doubles astronaut suit oxygen capacity, automatically aligns installable interior equipment to the hull and increases photovoltaic peak output by 25%. See [UPDATE-0.91.0.md](UPDATE-0.91.0.md).
+
+Version 0.90.0 enables building blueprint placement during rover unloading and restores all original v0.87.0 habitat hull shapes. See [UPDATE-0.90.0.md](UPDATE-0.90.0.md).
+
+Version 0.89.0 adds a ground-aligned placement reticle, rotatable lander landing preview and walkable cargo bay, reliable FPV exit controls, and curved habitat hulls with building-specific footprints. See [UPDATE-0.89.0.md](UPDATE-0.89.0.md).
 
 Version 0.88.1 refines corridor connector structure with rounded transition frames, basement-fitted supports and cleaner sleeve-to-foundation joins. See [UPDATE-0.88.1.md](UPDATE-0.88.1.md).
 
@@ -132,17 +142,18 @@ Press **1–3** to select a simulation speed and **Space** to pause or resume in
 
 ## Build and run
 
-The game uses the external JSD 3d-engine 0.5.20 for rendering, platform, math,
+The game uses the external JSD 3d-engine 0.5.22 for rendering, platform, math,
 workers and audio. Its former in-game engine directory is removed. Game-specific
 bindings live under `game/src/runtime/` alongside the game code.
 
 ```bash
 ./build.sh /absolute/path/to/3d-engine
 ./run.sh
-./run.sh Debug
+./build.sh /absolute/path/to/3d-engine --debug # optional; replaces game
+./run.sh
 ```
 
-Both Release and Debug are built. On Windows use `build.bat --engine PATH`.
+Only one executable is built. The default is optimized Release without debug features. `--debug` includes the debug gameplay features in the same executable; rebuild without it to disable them. On Windows use `build.bat --engine PATH [--debug]`. `./run.sh --build-mode` reports the compiled feature mode.
 See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for exact requirements,
 first-person rendering, runtime staging, audio/worker behavior and tests.
 

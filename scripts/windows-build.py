@@ -13,7 +13,7 @@ import time
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE_VERSION = '0.5.22'
-CONFIGURATIONS = ('Release', 'Debug', 'RelWithDebInfo', 'MinSizeRel')
+CONFIGURATIONS = ('Release', 'RelWithDebInfo', 'MinSizeRel')
 
 
 def require(condition, message):
@@ -98,47 +98,42 @@ def run(args, root=ROOT):
     tests = args.tests or args.action == 'test' or args.render_tests
     flags = [cmake, '-S', root, '-B', build, '-G', generator, '-A', 'x64',
              '-DJSD_GAME_ENGINE_DIR='+str(engine), '-DJSD_GUARD_PYTHON='+sys.executable, '-DGAME_BUILD_NAVIGATION_TESTS='+('ON' if tests else 'OFF'),
-             '-DGAME_BUILD_RENDER_TESTS='+('ON' if args.render_tests else 'OFF')]
+             '-DGAME_BUILD_RENDER_TESTS='+('ON' if args.render_tests else 'OFF'),
+             '-DGAME_DEBUG_FEATURES='+('ON' if args.debug else 'OFF')]
     if instance:
         flags.append('-DCMAKE_GENERATOR_INSTANCE='+instance)
     command(flags, root)
     if args.action == 'configure':
         return
-    variants = (args.configuration, 'Release' if args.configuration == 'Debug' else 'Debug')
     jobs = args.jobs or os.cpu_count() or 4
     require(jobs > 0, 'Build jobs must be a positive integer.')
-    durations = []
-    for variant in variants:
-        variant_start = time.perf_counter()
-        flags = [cmake, '--build', build, '--config', variant, '--parallel', str(jobs)]
-        if args.clean:
-            flags.append('--clean-first')
-        command(flags, root)
-        durations.append(round((time.perf_counter()-variant_start)*1000))
-    # Verify the app-local SDL runtime for both configurations, including Debug.
-    # Do not claim a portable build if only the .exe was produced.
+    variant_start = time.perf_counter()
+    flags = [cmake, '--build', build, '--config', args.configuration, '--parallel', str(jobs)]
+    if args.clean:
+        flags.append('--clean-first')
+    command(flags, root)
+    duration = round((time.perf_counter()-variant_start)*1000)
     runtime_dir = build/'bin'
-    for name in ('game.exe', 'game-debug.exe'):
-        executable = runtime_dir/name
-        require(executable.is_file(), f'Missing game binary: {executable}')
-        runtime_dlls = [entry for entry in runtime_dir.iterdir()
-                        if entry.is_file() and entry.suffix.lower() == '.dll'
-                        and entry.name.lower().startswith('sdl2')]
-        require(runtime_dlls, f'Missing SDL2 runtime DLL beside {executable}. Rebuild the game and JSD engine together.')
-        result = subprocess.run([str(executable), '--version'], cwd=root, check=True,
+    executable = runtime_dir/'game.exe'
+    require(executable.is_file(), f'Missing game binary: {executable}')
+    require((runtime_dir/'SDL2.dll').is_file(), 'Missing SDL2 runtime DLL beside game.exe. Rebuild the game and JSD engine together.')
+    for option, expected in (('--version', 'game '+version), ('--build-mode', 'Debug' if args.debug else 'Release')):
+        result = subprocess.run([str(executable), option], cwd=root, check=True,
                                 capture_output=True, text=True, encoding='utf-8', errors='replace')
-        require(result.stdout.strip() == 'game '+version, f'Binary version does not match source: {executable}')
-    command([cmake, '-DRUNTIME_DIR='+str(build/'bin'),
-             '-DFIRST_CONFIG='+variants[0], '-DFIRST_MS='+str(durations[0]),
-             '-DSECOND_CONFIG='+variants[1], '-DSECOND_MS='+str(durations[1]),
+        require(result.stdout.strip() == expected, f'Binary {option} does not match requested build: {executable}')
+    # Remove obsolete packaged outputs only after a successful verified build.
+    for name in ('game-debug.exe', 'game-debug.pdb', 'SDL2d.dll'):
+        (runtime_dir/name).unlink(missing_ok=True)
+    command([cmake, '-DRUNTIME_DIR='+str(runtime_dir),
+             '-DFIRST_CONFIG='+args.configuration, '-DFIRST_MS='+str(duration),
+             '-DDEBUG_FEATURES='+('ON' if args.debug else 'OFF'),
              '-DTOTAL_MS='+str(round((time.perf_counter()-start)*1000)),
              '-P', root/'scripts/build-summary.cmake'], root)
     if args.action == 'test':
         ctest = Path(cmake).with_name('ctest.exe')
         require(ctest.is_file(), f'CTest is missing beside CMake: {ctest}')
-        for variant in variants:
-            command([ctest, '--test-dir', build, '-C', variant, '--output-on-failure'], root)
-    print(f'Lunar Colony {version} / JSD {ENGINE_VERSION}: Release and Debug ready in {build / "bin"}')
+        command([ctest, '--test-dir', build, '-C', args.configuration, '--output-on-failure'], root)
+    print(f'Lunar Colony {version} / JSD {ENGINE_VERSION}: game.exe ready in {runtime_dir} (debug features: {args.debug})')
 
 
 def parse_args(argv=None):
@@ -146,6 +141,7 @@ def parse_args(argv=None):
     parser.add_argument('action', choices=('build', 'configure', 'test'))
     parser.add_argument('inputs', nargs='*', help='Configuration and/or positional engine source path')
     parser.add_argument('--engine')
+    parser.add_argument('--debug', action='store_true', help='Include debug gameplay features in the single game executable')
     parser.add_argument('--tests', action='store_true', default=os.environ.get('GAME_BUILD_TESTS', '').upper() in ('ON', '1', 'TRUE'))
     parser.add_argument('--render-tests', action='store_true')
     parser.add_argument('--clean', action='store_true')
@@ -156,6 +152,8 @@ def parse_args(argv=None):
     args.configuration = 'Release'
     configured = False
     for value in args.inputs:
+        if value.lower() == "debug":
+            parser.error("Use --debug to include debug features in the normal build.")
         config = next((c for c in CONFIGURATIONS if c.lower() == value.lower()), None)
         if config:
             if configured:

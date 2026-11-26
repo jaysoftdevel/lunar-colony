@@ -456,7 +456,7 @@ void GameApp::update_soundscape(float dt,const game::runtime::InputState& input)
             const auto flight=lunar_lander_flight(lander_.elapsed);
             const float power=std::clamp(.64f+flight.thrust_acceleration*.12f,.6f,1.0f);
             audio.loop(key(Ambient,5),Cue::Exhaust,
-                world_voice(lander_.site+flight.offset,power,420,.82f+.18f*power,5));
+                world_voice(lander_world(lander_,flight.offset),power,420,.82f+.18f*power,5));
         }
         if(last_lander && *last_lander==static_cast<std::uint64_t>(LanderPhase::Approach) && !lander_.in_flight())
             audio.play(Cue::Touchdown,world_voice(lander_.site,.98f,120,.91f,5));

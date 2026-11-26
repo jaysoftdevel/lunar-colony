@@ -36,7 +36,7 @@ inline CorridorDoor end_door(const PlacedHabitat& h,const HabitatMesh& m,int sig
     d.normal=world_math::rotate_y({s,0,0},h.rotation_degrees);
     d.generated=true;d.entrance_index=sign<0?-5:-6;
     const auto point=[&](float lateral,float y){
-        const float x=s*m.dome_radii.x*(m.dome_radii.y==0?1.f:std::sqrt(std::max(0.f,1-lateral*lateral/(m.dome_radii.z*m.dome_radii.z))));
+        const float x=s*m.dome_radii.x*std::sqrt(std::max(0.f,1-lateral*lateral/(m.dome_radii.z*m.dome_radii.z)));
         return h.position+world_math::rotate_y({x,m.walkable_floor_y+y,lateral},h.rotation_degrees);
     };
     constexpr float half=geometry::kGeneratedEntranceHalfWidth;

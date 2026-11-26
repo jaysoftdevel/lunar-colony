@@ -1,7 +1,8 @@
 param(
-    [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
+    [ValidateSet("Release", "RelWithDebInfo", "MinSizeRel")]
     [string]$Configuration = "Release",
     [string]$EnginePath = "",
+    [switch]$Debug,
     [switch]$Tests,
     [switch]$RenderTests,
     [switch]$Clean,
@@ -10,6 +11,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $argsList = @("build", $Configuration)
 if ($EnginePath) { $argsList += @("--engine", $EnginePath) }
+if ($Debug) { $argsList += "--debug" }
 if ($Tests) { $argsList += "--tests" }
 if ($RenderTests) { $argsList += "--render-tests" }
 if ($Clean) { $argsList += "--clean" }

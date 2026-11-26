@@ -39,8 +39,8 @@ void GameApp::render_playfield(SceneRenderer& r){
             lunar_look::append_corridor_fixtures(corridor_fixtures,corridor);
         if(graphics_.enabled(GraphicsFeature::LocalLights)){
             std::vector<LunarLight> lights;
-            if(lander_.active()&&(lander_.phase==LanderPhase::OpeningRamp||lander_.phase==LanderPhase::DeployingRobots)){
-                for(float z:{-1.4f,1.4f})lights.push_back({lander_.site+Vec3{0,4.25f,z},{.84f,.91f,1.f,1},5.5f,45.f});
+            if(lander_.active()&&lander_.phase>=LanderPhase::OpeningRamp){
+                for(float z:{-1.4f,1.4f})lights.push_back({lander_world(lander_,{0,4.25f,z}),{.84f,.91f,1.f,1},5.5f,45.f});
             }
             for(const auto& fixture:corridor_fixtures)lights.push_back(fixture.light());
             for(std::size_t i=0;i<placed_habitats_.size();++i){const auto& habitat=placed_habitats_[i];
@@ -205,7 +205,7 @@ void GameApp::render_playfield(SceneRenderer& r){
 
     if(selection_kind_==SelectionKind::None){
     const BuildObjectDefinition* active_build=build_catalog_.selected();
-    const char* controls=storage_gate_placement_active_?"STORAGE GATE / MOVE AROUND DOME / LMB PLACE EXTENSION / ESC CANCEL":
+    const char* controls=lander_.early_build_placement()&&!active_build?"ROBOTS UNLOADING / QUEUE BUILDINGS NOW / CONNECTIONS AFTER DEPLOYMENT":storage_gate_placement_active_?"STORAGE GATE / MOVE AROUND DOME / LMB PLACE EXTENSION / ESC CANCEL":
         corridor_link_source_>=0?"LMB TARGET CORRIDOR / ESC CANCEL":
         (active_build && active_build->kind==BuildObjectKind::Corridor?
             (corridor_build_start_?"LMB SET CORRIDOR END / ESC CANCEL":"LMB SET CORRIDOR START / ESC CANCEL"):
@@ -387,7 +387,7 @@ void GameApp::render_playfield_crosshair(SceneRenderer& r){
     const float top_px=STATUS_BAR_H*ui_scale_;
     const float bottom_px=(ui_height(r)-BUILD_BAR_H)*ui_scale_;
     if((float)input_.mouse_y<top_px || (float)input_.mouse_y>=bottom_px ||
-       mouse_over_selection_panel(input_) || mouse_over_playfield_overlay(input_)){
+       mouse_over_selection_panel(input_) || mouse_over_playfield_overlay(input_) || astronaut_status_hover(input_)){
         app_.set_world_cursor(false);
         app_.set_cursor_visible(true);
         return;
@@ -400,8 +400,33 @@ void GameApp::render_playfield_crosshair(SceneRenderer& r){
         return;
     }
 
-    // Retain the independent, low-latency native world cursor.
-    app_.set_cursor_visible(true);app_.set_world_cursor(true);
+    // Use the same ground-footprint hit tests as world selection. Keep the
+    // ground reticle while a placement or other world-position tool owns input.
+    const bool positioning=build_catalog_.selected() || interior_unit_tool_ ||
+        storage_gate_placement_active_ || corridor_link_source_>=0 ||
+        debug_move_pick_robot_>=0 || lander_.awaiting_site || lander_.awaiting_stash ||
+        selection_marquee_dragged_;
+    if(!positioning && (pick_habitat(hit)>=0 || pick_resource(hit)>=0 ||
+        pick_corridor(hit)>=0 || pick_walkway(hit)>=0 || pick_utility(hit)>=0 ||
+        (lander_.active() && lunar_lander_segment_blocked(lander_,hit,hit,0.f)))){
+        app_.set_world_cursor(false); // native arrow, no screen-space crosshair
+        app_.set_cursor_visible(true);
+        return;
+    }
+
+    // A world-space target, not a camera-facing native cursor. Every stroke
+    // is in the playfield plane, so orbit and zoom preserve its orientation.
+    app_.set_world_cursor(false);app_.set_cursor_visible(false);
+    hit.y=.045f;
+    const float radius=std::clamp(camera_.distance()*.014f,.38f,2.8f);
+    std::vector<Vec3> strokes;constexpr float pi=3.14159265f;
+    for(int quadrant=0;quadrant<4;++quadrant){
+        for(int j=0;j<12;++j){const float a=quadrant*pi*.5f+.20f+(pi*.5f-.40f)*j/12,b=quadrant*pi*.5f+.20f+(pi*.5f-.40f)*(j+1)/12;
+            strokes.insert(strokes.end(),{hit+Vec3{std::cos(a)*radius,0,std::sin(a)*radius},hit+Vec3{std::cos(b)*radius,0,std::sin(b)*radius}});}
+        const float t=quadrant*pi*.5f;const Vec3 d{std::cos(t),0,std::sin(t)};strokes.insert(strokes.end(),{hit+d*(radius*.34f),hit+d*(radius*1.32f)});
+    }
+    r.draw_lines_3d(strokes,{.015f,.02f,.025f,1},5.f);r.draw_lines_3d(strokes,{.18f,1,.48f,1},2.5f);
+    r.draw_lines_3d({hit+Vec3{-radius*.10f,0,0},hit+Vec3{radius*.10f,0,0},hit+Vec3{0,0,-radius*.10f},hit+Vec3{0,0,radius*.10f}},{1,.90f,.16f,1},3.f);
 }
 
 } // namespace game

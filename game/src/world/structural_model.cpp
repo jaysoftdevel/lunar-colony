@@ -122,7 +122,6 @@ void vessel_ring(Builder& b,Vec3 center,float radius){
 Metrics reinforce(HabitatMesh& m,HabitatKind kind){
     if(m.dome_radii.x>0){
         const auto start=m.hull_frames.size();Builder b{m.hull_frames,m.edges,{}};const auto r=m.dome_radii;
-        if(r.y==0){hall(b,{-r.x,m.walkable_floor_y-.22f,-r.z},{r.x,m.dome_spring_y,r.z});b.metrics.first_vertex=start;b.metrics.vertices=m.hull_frames.size()-start;return b.metrics;}
         dome(b,{0,m.dome_spring_y,0},r.x,r.y,r.z);
         const int segments=std::max(24,divisions(2*pi*std::max(r.x,r.z)));
         for(float y:{m.walkable_floor_y+.12f,m.walkable_floor_y+1.05f,m.walkable_floor_y+2.f})

@@ -1,4 +1,4 @@
-# Lunar Colony 0.84.0 — external JSD engine
+# Lunar Colony 0.92.0 — external JSD engine
 
 The game requires the supplied **JSD 3d-engine source 0.5.22** in a separate
 directory. The structural graphics update uses engine 0.5.22 unchanged. There is no in-game `engine/`
@@ -12,15 +12,16 @@ From the updated game source root:
 ```bash
 ./build.sh /absolute/path/to/3d-engine
 ./run.sh
-./run.sh Debug
+./build.sh /absolute/path/to/3d-engine --debug # optional
+./run.sh
 ```
 
-Both Release and Debug binaries are produced. The argument must point to the
+One optimized game binary is produced. `--debug` enables debug gameplay features in that binary, not a separate Debug compiler configuration. Rebuild without the flag to disable them. The argument must point to the
 engine source root containing `JSD_PROJECT.json`, `CMakeLists.txt`, `include/`,
 `src/` and `third_party/`. Quote paths with spaces. Named arguments work too:
 
 ```bash
-./build.sh --engine "/home/jay/3D projects/3d-engine" Debug --tests
+./build.sh --engine "/home/jay/3D projects/3d-engine" --debug --tests
 ```
 
 `JSD_GAME_ENGINE_DIR` is also accepted as an environment variable or a CMake
@@ -36,7 +37,8 @@ and CMake 3.21+:
 ```bat
 build.bat --engine "C:\3D\3d-engine"
 run.bat
-run.bat Debug
+build.bat --debug
+run.bat
 ```
 
 Or `./build-windows.ps1 -EnginePath 'C:\3D\3d-engine' -Configuration Release`.
@@ -95,11 +97,11 @@ engine CPUs. `./run.sh --cpu-info` reports the selected JSD workers.
 ## Runtime and tests
 
 JSD/Jolt link statically. Source-built SDL libraries and license notices are
-staged beside the game (under `bin/lib/` on Linux), with separate Release/Debug
-SDL runtimes. No OpenAL or Direct3D runtime is required. Saves are unchanged.
+staged beside the game (under `bin/lib/` on Linux), using the selected optimized configuration. The debug gameplay option does not change SDL configuration. No OpenAL or Direct3D runtime is required. Saves are unchanged.
 
 ```bash
 ./test.sh /path/to/3d-engine
+./test.sh /path/to/3d-engine --debug # includes debug-only regressions
 # Optional actual GL/EGL rendering tests:
 cmake -S . -B build/linux/Release -DGAME_BUILD_RENDER_TESTS=ON
 cmake --build build/linux/Release --parallel 4

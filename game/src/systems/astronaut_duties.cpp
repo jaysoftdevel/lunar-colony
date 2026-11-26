@@ -210,7 +210,7 @@ void GameApp::assign_astronaut_duties(float dt){
         }
         if(actor.destination && actor.activity==AstronautActivity::Manual && actor.fatigue<kCrewExhausted)continue;
         if(actor.destination && actor.activity==AstronautActivity::Resupply &&
-           actor.suit_oxygen_kg<.22 && astronaut_cache_.oxygen_kg>0)continue;
+           actor.suit_oxygen_kg<kSuitOxygenCapacityKg*(.22/.28) && astronaut_cache_.oxygen_kg>0)continue;
         if(actor.activity==AstronautActivity::Construction)continue;
         if(actor.destination && actor.order_timeout<16.f){
             bool target_lock=false;

@@ -67,7 +67,7 @@ configure_game_cluster(game_cluster_rendering)
 
 add_library(game_cluster_ui OBJECT
     src/ui/status_bar.cpp
-    "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/src/ui/debug_frame.cpp>"
+    "$<$<BOOL:${GAME_DEBUG_FEATURES}>:${CMAKE_CURRENT_SOURCE_DIR}/src/ui/debug_frame.cpp>"
     src/ui/build_bar.cpp
     src/ui/build_queue.cpp
     src/ui/activity_log_panel.cpp

@@ -16,7 +16,7 @@ inline constexpr double kFuelCellElectricalEfficiency=0.55;
 inline constexpr double kHydrogenElectricalKwhPerKg=kHydrogenLowerHeatingValueKwhPerKg*kFuelCellElectricalEfficiency;
 inline constexpr double kHydrogenGeneratorPeakKw=3.0;
 inline constexpr double kOxygenGeneratorHydrogenBufferKg=4.5;
-inline constexpr double kSolarPeakKw=16.0;
+inline constexpr double kSolarPeakKw=20.0;
 inline constexpr double kCrewOxygenKgPerDay=0.84;
 inline constexpr double kCrewWaterLitresPerDay=4.0;
 // Conservative sealed-habitat oxygen loss. This represents normal hatch/seal

@@ -60,12 +60,12 @@ struct Mesh {
             quad(shade,v0,v1,v2,v3);
         }
     }
-    void draw(game::runtime::SceneRenderer& r,Vec3 offset,float roll=0,float opacity=1,LunarMaterial material=LunarMaterial::Paint)const{
+    void draw(game::runtime::SceneRenderer& r,Vec3 offset,float roll=0,float opacity=1,LunarMaterial material=LunarMaterial::Paint,int turns=0)const{
         const LanderRoll rotation(roll);
-        const game::runtime::LunarSurfaceMapping mapping{offset,rotation.apply({1,0,0}),rotation.apply({0,1,0}),{0,0,1}};
+        const game::runtime::LunarSurfaceMapping mapping{offset,lander_rotate(rotation.apply({1,0,0}),turns),lander_rotate(rotation.apply({0,1,0}),turns),lander_rotate({0,0,1},turns)};
         for(const auto& part:parts){
             auto points=part.vertices;
-            for(auto& v:points) v=rotation.apply(v)+offset;
+            for(auto& v:points) v=lander_rotate(rotation.apply(v),turns)+offset;
             Color color=part.color;
             color.a*=opacity;
             if(solid) r.draw_mapped_lunar_surface(points,material,color,mapping);
@@ -88,14 +88,14 @@ float visual_throttle(float time){
 }
 
 void draw_plume_shell(Mesh& plume,Vec3 mouth,const LanderRoll& roll,float reach,float clipped,
-                      float radius,float intensity,bool core){
+                      float radius,float intensity,bool core,int turns){
     constexpr int sides=20,bands=9;
     const float limit=std::min(clipped/reach,1.0f);
     const auto ring_point=[&](int side,float fraction){
         const float angle=2*pi*side/sides;
         const float width=core?radius*(1-.96f*std::pow(fraction,1.3f)):
             nozzle_aperture+(radius-nozzle_aperture)*std::pow(fraction,.72f);
-        Vec3 p=mouth+roll.apply({width*std::cos(angle),-reach*fraction,width*std::sin(angle)});
+        Vec3 p=mouth+lander_rotate(roll.apply({width*std::cos(angle),-reach*fraction,width*std::sin(angle)}),turns);
         p.y=std::max(.008f,p.y);
         return p;
     };
@@ -115,14 +115,14 @@ void draw_plume_shell(Mesh& plume,Vec3 mouth,const LanderRoll& roll,float reach,
 }
 
 void render_lander_exhaust(game::runtime::SceneRenderer& renderer,Vec3 origin,const LanderFlightSample& flight,
-                           float time,float since_cutoff,bool powered,bool solid,int particle_count){
+                           float time,float since_cutoff,bool powered,bool solid,int particle_count,int turns){
     const float throttle=visual_throttle(time);
     const float burn=smooth(time/.32f)*smooth((kLanderDescentSeconds-time)/.70f);
     const LanderRoll roll(flight.roll_degrees);
-    const Vec3 axis=roll.apply({0,-1,0});
+    const Vec3 axis=lander_rotate(roll.apply({0,-1,0}),turns);
     Mesh sheath(solid),cores(solid),dust(solid);
     for(std::size_t i=0;i<nozzle_mouths.size();++i){
-        const Vec3 mouth=origin+roll.apply(nozzle_mouths[i]);
+        const Vec3 mouth=origin+lander_rotate(roll.apply(nozzle_mouths[i]),turns);
         const float phase=static_cast<float>(i)*2.1f;
         const float pulse=1+.035f*std::sin(time*12.5f+phase)+.025f*std::sin(time*20.2f-phase);
         const float reach=(6.1f+4.5f*throttle)*pulse;
@@ -134,8 +134,8 @@ void render_lander_exhaust(game::runtime::SceneRenderer& renderer,Vec3 origin,co
             const bool volume=solid && renderer.draw_lunar_volume({mouth,axis,visible,spread,
                 {.27f,.56f,.96f,1},1.02f*strength,3.5f*strength,true,nozzle_aperture,reach});
             if(!volume)
-                draw_plume_shell(sheath,mouth,roll,reach,visible,spread,strength,false);
-            draw_plume_shell(cores,mouth,roll,reach*.34f,visible,nozzle_aperture*.71f,strength,true);
+                draw_plume_shell(sheath,mouth,roll,reach,visible,spread,strength,false,turns);
+            draw_plume_shell(cores,mouth,roll,reach*.34f,visible,nozzle_aperture*.71f,strength,true,turns);
         }
         if(!solid)continue;
         const float pressure=smooth((1-ground_distance/reach)/.80f);
@@ -167,7 +167,7 @@ void render_lander_exhaust(game::runtime::SceneRenderer& renderer,Vec3 origin,co
 void GameApp::render_lunar_lander(game::runtime::SceneRenderer& r){
     if(!lander_.active()||lander_.awaiting_site)return;
     const auto flight=lunar_lander_flight(lander_.in_flight()?lander_.elapsed:kLanderDescentSeconds);
-    Vec3 origin=lander_.site+flight.offset;
+    Vec3 origin=lander_world(lander_,flight.offset);
     const float settle=lander_.phase==LanderPhase::Settling?std::exp(-lander_.elapsed*2.5f)*std::sin(lander_.elapsed*8)*.055f:0;
     origin.y+=settle;
     const bool solid=!mesh_layout_active();
@@ -184,7 +184,7 @@ void GameApp::render_lunar_lander(game::runtime::SceneRenderer& r){
         const auto a=chassis[i],b=chassis[(i+1)%chassis.size()];
         if(i!=4)frame.quad(i%2?white:metal,a-floor_drop,b-floor_drop,b+roof_lift,a+roof_lift);
         frame.triangle(metal,{0,2.0f,0},b-floor_drop,a-floor_drop);
-        frame.triangle(dark,{0,2.36f,0},a,b);
+        frame.triangle(dark,{0,kLanderDeckY,0},b+Vec3{0,.04f,0},a+Vec3{0,.04f,0});
         frame.triangle(white,{0,4.92f,0},a+roof_lift,b+roof_lift);
     }
     constexpr float front=3.60f;
@@ -197,7 +197,7 @@ void GameApp::render_lunar_lander(game::runtime::SceneRenderer& r){
     frame.box({0,2.21f,front},{4.84f,.42f,.13f},metal);
     for(std::size_t i=0;i<chassis.size();++i){
         const auto a=chassis[i],b=chassis[(i+1)%chassis.size()];
-        frame.beam(a,b,.23f,metal);
+        if(i!=4)frame.beam(a,b,.23f,metal);
         frame.beam(a-Vec3{0,.40f,0},b-Vec3{0,.40f,0},.24f,metal);
         frame.beam(a,b-Vec3{0,.40f,0},.12f,white);
     }
@@ -242,7 +242,7 @@ void GameApp::render_lunar_lander(game::runtime::SceneRenderer& r){
             tanks.beam({x*4.78f,3.0f+i*.20f,-3.64f},{x*4.78f,3.0f+i*.20f,-2.6f},.08f,blue);
     }
 
-    if(lander_.phase==LanderPhase::OpeningRamp||lander_.phase==LanderPhase::DeployingRobots)
+    if(lander_.phase>=LanderPhase::OpeningRamp)
         for(float z:{-1.4f,1.4f}){
             frame.box({0,4.32f,z},{.72f,.10f,.32f},metal);
             if(solid)lights.box({0,4.263f,z},{.62f,.018f,.24f},{.84f,.91f,1.f,1});
@@ -289,7 +289,7 @@ void GameApp::render_lunar_lander(game::runtime::SceneRenderer& r){
         gear.cylinder(knee,.20f,.14f,gold);
     }
     for(std::size_t port=0;port<kLanderSalvagePortCount;++port){
-        const Vec3 focus=lunar_lander_salvage_focus(lander_,port)-lander_.site;
+        const Vec3 focus=lander_local(lander_,lunar_lander_salvage_focus(lander_,port));
         gear.box(focus,{.26f,.36f,.31f},gold);
         gear.beam(focus,{focus.x*.77f,1.96f,focus.z*.75f},.14f,metal);
     }
@@ -302,6 +302,7 @@ void GameApp::render_lunar_lander(game::runtime::SceneRenderer& r){
     constexpr float half_length=3.7f;
     const float a=(90.0f-108.925f*ramp)*pi/180,b=(-90.0f+71.075f*ramp)*pi/180;
     Vec3 hinge{0,2.4f,3.6f},mid=hinge+Vec3{0,half_length*std::sin(a),half_length*std::cos(a)},tip=mid+Vec3{0,half_length*std::sin(b),half_length*std::cos(b)};
+    if(ramp>=.9999f){mid={0,kLanderDeckY*.5f,(kLanderRampStart+kLanderRampEnd)*.5f};tip={0,0,kLanderRampEnd};}
     for(const auto seg:std::array<std::array<Vec3,2>,2>{{{{hinge,mid}},{{mid,tip}}}}){
         Vec3 side{2.0f,0,0};m.quad(metal,seg[0]-side,seg[1]-side,seg[1]+side,seg[0]+side);
         for(float x:{-2.02f,2.02f})m.beam(seg[0]+Vec3{x,.08f,0},seg[1]+Vec3{x,.08f,0},.09f,gold);
@@ -323,19 +324,19 @@ void GameApp::render_lunar_lander(game::runtime::SceneRenderer& r){
     const float work=lander_.salvage_seconds;
     const auto draw_module=[&](const Mesh& module,float removal,LunarMaterial material=LunarMaterial::Paint){
         const float lift=smooth((work-(removal-1.4f))/1.4f);
-        if(lift<1) module.draw(r,origin+Vec3{0,.48f*lift,0},flight.roll_degrees,1-lift,material);
+        if(lift<1) module.draw(r,origin+Vec3{0,.48f*lift,0},flight.roll_degrees,1-lift,material,lander_.quarter_turns);
     };
     draw_module(top,4.5f);
     draw_module(tanks,9.0f,LunarMaterial::Alloy);
     draw_module(frame,13.5f);
-    if(solid && work<12.1f) lights.draw(r,origin,flight.roll_degrees,1,LunarMaterial::Emissive);
+    if(solid && work<12.1f) lights.draw(r,origin,flight.roll_degrees,1,LunarMaterial::Emissive,lander_.quarter_turns);
     // Keep the last recovery frame visible while waiting for a place for its parts.
     const float last_cut=smooth((work-16.0f)/2.0f);
-    gear.draw(r,origin-Vec3{0,.24f*last_cut,0},flight.roll_degrees,1-.72f*last_cut,LunarMaterial::Alloy);
+    gear.draw(r,origin-Vec3{0,.24f*last_cut,0},flight.roll_degrees,1-.72f*last_cut,LunarMaterial::Alloy,lander_.quarter_turns);
     const int particles=graphics_.particle_density==0?0:game::runtime::quality_budget(graphics_.particle_density,12,24,42);
     if(lander_.in_flight())
-        render_lander_exhaust(r,origin,flight,lander_.elapsed,0,true,solid,particles);
+        render_lander_exhaust(r,origin,flight,lander_.elapsed,0,true,solid,particles,lander_.quarter_turns);
     else if(lander_.phase==LanderPhase::Settling && lander_.elapsed<dust_drift_seconds)
-        render_lander_exhaust(r,lander_.site,flight,kLanderDescentSeconds,lander_.elapsed,false,solid,particles);
+        render_lander_exhaust(r,lander_.site,flight,kLanderDescentSeconds,lander_.elapsed,false,solid,particles,lander_.quarter_turns);
 }
 } // namespace game

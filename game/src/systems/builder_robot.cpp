@@ -2063,7 +2063,7 @@ void GameApp::update_builder_robot(float dt){
         nav=NavSnapshot{};
         if(lander_.active()){
             nav.solids.push_back(make_nav_rect(lander_.site,0,10.7f,10.7f,kLanderBlockerSequence));
-            nav.solids.push_back(make_nav_rect(lander_.site+Vec3{0,0,7.15f},0,4.24f,7.1f,kLanderBlockerSequence));
+            nav.solids.push_back(make_nav_rect(lander_world(lander_,{0,0,7.15f}),90.f*lander_.quarter_turns,4.24f,7.1f,kLanderBlockerSequence));
             lunar_lander_reserved_unload_paths(lander_,(int)builder_robots_.size(),[&](Vec3 a,Vec3 b){
                 const auto d=b-a;const float run=dist_xz(a,b),heading=std::atan2(d.x,d.z)*180.f/PI;
                 nav.solids.push_back(make_nav_rect((a+b)*.5f,heading,1.5f,run+1.5f,kLanderBlockerSequence));

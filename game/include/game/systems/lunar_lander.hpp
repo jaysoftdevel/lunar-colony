@@ -12,6 +12,7 @@ enum class LanderPhase : std::uint8_t {
 struct LunarLanderState {
     LanderPhase phase{LanderPhase::Inactive};
     float elapsed{0};
+    std::uint8_t quarter_turns{0}; // clockwise world yaw in 90-degree steps
     game::runtime::Vec3 site{};
     ResourceBundle manifest{}, remaining{};
     CropSeeds seeds_aboard{};
@@ -30,7 +31,23 @@ struct LunarLanderState {
     bool active() const { return has_depot()&&!salvaged; }
     bool in_flight() const { return phase==LanderPhase::Approach&&!awaiting_site; }
     bool deploying() const { return active() && phase!=LanderPhase::Ready; }
+    bool early_build_placement() const {
+        return deploying() && !awaiting_site && !awaiting_stash && boxed &&
+            phase>=LanderPhase::OpeningRamp && phase<=LanderPhase::UnloadingCargo;
+    }
+    bool build_placement_available() const {
+        return !awaiting_site && !awaiting_stash && (!deploying() || early_build_placement());
+    }
 };
+inline game::runtime::Vec3 lander_rotate(game::runtime::Vec3 p,int turns){
+    switch((turns%4+4)%4){case 1:return {p.z,p.y,-p.x};case 2:return {-p.x,p.y,-p.z};case 3:return {-p.z,p.y,p.x};default:return p;}
+}
+inline game::runtime::Vec3 lander_world(const LunarLanderState& l,game::runtime::Vec3 p){return l.site+lander_rotate(p,l.quarter_turns);}
+inline game::runtime::Vec3 lander_local(const LunarLanderState& l,game::runtime::Vec3 p){return lander_rotate(p-l.site,-int(l.quarter_turns));}
+inline constexpr float kLanderDeckY=2.40f,kLanderRampStart=3.60f,kLanderRampEnd=10.60f,kLanderRampHalfWidth=2.0f;
+inline bool lander_boardable(const LunarLanderState& l){return l.active()&&!l.salvage_requested&&l.phase>=LanderPhase::Ready;}
+float lunar_lander_crew_floor(const LunarLanderState&,game::runtime::Vec3);
+bool lunar_lander_crew_blocked(const LunarLanderState&,game::runtime::Vec3,game::runtime::Vec3,float);
 struct LanderFlightSample {
     game::runtime::Vec3 offset{}, velocity{}, acceleration{};
     float roll_degrees{0}, thrust_acceleration{0}, gear{0};
@@ -70,7 +87,7 @@ template<class F> void lunar_lander_reserved_unload_paths(const LunarLanderState
     if(l.phase!=LanderPhase::DeployingRobots||l.legacy_parking)return;
     for(int i=std::max(0,first);i<l.builders+l.carriers;++i){
         const auto bay=lunar_lander_robot_bay(l,i);
-        const game::runtime::Vec3 points[]{l.site+game::runtime::Vec3{0,0,10.6f},l.site+game::runtime::Vec3{0,0,13.4f},{bay.x,l.site.y, l.site.z+13.4f},bay};
+        const game::runtime::Vec3 points[]{lander_world(l,{0,0,10.6f}),lander_world(l,{0,0,13.4f}),lander_world(l,{lander_local(l,bay).x,0,13.4f}),bay};
         for(int j=1;j<4;++j)if(game::runtime::length(points[j]-points[j-1])>.01f)emit(points[j-1],points[j]);
     }
 }

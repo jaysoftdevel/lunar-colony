@@ -8,7 +8,6 @@ function(format_duration out elapsed_ms)
 endfunction()
 
 format_duration(first_time "${FIRST_MS}")
-format_duration(second_time "${SECOND_MS}")
 format_duration(total_time "${TOTAL_MS}")
 
 # Count the shared bin directory once, including its staged runtime files.
@@ -25,6 +24,6 @@ string(SUBSTRING "${remainder}" 1 2 size_fraction)
 
 message(STATUS "Build summary")
 message(STATUS "  ${FIRST_CONFIG} build time: ${first_time}")
-message(STATUS "  ${SECOND_CONFIG} build time: ${second_time}")
+message(STATUS "  Debug features: ${DEBUG_FEATURES}")
 message(STATUS "  Overall build time: ${total_time}")
 message(STATUS "  Binary package size: ${size_mib}.${size_fraction} MiB (${package_bytes} bytes)")

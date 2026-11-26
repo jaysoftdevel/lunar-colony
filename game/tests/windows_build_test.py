@@ -37,27 +37,37 @@ class WindowsBuild(unittest.TestCase):
         for name in ('game.exe', 'game-debug.exe', 'SDL2.dll'): (build/name).touch()
         with patch.object(driver, 'select_toolchain', return_value=(str(self.cmake), 'Visual Studio 18 2026', str(self.parent/'Visual Studio'))), \
              patch.object(driver, 'command', side_effect=lambda args, root: self.calls.append([str(x) for x in args])), \
-             patch.object(driver.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'game 0.84.0\n', '')):
+             patch.object(driver.subprocess, 'run', side_effect=lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, ('Debug' if args.debug else 'Release')+'\n' if cmd[-1]=='--build-mode' else 'game 0.84.0\n', '')):
             driver.run(args, self.root)
     def write_cache(self, text):
         p = self.root/'build/windows/CMakeCache.txt'; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text)
-    def test_paths_configuration_and_both_builds(self):
-        self.invoke(self.args('Debug', '--jobs', '3'))
+    def test_paths_configuration_and_single_build(self):
+        self.invoke(self.args('--debug', '--jobs', '3'))
         self.assertIn('-DJSD_GAME_ENGINE_DIR='+str(self.engine), self.calls[0])
         self.assertIn('-DCMAKE_GENERATOR_INSTANCE='+str(self.parent/'Visual Studio'), self.calls[0])
-        self.assertEqual(self.calls[1][-4:], ['--config', 'Debug', '--parallel', '3'])
-        self.assertEqual(self.calls[2][-4:], ['--config', 'Release', '--parallel', '3'])
-        self.assertIn('-P', self.calls[3])
+        self.assertIn('-DGAME_DEBUG_FEATURES=ON', self.calls[0])
+        self.assertEqual(self.calls[1][-4:], ['--config', 'Release', '--parallel', '3'])
+        self.assertEqual(len(self.calls), 3)
+        self.assertIn('-P', self.calls[2])
+        self.assertFalse((self.root/'build/windows/bin/game-debug.exe').exists())
     def test_configure_only(self):
         args = self.args(); args.action = 'configure'; self.invoke(args)
         self.assertEqual(len(self.calls), 1)
-    def test_ctest_both_variants_and_render_flag(self):
+    def test_ctest_single_variant_and_render_flag(self):
         args = self.args('--render-tests'); args.action = 'test'; self.invoke(args)
         self.assertIn('-DGAME_BUILD_RENDER_TESTS=ON', self.calls[0])
-        self.assertEqual([call[-2] for call in self.calls[-2:]], ['Release', 'Debug'])
+        self.assertIn('-DGAME_DEBUG_FEATURES=OFF', self.calls[0])
+        self.assertEqual(len(self.calls), 4)
+        self.assertEqual(self.calls[-1][-2], 'Release')
     def test_positional_engine_and_interspersed_options(self):
-        args = driver.parse_args(['build', str(self.engine), '--jobs', '2', 'debug', '--tests'])
-        self.assertEqual((args.engine, args.configuration, args.jobs, args.tests), (str(self.engine), 'Debug', 2, True))
+        args = driver.parse_args(['build', str(self.engine), '--jobs', '2', '--debug', '--tests'])
+        self.assertEqual((args.engine, args.configuration, args.jobs, args.tests, args.debug), (str(self.engine), 'Release', 2, True, True))
+    def test_debug_is_not_a_configuration(self):
+        with self.assertRaises(SystemExit): self.args('Debug')
+    def test_feature_switch_off_is_explicit(self):
+        self.write_cache('GAME_DEBUG_FEATURES:BOOL=ON\n')
+        self.invoke(self.args())
+        self.assertIn('-DGAME_DEBUG_FEATURES=OFF', self.calls[0])
     def test_cached_engine_used(self):
         self.write_cache('JSD_GAME_ENGINE_DIR:PATH='+str(self.engine)+'\n')
         args = driver.parse_args(['configure']); self.invoke(args)

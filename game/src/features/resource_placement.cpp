@@ -224,7 +224,7 @@ void GameApp::render_resource_placement(SceneRenderer& r){
     candidate.size=resource_size;
     candidate.storage_size=storage_size;
     candidate.rotation_degrees=placement_rotation_degrees_;
-    auto attachment=preview_structure_attachment(hit,nullptr,&candidate);
+    auto attachment=lander_.early_build_placement()?std::optional<StructureAttachment>{}:preview_structure_attachment(hit,nullptr,&candidate);
     if(attachment){snapped=attachment->position;rotation=candidate.rotation_degrees;}
     const auto& mesh=selected->resource_kind==ResourceKind::StorageDome?
         resource_models_.mesh(selected->resource_kind,storage_size):resource_models_.mesh(selected->resource_kind,resource_size);

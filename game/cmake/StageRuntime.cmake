@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Release and Debug can stage into the same runtime directory.
+# Debug features are optional in the single game runtime.
 file(MAKE_DIRECTORY "${RUNTIME_DIR}")
 file(LOCK "${RUNTIME_DIR}/../.runtime-stage.lock" GUARD PROCESS TIMEOUT 60)
 
@@ -19,6 +19,8 @@ endfunction()
 if(DEBUG_TEMPLATE)
     get_filename_component(template_name "${DEBUG_TEMPLATE}" NAME)
     stage_file("${DEBUG_TEMPLATE}" "debug/${template_name}")
+else()
+    file(REMOVE "${RUNTIME_DIR}/debug/0-54-0-debug-start.gmsave")
 endif()
 
 if(UI_FONT_NOTICE)

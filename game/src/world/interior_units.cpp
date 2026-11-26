@@ -34,9 +34,9 @@ const InteriorUnitProfile& interior_unit_profile(InteriorUnitKind kind,InteriorU
 const char* interior_unit_recipe(InteriorUnitKind kind,InteriorUnitSize size){
     if(kind!=InteriorUnitKind::OxygenGenerator)return interior_unit_recipe(kind);
     switch(size){
-        case InteriorUnitSize::VerySmall:return "4.5 KG O2/D / 5.06 L WATER/D / 1.5 KW";
-        case InteriorUnitSize::Small:return "9 KG O2/D / 10.13 L WATER/D / 3 KW";
-        default:return "18 KG O2/D / 20.25 L WATER/D / 6 KW";
+        case InteriorUnitSize::VerySmall:return "9 KG O2/D / 10.13 L WATER/D / 1.5 KW";
+        case InteriorUnitSize::Small:return "18 KG O2/D / 20.25 L WATER/D / 3 KW";
+        default:return "36 KG O2/D / 40.50 L WATER/D / 6 KW";
     }
 }
 const char* interior_unit_recipe(InteriorUnitKind kind){
@@ -50,7 +50,7 @@ const char* interior_unit_recipe(InteriorUnitKind kind){
         case InteriorUnitKind::DrinkingWell:return "NETWORK WATER -> 10 L DRINKING RESERVE";
         case InteriorUnitKind::DiningTable:return "PASSIVE DINING SURFACE / FOUR PLACES";
         case InteriorUnitKind::SeatingBench:return "PASSIVE SEATING / TWO PLACES";
-        case InteriorUnitKind::OxygenGenerator:return "18 KG O2 / DAY / 20.25 L WATER / 6 KW";
+        case InteriorUnitKind::OxygenGenerator:return "36 KG O2 / DAY / 40.50 L WATER / 6 KW";
         case InteriorUnitKind::ServiceTerminal:return "LIVE ROOM AIR / POWER / WATER TERMINAL";
         default:return "";
     }

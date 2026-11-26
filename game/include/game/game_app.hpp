@@ -433,7 +433,6 @@ private:
     mutable std::vector<UnitMeshCache> interior_unit_meshes_;
     std::optional<InteriorUnitKind> interior_unit_tool_;
     std::size_t interior_unit_host_{kNoRobotIndex};
-    float interior_unit_rotation_{};
     InteriorUnitSize interior_unit_size_{InteriorUnitSize::Medium};
     std::string interior_unit_message_;
     void focus_interior(std::size_t);

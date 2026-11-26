@@ -18,6 +18,13 @@ endif()
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Game build configuration" FORCE)
 endif()
+# Debug gameplay tools are independent of compiler optimization/configuration.
+option(GAME_DEBUG_FEATURES "Compile debug gameplay features into the game executable" OFF)
+if(CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_CONFIGURATION_TYPES "Release;RelWithDebInfo;MinSizeRel" CACHE STRING "Supported game configurations" FORCE)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(FATAL_ERROR "Use Release with -DGAME_DEBUG_FEATURES=ON (or ./build.sh --debug). Separate Debug builds are retired.")
+endif()
 option(GAME_BUILD_NAVIGATION_TESTS "Build headless navigation regressions" OFF)
 
 if(WIN32)

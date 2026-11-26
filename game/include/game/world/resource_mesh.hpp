@@ -57,8 +57,8 @@ inline constexpr double power_storage_capacity_kwh(ResourceSizeTier size){
 
 // Small local output buffers keep generators useful during short storage/network
 // interruptions without turning them into replacements for dedicated storage.
-// The standard solar buffer holds 15 minutes at peak output; small keeps the
-// same duration. Water drillers buffer a fraction of a game-day production.
+// The standard solar buffer retains 4 kWh (12 minutes at the 20 kW peak);
+// small retains 2 kWh at its 10 kW peak. Water drillers buffer a fraction of a game-day production.
 inline constexpr double solar_panel_buffer_capacity_kwh(ResourceSizeTier size){
     return size==ResourceSizeTier::Small?2.0:4.0;
 }

@@ -1,13 +1,13 @@
-# Shared Linux and Windows development — 0.66.0
+# Shared Linux and Windows development — 0.92.0
 
-Both platforms use the same game sources and external JSD 0.5.17 engine services.
+Both platforms use the same game sources and external JSD 0.5.22 engine services.
 
 | Action | Linux | Windows 11 |
 | --- | --- | --- |
-| Build Release and Debug | ./build.sh /path/to/3d-engine | build.bat --engine PATH |
+| Build game | ./build.sh /path/to/3d-engine | build.bat --engine PATH |
 | Configure | ./configure.sh /path/to/3d-engine | configure.bat --engine PATH |
-| Run Release | ./run.sh | run.bat |
-| Run Debug | ./run.sh Debug | run.bat Debug |
+| Build with debug features | ./build.sh --debug | build.bat --debug |
+| Run current game | ./run.sh | run.bat |
 | Run tests | ./test.sh /path/to/3d-engine | Set JSD_GAME_ENGINE_DIR, then test.bat |
 | Clean | ./clean.sh | clean.bat |
 

@@ -131,18 +131,16 @@ bool attach_surface_profile(CorridorDoor& door,const PlacedHabitat& h,const Habi
 }
 bool reproject_habitat_door(CorridorDoor& door,const PlacedHabitat& h,const HabitatMesh& m){
     auto n=flat_normal(rotate_y(door.normal,-h.rotation_degrees));
-    if(m.dome_radii.x>0&&m.dome_radii.y==0)n=std::abs(n.x)>std::abs(n.z)?Vec3{std::copysign(1.f,n.x),0,0}:Vec3{0,0,std::copysign(1.f,n.z)};
     const auto side=perp_xz(n);
     const auto local=rotate_y(door.wall_position-h.position,-h.rotation_degrees);
     float lateral=dot(flatten(local),side);
-    if(m.dome_radii.x>0&&m.dome_radii.y==0){const float limit=std::max(0.f,(std::abs(n.x)>.5f?m.dome_radii.z:m.dome_radii.x)-GENERATED_ENTRANCE_HALF_WIDTH-.12f);lateral=std::clamp(lateral,-limit,limit);}
+    if(m.dome_radii.x>0){const float extent=std::hypot(side.x*m.dome_radii.x,side.z*m.dome_radii.z);const float limit=std::max(0.f,extent-GENERATED_ENTRANCE_HALF_WIDTH-.12f);lateral=std::clamp(lateral,-limit,limit);}
     const auto hit=local_hull_wall_point(m,n,lateral,m.walkable_floor_y+.8f);
     if(!hit)return false;
     const auto old=door.wall_position;
     door.wall_position=h.position+rotate_y(*hit,h.rotation_degrees);door.wall_position.y=h.position.y+m.walkable_floor_y;
     auto shift=door.wall_position-old;shift.y=0;
-    if(m.dome_radii.x>0&&m.dome_radii.y==0){door.normal=flat_normal(rotate_y(n,h.rotation_degrees));door.position=door.wall_position+door.normal*GENERATED_ENTRANCE_DEPTH;}
-    else door.position=door.position+shift;
+    door.position=door.position+shift;
     door.position.y=door.wall_position.y;
     return attach_surface_profile(door,h,m);
 }
@@ -232,7 +230,7 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
 
     const Vec3 local_hit=origin+direction*best_t;
     local_normal=flat_normal(local_normal);
-    if(mesh.dome_radii.x>0&&mesh.dome_radii.y>0){
+    if(mesh.dome_radii.x>0){
         const auto r=mesh.dome_radii;
         // Use the continuous pressure-wall normal. At a tessellation seam,
         // choosing either facet can skew an axial hatch and its walking aisle.
@@ -248,8 +246,7 @@ std::optional<CorridorDoor> generated_cursor_door(std::size_t habitat_index,
     d.position.y=habitat.position.y+mesh.walkable_floor_y;
     d.generated=true;
     d.entrance_index=-1;
-    if(mesh.dome_radii.x>0&&mesh.dome_radii.y==0){if(!reproject_habitat_door(d,habitat,mesh))return std::nullopt;}
-    else if(!attach_surface_profile(d,habitat,mesh)) return std::nullopt;
+    if(!attach_surface_profile(d,habitat,mesh)) return std::nullopt;
     // wall_profile retains the actual curved/faceted surface points. The door
     // controller's logical threshold, however, belongs at walking-floor level
     // just like every corridor endpoint; keeping it at the geometry slice made

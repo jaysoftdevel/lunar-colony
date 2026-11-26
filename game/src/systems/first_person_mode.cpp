@@ -70,9 +70,7 @@ bool habitat_uses_elliptical_hull(HabitatKind kind){
 bool inside_habitat_hull(Vec3 p,const PlacedHabitat& h,const HabitatMesh& mesh,float inset){
     const Vec3 local=rotate_y(p-h.position,-h.rotation_degrees);
     if(mesh.dome_radii.x>0){
-        const float rx=std::max(.01f,mesh.dome_radii.x-inset),rz=std::max(.01f,mesh.dome_radii.z-inset);
-        if(mesh.dome_radii.y==0)return std::abs(local.x)<=rx&&std::abs(local.z)<=rz;
-        return local.x*local.x/(rx*rx)+local.z*local.z/(rz*rz)<=1.f;
+        return mesh.radial_squared(local.x,local.z,inset)<=1.f;
     }
     // The structural envelope may be split over shell, glazing and foundation
     // meshes (Bio/Cantine domes are the important case). Treat their projected
@@ -567,6 +565,7 @@ bool GameApp::first_person_spawn_valid(Vec3 p) const {
 }
 
 float GameApp::first_person_floor_height(Vec3 p) const {
+    if(const float deck=lunar_lander_crew_floor(lander_,p);deck>0)return deck;
     const float package_top=resource_package_support(p);if(package_top>0)return package_top;
     // A jump onto installed equipment must land on its solid top instead of
     // dropping through it into a volume from which no horizontal step is legal.
@@ -733,6 +732,7 @@ float GameApp::first_person_floor_height(Vec3 p) const {
 
 float GameApp::first_person_ceiling_height(Vec3 p) const {
     float ceiling=std::numeric_limits<float>::max();
+    if(lander_boardable(lander_)){const auto q=lander_local(lander_,p);if(std::abs(q.x)<2.30f&&q.z>=-3.75f&&q.z<kLanderRampStart)ceiling=lander_.site.y+4.24f;}
     nearby_resource_packages(p,first_person_.body_radius(),[&](const packages::Box& box){
         if(std::abs(p.x-box.base.x)<box.half+first_person_.body_radius()&&std::abs(p.z-box.base.z)<box.half+first_person_.body_radius()&&box.bottom()>=p.y+first_person_.body_height()-.02f)ceiling=std::min(ceiling,box.bottom());
         return true;
@@ -757,9 +757,8 @@ float GameApp::first_person_ceiling_height(Vec3 p) const {
         if(m.dome_radii.x>0){
             const auto local=rotate_y(p-h.position,-h.rotation_degrees);
             for(int sample=0;sample<9;++sample){auto q=local;if(sample){const float a=6.2831853f*(sample-1)/8;q.x+=std::cos(a)*first_person_.body_radius();q.z+=std::sin(a)*first_person_.body_radius();}
-                const float rho=q.x*q.x/(m.dome_radii.x*m.dome_radii.x)+q.z*q.z/(m.dome_radii.z*m.dome_radii.z);
-                if(m.dome_radii.y==0){if(std::abs(q.x)<=m.dome_radii.x&&std::abs(q.z)<=m.dome_radii.z)ceiling=std::min(ceiling,h.position.y+m.dome_spring_y-.025f);}
-                else if(rho<=1)ceiling=std::min(ceiling,h.position.y+m.dome_spring_y+m.dome_radii.y*std::sqrt(1-rho)-.025f);
+                const float rho=m.radial_squared(q.x,q.z);
+                if(rho<=1)ceiling=std::min(ceiling,h.position.y+m.dome_spring_y+m.dome_radii.y*std::sqrt(1-rho)-.025f);
             }
         }else {scan(m.shell,h.position,h.rotation_degrees);scan(m.glazing,h.position,h.rotation_degrees);}
         for(const auto& door:habitat_doors(i))if(point_in_doorway_clearance(p,door,first_person_.body_radius()))ceiling=std::min(ceiling,door.position.y+geometry::kDoorClearHeight);
@@ -826,7 +825,7 @@ const SupplyState* GameApp::astronaut_air_at(Vec3 p,bool& airlock) const {
 }
 
 bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to,CrewTraversal traversal) const {
-    if(lunar_lander_segment_blocked(lander_,from,to,0.35f))return false;
+    if(lunar_lander_crew_blocked(lander_,from,to,first_person_.body_radius()))return false;
     const float radius=first_person_.body_radius();
     const float half=(float)playfield_.size()*0.5f-radius;
     if(to.x<-half || to.x>half || to.z<-half || to.z>half) return false;
@@ -1091,6 +1090,7 @@ bool GameApp::first_person_move_allowed(Vec3 from,Vec3 to,CrewTraversal traversa
 std::string GameApp::first_person_environment_label() const {
     if(first_person_mode_!=FirstPersonMode::Active) return "";
     const Vec3 p=first_person_.feet_position();
+    if(lander_boardable(lander_)){const auto q=lander_local(lander_,p);if(std::abs(q.x)<2.30f&&q.z>=-3.75f&&q.z<kLanderRampStart)return "LANDER CARGO BAY / VACUUM - SUIT REQUIRED";}
 
     for(std::size_t i=0;i<placed_habitats_.size();++i){
         const auto& h=placed_habitats_[i];
@@ -1324,6 +1324,11 @@ bool GameApp::first_person_pointer_over_hud(const InputState& input) const {
         astronaut_status_hover(input)||mouse_over_playfield_overlay(input);
 }
 bool GameApp::pick_build_ground(Vec3& hit) const {
+    if(!lander_.build_placement_available())return false;
+    if(lander_.early_build_placement()){
+        const auto* tool=build_catalog_.selected();
+        if(storage_gate_placement_active_ || interior_unit_tool_ || corridor_link_source_>=0 || !tool || (tool->kind!=BuildObjectKind::Habitat&&tool->kind!=BuildObjectKind::Resource))return false;
+    }
     if(first_person_mode_!=FirstPersonMode::Active)
         return camera_.intersect_playfield(input_.mouse_x,input_.mouse_y,viewport_width_,viewport_height_,playfield_.size(),hit);
     if(first_person_pointer_over_hud(input_))return false;
@@ -1409,7 +1414,7 @@ bool GameApp::interior_unit_position_clear(std::size_t index,const InteriorUnit&
         const auto world=host.position+rotate_y({x,source.walkable_floor_y,z},host.rotation_degrees);
         // Equipment already has a clearance margin; do not add avatar head radius.
         float roof=std::numeric_limits<float>::max();
-        if(source.dome_radii.x>0){const auto r=source.dome_radii;const float rho=x*x/(r.x*r.x)+z*z/(r.z*r.z);roof=source.dome_spring_y+r.y*std::sqrt(std::max(0.f,1-rho))-.025f;}
+        if(source.dome_radii.x>0){const auto r=source.dome_radii;const float rho=source.radial_squared(x,z);roof=source.dome_spring_y+r.y*std::sqrt(std::max(0.f,1-rho))-.025f;}
         else for(const auto* layer:{&source.shell,&source.glazing})for(std::size_t t=0;t+2<layer->size();t+=3){
             float y=0;if(triangle_height_at_xz({x,0,z},(*layer)[t],(*layer)[t+1],(*layer)[t+2],y)&&y>source.walkable_floor_y+.10f)roof=std::min(roof,y);
         }

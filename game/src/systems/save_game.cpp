@@ -36,7 +36,7 @@ namespace fs=std::filesystem;
 std::string path_utf8(const fs::path& path){const auto text=path.u8string();return {text.begin(),text.end()};}
 constexpr std::array<char,8> kSaveMagic{{'G','A','M','E','S','A','V','1'}};
 constexpr std::uint32_t kCompactSaveSchema=48;
-constexpr std::uint32_t kSaveSchema=55;
+constexpr std::uint32_t kSaveSchema=57;
 constexpr std::uint32_t kMinSaveSchema=1;
 constexpr std::uint64_t kMaxVectorItems=2'000'000;
 constexpr std::uint64_t kMaxObjects=100'000;
@@ -1115,6 +1115,7 @@ bool GameApp::save_game_to_name(const std::string& raw_name,std::string& error,b
     w.pod(astronaut_cache_.oxygen_kg);w.pod(astronaut_cache_.food_kg);w.pod(astronaut_cache_.water_litres);
     w.pod(static_cast<std::uint64_t>(deconstruction_jobs_.size()));
     for(const auto& job:deconstruction_jobs_){w.pod(job.sequence);w.pod(job.progress);}
+    w.pod(lander_.quarter_turns);
     w.out.close();
     if(!w.ok()){ fs::remove(temp_path,ec); error="Writing the savegame failed."; return false; }
     // The closed temporary file and its destination share a directory, so
@@ -1233,7 +1234,7 @@ bool GameApp::load_debug_blueprint_template_from_file(const std::string& path,st
     corridor_network_.set_playfield_half_extent(kDebugTemplatePlayfieldSize*0.5f);
     corridor_network_.repair_invalid_topology(placed_habitats_,habitat_models_);
     corridor_network_.synchronize_structure_interfaces(placed_habitats_,habitat_models_,placed_resources_,resource_models_);
-    if(source_schema<54)align_saved_interior_units();
+    if(source_schema<57)align_saved_interior_units();
     pressure_doors_.clear();airlock_cycles_.clear();storage_gate_open_.clear();
     utility_network_.restore_connections(std::move(utilities),r.compact());
     utility_network_.set_playfield_half_extent(kDebugTemplatePlayfieldSize*0.5f);
@@ -1852,6 +1853,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
         }
         if(!r.ok()){error="Damaged deconstruction queue.";return false;}
     }
+    if(source_schema>=56){saved_lander.quarter_turns=r.pod<std::uint8_t>();if(!r.ok()||saved_lander.quarter_turns>3){error="Invalid lander orientation.";return false;}}
     // v0.40.11 and older stored delivered construction material on the BR-02
     // coordinator. Move that authoritative buffer onto the blueprint itself so
     // carriers can continue supplying an unstaffed blueprint and constructors
@@ -1928,7 +1930,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     corridor_network_.set_playfield_half_extent((float)playfield_.size()*0.5f);
     corridor_network_.repair_invalid_topology(placed_habitats_,habitat_models_);
     corridor_network_.synchronize_structure_interfaces(placed_habitats_,habitat_models_,placed_resources_,resource_models_);
-    if(source_schema<54)align_saved_interior_units();
+    if(source_schema<57)align_saved_interior_units();
     assign_storage_loading_faces();
     synchronize_storage_gates();
     pressure_doors_.clear();airlock_cycles_.clear();storage_gate_open_.clear();

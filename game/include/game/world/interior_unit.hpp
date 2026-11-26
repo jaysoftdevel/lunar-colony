@@ -26,7 +26,8 @@ const InteriorUnitProfile& interior_unit_profile(InteriorUnitKind);
 const InteriorUnitProfile& interior_unit_profile(InteriorUnitKind,InteriorUnitSize);
 inline const InteriorUnitProfile& interior_unit_profile(const InteriorUnit& unit){return interior_unit_profile(unit.kind,unit.size);}
 inline float oxygen_unit_factor(InteriorUnitSize size){return size==InteriorUnitSize::VerySmall?.25f:size==InteriorUnitSize::Small?.5f:1.f;}
-inline double oxygen_unit_capacity(const InteriorUnit& unit){return unit.kind==InteriorUnitKind::OxygenGenerator?18.*oxygen_unit_factor(unit.size):0.;}
+inline constexpr double kOxygenGeneratorNominalKgPerDay=36.;
+inline double oxygen_unit_capacity(const InteriorUnit& unit){return unit.kind==InteriorUnitKind::OxygenGenerator?kOxygenGeneratorNominalKgPerDay*oxygen_unit_factor(unit.size):0.;}
 inline const char* interior_unit_size_name(InteriorUnitSize size){return size==InteriorUnitSize::VerySmall?"VERY SMALL":size==InteriorUnitSize::Small?"SMALL":"MEDIUM";}
 const char* interior_unit_recipe(InteriorUnitKind);
 const char* interior_unit_recipe(InteriorUnitKind,InteriorUnitSize);

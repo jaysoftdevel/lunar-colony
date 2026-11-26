@@ -152,6 +152,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
         if(debug_move_pick_robot_>=0 && (in.escape_pressed || in.right_pressed)){debug_move_pick_robot_=-1;return;}
 
         if(lander_.awaiting_site||lander_.awaiting_stash){
+            if(lander_.awaiting_site){if(in.key_n_pressed)lander_.quarter_turns=(lander_.quarter_turns+3)%4;if(in.key_m_pressed)lander_.quarter_turns=(lander_.quarter_turns+1)%4;}
             if(in.escape_pressed){screen_=Screen::MainMenu;return;}
             if(mouse_over_selection_panel(in)) world_camera_input.wheel=0;
             camera_.update(world_camera_input,playfield_.size(),viewport_height_,dt);
@@ -169,15 +170,15 @@ void GameApp::update_simulation(float dt,const InputState& in){
             if(active_game_phase_==GamePhase::RobotPreparation) update_trader(sim_dt);
         }
         const auto advance_colony=[&]{
-            if(paused) return;
+            if(paused || lander_.deploying()) return; // Queue blueprints now; deployment retains control of rover motion.
             status_.update(sim_dt);
             update_construction(sim_dt);
         };
-        if(lander_.deploying()){
+        if(lander_.deploying()&&!lander_.early_build_placement()){
             if(in.escape_pressed){screen_=Screen::MainMenu;return;}
             if(lander_.in_flight()){
                 const auto flight=lunar_lander_flight(lander_.elapsed);
-                const Vec3 origin=lander_.site+Vec3{flight.offset.x*.5f,flight.offset.y*.45f,0};
+                const Vec3 origin=lander_world(lander_,{flight.offset.x*.5f,flight.offset.y*.45f,0});
                 auto view=camera_.state();
                 view.target=view.target-origin;
                 camera_.restore(view);
@@ -200,7 +201,7 @@ void GameApp::update_simulation(float dt,const InputState& in){
             return;
         }
         if(!paused) update_pressure_doors(dt);
-        if(in.key_v_pressed){
+        if(in.key_v_pressed&&!lander_.deploying()){
             selection_marquee_active_=false;
             selection_marquee_dragged_=false;
             if(first_person_mode_==FirstPersonMode::Off) enter_first_person_mode();
@@ -218,6 +219,11 @@ void GameApp::update_simulation(float dt,const InputState& in){
             if(in.key_l_pressed && controlled_astronaut_>=0 && !cursor_was_free && !in.key_alt_down && test_astronauts_[controlled_astronaut_].health>0)
                 astronaut_views_[controlled_astronaut_].suit_light=!astronaut_views_[controlled_astronaut_].suit_light;
             const bool cursor_free=first_person_cursor_free();
+            if(cursor_free && in.left_pressed){
+                const auto panel=astronaut_status_rect();const float scale=std::min(1.f,panel.h/252.f),w=panel.w-22.f;
+                const Rect exit{panel.x+11.f+w*.52f,panel.y+222*scale,w*.48f,24*scale};
+                if(exit.contains(in.mouse_x/ui_scale_,in.mouse_y/ui_scale_)){input_.left_pressed=false;exit_first_person_mode();return;}
+            }
             app_.set_relative_mouse_mode(!cursor_free);app_.set_cursor_visible(cursor_free);
             auto fpv_input=in;
             if(cursor_was_free!=cursor_free){

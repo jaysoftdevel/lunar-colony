@@ -6,13 +6,17 @@ namespace game {
 const HabitatMesh& interior_unit_mesh(InteriorUnitKind);
 const HabitatMesh& interior_unit_mesh(InteriorUnitKind,InteriorUnitSize);
 inline const HabitatMesh& interior_unit_mesh(const InteriorUnit& unit){return interior_unit_mesh(unit.kind,unit.size);}
+// Every installable unit follows the local tangent of its host pressure hull.
 inline bool interior_unit_wall_aligned(InteriorUnitKind kind){
-    return kind!=InteriorUnitKind::DiningTable&&kind!=InteriorUnitKind::SeatingBench&&kind!=InteriorUnitKind::HydroponicRack;
+    return kind<InteriorUnitKind::Count;
+}
+// Alignment does not imply that freestanding furnishings require wall anchors.
+inline bool interior_unit_wall_anchored(InteriorUnitKind kind){
+    return interior_unit_wall_aligned(kind)&&kind!=InteriorUnitKind::DiningTable&&kind!=InteriorUnitKind::SeatingBench&&kind!=InteriorUnitKind::HydroponicRack;
 }
 inline float interior_unit_wall_yaw(const HabitatMesh& host,runtime::Vec3 p){
     const auto r=host.dome_radii;
     if(r.x<=0||r.z<=0||p.x*p.x+p.z*p.z<.01f)return 0;
-    if(r.y==0){const float dx=r.x-std::abs(p.x),dz=r.z-std::abs(p.z);return dx<dz?(p.x<0?-90.f:90.f):(p.z<0?180.f:0.f);}
     return std::atan2(p.x/(r.x*r.x),p.z/(r.z*r.z))*57.2957795f;
 }
 inline bool interior_units_overlap(const InteriorUnit& a,const InteriorUnit& b,float margin=.18f){

@@ -359,9 +359,8 @@ void GameApp::render_builder_robot(SceneRenderer& r){
             }else{
                 const auto flight=lunar_lander_flight(lander_.in_flight()?lander_.elapsed:kLanderDescentSeconds);
                 roll=flight.roll_degrees;
-                robot.position=robot.visual_position=lander_.site+flight.offset+
-                    oriented(lunar_lander_robot_berth((int)robot_index-first),0,0,roll);
-                robot.heading_degrees=robot.visual_heading_degrees=0;
+                robot.position=robot.visual_position=lander_world(lander_,flight.offset+oriented(lunar_lander_robot_berth((int)robot_index-first),0,0,roll));
+                robot.heading_degrees=robot.visual_heading_degrees=90.f*lander_.quarter_turns;
             }
         }
         const float phase=action_fraction(robot);

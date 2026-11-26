@@ -45,7 +45,7 @@ Rect GameApp::activity_log_button_rect() const {
 }
 
 void GameApp::render_build_bar(SceneRenderer& r){
-    if(lander_.deploying()||lander_.awaiting_site||lander_.awaiting_stash){
+    if(!lander_.build_placement_available()){
         const float w=ui_width(r),y=ui_height(r)-BUILD_BAR_H;
         r.draw_gradient_rect({0,y,w,BUILD_BAR_H},{.045f,.07f,.09f,.78f},{.025f,.042f,.059f,.92f});
         const char* message=lander_.awaiting_site?"CLICK TOUCHDOWN SITE  /  GREEN OUTLINE = CLEAR  /  ESC MENU":
@@ -101,7 +101,9 @@ void GameApp::render_build_bar(SceneRenderer& r){
     std::vector<int> visible;
     const auto& items=build_catalog_.items();
     for(size_t i=0;i<items.size();++i){
-        if(items[i].category==build_catalog_.category()) visible.push_back((int)i);
+        if(items[i].category==build_catalog_.category() &&
+           (!lander_.early_build_placement() || items[i].kind==BuildObjectKind::Habitat || items[i].kind==BuildObjectKind::Resource))
+            visible.push_back((int)i);
     }
 
     constexpr float icon_size=BUILD_ICON_SIZE,icon_gap=BUILD_ICON_GAP,section_gap=18.0f;

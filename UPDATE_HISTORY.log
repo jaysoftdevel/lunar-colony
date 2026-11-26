@@ -1,3 +1,7 @@
+0.91.0 - Doubled suit oxygen capacity; automatic interior hull alignment; 25% higher solar output.
+
+0.89.0 - Ground-aligned placement reticle; N/M lander rotation and ramp preview; FPV ramp and cargo bay; FPV exit hitbox; curved roof envelopes with circular/rectangular footprints.
+
 0.88.1 - Corridor connector sleeves gain rounded/oval transition frames with basement-fitted supports and cleaner hull-to-base joins.
 
 0.88.0 - Clock-driven Earth, level corridor routes, continuous docking floors and stairs, storage gate collar, larger colored crosshair and rectangular habitats.
@@ -948,3 +952,9 @@ v0.50.13 - Stage 1 usability and direct item activation
 0.85.1 - Native validation with JSD 0.5.22, exact save charging/corridor and FPV L-key regression coverage.
 
 0.86.0 - Confirmed save deletion; restored speed/DEL controls; battery priority lighting; persistent builder-driven deconstruction.
+
+0.90.0 - Restore v0.87.0 original habitat hull geometry; enable habitat/facility blueprint placement during rover unloading.
+
+0.92.0 - One optimized game executable; optional --debug compile-time gameplay features; unified launch, staging and test selection.
+
+0.93.0 - Structure hover native pointer; double oxygen production at unchanged generator electrical demand.

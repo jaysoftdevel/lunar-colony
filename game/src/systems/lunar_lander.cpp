@@ -63,14 +63,14 @@ const char* lunar_lander_phase_name(const LunarLanderState& l){
 }
 game::runtime::Vec3 lunar_lander_stash_position(const LunarLanderState& l,MaterialResource material){
     const int i=(int)material;
-    return l.site+game::runtime::Vec3{-9.0f-3.8f*(float)(i/4),0,-3.6f+2.4f*(float)(i%4)};
+    return lander_world(l,{-9.0f-3.8f*(float)(i/4),0,-3.6f+2.4f*(float)(i%4)});
 }
 game::runtime::Vec3 lunar_lander_robot_bay(const LunarLanderState& l,int ordinal){
     if(l.legacy_parking)
-        return l.site+game::runtime::Vec3{12.6f-3.0f*(float)(ordinal%3),0,-5.4f+3.1f*(float)(ordinal/3)};
+        return lander_world(l,{12.6f-3.0f*(float)(ordinal%3),0,-5.4f+3.1f*(float)(ordinal/3)});
     // Fill the outboard bays first so released rovers have an outward exit.
     constexpr float sides[]={6.65f,-6.65f,4.0f,-4.0f};
-    return l.site+game::runtime::Vec3{sides[ordinal%4],0,6.7f+2.15f*(float)(ordinal/4)};
+    return lander_world(l,{sides[ordinal%4],0,6.7f+2.15f*(float)(ordinal/4)});
 }
 namespace {
 constexpr float kRoverUnloadSpeed=1.65f;
@@ -87,7 +87,7 @@ struct RoverUnloadRoute {
     RoverUnloadRoute(const LunarLanderState& lander,int ordinal,int first)
         : ramp_entry_time(kRoverRampHeadway*(1+ordinal-first)){
         const auto berth=lunar_lander_robot_berth(ordinal-first);
-        const auto bay=lunar_lander_robot_bay(lander,ordinal)-lander.site;
+        const auto bay=lander_local(lander,lunar_lander_robot_bay(lander,ordinal));
         const float lane=lander.legacy_parking?12.0f:kApronLaneZ;
         points={{berth,{berth.x,2.4f,kFrontBerthZ},{0,2.4f,kRampHingeZ},{0,0,10.6f},
                  {0,0,lane},{bay.x,0,lane},bay}};
@@ -133,13 +133,13 @@ float lunar_lander_deployment_seconds(const LunarLanderState& lander,int first){
 LanderRoverPose lunar_lander_robot_pose(const LunarLanderState& lander,int ordinal,int first){
     const RoverUnloadRoute route(lander,ordinal,first);
     const float along=route.distance[2]+(lander.elapsed-route.ramp_entry_time)*kRoverUnloadSpeed;
-    if(along<=0) return {lander.site+route.points.front(),0,0,false};
-    if(along>=route.distance.back()) return {lander.site+route.points.back(),180,0,true,route.distance.back()};
+    if(along<=0) return {lander_world(lander,route.points.front()),90.f*lander.quarter_turns,0,false};
+    if(along>=route.distance.back()) return {lander_world(lander,route.points.back()),180.f+90.f*lander.quarter_turns,0,true,route.distance.back()};
     // Blend the heading through bends while staying on the reserved lane.
     const auto tangent=route.sample(along+.20f)-route.sample(std::max(0.0f,along-.20f));
     const float heading=std::atan2(tangent.x,tangent.z)*180.0f/3.14159265f;
     const float pitch=std::atan2(-tangent.y,std::hypot(tangent.x,tangent.z))*180.0f/3.14159265f;
-    return {lander.site+route.sample(along),heading,pitch,false,along};
+    return {lander_world(lander,route.sample(along)),heading+90.f*lander.quarter_turns,pitch,false,along};
 }
 
 bool lunar_lander_deployment_clear(const LunarLanderState& lander,game::runtime::Vec3 position,float rotation,
@@ -147,12 +147,12 @@ bool lunar_lander_deployment_clear(const LunarLanderState& lander,game::runtime:
     using namespace world_math;
     const auto area=footprint(position,rotation,width,depth);
     if(!lander.legacy_parking)
-        return !overlaps(area,footprint(lander.site+Vec3{0,0,2.6f},0,12.2f,17.4f),margin)
-            && !overlaps(area,footprint(lander.site+Vec3{0,0,10.2f},0,15.8f,9.4f),margin);
+        return !overlaps(area,footprint(lander_world(lander,{0,0,2.6f}),90.f*lander.quarter_turns,12.2f,17.4f),margin)
+            && !overlaps(area,footprint(lander_world(lander,{0,0,10.2f}),90.f*lander.quarter_turns,15.8f,9.4f),margin);
     // Keep the original apron for saved landers that were already unloaded.
-    return !overlaps(area,footprint(lander.site+Vec3{0,0,2.6f},0,12.2f,17.4f),margin)
-        && !overlaps(area,footprint(lander.site+Vec3{9.6f,0,3.15f},0,8.8f,19.7f),margin)
-        && !overlaps(area,footprint(lander.site+Vec3{6.5f,0,11.85f},0,15.0f,2.3f),margin);
+    return !overlaps(area,footprint(lander_world(lander,{0,0,2.6f}),90.f*lander.quarter_turns,12.2f,17.4f),margin)
+        && !overlaps(area,footprint(lander_world(lander,{9.6f,0,3.15f}),90.f*lander.quarter_turns,8.8f,19.7f),margin)
+        && !overlaps(area,footprint(lander_world(lander,{6.5f,0,11.85f}),90.f*lander.quarter_turns,15.0f,2.3f),margin);
 }
 
 bool lunar_lander_segment_blocked(const LunarLanderState& l,game::runtime::Vec3 a,game::runtime::Vec3 b,float radius,int pending_from){
@@ -165,14 +165,37 @@ bool lunar_lander_segment_blocked(const LunarLanderState& l,game::runtime::Vec3 
         reserved|=slab(x,y,-.75f-radius,.75f+radius,-.75f-radius,run+.75f+radius);
     });
     if(reserved)return true;
-    a=a-l.site;b=b-l.site;
+    a=lander_local(l,a);b=lander_local(l,b);
     return slab(a,b,-5.35f-radius,5.35f+radius,-5.35f-radius,5.35f+radius)||
         slab(a,b,-2.12f-radius,2.12f+radius,3.6f-radius,10.7f+radius);
 }
 
+// The crew accesses the cargo bay, not the closed upper command capsule.
+float lunar_lander_crew_floor(const LunarLanderState& l,game::runtime::Vec3 world){
+    if(!lander_boardable(l))return 0;
+    const auto p=lander_local(l,world);
+    if(std::abs(p.x)<=kLanderRampHalfWidth+.02f&&p.z>=kLanderRampStart&&p.z<=kLanderRampEnd)
+        return l.site.y+kLanderDeckY*(kLanderRampEnd-p.z)/(kLanderRampEnd-kLanderRampStart);
+    if(std::abs(p.x)<=2.30f&&p.z>=-3.75f&&p.z<kLanderRampStart)return l.site.y+kLanderDeckY;
+    return 0;
+}
+bool lunar_lander_crew_blocked(const LunarLanderState& l,game::runtime::Vec3 a,game::runtime::Vec3 b,float radius){
+    if(!lander_boardable(l))return lunar_lander_segment_blocked(l,a,b,radius);
+    // Sample the swept body center so the bay can only be entered by its ramp.
+    const auto x=lander_local(l,a),y=lander_local(l,b);
+    const int count=std::max(1,int(std::ceil(game::runtime::length(y-x)/.08f)));
+    for(int i=0;i<=count;++i){const auto p=x+(y-x)*(float(i)/count);
+        const bool ramp=p.z>=kLanderRampStart-.01f&&p.z<=kLanderRampEnd+.05f&&std::abs(p.x)<=kLanderRampHalfWidth-radius;
+        const bool bay=p.z>=-3.75f+radius&&p.z<=kLanderRampStart+.01f&&std::abs(p.x)<=2.30f-radius;
+        if(ramp||bay){const float deck=lunar_lander_crew_floor(l,lander_world(l,p))-l.site.y;if(p.y<deck-.32f||p.y>deck+.90f)return true;continue;}
+        if(std::abs(p.x)<5.35f+radius&&p.z>-5.35f-radius&&p.z<5.35f+radius)return true;
+        if(std::abs(p.x)<2.12f+radius&&p.z>kLanderRampStart-radius&&p.z<kLanderRampEnd-radius)return true;
+    }return false;
+}
+
 game::runtime::Vec3 lunar_lander_salvage_station(const LunarLanderState& lander,std::size_t port){
     constexpr game::runtime::Vec3 stations[]={{6.5f,0,0},{-6.5f,0,0},{0,0,-6.5f}};
-    return lander.site+stations[port];
+    return lander_world(lander,stations[port]);
 }
 
 game::runtime::Vec3 lunar_lander_salvage_focus(const LunarLanderState& lander,std::size_t port){
@@ -194,7 +217,7 @@ bool GameApp::lander_placement_clear(game::runtime::Vec3 p,float rotation,float 
     if(!lander_.active())return true;
     using namespace world_math;
     const auto candidate=footprint(p,rotation,width,depth);
-    if(overlaps(candidate,footprint(lander_.site+game::runtime::Vec3{0,0,2.6f},0,12.2f,17.4f),0.5f))return false;
+    if(overlaps(candidate,footprint(lander_world(lander_,{0,0,2.6f}),90.f*lander_.quarter_turns,12.2f,17.4f),0.5f))return false;
     if(lander_.deploying()&&!lunar_lander_deployment_clear(lander_,p,rotation,width,depth,.5f)) return false;
     return true;
 }
@@ -202,7 +225,7 @@ bool GameApp::lander_placement_clear(game::runtime::Vec3 p,float rotation,float 
 BuilderRobotState GameApp::lander_robot(int ordinal) const {
     BuilderRobotState r;
     r.role=ordinal<(int)lander_.builders?RobotRole::Constructor:RobotRole::Carrier;
-    r.position=lunar_lander_robot_bay(lander_,ordinal);r.heading_degrees=180;
+    r.position=lunar_lander_robot_bay(lander_,ordinal);r.heading_degrees=180.f+90.f*lander_.quarter_turns;
     r.visual_position=r.position;r.visual_heading_degrees=r.heading_degrees;r.visual_initialized=true;
     const bool carrier=r.role==RobotRole::Carrier;
     r.move_speed_mps=carrier?kCarrierRobotTransitSpeedMps:kBuilderRobotTransitSpeedMps;
@@ -258,10 +281,10 @@ void GameApp::update_lunar_lander(float dt){
             const auto focus=[](game::runtime::Vec3 offset){return game::runtime::Vec3{offset.x*.5f,offset.y*.45f,0};};
             const auto distance=[](game::runtime::Vec3 offset){return 46.0f+offset.y*1.25f;};
             if(lander_.elapsed==step&&step>0){
-                camera_.restore({distance(after.offset),36,38,lander_.site+focus(after.offset)});
+                camera_.restore({distance(after.offset),36,38,lander_world(lander_,focus(after.offset))});
             }else if(step>0){
                 auto view=camera_.state();
-                view.target+=focus(after.offset)-focus(before.offset);
+                view.target+=lander_rotate(focus(after.offset)-focus(before.offset),lander_.quarter_turns);
                 view.distance=std::max(8.0f,view.distance*distance(after.offset)/distance(before.offset));
                 camera_.restore(view);
             }
@@ -309,7 +332,7 @@ void GameApp::render_lunar_lander_panel(game::runtime::SceneRenderer& r){
         if(y>=p.y+4 && y+14<=p.y+p.h-4)game_label_fitted(r,{p.x+14,y,p.w-28,14},text,scale,theme_);
     };
     label(12,"LUNAR CARGO LANDER",0.66f);
-    label(40,lander_.awaiting_site?"CLICK LANDING SITE":lander_.awaiting_stash?"CLICK STASH MARKER":lunar_lander_phase_name(lander_),0.48f);
+    label(40,lander_.awaiting_site?"CLICK SITE / N-M ROTATE 90 DEG":lander_.awaiting_stash?"CLICK STASH MARKER":lunar_lander_phase_name(lander_),0.48f);
     const auto s=lunar_lander_flight(lander_.in_flight()?lander_.elapsed:kLanderDescentSeconds);
     std::ostringstream telemetry;telemetry<<std::fixed<<std::setprecision(1)<<"ALT "<<s.offset.y<<" M   VERTICAL "<<s.velocity.y<<" M/S";
     label(66,telemetry.str());

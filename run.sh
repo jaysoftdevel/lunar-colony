@@ -3,10 +3,9 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
 bin="$GAME_BIN"
 case "${1:-}" in
-    Debug|debug|--debug) bin="$GAME_DEBUG_BIN"; shift ;;
-    Release|release) shift ;;
+    Debug|debug|--debug|Release|release) echo "Select debug features at build time: ./build.sh [--debug]; then ./run.sh" >&2; exit 2 ;;
 esac
-if [[ ! -x "$GAME_BIN" || ! -x "$GAME_DEBUG_BIN" ]]; then
+if [[ ! -x "$GAME_BIN" ]]; then
     "$GAME_ROOT/build.sh"
 fi
 expected="game $(tr -d '\r\n' < "$GAME_ROOT/VERSION")"

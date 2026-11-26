@@ -46,7 +46,7 @@ bool GameApp::placement_preserves_robot_escape(Vec3 position,float rotation_degr
         return std::abs(local.x)<=sx*0.5f+inflate && std::abs(local.z)<=sz*0.5f+inflate;
     };
     auto blocked=[&](Vec3 p){
-        if(lunar_lander_segment_blocked(lander_,p,p,kPlacementRobotRadius))return true;
+        if(lunar_lander_segment_blocked(lander_,p,p,kPlacementRobotRadius,int(builder_robots_.size())))return true;
         if(inside_rotated(p,position,rotation_degrees,footprint_x,footprint_z,kPlacementRobotRadius)) return true;
         for(const auto& h:placed_habitats_){
             if(!h.construction.complete()) continue;
@@ -328,7 +328,7 @@ void GameApp::render_habitat_placement(SceneRenderer& r){
     candidate.kind=selected->habitat_kind;
     candidate.size=size;
     candidate.rotation_degrees=placement_rotation_degrees_;
-    auto attachment=preview_structure_attachment(hit,&candidate,nullptr);
+    auto attachment=lander_.early_build_placement()?std::optional<StructureAttachment>{}:preview_structure_attachment(hit,&candidate,nullptr);
     if(attachment)snapped=attachment->position;
     const auto plan=construction_costs::habitat(selected->habitat_kind,size,habitat_models_.mesh(selected->habitat_kind,size));
     const char* reason=nullptr;
