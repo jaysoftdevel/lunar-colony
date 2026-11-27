@@ -1,3 +1,5 @@
+0.93.1 - Complete workspace-local build cleanup via clean.sh; protects legacy saves and settings.
+
 0.91.0 - Doubled suit oxygen capacity; automatic interior hull alignment; 25% higher solar output.
 
 0.89.0 - Ground-aligned placement reticle; N/M lander rotation and ramp preview; FPV ramp and cargo bay; FPV exit hitbox; curved roof envelopes with circular/rectangular footprints.

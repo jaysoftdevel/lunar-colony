@@ -1,3 +1,12 @@
+# Version 0.93.1 — validation
+
+- Bash syntax check passed.
+- Six isolated filesystem regression tests passed: all Linux/Windows configurations, legacy debug binaries, staged fixtures, external engine symlinks, root save/settings preservation, idempotence, legacy-save and modified-template protection, config protection, symlinked build-root refusal, invalid arguments and workspace validation.
+- Run `python3 game/tests/clean_script_test.py` to repeat the cleanup regression.
+- No C++ changes; native game rebuild not required for testing this script. Windows batch cleanup unchanged.
+
+---
+
 # Version 0.93.0 — validation
 
 - C++20 syntax checks with generated CMake compiler flags passed: playfield_view.cpp, interior_units.cpp, supply_simulation.cpp, ui_regression.cpp and navigation_regression.cpp.
