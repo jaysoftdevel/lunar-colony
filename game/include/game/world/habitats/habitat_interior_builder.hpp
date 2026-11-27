@@ -15,10 +15,6 @@ inline void bench(Builder& b,Vec3 feet,float width,float depth,float height=.78f
 inline void console(Builder& b,Vec3 c,float width=1.2f,float facing_z=-1.f){
     interior_layout::StationScope station(b.mesh,StationKind::Screen);
     b.box(b.mesh.interior,c,{width,.68f,.46f},false);
-    b.box(b.mesh.interior,{c.x,c.y+.48f,c.z+.18f*facing_z},{width*.82f,.42f,.10f},false);
-    structure_display::Mount screen{{c.x,c.y+.48f,c.z+.245f*facing_z},{facing_z,0,0},{0,1,0},width*.73f,.31f};
-    structure_display::casing(b.mesh.service_metal,b.mesh.displays,screen);b.mesh.screens.push_back(screen);
-    b.box(b.mesh.service_metal,{c.x,c.y+.27f,c.z+.16f*facing_z},{.10f,.24f,.08f},false);
     b.box(b.mesh.service_metal,{c.x,c.y+.20f,c.z+.25f*facing_z},{width*.80f,.035f,.16f},false);
     for(int key=0;key<5;++key)b.box(b.mesh.markings,{c.x+width*(key-2)*.10f,c.y+.222f,c.z+.26f*facing_z},{width*.055f,.006f,.045f},false);
 }

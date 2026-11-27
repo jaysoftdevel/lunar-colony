@@ -801,10 +801,10 @@ void GameApp::render_selection_panel(SceneRenderer& r){
             }
         }
         if(item.kind==ResourceKind::PowerStorage || item.kind==ResourceKind::WaterStorage){
-            const double factor=item.size==ResourceSizeTier::Small?0.5:1.0;
             std::ostringstream inventory;inventory<<std::fixed<<std::setprecision(1);
             if(item.kind==ResourceKind::PowerStorage)inventory<<"BATTERY "<<item.supply.energy_kwh<<" / "<<power_storage_capacity_kwh(item.size)<<" KWH";
-            else inventory<<"TANK "<<item.supply.water_litres<<" / "<<2000*factor<<" L";
+            else inventory<<"TANK "<<item.supply.water_litres<<" / "<<water_storage_capacity_litres(item.size)<<" L";
+            inventory<<"  ("<<storage_fill_percent(item)<<"%)";
             game_label(r,{x,p.y+208},inventory.str(),0.52f,theme_);
         }
         if(item.kind==ResourceKind::StorageDome){
@@ -813,7 +813,7 @@ void GameApp::render_selection_panel(SceneRenderer& r){
             const ResourceBundle stored_resources=stored_resource_box_totals(item);
             const std::int64_t stored=stored_resources.total_amount()+stored_ore_mass_kg(item);
             std::ostringstream capacity,corridors,boxes;
-            capacity<<"STORAGE (BOX SUM)  "<<stored<<" / "<<storage_dome_capacity_kg(item.storage_size)<<" KG";
+            capacity<<"CARGO "<<storage_fill_percent(item)<<"%  "<<stored<<" / "<<storage_dome_capacity_kg(item.storage_size)<<" KG";
             const int gates=storage_loading::gate_count(item);
             boxes<<"LOADING GATES  "<<gates<<" / 3";
             corridors<<"CORRIDORS "<<corridor_network_.resource_connection_count((size_t)selected_resource_);
@@ -869,7 +869,7 @@ void GameApp::render_selection_panel(SceneRenderer& r){
             std::ostringstream inventory;
             inventory<<std::fixed<<std::setprecision(1)<<"STORED OXYGEN  "<<item.stored_oxygen_kg<<" / "<<capacity<<" KG";
             game_label(r,{x,p.y+90},inventory.str(),0.54f,theme_);
-            game_label(r,{x,p.y+119},"TANK FILL  "+std::to_string((int)(100*item.stored_oxygen_kg/capacity))+"%",0.51f,theme_,true);
+            game_label(r,{x,p.y+119},"TANK FILL  "+std::to_string(storage_fill_percent(item))+"%",0.51f,theme_,true);
             game_label(r,{x,p.y+151},"COLLECTS SURPLUS FROM CONNECTED GENERATORS",0.42f,theme_,true);
             game_label(r,{x,p.y+174},"RESERVE FEEDS CONNECTED HABITATS BELOW 95% AIR",0.40f,theme_,true);
             game_label(r,{x,p.y+197},"AVAILABLE AS OXYGEN AT THE TRADER",0.42f,theme_,true);
@@ -878,7 +878,7 @@ void GameApp::render_selection_panel(SceneRenderer& r){
         }
         if(item.kind==ResourceKind::HydrogenTank){
             const double capacity=hydrogen_tank_capacity_kg(item.size);
-            const double fraction=capacity>0?item.supply.hydrogen_kg/capacity:0.0;
+            const double fraction=storage_fill_fraction(item);
             std::ostringstream inventory;
             inventory<<std::fixed<<std::setprecision(2)<<"STORED HYDROGEN  "<<item.supply.hydrogen_kg<<" / "<<capacity<<" KG";
             game_label(r,{x,p.y+90},inventory.str(),0.54f,theme_);

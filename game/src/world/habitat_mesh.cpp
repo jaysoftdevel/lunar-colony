@@ -4,7 +4,7 @@
 #include "game/world/geometry_standards.hpp"
 #include "game/world/habitat_builder.hpp"
 #include "game/world/mesh_portals.hpp"
-#include "game/world/habitats/screen_mounts.hpp"
+#include "game/world/interior_station.hpp"
 #include "game/world/interior_finish.hpp"
 #include <cmath>
 
@@ -207,7 +207,6 @@ HabitatModelLibrary::HabitatModelLibrary(){
                 }
             }
             if(kind!=HabitatKind::AirLock)standardize_crew_interfaces(variant,false);
-            habitats::finish_screen_mounts(variant,kind);
             interior_finish::finish(variant);
         }
     });

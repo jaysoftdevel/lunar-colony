@@ -1,3 +1,15 @@
+0.93.7 - Add debug-only Free Play Auto Run with automatic landing, deployment, construction and pressure monitoring. Commission power, water extraction and oxygen production before the reserve tank.
+
+0.93.6 - Resolve the game checkout from the build script. Accept the engine source path as the only required argument.
+
+0.93.5 - Build against the explicit game and engine directories on every run. Paired with JSD 0.5.24 rendering optimizations.
+
+0.93.4 - Repair corridor routes that double back into their docking sleeves after hatch reprojection.
+
+0.93.3 - Stationary batteries gain 25% capacity. Tanks, battery banks and cargo domes show live fill levels. Corridor door adapters use fewer frame members. Status terminals are paired across each doorway. Cabin terminals show the temperature setpoint, oxygen partial pressure and net oxygen rate. Workshop terminals show gate, bay and power status.
+
+0.93.2 - Reduced CPU time preparing material batches, the rotating Earth and structure hulls.
+
 0.93.1 - Complete workspace-local build cleanup via clean.sh; protects legacy saves and settings.
 
 0.91.0 - Doubled suit oxygen capacity; automatic interior hull alignment; 25% higher solar output.

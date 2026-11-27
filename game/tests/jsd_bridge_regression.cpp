@@ -47,6 +47,38 @@ int main(int argc,char** argv){
                 require(pixel[0]>240 && pixel[1]<10,"UI scaling or postprocessing order changed");
                 require(gl.GetError()==0,"OpenGL rendering error");
             }
+            // Exercise same-size edits within a single spatial/material batch.
+            options.path=GraphicsPath::Classic;
+            options.aa=GraphicsAA::Off;
+            options.bloom=0;
+            renderer->set_graphics_settings(options);
+            const Vec3 eye{4,3,9};
+            const auto panel_view=multiply(perspective(radians(62),16.f/9,.05f,500),
+                                           look_at(eye,{4,3,4},{0,1,0}));
+            std::vector<Vec3> panel{{2,1,4},{6,1,4},{6,5,4},{2,1,4},{6,5,4},{2,5,4}};
+            LunarSurfaceMapping basis{};
+            const auto panel_frame=[&](Color tint){
+                renderer->begin_frame({0,0,0,1});
+                renderer->set_3d(panel_view);
+                renderer->draw_mapped_lunar_surface(panel,LunarMaterial::Hull,tint,basis);
+                renderer->end_frame();
+                std::vector<unsigned char> pixels(320*240*4);
+                gl.ReadPixels(160,60,320,240,vl::GL_RGBA,vl::GL_UNSIGNED_BYTE,pixels.data());
+                return pixels;
+            };
+            const Color silver{.8f,.72f,.65f,1};
+            const auto original=panel_frame(silver);
+            require(panel_frame(silver)==original,"Repeated batch changed pixels");
+            require(panel_frame({.15f,.7f,.2f,1})!=original,"Tint edit reused stale vertices");
+            basis.origin.x=.37f;
+            require(panel_frame(silver)!=original,"UV basis edit reused stale vertices");
+            basis.origin.x=0;
+            require(panel_frame(silver)==original,"Restored mapping did not restore the panel");
+            const auto geometry=panel;
+            std::fill(panel.begin(),panel.end(),panel.front());
+            require(panel_frame(silver)!=original,"Collapsed triangles retained the old mesh");
+            panel=geometry;
+            require(panel_frame(silver)==original,"Restored vertices did not restore the panel");
             // Switching from a world into menus must clear stale world color/history.
             renderer->begin_frame({0,0,0,1});renderer->set_2d();renderer->draw_rect({0,0,640,360},{0,1,0,1});renderer->end_frame();
             std::array<unsigned char,4> pixel{};gl.ReadPixels(320,180,1,1,vl::GL_RGBA,vl::GL_UNSIGNED_BYTE,pixel.data());

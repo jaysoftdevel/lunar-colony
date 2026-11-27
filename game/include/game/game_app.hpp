@@ -161,6 +161,13 @@ private:
     PlanningGameState planning_{};
     CropSeeds colony_seeds_{};
     LunarLanderState lander_{};
+    enum class AutoRunPhase { Inactive, Landing, Unloading, Building, Pressurizing, Finished };
+    struct AutoRun {
+        AutoRunPhase phase{AutoRunPhase::Inactive};
+        std::uint64_t first_blueprint{}, end_blueprint{};
+        std::string message;
+        double notice_until{};
+    } auto_run_;
     TraderState trader_{};
     std::string trade_message_{};
     std::string planning_status_message_{};
@@ -344,6 +351,10 @@ private:
     void render_new_game(game::runtime::SceneRenderer& r);
     void render_stage3_modes(game::runtime::SceneRenderer& r);
     void start_new_game(Stage3Mode stage3_mode=Stage3Mode::Sandbox);
+    void start_auto_run();
+    void update_auto_run();
+    bool queue_auto_run_base();
+    void set_auto_run_phase(AutoRunPhase phase,const char* message);
     void render_save_game(game::runtime::SceneRenderer& r);
     void render_load_game(game::runtime::SceneRenderer& r);
     void render_settings(game::runtime::SceneRenderer& r);
@@ -443,7 +454,7 @@ private:
     bool update_interior_unit_placement(const game::runtime::InputState&);
     void render_interior_unit_preview(game::runtime::SceneRenderer&);
     void render_interior_unit_panel(game::runtime::SceneRenderer&,std::size_t,float,float,float);
-    void render_interior_unit_screens(game::runtime::SceneRenderer&,std::size_t) const;
+    void render_interior_unit_lamps(game::runtime::SceneRenderer&,std::size_t) const;
     float interior_unit_panel_height(std::size_t) const;
     std::string interior_unit_status(std::size_t,const InteriorUnit&) const;
     void update_interior_units(float);
@@ -680,7 +691,6 @@ private:
     bool workshop_supplied(std::size_t resource_index) const;
     bool workshop_operational(std::size_t resource_index) const;
     structure_display::Content habitat_screen_content(std::size_t) const;
-    void render_habitat_screens(game::runtime::SceneRenderer&,std::size_t) const;
     void render_workshop_services(game::runtime::SceneRenderer& r,std::size_t index) const;
     void render_workshop_gate(game::runtime::SceneRenderer& r,const PlacedResource& item,bool preview=false,bool valid=true) const;
     void assign_storage_loading_faces();

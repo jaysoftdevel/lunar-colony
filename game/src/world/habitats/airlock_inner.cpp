@@ -24,8 +24,6 @@ void build_airlock_inner(Builder& b){
             for(int slot=0;slot<7;++slot)b.box(m.fabric,{x+(slot-3)*.075f,floor+1.86f,wall_z-sign*.045f},{.035f,.16f,.012f},false);
             b.cylinder_between(m.service_metal,{x-.36f,floor+1.04f,wall_z-sign*.08f},{x+.36f,floor+1.04f,wall_z-sign*.08f},.027f,10,true,false);
         }
-        const structure_display::Mount screen{{0,floor+1.25f,z-sign*.18f},{-sign,0,0},{0,1,0},.78f,.42f};
-        structure_display::casing(m.service_metal,m.displays,screen);m.screens.push_back(screen);
     }
     for(float x:{-3.05f,0.f,3.05f})
         b.cylinder_between(m.lamps,{x-.40f,floor+2.78f,0},{x+.40f,floor+2.78f,0},.028f,8,true,false);

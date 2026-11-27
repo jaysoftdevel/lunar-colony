@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GAME_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GAME_ROOT="$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 GAME_BUILD_DIR="$GAME_ROOT/build/linux"
 GAME_BIN="$GAME_BUILD_DIR/bin/game"
 
@@ -15,11 +15,9 @@ normalize_config() {
 }
 
 configure_variant() {
-    local engine_flags=()
-    if [[ -n "${JSD_GAME_ENGINE_DIR:-}" ]]; then engine_flags=("-DJSD_GAME_ENGINE_DIR=$JSD_GAME_ENGINE_DIR"); fi
-    cmake -S "$GAME_ROOT" -B "$GAME_BUILD_DIR/$1" "${engine_flags[@]}" \
-        -DCMAKE_BUILD_TYPE="$1" -DGAME_BIN_DIR="$GAME_BUILD_DIR/bin" \
-        -DGAME_BUILD_NAVIGATION_TESTS="$2" -DGAME_DEBUG_FEATURES="$3"
+    cmake -S "$GAME_ROOT" -B "$GAME_VARIANT_DIR" "-DJSD_GAME_ENGINE_DIR=$JSD_GAME_ENGINE_DIR" \
+        -DCMAKE_BUILD_TYPE="$CONFIG" -DGAME_BIN_DIR="$GAME_VARIANT_DIR/bin" \
+        -DGAME_BUILD_NAVIGATION_TESTS="$TESTS" -DGAME_DEBUG_FEATURES="$DEBUG_FEATURES"
 }
 
 cpu_jobs() {

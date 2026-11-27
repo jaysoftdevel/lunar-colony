@@ -31,5 +31,28 @@ int main(){try{
     try{renderer.lines(bad);}catch(const std::invalid_argument&){rejected=true;}
     require(rejected,"nonfinite guides accepted");
     renderer.begin(camera);renderer.end();require(renderer.statistics().lineSegments==0,"stale guides leaked into next frame");
+    const auto picture=[&](const std::vector<LineSegment>& segments){
+        renderer.begin(camera);renderer.lines(segments);renderer.end();
+        std::vector<unsigned char> pixels(320*200*4);
+        gl.ReadPixels(0,0,320,200,vl::GL_RGBA,vl::GL_UNSIGNED_BYTE,pixels.data());
+        return pixels;
+    };
+    const LineSegment distant{{999,0,0},{1000,0,0},{1,0,0,.4f},3};
+    const std::vector<LineSegment> visible{
+        {{-1,0,0},{1,0,0},{0,1,0,.6f},12},
+        {{0,.1f,6},{0,.5f,-4},{0,0,1,.7f},2},
+        {{-1,3.2f,0},{1,3.2f,0},{1,1,0,.5f},100}
+    };
+    auto reference=picture(visible);
+    std::vector<LineSegment> groups(8192,distant);
+    groups[260]=visible[0];groups[3100]=visible[1];groups.back()=visible[2];
+    require(picture(groups)==reference,"Guide culling changed coverage or blend order");
+    require(renderer.statistics().lineSegments<groups.size(),"No offscreen guide blocks culled");
+    const auto initialPosition=camera.position;
+    camera.position.x+=1000;
+    picture(groups);
+    require(renderer.statistics().lineUploadBytes==0,"Camera motion reuploaded guide blocks");
+    camera.position=initialPosition;
+    require(picture(groups)==reference,"Returning camera lost retained guides");
     std::cout<<"PASS native guide rendering, depth occlusion, retained uploads, camera movement and validation\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

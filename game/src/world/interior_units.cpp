@@ -139,9 +139,6 @@ const HabitatMesh& interior_unit_mesh(InteriorUnitKind kind){
                 }
                 b.box(b.mesh.lamps,{0,size.y-.18f,0},{size.x*.75f,.025f,.06f},false);
             }
-            const float screen_y=std::min(size.y-.26f,1.38f);
-            structure_display::Mount screen{{0,screen_y,-size.z*.5f-.025f},{-1,0,0},{0,1,0},std::min(.74f,size.x*.7f),.32f};
-            structure_display::casing(b.mesh.service_metal,b.mesh.displays,screen);b.mesh.screens.push_back(screen);
             b.mesh.footprint_x=size.x;b.mesh.footprint_z=size.z;b.mesh.height=size.y;
             result[i]=std::move(b.mesh);
         }

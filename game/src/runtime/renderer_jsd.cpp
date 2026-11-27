@@ -17,12 +17,33 @@ struct Key {
     unsigned seed{};
     auto operator<=>(const Key&) const = default;
 };
+// A batch can contain several tints and UV bases. Keep those boundaries
+// alongside the positions so either kind of change invalidates the GPU mesh.
+struct SurfaceRun {
+    Color tint;
+    LunarSurfaceMapping mapping;
+    std::size_t end;
+};
+struct BatchInput {
+    std::vector<Vec3> positions;
+    std::vector<SurfaceRun> runs;
+    void clear(){positions.clear();runs.clear();}
+    bool matches(const BatchInput& other) const {
+        if(runs.size()!=other.runs.size() || positions.size()!=other.positions.size())return false;
+        for(std::size_t i=0;i<runs.size();++i){
+            const auto& a=runs[i];
+            const auto& b=other.runs[i];
+            if(a.end!=b.end || std::memcmp(&a.tint,&b.tint,sizeof(Color)) ||
+               std::memcmp(&a.mapping,&b.mapping,sizeof(LunarSurfaceMapping)))return false;
+        }
+        return positions.empty() || !std::memcmp(positions.data(),other.positions.data(),positions.size()*sizeof(Vec3));
+    }
+};
 struct Batch {
     gfx::MeshId mesh{};
-    std::vector<gfx::Vertex> vertices;
+    BatchInput input,uploaded_input;
     gfx::Material material;
     std::uint64_t last_frame{};
-    std::vector<gfx::Vertex> previous_vertices;
     std::size_t uploaded{};
 };
 class JsdRenderer final: public SceneRenderer {
@@ -37,6 +58,7 @@ class JsdRenderer final: public SceneRenderer {
     std::vector<gfx::LineSegment> lines_;
     std::vector<gfx::ParticleSprite> particles_;
     std::map<Key,Batch> batches_;
+    std::vector<gfx::Vertex> prepared_vertices_;
     ui::Batch ui_;
     Color clear_{};
     bool world_{},lunar_{},benchmarking_{},hardware_{},vsync_supported_{},ui_mode_{};
@@ -130,27 +152,65 @@ color=vec4(vColor.rgb,vColor.a*coverage);})GLSL");
     void queue(const std::vector<Vec3>& vertices,int kind,Color tint,const LunarSurfaceMapping* mapping=nullptr){
         if(tint.a<=0)return;
         world_=true;
-        for(std::size_t i=0;i+2<vertices.size();i+=3){
-            const Vec3 center=(vertices[i]+vertices[i+1]+vertices[i+2])*(1.f/3);
-            const bool sky=kind==int(LunarMaterial::Celestial);
-            const Key key{kind,sky?0:int(std::floor(center.x/24)),sky?0:int(std::floor(center.z/24)),tint.a<.995f,
-                (sky||kind==int(LunarMaterial::Emissive)||kind==int(LunarMaterial::DisplayText))?(int(tint.r*255)<<16)|(int(tint.g*255)<<8)|int(tint.b*255):0,
+        const bool sky=kind==int(LunarMaterial::Celestial);
+        const bool emissive=sky || kind==int(LunarMaterial::Emissive) || kind==int(LunarMaterial::DisplayText);
+        Key key{kind,0,0,tint.a<.995f,emissive?(int(tint.r*255)<<16)|(int(tint.g*255)<<8)|int(tint.b*255):0,
                 mapping!=nullptr,mapping?mapping->seed:0};
+        const auto count=vertices.size()/3*3;
+        std::size_t first=0;
+        const auto append=[&](std::size_t end){
             auto& batch=batches_[key];
-            if(batch.last_frame!=frame_){batch.previous_vertices.swap(batch.vertices);batch.vertices.clear();batch.last_frame=frame_;batch.material=material(kind,tint);batch.material.surfaceUV=mapping!=nullptr || kind==int(LunarMaterial::Hull) || kind==int(LunarMaterial::Paint) || kind==int(LunarMaterial::PressureDoor);
-                batch.material.surfaceSeed=(key.seed?key.seed:unsigned(kind*8191+17))&0x7fffffffu;}
-            const auto face=cross(vertices[i+1]-vertices[i],vertices[i+2]-vertices[i]);
-            const float area=length(face);
-            if(area<1e-9f)continue; // Dome poles and collapsed preview faces have no surface.
-            const auto n=face*(1/area);
-            const Vec3 local_n=mapping?Vec3{dot(n,mapping->x),dot(n,mapping->y),dot(n,mapping->z)}:n;
-            for(std::size_t j=i;j<i+3;++j){
-                auto p=vertices[j];auto uv=mapping?mapping->coordinate(p):p;
-                float u=uv.x,v=uv.z;
-                if(std::abs(local_n.y)<.6f){u=std::abs(local_n.x)>std::abs(local_n.z)?uv.z:uv.x;v=uv.y;}
-                batch.vertices.push_back({vector(p),vector(n),color(tint),u,v});
+            if(batch.last_frame!=frame_){
+                batch.input.clear();
+                batch.last_frame=frame_;
+                batch.material=material(kind,tint);
+                batch.material.surfaceUV=mapping!=nullptr || kind==int(LunarMaterial::Hull) || kind==int(LunarMaterial::Paint) || kind==int(LunarMaterial::PressureDoor);
+                batch.material.surfaceSeed=(key.seed?key.seed:unsigned(kind*8191+17))&0x7fffffffu;
+            }
+            auto& input=batch.input;
+            input.positions.insert(input.positions.end(),vertices.begin()+first,vertices.begin()+end);
+            input.runs.push_back({tint,mapping?*mapping:LunarSurfaceMapping{},input.positions.size()});
+            first=end;
+        };
+        if(!sky)for(std::size_t i=0;i<count;i+=3){
+            const Vec3 center=(vertices[i]+vertices[i+1]+vertices[i+2])*(1.f/3);
+            const int x=int(std::floor(center.x/24)),z=int(std::floor(center.z/24));
+            if(x!=key.x || z!=key.z){
+                if(i>first)append(i);
+                key.x=x;key.z=z;
             }
         }
+        if(first<count)append(count);
+    }
+    void update_batch(Batch& batch,bool mapped){
+        if(batch.input.matches(batch.uploaded_input))return;
+        auto& out=prepared_vertices_;
+        out.clear();
+        out.reserve(batch.input.positions.size());
+        std::size_t i=0;
+        const auto& v=batch.input.positions;
+        for(const auto& run:batch.input.runs){
+            for(;i<run.end;i+=3){
+                const auto face=cross(v[i+1]-v[i],v[i+2]-v[i]);
+                const float area=length(face);
+                if(area<1e-9f)continue;
+                const auto n=face*(1/area);
+                const auto& map=run.mapping;
+                const Vec3 local_n=mapped?Vec3{dot(n,map.x),dot(n,map.y),dot(n,map.z)}:n;
+                const bool wall=std::abs(local_n.y)<.6f;
+                const bool side=wall && std::abs(local_n.x)>std::abs(local_n.z);
+                for(std::size_t j=i;j<i+3;++j){
+                    const auto uv=mapped?map.coordinate(v[j]):v[j];
+                    out.push_back({vector(v[j]),vector(n),color(run.tint),side?uv.z:uv.x,wall?uv.y:uv.z});
+                }
+            }
+        }
+        if(!out.empty()){
+            if(!batch.mesh.value)batch.mesh=renderer_.createMesh(out);
+            else renderer_.updateMesh(batch.mesh,out);
+        }
+        batch.uploaded=out.size();
+        std::swap(batch.input,batch.uploaded_input);
     }
     void prepare_terrain(float half){
         const int q=graphics_.quality(GraphicsFeature::TerrainRelief),clutter=graphics_.ground_clutter,range=graphics_.clutter_range;
@@ -201,7 +261,7 @@ public:
     }
     void end_frame() override{
         const auto submitted=std::chrono::steady_clock::now();
-        std::size_t vertex_count=0;for(const auto& [key,b]:batches_)if(b.last_frame==frame_)vertex_count+=b.vertices.size();
+        std::size_t vertex_count=0;
         if(world_){
             renderer_.begin(view_.camera,environment_);
             if(lunar_)for(auto draw:terrain_){draw.modelMatrix=view_.correction;renderer_.submit(draw);}
@@ -211,10 +271,9 @@ public:
             for(auto it=batches_.begin();it!=batches_.end();){
                 auto& b=it->second;
                 if(b.last_frame+120<frame_){if(b.mesh.value)renderer_.destroyMesh(b.mesh);it=batches_.erase(it);continue;}
-                if(b.last_frame==frame_ && !b.vertices.empty()){
-                    if(!b.mesh.value)b.mesh=renderer_.createMesh(b.vertices);
-                    else if(b.previous_vertices.size()!=b.vertices.size() || std::memcmp(b.previous_vertices.data(),b.vertices.data(),b.vertices.size()*sizeof(gfx::Vertex)))renderer_.updateMesh(b.mesh,b.vertices);
-                    b.uploaded=b.vertices.size();
+                if(b.last_frame==frame_)update_batch(b,it->first.mapped!=0);
+                if(b.last_frame==frame_ && b.uploaded){
+                    vertex_count+=b.uploaded;
                     gfx::Draw draw;draw.mesh=b.mesh;draw.material=b.material;draw.objectId=b.mesh.value;draw.modelMatrix=view_.correction;renderer_.submit(draw);
                 }
                 ++it;

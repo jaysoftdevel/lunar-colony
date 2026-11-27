@@ -1,57 +1,37 @@
 #include "game/game_app.hpp"
-#include <bit>
-#include "game/world/structure_display.hpp"
-#include "game/util/world_math.hpp"
+#include "game/world/habitats/screen_mounts.hpp"
+#include "game/world/gas_flow.hpp"
 #include "game/world/world_labels.hpp"
 
-namespace game {
-structure_display::Content GameApp::habitat_screen_content(std::size_t index) const {
-    using namespace game::runtime;using namespace structure_display;
-    const auto& room=placed_habitats_[index];
-    const auto& mesh=habitat_runtime_mesh(index);const auto& supply=room.supply;
-    Content content;
-    switch(room.kind){
-        case HabitatKind::AirLock:
-            content.title="AIRLOCK CONTROL";
-            content.rows={"CABIN AIR "+value(supply.breathability())+"%","POWER "+value(supply.power_fraction*100)+"%","CYCLE IDLE"};
-            if(index<airlock_cycles_.size()){
-                content.rows[0]="CHAMBER "+value(airlock_cycles_[index].pressure*100)+"%";
-                content.rows[2]=airlock::phase(airlock_cycles_[index]);
-            }break;
-        case HabitatKind::OxygenGeneratorDome:
-            content.title="OXYGEN SYSTEM";content.rows={"O2 "+value(supply.oxygen_produced_kg_per_day,1)+" KG/D","WATER "+value(supply.water_processed_litres_per_day,1)+" L/D","CABIN AIR "+value(supply.breathability())+"%"};break;
-        case HabitatKind::BioDome:{
-            int planted=0;double growth=0;
-            for(std::size_t i=0;i<hydroponics_bay_count(room.size);++i)if(!(mesh.blocked_grow_bays&(1u<<i))&&room.hydroponics[i].plant!=HydroponicPlant::Empty){++planted;growth+=room.hydroponics[i].growth_fraction;}
-            content.title="HYDROPONICS";content.rows={"CROPS "+std::to_string(planted)+"/"+std::to_string(hydroponics_bay_count(room.size)-std::popcount(unsigned(mesh.blocked_grow_bays))),"GROWTH "+value(planted?growth*100/planted:0)+"%","CABIN AIR "+value(supply.breathability())+"%"};break;}
-        case HabitatKind::CrewQuarters:
-            content.title="CREW QUARTERS";content.rows={"BEDS "+std::to_string(std::count_if(mesh.crew_bunks.begin(),mesh.crew_bunks.end(),[](const auto& bed){return bed.available;})),"CABIN AIR "+value(supply.breathability())+"%","POWER "+value(supply.power_fraction*100)+"%"};break;
-        case HabitatKind::CantineDome:
-            content.title="CANTEEN STORES";content.rows={"COLONY FOOD "+value(resources_.amounts().food)+" KG","WATER "+value(supply.water_litres)+" L","CABIN AIR "+value(supply.breathability())+"%"};break;
-        case HabitatKind::SickBay:
-            content.title="MEDICAL STORES";content.rows={"MEDICAL "+value(resources_.amounts().medical)+" KG","CABIN AIR "+value(supply.breathability())+"%","POWER "+value(supply.power_fraction*100)+"%"};break;
-        default:
-            content.title=room.kind==HabitatKind::Laboratory?"LAB ENVIRONMENT":room.kind==HabitatKind::Factory?"FACTORY SERVICES":room.kind==HabitatKind::Manufactory?"MANUFACTORY":"PROCESSING SERVICES";
-            content.rows={"POWER "+value(supply.power_fraction*100)+"%","CABIN AIR "+value(supply.breathability())+"%","WATER "+value(supply.water_litres)+" L"};break;
-    }
+namespace game::structure_display {
+Content environment(const char* title,const SupplyState& supply){
+    const auto partial_kpa=.30*gas::pressure(supply.oxygen_kg,supply.volume_m3)/1000.;
+    const double net=supply.oxygen_net_kg_per_day;
+    Content content{title,{"TEMP SET "+value(gas::temperature-273.15)+" C",
+        "O2 PRESS "+value(partial_kpa,1)+" KPA",
+        "NET O2 "+std::string(net>.049?"+":"")+value(std::abs(net)<.05?0.:net,1)+" KG/D"}};
     if(supply.warnings)content.accent={1,.68f,.23f,1};
     return content;
 }
-void GameApp::render_habitat_screens(game::runtime::SceneRenderer& renderer,std::size_t index) const {
-    using namespace game::runtime;using namespace structure_display;
-    const auto& room=placed_habitats_[index];if(!room.construction.complete()||mesh_layout_active())return;
-    const auto& mesh=habitat_runtime_mesh(index);
-    const bool powered=room.power_enabled&&room.supply.power_fraction>.01;
-    const Vec3 eye=first_person_mode_==FirstPersonMode::Active?first_person_.eye_position():camera_.eye_position();
-    const auto content=habitat_screen_content(index);
-    const auto doors=habitat_doors(index);
-    for(const auto& screen:mesh.screens){
-        const auto center=world_math::rotate_y(screen.center,room.rotation_degrees)+room.position;
-        bool door_overlap=false;
-        for(const auto& door:doors){const auto offset=center-door.wall_position;const Vec3 side{-door.normal.z,0,door.normal.x};
-            if(std::abs(dot(offset,door.normal))<1.f&&std::abs(dot(offset,side))<geometry::kDoorClearWidth*.5f+screen.width*.5f&&center.y>door.position.y&&center.y<door.position.y+geometry::kDoorClearHeight+.2f)door_overlap=true;
-        }
-        if(!door_overlap)draw(renderer,screen,room.position,room.rotation_degrees,content,powered,eye);
+void draw_door_pair(runtime::SceneRenderer& renderer,Vec3 base,Vec3 normal,float half_width,float depth,
+                    const Content& content,bool powered,Vec3 eye){
+    using namespace runtime;
+    std::vector<Vec3> metal,glass;
+    for(float face:{-1.f,1.f}){
+        const auto mount=jamb_mount(base,normal,half_width,depth,face);
+        casing(metal,glass,mount);
+        draw(renderer,mount,{},0,content,powered,eye);
     }
+    renderer.draw_lunar_surface(metal,LunarMaterial::Alloy,{.26f,.31f,.34f,1});
+    renderer.draw_lunar_surface(glass,powered?LunarMaterial::Display:LunarMaterial::Rubber,{.025f,.055f,.062f,1});
+}
+}
+namespace game {
+structure_display::Content GameApp::habitat_screen_content(std::size_t index) const {
+    const auto& room=placed_habitats_[index];
+    auto content=structure_display::environment(world_labels::habitat_name(room.kind),room.supply);
+    if(room.kind==HabitatKind::AirLock&&index<airlock_cycles_.size())
+        content.title="AIRLOCK / "+std::string(airlock::phase(airlock_cycles_[index]));
+    return content;
 }
 }

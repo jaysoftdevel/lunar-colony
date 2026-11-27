@@ -114,7 +114,7 @@ void append_oval_transition_frame(CorridorMesh& mesh,const Ring& a,const Ring& b
     if(a.size()!=b.size()||a.size()<3)return;
     const auto start=(a[0]+a[1])*.5f,finish=(b[0]+b[1])*.5f;
     const float run=distance_xz(start,finish);if(run<.12f)return;
-    const int count=std::max(1,int(std::ceil(run/.82f)));
+    const int count=std::max(1,int(std::ceil(run/2.4f)));
     const float half=std::min(.065f/run,.28f/count);
     constexpr float depth=.075f;
     for(int i=0;i<count;++i){const float t=(i+.5f)/count;
@@ -123,13 +123,14 @@ void append_oval_transition_frame(CorridorMesh& mesh,const Ring& a,const Ring& b
     }
     // Longitudinal stringers stop at the flange faces, so there are no
     // intersecting beam ends. Mount them along the same swept skin vertices.
+    if(run<.85f)return; // The single supported flange spans a short door adapter.
     structural::Builder rails{mesh.details,mesh.edges,{}};
     const auto outer_a=offset_ring(a,.035f),outer_b=offset_ring(b,.035f);
     for(int i=0;i<=count;++i){
         const float t0=i==0?0.f:(i-.5f)/count+half;
         const float t1=i==count?1.f:(i+.5f)/count-half;
         if((t1-t0)*run<.01f)continue;
-        for(std::size_t k:{std::size_t(2),std::size_t(4),std::size_t(7),std::size_t(10),std::size_t(12)}){
+        for(std::size_t k:{std::size_t(2),std::size_t(12)}){
             if(k>=a.size())continue;
             const auto p=outer_a[k]+(outer_b[k]-outer_a[k])*t0,q=outer_a[k]+(outer_b[k]-outer_a[k])*t1;
             rails.beam(p,q,.035f,.045f,{0,1,0});

@@ -934,7 +934,7 @@ struct UiRegression {
         }
         for(auto tier:{HabitatSizeTier::Small,HabitatSizeTier::Standard}){
             PlacedHabitat airlock;airlock.kind=HabitatKind::AirLock;airlock.size=tier;airlock.construction.finish();airlock.supply.power_fraction=1;app.placed_habitats_={airlock};
-            const auto& m=app.habitat_runtime_mesh(0);require(m.stations.empty()&&m.screens.size()==2,"Fitted wall services missing or unnecessary airlock floor equipment remains");
+            const auto& m=app.habitat_runtime_mesh(0);require(m.stations.empty()&&m.screens.empty(),"Fitted wall services missing or unnecessary airlock floor equipment remains");
             const float y=m.walkable_floor_y;
             for(float x:{-3.f,-.5f,.5f,3.f})require(app.first_person_move_allowed({x,y,0},{x+.1f,y,0}),"Airlock equipment obstructs transfer aisle");
             struct HatchRecorder:Recorder{std::size_t control=0,text=0;
@@ -1117,21 +1117,22 @@ struct UiRegression {
         changed_skin[2].y=.5f;
         require(hull_surface::split(changed_skin,1).upper.empty(),"Hull cache retained obsolete geometry after a same-size rebuild");
         int mounts=0;
+        for(float face:{-1.f,1.f}){
+            const auto mount=structure_display::jamb_mount({}, {0,0,1},.7f,.24f,face);
+            require(mount.normal().z*face>.99f && std::abs(mount.center.x)-mount.width*.5f>.7f,"Terminal obstructs door or faces the wall");
+            ++mounts;
+        }
         for(int kind=0;kind<int(HabitatKind::Count);++kind)for(int tier=0;tier<int(HabitatSizeTier::Count);++tier){
             const auto& mesh=app.habitat_models_.mesh(HabitatKind(kind),HabitatSizeTier(tier));
-            require(mesh.screens.size()>=(kind==int(HabitatKind::AirLock)?0u:kind==int(HabitatKind::OxygenGeneratorDome)?2u:4u) && mesh.displays.size()==mesh.screens.size()*6,"A room variant has missing screen mounts or luminous box faces: "+std::to_string(kind)+"/"+std::to_string(tier)+" mounts="+std::to_string(mesh.screens.size())+" faces="+std::to_string(mesh.displays.size()));
-            for(const auto& screen:mesh.screens){
-                require(std::abs(length(screen.right)-1)<1e-5 && std::abs(dot(screen.right,screen.up))<1e-5,"Screen mounting basis is distorted");
-                require(screen.width>.4f && screen.height>.25f,"Screen is too small to read");++mounts;
-            }
+            require(mesh.screens.empty()&&mesh.displays.empty(),"Room has an extra status display");
             Materials visual;app.render_habitat_mesh(visual,mesh,{},0,false,true,false,kConstructionSteps,nullptr,false,HabitatKind(kind),true);
             require(!visual.glazing.empty()&&!visual.bad_alpha,"A room upper hull lost its transparent solar film");
             require(!visual.structure.empty(),"Transparent hull removed solid structural parts");
         }
         PlacedHabitat oxygen;oxygen.kind=HabitatKind::OxygenGeneratorDome;oxygen.construction.finish();oxygen.supply.power_fraction=.75;
-        oxygen.supply.oxygen_produced_kg_per_day=12.3;oxygen.supply.water_processed_litres_per_day=13.8;
+        oxygen.supply.volume_m3=10;oxygen.supply.oxygen_kg=10*kOxygenKgPerM3;oxygen.supply.oxygen_net_kg_per_day=-1.2;
         app.placed_habitats_={oxygen};const auto content=app.habitat_screen_content(0);
-        require(content.title=="OXYGEN SYSTEM"&&content.rows[0]=="O2 12.3 KG/D"&&content.rows[1]=="WATER 13.8 L/D","Oxygen screen invents telemetry or loses units");
+        require(content.title=="OXYGEN GENERATOR DOME"&&content.rows[0]=="TEMP SET 20 C"&&content.rows[1]=="O2 PRESS 21.0 KPA"&&content.rows[2]=="NET O2 -1.2 KG/D","Oxygen screen invents telemetry or loses units");
         const structure_display::Mount screen{{0,0,0},{1,0,0},{0,1,0},.9f,.48f};Materials text;
         structure_display::draw(text,screen,{},0,content,true,{0,0,2});
         require(text.text.size()>300,"Screen did not emit readable glyph geometry");
@@ -1263,7 +1264,7 @@ struct UiRegression {
             require(app.resources_.amount(MaterialResource::Iron)==stock-cost,"Unit installation cost");
             if(kind==InteriorUnitKind::DiningTable||kind==InteriorUnitKind::SeatingBench){
                 require(interior_unit_mesh(kind).screens.empty()&&interior_unit_profile(kind).power_kw==0,"Passive furniture draws power");
-                Recorder screen;app.render_interior_unit_screens(screen,0);
+                Recorder screen;app.render_interior_unit_lamps(screen,0);
             }
             app.placed_habitats_[0].units.clear();
         }
@@ -1592,7 +1593,7 @@ struct UiRegression {
         app.first_person_.set_fov(500);require(app.first_person_.fov()==110,"FOV maximum was not enforced");
         for(int kind=0;kind<int(HabitatKind::Count);++kind)for(int tier=0;tier<int(HabitatSizeTier::Count);++tier){
             const auto& mesh=app.habitat_models_.mesh(HabitatKind(kind),HabitatSizeTier(tier));
-            require(!mesh.lining.empty() && !mesh.deck.empty() && (!mesh.service_metal.empty()||!mesh.overhead_services.empty()) && (!mesh.lamps.empty()||!mesh.overhead_lamps.empty()) && (kind==int(HabitatKind::AirLock)||!mesh.displays.empty()),"A room variant has missing station detail layers: "+std::to_string(kind)+"/"+std::to_string(tier));
+            require(!mesh.lining.empty() && !mesh.deck.empty() && (!mesh.service_metal.empty()||!mesh.overhead_services.empty()) && (!mesh.lamps.empty()||!mesh.overhead_lamps.empty()) && mesh.displays.empty(),"A room variant has missing station detail layers: "+std::to_string(kind)+"/"+std::to_string(tier));
             for(const auto* layer:{&mesh.lining,&mesh.deck,&mesh.service_metal,&mesh.lamps,&mesh.displays,&mesh.overhead_services,&mesh.overhead_lamps}){
                 require(layer->size()%3==0,"Station detail layer is not a triangle list");
                 for(const auto& p:*layer)require(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z),"Station detail layer has invalid geometry");
@@ -2609,7 +2610,7 @@ struct UiRegression {
             PlacedHabitat h;h.kind=HabitatKind::AirLock;h.size=tier;h.rotation_degrees=rotation;h.construction.finish();h.supply.power_fraction=1;app.placed_habitats_={h};
             const auto& mesh=app.habitat_models_.mesh(h);const auto& fitted=app.habitat_runtime_mesh(0);
             require(mesh.entrances.size()==2&&app.habitat_doors(0).size()==4,"Finished isolated airlock lacks its four seals");
-            require(fitted.service_metal.size()>1000&&fitted.screens.size()==2&&!fitted.fabric.empty()&&!fitted.lamps.empty(),"Pressure recovery/filter/control/light equipment not fitted with construction");
+            require(fitted.service_metal.size()>1000&&fitted.screens.empty()&&!fitted.fabric.empty()&&!fitted.lamps.empty(),"Pressure recovery/filter/control/light equipment not fitted with construction");
             require(fitted.service_metal.size()==mesh.service_metal.size(),"Runtime optional-machine filtering removed integral airlock fit");
             InteriorUnit terminal;terminal.kind=InteriorUnitKind::ServiceTerminal;terminal.position={0,mesh.walkable_floor_y,0};std::string error;
             require(!app.place_interior_unit(0,terminal,error),"Fixed airlock accepted optional floor machinery");

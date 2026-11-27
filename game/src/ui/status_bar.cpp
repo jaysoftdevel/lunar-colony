@@ -146,7 +146,7 @@ void GameApp::render_status_bar(SceneRenderer& r){
             const double capacity=power_storage_capacity_kwh(item.size);energy_capacity+=capacity;
             if(std::isfinite(item.supply.energy_kwh))energy+=std::clamp(item.supply.energy_kwh,0.0,capacity);
         }else if(item.kind==ResourceKind::WaterStorage){
-            const double capacity=item.size==ResourceSizeTier::Small?1000.0:2000.0;water_capacity+=capacity;
+            const double capacity=water_storage_capacity_litres(item.size);water_capacity+=capacity;
             if(std::isfinite(item.supply.water_litres))water_stored+=std::clamp(item.supply.water_litres,0.0,capacity);
         }else if(item.kind==ResourceKind::OxygenTank){
             oxygen_stock+=item.stored_oxygen_kg;

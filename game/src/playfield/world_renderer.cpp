@@ -1,3 +1,4 @@
+#include "game/world/habitats/screen_mounts.hpp"
 #include "game/game_app.hpp"
 #include "game/world/structure_display.hpp"
 #include "game/world/hull_surface.hpp"
@@ -87,6 +88,93 @@ void draw_faded_hull(SceneRenderer& r,const std::vector<Vec3>& shell,const std::
     // Cyan always means a physical shell is faded. Unbuilt parts remain drafts.
     const auto guides=transformed_vertices(edges,position,rotation);
     r.draw_lines_3d(guides,{.18f,.82f,1.f,installed_fraction<1.f?.40f:.72f},1.6f);
+}
+
+void draw_storage_gauge(SceneRenderer& r,const PlacedResource& item,const ResourceMesh& mesh){
+    // Dimensions below are local to the authored hull. Gas vessels scale in
+    // three axes, while small battery and water models scale horizontally.
+    const float width=mesh.footprint_x;
+    float x=0,y=0,z=0,w=0,h=0;
+    Color tint;
+    bool segmented=false;
+    Vec3 right{1,0,0};
+    switch(item.kind){
+        case ResourceKind::PowerStorage:
+            x=width*.105f;y=2.65f;z=mesh.footprint_z*.342f;w=width*.136f;h=3.2f;
+            tint={.10f,.54f,.30f,1};segmented=true;break;
+        case ResourceKind::WaterStorage:
+            x=width*(2.65f/11);y=3.7f;z=mesh.footprint_z*.362f;w=width*.13f;h=3.85f;
+            tint={.10f,.56f,.84f,1};break;
+        case ResourceKind::OxygenTank:
+            x=width*(1.65f/8.6f);y=mesh.height*.46f;z=mesh.footprint_z*.195f;w=width*.16f;h=mesh.height*.55f;
+            tint={.33f,.76f,.85f,1};break;
+        case ResourceKind::HydrogenTank:
+            x=0;y=mesh.height*.45f;z=mesh.footprint_z*.28f;w=width*.16f;h=mesh.height*.32f;
+            tint={.69f,.49f,.89f,1};break;
+        case ResourceKind::StorageDome:
+            // Put the indicator on a diagonal service sill, clear of the cardinal aisles.
+            right=normalize(Vec3{1,0,-1});z=width*.454f;y=mesh.walkable_floor_y+.88f;
+            w=std::clamp(width*.18f,1.4f,3.1f);h=1.25f;
+            tint={.93f,.62f,.20f,1};segmented=true;break;
+        default:return;
+    }
+    const float fill=static_cast<float>(storage_fill_fraction(item));
+    const std::string label=std::to_string(storage_fill_percent(item))+"%";
+    std::vector<Vec3> frames,background,contents,graduations;
+    for(float face:{-1.f,1.f}){
+        const Vec3 horizontal=right*face,up{0,1,0},normal=cross(horizontal,up);
+        const Vec3 center=normal*z+right*(face*x)+up*y;
+        if(item.kind==ResourceKind::StorageDome)
+            structure_display::box(frames,center-normal*(width*.027f)-up*(h*.35f),horizontal,up,normal,
+                                   {w*.5f,.12f,width*.055f});
+        structure_display::box(frames,center-normal*.05f,horizontal,up,normal,{w+.07f,h+.07f,.1f});
+        structure_display::quad(background,center+normal*.012f,horizontal,up,w,h);
+        const Vec3 origin=center-up*(h*.43f)+normal*.024f;
+        const float track=h*.62f;
+        // Bars grow from the bottom. Battery cells and cargo bins have gutters.
+        const int cells=segmented?6:1;
+        for(int i=0;i<cells;++i){
+            const float gap=segmented?.045f:0.f;
+            const float lo=(i+gap)/cells,hi=std::min(fill,(i+1-gap)/cells);
+            if(hi>lo)structure_display::quad(contents,origin+up*(track*(lo+hi)*.5f),horizontal,up,w*.68f,track*(hi-lo));
+        }
+        for(int i=0;i<=4;++i)
+            structure_display::quad(graduations,origin+horizontal*(w*.414f)+up*(track*i*.25f),horizontal,up,w*.085f,.025f);
+        if(item.kind==ResourceKind::WaterStorage && fill>0)
+            structure_display::quad(graduations,origin+up*(track*fill)+normal*.007f,horizontal,up,w*.68f,.025f);
+        const structure_display::Mount readout{center+up*(h*.34f)+normal*.029f,horizontal,up,w*.89f,h*.235f};
+        structure_display::paint(r,readout,item.position,item.rotation_degrees,label,{.94f,.96f,.92f,1});
+    }
+    // The four water vessels share a manifold. Use the tank model's cylindrical
+    // volume and keep the liquid just inside the shell at both size tiers.
+    if(item.kind==ResourceKind::WaterStorage && fill>0){
+        constexpr int sides=16;
+        static const auto circle=[]{
+            std::array<Vec3,sides+1> ring{};
+            for(int i=0;i<sides;++i){
+                const float a=2.f*rf::pi*i/sides;
+                ring[i]={std::cos(a),0,std::sin(a)};
+            }
+            ring[sides]=ring[0];
+            return ring;
+        }();
+        const float scale=width/11.f;
+        const Vec3 rise{0,5.50f*fill,0};
+        for(float dx:{-2.65f,2.65f})for(float dz:{-1.75f,1.75f}){
+            const Vec3 base{dx*scale,.80f,dz*scale};
+            for(int i=0;i<sides;++i){
+                const auto a=base+circle[i]*(1.24f*scale),b=base+circle[i+1]*(1.24f*scale);
+                contents.insert(contents.end(),{a,a+rise,b+rise,a,b+rise,b,base+rise,b+rise,a+rise});
+            }
+        }
+    }
+    const auto draw=[&](const auto& local,LunarMaterial material,Color color){
+        if(!local.empty())r.draw_lunar_surface(transformed_vertices(local,item.position,item.rotation_degrees),material,color);
+    };
+    draw(frames,LunarMaterial::Alloy,{.28f,.31f,.33f,1});
+    draw(background,LunarMaterial::Rubber,{.033f,.052f,.061f,1});
+    draw(contents,item.kind==ResourceKind::PowerStorage?LunarMaterial::Emissive:LunarMaterial::Marking,tint);
+    draw(graduations,LunarMaterial::Marking,{.80f,.86f,.84f,1});
 }
 
 void draw_pad_markings(SceneRenderer& r,const ResourceMesh& mesh,Vec3 position,float rotation){
@@ -524,7 +612,6 @@ void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 
     }
 
     const bool solid=!mesh_layout_active();
-    const auto shell=transformed_vertices(portal_layer(shell_layer,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
     const auto interior=transformed_vertices(portal_layer(mesh.interior,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto details=transformed_vertices(portal_layer(mesh.details,position,rotation_degrees,fpv_doors),position,rotation_degrees);
@@ -566,7 +653,7 @@ void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 
         r.draw_mapped_lunar_surface(transformed_vertices(portal_layer(panels.upper,position,rotation_degrees,fpv_doors),position,rotation_degrees),LunarMaterial::SolarShield,{.38f,.59f,.65f,.28f},mapping);
         r.draw_mapped_lunar_surface(glazing,LunarMaterial::SolarShield,{glass.r,glass.g,glass.b,.28f},mapping);
         const auto layer=[&](const std::vector<Vec3>& points,LunarMaterial material,Color tint,bool portal=true){
-            const auto local=portal?portal_layer(points,position,rotation_degrees,fpv_doors):points;
+            const auto& local=portal?portal_layer(points,position,rotation_degrees,fpv_doors):points;
             r.draw_mapped_lunar_surface(transformed_vertices(local,position,rotation_degrees),material,tint,mapping);
         };
         if(!show_hull || first_person_mode_==FirstPersonMode::Active)layer(hull_surface::split(mesh.lining,mesh.walkable_floor_y+(show_hull?1.f:.72f)).lower,LunarMaterial::Interior,{.79f,.81f,.80f,1});
@@ -580,6 +667,7 @@ void GameApp::render_habitat_mesh(SceneRenderer& r,const HabitatMesh& mesh,Vec3 
         if(selected) r.draw_lines_3d(edges,{0.98f,0.85f,0.46f,0.88f},2.0f);
         return;
     }
+    const auto shell=transformed_vertices(portal_layer(shell_layer,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const Color shell_color=greenhouse_dark?Color{0.15f,0.46f,0.24f,1.0f}:Color{0.24f,0.96f,0.42f,1.0f};
     const Color foundation_color=greenhouse_dark?Color{0.13f,0.38f,0.20f,1.0f}:Color{0.20f,0.84f,0.36f,1.0f};
     const Color interior_color=greenhouse_dark?Color{0.10f,0.27f,0.16f,0.78f}:Color{0.34f,1.00f,0.50f,0.98f};
@@ -660,7 +748,6 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
     }
 
     const bool solid=!mesh_layout_active();
-    const auto body=transformed_vertices(portal_layer(body_layer,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto foundation=transformed_vertices(portal_layer(mesh.foundation,position,rotation_degrees,fpv_doors,false,true),position,rotation_degrees);
     const auto details=transformed_vertices(portal_layer(detail_layer,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const auto edges=selected || !solid?
@@ -682,7 +769,7 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
             const auto& panels=hull_surface::split(body_layer,mesh.walkable_floor_y+1.0f);
             r.draw_mapped_lunar_surface(transformed_vertices(portal_layer(panels.lower,position,rotation_degrees,fpv_doors),position,rotation_degrees),LunarMaterial::Hull,paint,mapping);
             r.draw_mapped_lunar_surface(transformed_vertices(portal_layer(panels.upper,position,rotation_degrees,fpv_doors),position,rotation_degrees),LunarMaterial::SolarShield,{.38f,.59f,.65f,.28f},mapping);
-        }else r.draw_mapped_lunar_surface(body,pad?LunarMaterial::Deck:LunarMaterial::Hull,paint,mapping);
+        }else r.draw_mapped_lunar_surface(transformed_vertices(portal_layer(body_layer,position,rotation_degrees,fpv_doors),position,rotation_degrees),pad?LunarMaterial::Deck:LunarMaterial::Hull,paint,mapping);
         r.draw_mapped_lunar_surface(details,pad?LunarMaterial::Hull:LunarMaterial::Alloy,trim,mapping);
         r.draw_mapped_lunar_surface(transformed_vertices(glass_layer,position,rotation_degrees),LunarMaterial::SolarShield,{.38f,.59f,.65f,.28f},mapping);
         if(pad) draw_pad_markings(r,mesh,position,rotation_degrees);
@@ -690,6 +777,7 @@ void GameApp::render_resource_mesh(SceneRenderer& r,const ResourceMesh& mesh,Vec
         if(selected) r.draw_lines_3d(edges,{0.98f,0.85f,0.46f,0.88f},2.0f);
         return;
     }
+    const auto body=transformed_vertices(portal_layer(body_layer,position,rotation_degrees,fpv_doors),position,rotation_degrees);
     const float boost=selected?1.45f:1.0f;
     mesh_wireframe::draw_layer(r,foundation,{0.20f,0.84f,0.36f,1.0f},2.40f*boost);
     mesh_wireframe::draw_layer(r,body,{0.24f,0.96f,0.42f,1.0f},2.65f*boost);
@@ -861,22 +949,6 @@ void GameApp::render_workshop_services(SceneRenderer& r,std::size_t index) const
         const bool parked=operational && robot!=builder_robots_.end();
         const bool repair=parked && robot->condition<.999f;
         const bool charging=parked && robot->battery_charge_kwh<robot->battery_capacity_kwh*.995f;
-        const structure_display::Mount screen{{sign*4.55f,2.40f,p.z+.72f},{0,0,sign},{0,1,0},.56f,.39f};
-        std::vector<Vec3> case_mesh,glass;structure_display::casing(case_mesh,glass,screen);
-        structure_display::box(case_mesh,{sign*4.65f,2.40f,p.z+.72f},screen.right,screen.up,screen.normal(),{.30f,.22f,.04f});
-        structure_display::box(case_mesh,{sign*4.65f,2.20f,p.z+.72f},screen.right,screen.up,screen.normal(),{.10f,.42f,.06f});
-        if(!mesh_layout_active()){
-            r.draw_mapped_lunar_surface(transformed_vertices(case_mesh,home.position,home.rotation_degrees),LunarMaterial::Alloy,{.22f,.27f,.29f,1},mapping);
-            r.draw_mapped_lunar_surface(transformed_vertices(glass,home.position,home.rotation_degrees),operational?LunarMaterial::Display:LunarMaterial::Rubber,{.02f,.04f,.05f,1},mapping);
-            structure_display::Content info;
-            info.title="SERVICE BAY "+std::to_string(slot+1);
-            info.rows={parked?(repair?"REPAIRING":charging?"CHARGING":"READY"):"BAY EMPTY",
-                "BAT "+structure_display::value(parked&&robot->battery_capacity_kwh>0?100*robot->battery_charge_kwh/robot->battery_capacity_kwh:0)+"%",
-                "HULL "+(parked?structure_display::value(robot->condition*100)+"%":"--")};
-            if(!parked)info.rows[1]="CHARGER STANDBY";
-            const auto eye=first_person_mode_==FirstPersonMode::Active?first_person_.eye_position():camera_.eye_position();
-            structure_display::draw(r,screen,home.position,home.rotation_degrees,info,operational,eye);
-        }
         resources::Builder lamp;
         lamp.box(lamp.mesh.body,{sign*4.61f,2.77f,p.z+.72f},{.035f,.09f,.42f},false);
         const Color state=!operational?Color{.16f,.17f,.18f,1}:repair?Color{1.f,.51f,.08f,1}:
@@ -931,6 +1003,7 @@ void GameApp::render_resources(SceneRenderer& r){
         }
         else
             render_resource_mesh(r,mesh,instance.position,instance.rotation_degrees,false,true,selected,instance.construction.progress()*(float)kConstructionSteps,fpv_ptr,instance.kind);
+        if(instance.construction.complete())draw_storage_gauge(r,instance,mesh);
         if(r.lunar_scene_active() && instance.kind==ResourceKind::LandingPad && instance.construction.complete() &&
            lunar_look::powered(instance.supply,instance.power_enabled)){
             for(const auto& fixture:lunar_look::pad_fixtures(instance,mesh))
@@ -939,6 +1012,32 @@ void GameApp::render_resources(SceneRenderer& r){
         if(instance.kind==ResourceKind::StorageDome&&solid&&instance.construction.complete()){
             const float level=interior_light_level(i,true);
             if(level>0)lunar_look::draw_fixture(r,{instance.position+Vec3{0,mesh.walkable_floor_y+2.4f,0},{1.2f,.08f,.35f},{.80f*level,.89f*level,level,1},9,25*level},instance.rotation_degrees);
+        }
+        if(solid&&instance.construction.complete()){
+            const auto eye=first_person_mode_==FirstPersonMode::Active?first_person_.eye_position():camera_.eye_position();
+            const auto terminal=[&](const PlacedResource& owner,Vec3 base,Vec3 normal,float half_width,float depth){
+                structure_display::Content content;
+                if(owner.kind==ResourceKind::RobotWorkshop){
+                    const auto occupied=std::count_if(builder_robots_.begin(),builder_robots_.end(),[&](const auto& bot){
+                        return bot.workshop_index==i&&bot.workshop_parked;
+                    });
+                    content={"ROBOT WORKSHOP",{owner.workshop_gate_open>.99f?"GATE OPEN":owner.workshop_gate_open<.01f?"GATE CLOSED":"GATE MOVING",
+                        "BAYS IN USE "+std::to_string(occupied)+"/"+std::to_string(workshop::kBays),
+                        "LOAD "+structure_display::value(owner.supply.power_demand_kw,1)+" KW"}};
+                }else content=structure_display::environment(resource_name(owner.kind),owner.supply);
+                structure_display::draw_door_pair(r,base,normal,half_width,depth,content,
+                    instance.power_enabled&&door_power_available(owner.supply,owner.power_enabled),eye);
+            };
+            for(const auto& door:fpv_doors)
+                terminal(instance,{door.wall_position.x,door.position.y,door.wall_position.z},door.normal,geometry::kDoorClearWidth*.5f,.36f);
+            if(instance.kind==ResourceKind::RobotWorkshop)
+                terminal(instance,workshop::world(instance,{0,workshop::kDeck,-4.90f}),
+                    rotate_y({0,0,-1},instance.rotation_degrees),workshop::kGateHalf,.24f);
+            if(instance.kind==ResourceKind::StorageGate&&instance.storage_parent_index<placed_resources_.size()){
+                const auto& owner=placed_resources_[instance.storage_parent_index];
+                terminal(owner,storage_loading::mouth(owner,instance.storage_loading_face),
+                    storage_loading::normal(owner,instance.storage_loading_face),storage_loading::kHalfWidth,.20f);
+            }
         }
         if(fpv_ptr) for(const auto& door:fpv_doors) draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position),solid);
         if(instance.kind==ResourceKind::RobotWorkshop){render_workshop_gate(r,instance,!instance.construction.complete());render_workshop_services(r,i);}
@@ -1189,7 +1288,7 @@ void GameApp::render_habitats(SceneRenderer& r){
         const bool selected=selection_kind_==SelectionKind::Habitat && selected_habitat_==(int)i;
         if(const auto* job=deconstruction_job({ConstructionTargetKind::Habitat,i});job&&job->progress>0){
             const float p=job->progress;const bool hull=habitat_view_mode_==HabitatViewMode::FullHull;
-            const auto shell=hull?mesh.shell:hull_surface::split(mesh.shell,mesh.walkable_floor_y+.72f).lower;
+            const auto& shell=hull?mesh.shell:hull_surface::split(mesh.shell,mesh.walkable_floor_y+.72f).lower;
             draw_remaining_layer(r,shell,instance.position,instance.rotation_degrees,dismantle_shell(p),solid,LunarMaterial::Hull,{.70f,.72f,.74f,1});
             draw_remaining_layer(r,mesh.details,instance.position,instance.rotation_degrees,1-p,solid,LunarMaterial::Alloy,{.49f,.52f,.54f,1});
             draw_remaining_layer(r,mesh.interior,instance.position,instance.rotation_degrees,1-p,solid,LunarMaterial::Interior,{.62f,.64f,.66f,1});
@@ -1213,30 +1312,18 @@ void GameApp::render_habitats(SceneRenderer& r){
             constexpr const char* codes[]{"AIRLOCK","OXYGEN","FOOD","BIO","CREW","PROCESS","FACTORY","MFG","MED","LAB"};
             structure_display::paint(r,{{0,mesh.walkable_floor_y+.042f,0},{1,0,0},{0,0,-1},2.0f,.32f},instance.position,instance.rotation_degrees,codes[unsigned(instance.kind)%10],{.91f,.89f,.74f,1});
         }
-        render_habitat_screens(r,i);
-        render_interior_unit_screens(r,i);
+        if(solid&&!fpv_doors.empty()){
+            const auto content=habitat_screen_content(i);
+            const auto eye=first_person_mode_==FirstPersonMode::Active?first_person_.eye_position():camera_.eye_position();
+            for(const auto& door:fpv_doors)
+                structure_display::draw_door_pair(r,{door.wall_position.x,door.position.y,door.wall_position.z},door.normal,geometry::kDoorClearWidth*.5f,.24f,
+                    content,door_power_available(instance.supply,instance.power_enabled),eye);
+        }
+        render_interior_unit_lamps(r,i);
         if(r.lunar_scene_active() && instance.construction.complete() && lunar_look::powered(instance.supply,instance.power_enabled))
             lunar_look::draw_fixture(r,lunar_look::habitat_fixture(instance,mesh),instance.rotation_degrees);
         if(fpv_ptr&&(instance.kind==HabitatKind::AirLock||(habitat_view_mode_==HabitatViewMode::FullHull&&!selected))) for(const auto& door:fpv_doors){
             draw_sliding_door(r,door,first_person_door_open_fraction(door.wall_position),solid,1,instance.kind==HabitatKind::AirLock);
-            if(instance.kind==HabitatKind::AirLock&&solid){
-                const auto n=normalize(door.normal);const Vec3 side{-n.z,0,n.x};
-                const bool powered=door_power_available(instance.supply,instance.power_enabled);
-                const auto fraction=first_person_door_open_fraction(door.wall_position);
-                const auto& cycle=airlock_cycles_.size()>i?airlock_cycles_[i]:airlock::Cycle{};
-                const structure_display::Content content{"HATCH CONTROL",{
-                    fraction>.99f?"OPEN / KEEP CLEAR":pressure_door::sealed(fraction)?"LATCHED / SEALED":"SEAL IN MOTION",
-                    "CENTER "+structure_display::value(cycle.pressure*100)+"%",
-                    powered?(cycle.equalizing?"EQUALIZING":cycle.sealing?"SEALING / WAIT":"E / OPEN-CLOSE"):"HOLD E / CRANK"},{.44f,.87f,.91f,1}};
-                for(float face:{-1.f,1.f}){
-                    const structure_display::Mount mount{door.wall_position+side*1.03f+Vec3{0,1.36f,0}+n*(face*.17f),side*(-face),{0,1,0},.46f,.32f};
-                    std::vector<Vec3> casing,display;
-                    structure_display::casing(casing,display,mount);
-                    r.draw_lunar_surface(casing,LunarMaterial::Alloy,{.26f,.31f,.34f,1});
-                    r.draw_lunar_surface(display,LunarMaterial::Display,{.025f,.055f,.062f,1});
-                    structure_display::draw(r,mount,{},0,content,powered,first_person_mode_==FirstPersonMode::Active?first_person_.eye_position():camera_.eye_position());
-                }
-            }
 
         }
 

@@ -12,7 +12,7 @@ import time
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-ENGINE_VERSION = '0.5.22'
+ENGINE_VERSION = '0.5.24'
 CONFIGURATIONS = ('Release', 'RelWithDebInfo', 'MinSizeRel')
 
 

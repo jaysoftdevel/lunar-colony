@@ -186,36 +186,14 @@ void GameApp::update_interior_units(float dt){
         }
     }
 }
-void GameApp::render_interior_unit_screens(runtime::SceneRenderer& renderer,std::size_t index) const {
+void GameApp::render_interior_unit_lamps(runtime::SceneRenderer& renderer,std::size_t index) const {
     using namespace runtime;const auto& host=placed_habitats_[index];if(!host.construction.complete()||mesh_layout_active())return;
-    const auto eye=first_person_mode_==FirstPersonMode::Active?first_person_.eye_position():camera_.eye_position();
     for(const auto& unit:host.units){if(interior_unit_reserved(index,unit))continue;
         if(unit.kind==InteriorUnitKind::HydroponicRack&&unit.enabled&&hydroponics_lights_on(status_.hour())&&door_power_available(host.supply,host.power_enabled)){
             std::vector<Vec3> lamps;for(const auto p:interior_unit_mesh(unit).lamps)
                 lamps.push_back(host.position+world_math::rotate_y(unit.position+world_math::rotate_y(p,unit.rotation_degrees),host.rotation_degrees));
             renderer.draw_lunar_surface(lamps,LunarMaterial::Emissive,{.90f,.76f,.92f,1});
         }
-        const auto& screens=interior_unit_mesh(unit).screens;if(screens.empty())continue;
-        auto mount=screens.front();mount.center=unit.position+world_math::rotate_y(mount.center,unit.rotation_degrees);
-        mount.right=world_math::rotate_y(mount.right,unit.rotation_degrees);
-        const auto& profile=interior_unit_profile(unit);
-        structure_display::Content content{profile.name,{interior_unit_status(index,unit),interior_unit_recipe(unit),"LOAD "+structure_display::value(profile.power_kw,1)+" KW / BATCHES "+std::to_string(unit.batches)}};
-        if(unit.kind==InteriorUnitKind::FoodProcessor)content.rows={interior_unit_status(index,unit),"PREPARED MEALS "+structure_display::value(unit.food_kg,1)+" / 20 KG","2 FOOD + 1 WATER / BATCH"};
-        if(unit.kind==InteriorUnitKind::DrinkingWell)content.rows={interior_unit_status(index,unit),"CONNECTED WATER / MANUAL TAP","PUMP 0.08 KW / 10 L RESERVE"};
-        if(unit.kind==InteriorUnitKind::OxygenGenerator)content.rows={interior_unit_status(index,unit),"ROOM WATER "+structure_display::value(host.supply.water_processed_litres_per_day,1)+" L/DAY","ROOM H2 "+structure_display::value(host.supply.hydrogen_produced_kg_per_day,2)+" KG/DAY"};
-        if(unit.kind==InteriorUnitKind::ServiceTerminal)content.rows={
-            "AIR "+structure_display::value(host.supply.breathability())+"% / "+structure_display::value(gas::pressure(host.supply.oxygen_kg,host.supply.volume_m3)/1000.,1)+" KPA",
-            "POWER "+structure_display::value(host.supply.power_fraction*100)+"%",
-            "WATER "+structure_display::value(host.supply.water_litres,1)+" L"};
-        if(unit.kind==InteriorUnitKind::HydroponicRack&&unit.grow_bay<hydroponics_bay_count(host.size)){
-            const auto& bay=host.hydroponics[unit.grow_bay];const auto& crop=hydroponic_profile(bay.plant);
-            const double load=hydroponics_lights_on(status_.hour())?crop.power_kw:0;
-            content.rows={"BAY "+std::to_string(unsigned(unit.grow_bay)+1)+" / "+crop.name,
-                "GROWTH "+structure_display::value(bay.growth_fraction*100)+"%",
-                "LIGHT LOAD "+structure_display::value(load,2)+" KW"};
-        }
-        const bool powered=unit.enabled&&door_power_available(host.supply,host.power_enabled);
-        structure_display::draw(renderer,mount,host.position,host.rotation_degrees,content,powered,eye);
     }
 }
 }

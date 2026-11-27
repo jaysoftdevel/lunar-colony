@@ -164,6 +164,17 @@ void GameApp::render(SceneRenderer& r){
         r.draw_rect(toast,{.025f,.055f,.07f,.94f});
         ui::label_fitted(r,{toast.x+10,toast.y+9,toast.w-20,16},autosave_notice_,.82f,theme_);
     }
+    if constexpr(build::debug_features){
+        if(screen_==Screen::Playfield && !auto_run_.message.empty() &&
+           (auto_run_.phase!=AutoRunPhase::Finished || ui_time_seconds_<auto_run_.notice_until)){
+            r.set_2d(ui_scale_);
+            const float width=std::min(400.f,ui_width(r)-16.f);
+            const float y=STATUS_BAR_H+(ui_time_seconds_<autosave_notice_until_?48.f:12.f);
+            const Rect banner{(ui_width(r)-width)*.5f,y,width,28.f};
+            r.draw_rect(banner,{.025f,.055f,.07f,.94f});
+            ui::label_fitted(r,{banner.x+9,banner.y+6,banner.w-18,16},auto_run_.message,.62f,theme_);
+        }
+    }
     render_first_person_alerts(r);
     r.end_frame();
 }

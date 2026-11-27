@@ -1,8 +1,20 @@
-# JSD Lunar Base v0.93.1
+# JSD Lunar Base v0.93.7
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
-The game renders through the external **JSD 3d-engine 0.5.22**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+The game renders through the external **JSD 3d-engine 0.5.24**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+
+Version 0.93.7 adds **Auto Run** in debug builds under **New Game → Free Play → Robot Preparation**. It lands and unloads the cargo ship, then queues solar power, water extraction and oxygen production ahead of the reserve water tank. It builds a short airlock connection and waits for breathable pressure. It starts at the normal 4× game-speed setting and uses the selected rover counts. Auto Run expands small playfields to 96 × 96 for its layout.
+
+Version 0.93.6 takes only the engine source path in the Linux build scripts.
+
+Version 0.93.5 takes explicit game and engine source paths on Linux and uses the rendering optimizations in JSD 0.5.24.
+
+Version 0.93.4 repairs corridor docking routes when a reprojected hatch would leave old path samples inside its sleeve. This clears crosswise rails and conduits from the walking lane in affected saves.
+
+Version 0.93.3 increases stationary battery capacity by 25% and adds live level gauges to battery banks, liquid and gas tanks, and cargo domes. Door-to-tunnel adapters use fewer hoops and stringers. Status terminals are paired across each doorway. Cabin terminals show the temperature setpoint, oxygen partial pressure and net oxygen rate. Workshop terminals show gate, bay and power status.
+
+Version 0.93.2 reuses prepared surface meshes across frames and reduces CPU work for the rotating Earth and structure hulls.
 
 Version 0.93.1 makes `./clean.sh` remove the complete game build tree (Linux and Windows, all configurations), including obsolete debug binaries and local engine compilation artifacts. See [UPDATE-0.93.1.md](UPDATE-0.93.1.md).
 
@@ -144,7 +156,7 @@ Press **1–3** to select a simulation speed and **Space** to pause or resume in
 
 ## Build and run
 
-The game uses the external JSD 3d-engine 0.5.22 for rendering, platform, math,
+The game uses the external JSD 3d-engine 0.5.24 for rendering, platform, math,
 workers and audio. Its former in-game engine directory is removed. Game-specific
 bindings live under `game/src/runtime/` alongside the game code.
 

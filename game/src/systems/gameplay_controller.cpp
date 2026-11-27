@@ -148,6 +148,9 @@ void GameApp::update_simulation(float dt,const InputState& in){
             update_planning_game(dt);
             return;
         }
+        if constexpr(build::debug_features){
+            if(!simulation_paused())update_auto_run();
+        }
         if(debug_move_pick_robot_>=0 && (!debug_robot_move_available((std::size_t)debug_move_pick_robot_) || build_catalog_.selected()))debug_move_pick_robot_=-1;
         if(debug_move_pick_robot_>=0 && (in.escape_pressed || in.right_pressed)){debug_move_pick_robot_=-1;return;}
 

@@ -32,6 +32,7 @@ configure_game_cluster(game_cluster_app)
 add_library(game_cluster_interaction OBJECT
     src/playfield/playfield_view.cpp
     src/systems/gameplay_controller.cpp
+    "$<$<BOOL:${GAME_DEBUG_FEATURES}>:${CMAKE_CURRENT_SOURCE_DIR}/src/systems/auto_run.cpp>"
     src/systems/soundscape.cpp
     src/systems/sound_assets.cpp
     src/systems/astronaut_test.cpp

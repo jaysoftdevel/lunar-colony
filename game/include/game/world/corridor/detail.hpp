@@ -48,12 +48,32 @@ inline float distance_xz(Vec3 a,Vec3 b){
     const float dx=a.x-b.x,dz=a.z-b.z;
     return std::sqrt(dx*dx+dz*dz);
 }
-// Short building-to-building spans use one continuously supported deck datum.
-// Keep the saved horizontal alignment and construction ledger; only repair the
-// terminal samples and elevation, not the placement or topology.
+// Building-to-building spans use one continuously supported deck datum.
 inline bool building_endpoint(const CorridorEndpoint& e){return e.kind==CorridorEndpointKind::Habitat || e.kind==CorridorEndpointKind::Resource;}
 inline void align_docking_path(CorridorEndpoint& a,CorridorEndpoint& b,std::vector<Vec3>& path){
     if(path.size()<2)return;
+    path.front()=a.position;path.back()=b.position;
+    // Reprojecting an old hatch can move the terminal past its saved curve
+    // samples. Those samples are now inside the sleeve. Sweeping the tube
+    // back to the terminal flips the side vectors and runs rails across the deck.
+    const auto trim_sleeve=[&](const CorridorEndpoint& endpoint,bool at_front){
+        if(!building_endpoint(endpoint)||path.size()<=2)return;
+        const auto normal=flat_normal(endpoint.door.normal);
+        if(length(normal)<.001f)return;
+        constexpr float min_lead=.025f;
+        const auto behind_terminal=[&](Vec3 p){
+            return dot(p-endpoint.position,normal)<min_lead;
+        };
+        if(at_front){
+            const auto first=std::find_if_not(path.begin()+1,path.end()-1,behind_terminal);
+            path.erase(path.begin()+1,first);
+        }else{
+            const auto last=std::find_if_not(path.rbegin()+1,path.rend()-1,behind_terminal);
+            path.erase(last.base(),path.end()-1);
+        }
+    };
+    trim_sleeve(a,true);
+    trim_sleeve(b,false);
     if(building_endpoint(a) && building_endpoint(b)){
         float run=0;for(std::size_t i=1;i<path.size();++i)run+=distance_xz(path[i-1],path[i]);
         if(run>.001f){
@@ -71,12 +91,17 @@ inline void align_docking_path(CorridorEndpoint& a,CorridorEndpoint& b,std::vect
     // Shift the small terminal lead onto the actual hatch normal, while leaving
     // the remainder of the curve unchanged. This keeps deck and seal aligned.
     if(path.size()>=4){
-        const auto align=[&](const CorridorEndpoint& e,Vec3& next){
+        const auto align=[&](const CorridorEndpoint& e,Vec3& next,Vec3 following){
             if(!building_endpoint(e))return;
             const float lead=distance_xz(e.position,next);
-            if(lead>.001f && lead<.5f){const float y=next.y;next=e.position+flat_normal(e.door.normal)*lead;next.y=y;}
+            const auto normal=flat_normal(e.door.normal);
+            if(lead>.001f&&lead<.5f&&dot(following-e.position,normal)>lead){
+                const float y=next.y;
+                next=e.position+normal*lead;
+                next.y=y;
+            }
         };
-        align(a,path[1]);align(b,path[path.size()-2]);
+        align(a,path[1],path[2]);align(b,path[path.size()-2],path[path.size()-3]);
     }
 }
 inline int docking_step_count(Vec3 a,Vec3 b){

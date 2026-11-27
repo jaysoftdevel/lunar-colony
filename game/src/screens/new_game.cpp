@@ -174,6 +174,13 @@ void GameApp::render_new_game(SceneRenderer& r){
         new_game_status_message_.clear();
     }
     const char* action=career?"START CAREER":debug_stage?"CONTINUE":"CREATE";
+    if constexpr(build::debug_features){
+        if(!career && robot_stage &&
+           ui::button(r,ui_input_,{(left+right-action_w)*.5f,actions_y,action_w,actions_h},"AUTO RUN",theme_)){
+            start_auto_run();
+            return;
+        }
+    }
     if(ui::button(r,ui_input_,{right-action_w,actions_y,action_w,actions_h},action,theme_,
         !debug_stage || debug_frame_enabled_)){
         if(debug_stage){
@@ -224,6 +231,7 @@ void GameApp::render_stage3_modes(SceneRenderer& r){
 }
 
 void GameApp::start_new_game(Stage3Mode stage3_mode){
+    auto_run_={};
     reset_deconstruction();
     if(!build::debug_features && new_game_phase_selection_==GamePhase::Debug) return;
     const bool robot_stage=new_game_phase_selection_==GamePhase::RobotPreparation;

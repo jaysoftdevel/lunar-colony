@@ -47,12 +47,11 @@ inline const char* resource_size_name(ResourceSizeTier size){
     }
 }
 
-// Shared electrical-storage capacity definition. Keep simulation, status bar
-// and inspectors on the same source of truth. v0.43.32 raises the dedicated
-// Power Storage battery by another 50%: Standard 90 -> 135 kWh,
-// Small 45 -> 67.5 kWh.
 inline constexpr double power_storage_capacity_kwh(ResourceSizeTier size){
-    return size==ResourceSizeTier::Small?67.5:135.0;
+    return size==ResourceSizeTier::Small?84.375:168.75;
+}
+inline constexpr double water_storage_capacity_litres(ResourceSizeTier size){
+    return size==ResourceSizeTier::Small?1000.0:2000.0;
 }
 
 // Small local output buffers keep generators useful during short storage/network
@@ -282,6 +281,23 @@ inline std::int64_t stored_ore_mass_kg(const PlacedResource& placed){
 
 inline std::int64_t storage_dome_used_kg(const PlacedResource& placed){
     return placed.stored_resources.total_amount()+stored_ore_mass_kg(placed);
+}
+
+// Local inventory only. The oxygen vessel is separate from its supply manifold.
+inline double storage_fill_fraction(const PlacedResource& item){
+    double fraction=0;
+    switch(item.kind){
+        case ResourceKind::PowerStorage: fraction=item.supply.energy_kwh/power_storage_capacity_kwh(item.size);break;
+        case ResourceKind::WaterStorage: fraction=item.supply.water_litres/water_storage_capacity_litres(item.size);break;
+        case ResourceKind::OxygenTank: fraction=item.stored_oxygen_kg/oxygen_tank_capacity_kg(item.size);break;
+        case ResourceKind::HydrogenTank: fraction=item.supply.hydrogen_kg/hydrogen_tank_capacity_kg(item.size);break;
+        case ResourceKind::StorageDome: fraction=double(storage_dome_used_kg(item))/storage_dome_capacity_kg(item.storage_size);break;
+        default: return 0;
+    }
+    return std::isfinite(fraction)?std::clamp(fraction,0.0,1.0):0.0;
+}
+inline int storage_fill_percent(const PlacedResource& item){
+    return static_cast<int>(std::lround(storage_fill_fraction(item)*100));
 }
 
 class ResourceModelLibrary {

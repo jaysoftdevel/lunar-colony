@@ -215,6 +215,8 @@ if(GAME_BUILD_NAVIGATION_TESTS)
         target_sources(lander_regression PRIVATE $<TARGET_OBJECTS:${cluster}>)
     endforeach()
     add_test(NAME lunar_lander_deployment COMMAND lander_regression)
+    add_test(NAME lunar_free_play_auto_run COMMAND lander_regression --auto-run)
+    set_tests_properties(lunar_free_play_auto_run PROPERTIES TIMEOUT 180)
     set_tests_properties(lunar_lander_deployment PROPERTIES TIMEOUT 180)
 endif()
 

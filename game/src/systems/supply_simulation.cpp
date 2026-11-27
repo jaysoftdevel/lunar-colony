@@ -12,7 +12,7 @@ double habitat_scale(const PlacedHabitat& h){
 }
 double battery_capacity(const PlacedResource& r){return power_storage_capacity_kwh(r.size);}
 double solar_buffer_capacity(const PlacedResource& r){return solar_panel_buffer_capacity_kwh(r.size);}
-double tank_capacity(const PlacedResource& r){return 2000.0*scale(r);}
+double tank_capacity(const PlacedResource& r){return water_storage_capacity_litres(r.size);}
 double driller_buffer_capacity(const PlacedResource& r){return water_driller_buffer_capacity_litres(r.size);}
 double hydrogen_buffer_capacity(const PlacedHabitat& h){return kOxygenGeneratorHydrogenBufferKg*habitat_scale(h);}
 double hydrogen_generator_peak_kw(const PlacedResource& r){return kHydrogenGeneratorPeakKw*scale(r);}

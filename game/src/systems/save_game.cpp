@@ -1923,6 +1923,7 @@ bool GameApp::load_game_from_file(const std::string& path,std::string& error){
     status_rate_display_={};
     resources_.restore(resource_state);
     reset_deconstruction();
+    auto_run_={};
     placed_habitats_=std::move(habitats);
     placed_resources_=std::move(structures);
     ground_resource_piles_=std::move(piles);

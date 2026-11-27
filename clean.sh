@@ -59,4 +59,4 @@ if [[ -e "$BUILD" || -L "$BUILD" ]]; then
 fi
 printf 'Cleaned all game build artifacts: %s\n' "$BUILD"
 echo 'Source files, root savegames, settings outside build/, and the external engine remain unchanged.'
-echo 'Next build: ./build.sh /path/to/3d-engine [--debug]'
+echo 'Next build: ./build.sh PATH_TO_ENGINE [--debug]'

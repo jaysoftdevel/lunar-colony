@@ -94,24 +94,62 @@ void GameApp::render_playfield(SceneRenderer& r){
         const Vec3 eye=fpv?first_person_.eye_position():camera_.eye_position();
         const float distance=lander_.in_flight()?220.f:650.f, radius=distance*.039f;
         const Vec3 center=eye+direction*distance;
-        // Low-cost procedural continent silhouettes on a spherical globe.
-        // Longitude/latitude are in degrees; each ring is drawn with ocean,
-        // land, polar ice and cloud tones, modulated by the solar direction.
-        struct Coast{float lon,lat,w,h;};
-        constexpr Coast land[]{{-105,49,39,26},{-86,22,16,22},{-61,-15,23,36},{-44,72,15,11},{19,6,26,34},{48,48,52,23},{94,48,43,25},{80,19,16,19},{117,7,22,11},{136,-25,22,15},{-5,52,15,15}};
-        constexpr int rings=40, sectors=80;constexpr float pi=3.14159265f;
-        std::array<std::vector<Vec3>,20> batches;
-        const auto point=[&](float u,float v){return Vec3{std::cos(v)*std::cos(u),std::sin(v),std::cos(v)*std::sin(u)};};
-        for(int j=0;j<rings;++j)for(int i=0;i<sectors;++i){
-            const float u0=-pi+2*pi*i/sectors,u1=-pi+2*pi*(i+1)/sectors,v0=-pi*.5f+pi*j/rings,v1=-pi*.5f+pi*(j+1)/rings;
-            const float u=(u0+u1)*.5f,v=(v0+v1)*.5f,lon=u*180/pi,lat=v*180/pi;
-            const float noise=.12f*std::sin(u*21+v*14)+.09f*std::cos(u*33-v*23);
-            float coast=10;for(const auto& l:land){const float x=(lon-l.lon)/l.w,y=(lat-l.lat)/l.h;coast=std::min(coast,x*x+y*y);}
-            int type=coast+noise<1?1:0;if(std::abs(lat)>72+5*std::sin(5*u))type=2;
-            if(std::sin(u*13+std::sin(v*9)*2)+std::cos(v*19-u*4)>1.52f)type=3;
-            const auto normal=point(u+angle*.25f,v);const int shade=std::clamp(int((.20f+.80f*std::max(0.f,dot(normal,sun.direction)))*5),0,4);
-            const auto p=center+point(u0+angle*.25f,v0)*radius,q=center+point(u1+angle*.25f,v0)*radius,a=center+point(u0+angle*.25f,v1)*radius,b=center+point(u1+angle*.25f,v1)*radius;
-            auto& dst=batches[type*5+shade];dst.insert(dst.end(),{p,a,b,p,b,q});
+        constexpr int rings=40, sectors=80;
+        constexpr float pi=3.14159265f;
+        const auto longitude=[](int i){return -pi+2*pi*i/sectors;};
+        const auto latitude=[](int j){return -pi*.5f+pi*j/rings;};
+        // Coastlines, clouds and ice are fixed in globe coordinates.
+        static const auto terrain_type=[&]{
+            struct Coast{float lon,lat,w,h;};
+            constexpr Coast land[]{{-105,49,39,26},{-86,22,16,22},{-61,-15,23,36},{-44,72,15,11},{19,6,26,34},{48,48,52,23},{94,48,43,25},{80,19,16,19},{117,7,22,11},{136,-25,22,15},{-5,52,15,15}};
+            std::array<unsigned char,rings*sectors> types{};
+            for(int j=0;j<rings;++j)for(int i=0;i<sectors;++i){
+                const float u=(longitude(i)+longitude(i+1))*.5f,v=(latitude(j)+latitude(j+1))*.5f;
+                const float lon=u*180/pi,lat=v*180/pi;
+                const float noise=.12f*std::sin(u*21+v*14)+.09f*std::cos(u*33-v*23);
+                float coast=10;
+                for(const auto& l:land){
+                    const float x=(lon-l.lon)/l.w,y=(lat-l.lat)/l.h;
+                    coast=std::min(coast,x*x+y*y);
+                }
+                int type=coast+noise<1?1:0;
+                if(std::abs(lat)>72+5*std::sin(5*u))type=2;
+                if(std::sin(u*13+std::sin(v*9)*2)+std::cos(v*19-u*4)>1.52f)type=3;
+                types[j*sectors+i]=static_cast<unsigned char>(type);
+            }
+            return types;
+        }();
+        std::array<Vec2,sectors+1> meridians;
+        std::array<Vec2,sectors> midpoints;
+        for(int i=0;i<=sectors;++i){
+            const float u=longitude(i)+angle*.25f;
+            meridians[i]={std::cos(u),std::sin(u)};
+            if(i<sectors){
+                const float mid=(longitude(i)+longitude(i+1))*.5f+angle*.25f;
+                midpoints[i]={std::cos(mid),std::sin(mid)};
+            }
+        }
+        // Share edge positions across adjoining faces, including both seam endpoints.
+        const auto make_ring=[&](int j){
+            std::array<Vec3,sectors+1> row;
+            const float v=latitude(j),cv=std::cos(v),sv=std::sin(v);
+            for(int i=0;i<=sectors;++i)
+                row[i]=center+Vec3{cv*meridians[i].x,sv,cv*meridians[i].y}*radius;
+            return row;
+        };
+        static thread_local std::array<std::vector<Vec3>,20> batches;
+        for(auto& batch:batches)batch.clear();
+        auto lower=make_ring(0);
+        for(int j=0;j<rings;++j){
+            const auto upper=make_ring(j+1);
+            const float v=(latitude(j)+latitude(j+1))*.5f,cv=std::cos(v),sv=std::sin(v);
+            for(int i=0;i<sectors;++i){
+                const Vec3 normal{cv*midpoints[i].x,sv,cv*midpoints[i].y};
+                const int shade=std::clamp(int((.20f+.80f*std::max(0.f,dot(normal,sun.direction)))*5),0,4);
+                auto& dst=batches[terrain_type[j*sectors+i]*5+shade];
+                dst.insert(dst.end(),{lower[i],upper[i],upper[i+1],lower[i],upper[i+1],lower[i+1]});
+            }
+            lower=upper;
         }
         constexpr Color colors[]{{.045f,.16f,.43f,1},{.22f,.35f,.16f,1},{.70f,.78f,.82f,1},{.47f,.56f,.67f,1}};
         for(int i=0;i<20;++i){auto c=colors[i/5];const float shade=.12f+.22f*(i%5);c.r*=shade;c.g*=shade;c.b*=shade;r.draw_lunar_surface(batches[i],LunarMaterial::Celestial,c);}

@@ -162,6 +162,7 @@ game/src/systems/first_person_controller.cpp
 game/src/systems/first_person_mode.cpp
 game/src/systems/game_progress.cpp
 game/src/systems/gameplay_controller.cpp
+game/src/systems/auto_run.cpp
 game/src/systems/gate_areas.cpp
 game/src/systems/interior_layout.cpp
 game/src/systems/interior_unit_placement.cpp

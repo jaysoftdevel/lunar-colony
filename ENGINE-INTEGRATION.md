@@ -1,7 +1,7 @@
-# Lunar Colony 0.92.0 — external JSD engine
+# Lunar Colony 0.93.7 — external JSD engine
 
-The game requires the supplied **JSD 3d-engine source 0.5.22** in a separate
-directory. The structural graphics update uses engine 0.5.22 unchanged. There is no in-game `engine/`
+The game requires the supplied **JSD 3d-engine source 0.5.24** in a separate
+directory. There is no in-game `engine/`
 directory, legacy engine target, alternate graphics backend, OpenAL backend,
 private ray-tracing pipeline, trained filter, or custom worker implementation.
 
@@ -16,20 +16,14 @@ From the updated game source root:
 ./run.sh
 ```
 
-One optimized game binary is produced. `--debug` enables debug gameplay features in that binary, not a separate Debug compiler configuration. Rebuild without the flag to disable them. The argument must point to the
-engine source root containing `JSD_PROJECT.json`, `CMakeLists.txt`, `include/`,
-`src/` and `third_party/`. Quote paths with spaces. Named arguments work too:
+The script uses the game checkout it belongs to. Pass the engine checkout as
+the first argument on every build. Quote paths with spaces. Relative engine
+paths are resolved from the directory where you invoke the script. Each engine
+checkout gets its own incremental CMake directory under `build/linux/engines/`.
 
-```bash
-./build.sh --engine "/home/jay/3D projects/3d-engine" --debug --tests
-```
-
-`JSD_GAME_ENGINE_DIR` is also accepted as an environment variable or a CMake
-cache option. The argument takes precedence. Subsequent builds reuse the cached
-path. Wrong project identities/versions and engine-root changes in an existing
-build directory are rejected. Remove the game's platform build directory before
-switching engine roots. The engine's own source/build directory is never updated
-or installed into by this game build. `GAME_BUILD_JOBS=4` sets build concurrency.
+The selected runtime is staged in the game's `build/linux/bin/` directory.
+Add `--debug` to enable debug gameplay features. Set `GAME_BUILD_JOBS=4` to
+limit build concurrency.
 
 On Windows 11, with the Visual Studio 2022/2026 C++ workload, a Windows SDK, Python 3.10+
 and CMake 3.21+:
@@ -103,7 +97,7 @@ staged beside the game (under `bin/lib/` on Linux), using the selected optimized
 ./test.sh /path/to/3d-engine
 ./test.sh /path/to/3d-engine --debug # includes debug-only regressions
 # Optional actual GL/EGL rendering tests:
-cmake -S . -B build/linux/Release -DGAME_BUILD_RENDER_TESTS=ON
+cmake -S . -B build/linux/Release -DJSD_GAME_ENGINE_DIR=/path/to/3d-engine -DGAME_BUILD_RENDER_TESTS=ON
 cmake --build build/linux/Release --parallel 4
 ctest --test-dir build/linux/Release -R jsd_ --output-on-failure
 ```

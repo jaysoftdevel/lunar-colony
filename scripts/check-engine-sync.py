@@ -6,8 +6,8 @@ from pathlib import Path
 import re
 import sys
 
-GAME = '0.92.0'
-ENGINE = '0.5.22'
+GAME = '0.93.7'
+ENGINE = '0.5.24'
 
 def check(game: Path, engine: Path):
     game, engine = game.resolve(), engine.resolve()

@@ -37,6 +37,30 @@ int main(){try{
  const auto fixed=damaged.path;align_docking_path(da,db,damaged.path);
  for(std::size_t i=0;i<fixed.size();++i)require(length(fixed[i]-damaged.path[i])<.001f,"Docking repair is not idempotent");
 
+ // A reprojected hatch may move beyond the terminal samples saved by an older
+ // build. Check both route orders and the low rails as well as standing height.
+ for(bool reverse:{false,true}){
+    auto c=tube({{-2,0,0},{-1.6f,0,0},{-1.0f,0,0},{3,0,0},{3.6f,0,0},{4,0,0}});
+    c.endpoint_a.kind=c.endpoint_b.kind=CorridorEndpointKind::Habitat;
+    c.endpoint_a.position={0,0,0};c.endpoint_b.position={2,0,0};
+    c.endpoint_a.door.normal={1,0,0};c.endpoint_b.door.normal={-1,0,0};
+    c.endpoint_a.door.position=c.endpoint_a.door.wall_position={-1.75f,WALKWAY_Y,0};
+    c.endpoint_b.door.position=c.endpoint_b.door.wall_position={3.75f,WALKWAY_Y,0};
+    // Keep an undamaged sample in the middle of the route.
+    c.path.insert(c.path.begin()+3,{1,0,0});
+    if(reverse){std::reverse(c.path.begin(),c.path.end());std::swap(c.endpoint_a,c.endpoint_b);}
+    align_docking_path(c.endpoint_a,c.endpoint_b,c.path);
+    require(c.path.size()==3&&length(c.path[1]-Vec3{1,0,0})<.001f,"Reprojected hatch left route samples inside its pressure sleeve");
+    const auto mesh=build_mesh(c.endpoint_a,c.endpoint_b,c.path,{},NONE_INDEX);
+    for(float y:{.48f,.66f,.89f,1.4f}){
+        const Vec3 from{-1.5f,y,0},to{3.5f,y,0};
+        c.mesh.shell=mesh.details;
+        require(!hit(from,to,{c}),"Crosswise corridor rail or conduit after hatch reprojection");
+        c.mesh.shell=mesh.shell;
+        require(!hit(from,to,{c}),"Internal pressure panel after hatch reprojection");
+    }
+ }
+
  // The sleeve's frame must use the same rounded skin profile, not a freestanding
  // rectangular gate or oversized ring. Verify both endpoint orientations, a
  // raised sloping adapter, and the ground-to-flange load path.

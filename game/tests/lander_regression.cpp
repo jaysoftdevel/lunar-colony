@@ -54,6 +54,70 @@ struct Capture:game::runtime::SceneRenderer {
 
 namespace game {
 struct LanderRegression {
+    static void auto_run(int builders=1,int carriers=1){
+        using namespace runtime;
+        GameHost host;
+        GameApp app(host);
+        app.screen_=GameApp::Screen::NewGame;
+        app.new_game_phase_selection_=GameApp::GamePhase::RobotPreparation;
+        Capture menu;
+        const auto button_visible=[&]{
+            menu.texts.clear();
+            app.render_new_game(menu);
+            return std::any_of(menu.texts.begin(),menu.texts.end(),[](const auto& text){return text.text=="AUTO RUN";});
+        };
+        require(!button_visible(),"Career menu displayed Auto Run");
+        app.new_game_mode_selection_=GameApp::NewGameMode::FreePlay;
+        app.new_game_phase_selection_=GameApp::GamePhase::Planning;
+        require(!button_visible(),"Earth planning displayed a lunar Auto Run control");
+        app.new_game_phase_selection_=GameApp::GamePhase::RobotPreparation;
+        require(button_visible()==build::debug_features,"Auto Run availability disagrees with the build mode");
+        if constexpr(!build::debug_features)return;
+        app.starting_robot_count_=builders;
+        app.starting_carrier_count_=carriers;
+        app.playfield_size_=64;
+        app.debug_start_template_enabled_=true;
+        app.autosave_minutes_=0;
+        const auto button=menu.button("AUTO RUN");
+        app.ui_input_.mouse_x=int(button.x+button.w/2);
+        app.ui_input_.mouse_y=int(button.y+button.h/2);
+        app.ui_input_.left_pressed=true;
+        app.render_new_game(menu);
+        require(app.screen_==GameApp::Screen::Playfield && !app.lander_.awaiting_site,"Auto Run did not initiate landing");
+
+        constexpr float step=1.f/12.f;
+        float game_seconds=0.f,oxygen_started=0.f,tank_started=0.f;
+        for(int tick=0;tick<36'000 && app.auto_run_.phase!=GameApp::AutoRunPhase::Finished;++tick){
+            game_seconds+=step*app.game_speed_multiplier();
+            app.update_simulation(step,{});
+            if(app.placed_resources_.size()!=4||app.placed_habitats_.size()!=2)continue;
+            if(oxygen_started==0 && app.placed_habitats_[0].supply.oxygen_produced_kg_per_day>0)oxygen_started=game_seconds;
+            if(tank_started==0 && app.placed_resources_[3].construction.complete())tank_started=game_seconds;
+        }
+        if(app.auto_run_.message!="AUTO RUN / BASE PRESSURIZED"){
+            for(const auto& item:app.placed_resources_)std::cerr<<"Equipment "<<int(item.kind)<<" stage "<<int(item.construction.step)<<" power "<<item.supply.power_fraction<<" water "<<item.supply.water_litres<<"\n";
+            for(const auto& item:app.placed_habitats_)std::cerr<<"Habitat "<<int(item.kind)<<" stage "<<int(item.construction.step)<<" air "<<item.supply.breathability()<<" power "<<item.supply.power_fraction<<"\n";
+            for(const auto& item:app.utility_network_.connections())std::cerr<<"Utility stage "<<int(item.construction.step)<<"\n";
+            for(const auto& item:app.corridor_network_.connections())std::cerr<<"Corridor stage "<<int(item.construction.step)<<" air "<<item.supply.breathability()<<"\n";
+            for(const auto& bot:app.builder_robots_)std::cerr<<"Rover "<<int(bot.role)<<" mode "<<int(bot.mode)<<" target "<<int(bot.target.kind)<<"/"<<bot.target.index<<" block "<<int(bot.safety.block_reason)<<" position "<<bot.position.x<<","<<bot.position.z<<" charge "<<bot.battery_charge_kwh<<"\n";
+        }
+        require(app.auto_run_.message=="AUTO RUN / BASE PRESSURIZED",app.auto_run_.message);
+        require(app.lander_.phase==LanderPhase::Ready&&app.lander_.remaining.empty()&&app.lander_.boxed&&
+                app.builder_robots_.size()==std::size_t(builders+carriers),"Incomplete lander deployment");
+        require(app.placed_resources_[0].size==ResourceSizeTier::Standard&&
+                app.placed_resources_[1].size==ResourceSizeTier::Standard,"Auto Run downgraded the solar array or battery");
+        const auto& links=app.utility_network_.evaluate_services(app.corridor_network_,app.placed_habitats_,app.placed_resources_);
+        const auto component=links.resources[0].component;
+        require(component!=kNoUtilityComponent,"Solar array never joined the utility network");
+        for(const auto& equipment:links.resources)require(equipment.component==component,"Equipment disconnected");
+        for(const auto& room:links.habitats)require(room.component==component,"Habitat disconnected");
+        require(app.corridor_network_.connections().size()==1&&app.corridor_network_.connections()[0].path.size()==2,
+                "Auto Run did not use a straight airlock corridor");
+        require(oxygen_started>0&&(builders>1||oxygen_started<tank_started),"Tank assembly delayed oxygen production");
+        std::cout<<"Auto Run pressurized the base in "<<game_seconds<<" simulation seconds. Oxygen started at "
+                 <<oxygen_started<<", tank completed at "<<tank_started<<"\n";
+    }
+
     static ResourceBundle cargo(){ResourceBundle b;b.iron=1000;b.food=600;b.water=700;b.silicon=333;return b;}
     static void setup(GameApp& a){a.playfield_size_=128;a.playfield_.rebuild(128);a.on_resize(1600,900);a.screen_=GameApp::Screen::Playfield;a.active_game_phase_=GameApp::GamePhase::RobotPreparation;a.game_session_active_=true;a.status_.reset();a.begin_lunar_landing(cargo(),1,1);}
     static game::runtime::Vec2 screen(GameApp& a,game::runtime::Vec3 p){auto m=a.camera_.view_projection(1600.f/900);float w=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];return {(m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12])/w*800+800,450-(m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13])/w*450};}
@@ -394,4 +458,8 @@ struct LanderRegression {
     }
 };
 }
-int main(int argc,char** argv){try{game::LanderRegression::run(argc>1?argv[1]:nullptr);return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{
+    if(argc>1 && std::string(argv[1])=="--auto-run")
+        game::LanderRegression::auto_run(argc>2?std::stoi(argv[2]):1,argc>3?std::stoi(argv[3]):1);
+    else game::LanderRegression::run(argc>1?argv[1]:nullptr);
+    return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

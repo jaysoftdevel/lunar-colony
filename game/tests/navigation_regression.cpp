@@ -1349,7 +1349,7 @@ struct NavigationRegression {
         for(int slot=0;slot<4;++slot){auto& bot=app.builder_robots_[slot];bot.workshop_index=0;bot.workshop_bay=slot;bot.workshop_parked=true;bot.condition=.6f;bot.battery_capacity_kwh=10;bot.battery_charge_kwh=2;bot.position=workshop::bay(home,slot);}
         require(app.workshop_operational(0),"Service fixture is not powered");
         GeometryRecorder active;app.render_workshop_services(active,0);
-        require(active.service_lamps.size()==4 && active.displays.size()==4*6,"Not all four bays have repair indicators and diagnostic screens");
+        require(active.service_lamps.size()==4 && active.displays.empty(),"Expected four repair lamps and no duplicate bay screens");
         for(const auto& c:active.service_lamps)require(c.r==1.f && c.g==.51f,"Damaged parked robot has no active repair indicator");
         app.builder_robots_[0].condition=app.builder_robots_[1].condition=1.f;
         app.builder_robots_[0].battery_charge_kwh=10;app.builder_robots_[3].workshop_parked=false;
@@ -2938,7 +2938,7 @@ struct NavigationRegression {
         game::runtime::GameHost engine;GameApp app(engine);app.playfield_.rebuild(192);app.builder_robots_.resize(1);app.builder_robots_[0].position={-80,0,80};
         auto resource=[](ResourceKind kind,Vec3 p){PlacedResource r;r.kind=kind;r.position=p;r.construction.step=kConstructionSteps;return r;};
         app.status_.reset();auto clock=app.status_.state();clock.hour=12;clock.crew_current=0;app.status_.restore(clock);
-        require(std::abs(power_storage_capacity_kwh(ResourceSizeTier::Standard)-135.0)<1e-9 && std::abs(power_storage_capacity_kwh(ResourceSizeTier::Small)-67.5)<1e-9,"power storage capacity increase missing");
+        require(std::abs(power_storage_capacity_kwh(ResourceSizeTier::Standard)-168.75)<1e-9 && std::abs(power_storage_capacity_kwh(ResourceSizeTier::Small)-84.375)<1e-9,"power storage capacity increase missing");
 
         // Generator-local buffers must preserve otherwise-curtailed output and
         // remain useful without replacing dedicated long-term storage.

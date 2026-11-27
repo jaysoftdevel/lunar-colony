@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
-# Shared argument handling for build.sh and configure.sh.
+# Shared argument handling for build.sh, configure.sh and test.sh.
+build_usage() {
+    echo "Usage: $0 PATH_TO_ENGINE [Release|RelWithDebInfo|MinSizeRel] [--debug] [--tests] [--clean]"
+}
+
 parse_build_arguments() {
+    if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then build_usage; exit 0; fi
+    if (($# == 0)); then build_usage >&2; return 2; fi
+    local engine="$1" argument
+    shift
+    if [[ ! -f "$GAME_ROOT/VERSION" || ! -f "$GAME_ROOT/game/CMakeLists.txt" || ! -f "$GAME_ROOT/cmake/ExternalEngine.cmake" ]]; then
+        echo "Invalid Lunar Colony source directory: $GAME_ROOT" >&2
+        return 2
+    fi
+    if [[ ! -f "$engine/JSD_PROJECT.json" || ! -f "$engine/include/jsd/engine.hpp" ]]; then
+        echo "Invalid JSD engine source directory: $engine" >&2
+        return 2
+    fi
+    JSD_GAME_ENGINE_DIR="$(CDPATH= cd -- "$engine" && pwd -P)"
+
     CONFIG=Release
     DEBUG_FEATURES=OFF
     TESTS="${GAME_BUILD_TESTS:-OFF}"
     build_flags=()
-    local selected_engine="" argument
     while (($#)); do
         argument="$1"
         case "$argument" in
@@ -13,35 +30,17 @@ parse_build_arguments() {
             --debug) DEBUG_FEATURES=ON ;;
             Debug|debug) echo "Use --debug to include debug features in the normal build." >&2; return 2 ;;
             --clean) build_flags=(--clean-first) ;;
-            --engine)
-                shift
-                if (($#==0)); then echo '--engine requires an engine source directory.' >&2; return 2; fi
-                [[ -z "$selected_engine" ]] || { echo 'Supply one engine directory.' >&2; return 2; }
-                selected_engine="$1" ;;
-            --engine=*)
-                [[ -z "$selected_engine" ]] || { echo 'Supply one engine directory.' >&2; return 2; }
-                selected_engine="${argument#--engine=}"
-                [[ -n "$selected_engine" ]] || { echo '--engine requires a directory.' >&2; return 2; } ;;
             Release|release|RelWithDebInfo|relwithdebinfo|reldeb|MinSizeRel|minsizerel|minsize)
                 CONFIG="$(normalize_config "$argument")" ;;
-            -h|--help)
-                echo "Usage: $0 /path/to/3d-engine [Release|RelWithDebInfo|MinSizeRel] [--debug] [--tests] [--clean]"
-                echo 'The engine can also be supplied with --engine PATH or JSD_GAME_ENGINE_DIR.'
-                echo 'Later builds reuse the engine path cached by CMake. --debug enables gameplay tools, not a separate compiler configuration.'
-                exit 0 ;;
-            -*) echo "Unknown option: $argument" >&2; return 2 ;;
-            *)
-                [[ -z "$selected_engine" ]] || { echo 'Supply one engine directory.' >&2; return 2; }
-                selected_engine="$argument" ;;
+            -h|--help) build_usage; exit 0 ;;
+            *) echo "Unknown build argument: $argument" >&2; return 2 ;;
         esac
         shift
     done
-    JSD_GAME_ENGINE_DIR="${selected_engine:-${JSD_GAME_ENGINE_DIR:-}}"
-    if [[ -n "$JSD_GAME_ENGINE_DIR" ]]; then
-        if [[ ! -f "$JSD_GAME_ENGINE_DIR/JSD_PROJECT.json" || ! -f "$JSD_GAME_ENGINE_DIR/include/jsd/engine.hpp" ]]; then
-            echo "Invalid JSD engine source directory: $JSD_GAME_ENGINE_DIR" >&2
-            return 2
-        fi
-        JSD_GAME_ENGINE_DIR="$(cd -- "$JSD_GAME_ENGINE_DIR" && pwd -P)"
-    fi
+    # CMake and bundled dependency caches contain absolute paths. Give each
+    # game/engine pair a stable build tree and stage the selected binary at bin/.
+    require_tool sha256sum
+    local path_hash
+    path_hash="$(printf '%s\0%s\0' "$GAME_ROOT" "$JSD_GAME_ENGINE_DIR" | sha256sum)"
+    GAME_VARIANT_DIR="$GAME_BUILD_DIR/engines/${path_hash%% *}/$CONFIG"
 }
