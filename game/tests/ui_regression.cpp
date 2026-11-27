@@ -2857,6 +2857,41 @@ struct UiRegression {
         for(const auto& path:paths) fs::remove(path);
     }
 
+    static void title_menu(){
+        using game::runtime::InputState;
+        game::runtime::GameHost host;
+        const std::array<std::pair<int,int>,4> sizes{{{960,540},{1280,720},{1920,1080},{3840,2160}}};
+        for (const auto& [width,height] : sizes) {
+            GameApp app(host);
+            setup(app,0,2);
+            Recorder renderer;
+            renderer.resize(width,height);
+            app.render(renderer);
+            const auto button=renderer.button("NEW GAME");
+            app.input_.mouse_x=int(std::lround((button.x+button.w/2)*renderer.scale));
+            app.input_.mouse_y=int(std::lround((button.y+button.h/2)*renderer.scale));
+            app.input_.left_pressed=true;
+            app.render(renderer);
+            require(app.screen_==GameApp::Screen::NewGame,"engine title menu missed the new-game hitbox");
+        }
+        GameApp app(host);
+        setup(app,0,2);
+        Recorder renderer;
+        app.input_.edit_down=true;
+        app.input_.enter_pressed=true;
+        app.render(renderer);
+        require(app.screen_==GameApp::Screen::LoadGame,"keyboard focus did not select Load Game");
+        InputState escape;
+        escape.escape_pressed=true;
+        app.update(0,escape);
+        require(app.screen_==GameApp::Screen::MainMenu,"Escape did not return from Load Game");
+        app.game_session_active_=true;
+        app.input_={};
+        app.input_.enter_pressed=true;
+        app.render(renderer);
+        require(app.screen_==GameApp::Screen::Playfield,"Enter did not resume the active session");
+    }
+
     static void run(const std::string& output){
         order_controls();
         presentation_controls();
@@ -3983,6 +4018,7 @@ int main(int argc,char** argv){
             game::UiRegression::build_mode();
             game::UiRegression::recent_saves();
         }
+        else if(out=="title-menu") game::UiRegression::title_menu();
         else if(out=="lander-boarding") game::UiRegression::lander_boarding();
         else if(out=="structure-hover-cursor") game::UiRegression::structure_hover_cursor();
         else if(out=="gameplay-options") game::UiRegression::gameplay_options();

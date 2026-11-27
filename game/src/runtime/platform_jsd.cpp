@@ -1,5 +1,5 @@
 #include "jsd_bridge.hpp"
-#include "startup_splash.hpp"
+#include <jsd/game_shell.hpp>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -61,14 +61,13 @@ int GameHost::run(const WindowConfig& config,const std::function<std::unique_ptr
         p.platform->dimensions();p.width=p.platform->width;p.height=p.platform->height;
         {
             // A minimal splash precedes both renderer/shader work and game assets.
-            StartupSplash splash(*p.platform);
-            p.renderer=jsd_bridge::create_renderer(*p.platform,[&](const rf::gfx::ShaderBuildProgress& progress){
-                const auto detail=std::to_string(progress.completed)+" shaders ready / "+std::to_string(progress.cached)+" cached";
-                splash.show(progress.phase,detail);
-            });
-            splash.show("Preparing game assets",{},true);
+            p.platform->setVSync(false);
+            jsd::shell::Window splash(*p.platform,"LUNAR COLONY");
+            splash.showStartup("Starting Lunar Colony",{},true);
+            p.renderer=jsd_bridge::create_renderer(*p.platform,splash.rendererStartup().progress);
+            splash.showStartup("Preparing game assets",{},true);
             game=create_game();if(!game)throw std::runtime_error("Game factory returned no game");
-            splash.show("Starting colony systems",{},true);
+            splash.showStartup("Starting colony systems",{},true);
             p.platform->dimensions();p.width=p.platform->width;p.height=p.platform->height;p.renderer->resize(p.width,p.height);
             game->on_resize(p.width,p.height);game->on_start();
             if(config.fullscreen&&!fullscreen()){
@@ -79,7 +78,7 @@ int GameHost::run(const WindowConfig& config,const std::function<std::unique_ptr
             // the resulting drawable size, including on high-DPI Windows displays.
             p.platform->dimensions();p.width=p.platform->width;p.height=p.platform->height;
             p.renderer->resize(p.width,p.height);game->on_resize(p.width,p.height);
-            splash.show("Preparing first frame",{},true);
+            splash.showStartup("Preparing first frame",{},true);
             game->render(*p.renderer); // Replace the splash only with a completed frame.
         }
         SDL_StartTextInput();std::cout<<cpu_worker_summary()<<'\n';
@@ -174,7 +173,7 @@ int GameHost::run(const WindowConfig& config,const std::function<std::unique_ptr
         SDL_StopTextInput();p.platform->captureMouse(false);
         // GL objects must be released while the engine context is still live.
         p.renderer.reset();game.reset();if(p.crosshair){SDL_SetCursor(SDL_GetDefaultCursor());SDL_FreeCursor(p.crosshair);p.crosshair=nullptr;}p.platform.reset();return 0;
-    }catch(const StartupCancelled&){game.reset();impl_.reset();return 0;
+    }catch(const jsd::shell::StartupCancelled&){game.reset();impl_.reset();return 0;
     }catch(const std::exception& e){
         std::cerr<<"Could not run Lunar Colony with JSD: "<<e.what()<<'\n';game.reset();impl_.reset();return 3;
     }

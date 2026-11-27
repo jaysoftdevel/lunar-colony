@@ -1,32 +1,13 @@
 #pragma once
 #include "game/runtime/ui_font.hpp"
 #include "game/runtime/ui_metrics.hpp"
+#include <jsd/detail/shell_font.hpp>
 
 namespace game::runtime::ui {
 
-inline constexpr int atlas_width=512,atlas_height=256;
-inline constexpr int glyph_width=32,glyph_height=40;
-
-inline const auto& font_atlas(){
-    static const auto atlas=[]{
-        constexpr std::uint8_t data[]{
-#include "ui_font_atlas.inc"
-        };
-        std::array<std::uint8_t,atlas_width*atlas_height> pixels{};
-        std::size_t source=0,destination=0;
-        while(source<std::size(data)){
-            const auto packet=data[source++];
-            const std::size_t count=(packet&127u)+1;
-            if(packet&128u){
-                std::copy_n(data+source,count,pixels.data()+destination);
-                source+=count;
-            }
-            destination+=count;
-        }
-        return pixels;
-    }();
-    return atlas;
-}
+inline constexpr int atlas_width=jsd::shell::detail::atlasWidth,atlas_height=jsd::shell::detail::atlasHeight;
+inline constexpr int glyph_width=jsd::shell::detail::glyphWidth,glyph_height=jsd::shell::detail::glyphHeight;
+inline const auto& font_atlas(){return jsd::shell::detail::fontAtlas();}
 
 struct Vertex {
     Vec2 position,uv;

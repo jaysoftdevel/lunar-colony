@@ -1,3 +1,4 @@
+0.93.8 - Use the shared JSD 0.5.25 start screen and shader startup splash. Support arrow keys and Enter in the title menu.
 0.93.7 - Add debug-only Free Play Auto Run with automatic landing, deployment, construction and pressure monitoring. Commission power, water extraction and oxygen production before the reserve tank.
 
 0.93.6 - Resolve the game checkout from the build script. Accept the engine source path as the only required argument.

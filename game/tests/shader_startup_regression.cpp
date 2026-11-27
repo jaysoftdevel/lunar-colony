@@ -1,4 +1,6 @@
-#include "startup_splash.hpp"
+#include <jsd/game_shell.hpp>
+#include <frontier/detail/gl.hpp>
+#include <frontier/platform.hpp>
 #include <frontier/renderer.hpp>
 #include <filesystem>
 #include <fstream>
@@ -16,9 +18,38 @@ int main(){try{
     const auto root=fs::current_path()/"shader startup test cache";fs::remove_all(root);
     Platform platform(true,640,360);vl::GL gl;gl.load([&](const char* n){return platform.resolve(n);});
     const auto pixels=[&]{std::vector<unsigned char> image(640*360*4);gl.ReadPixels(0,0,640,360,vl::GL_RGBA,vl::GL_UNSIGNED_BYTE,image.data());return image;};
-    {game::runtime::StartupSplash splash(platform);splash.show("Preparing graphics","First start / compiling shader cache",true);
+    {jsd::shell::Window splash(platform,"SHADER REGRESSION");
+        gl.Viewport(13,17,600,300);gl.Enable(vl::GL_SCISSOR_TEST);gl.ColorMaski(1,0,1,1,1);
+        unsigned framebuffer=0;gl.GenFramebuffers(1,&framebuffer);gl.BindFramebuffer(0x8CA9,framebuffer);
+        splash.showStartup("Preparing graphics","First start / compiling shader cache",true);
+        int viewport[4]{},drawFramebuffer=0,scissor=0;
+        gl.GetIntegerv(0x0BA2,viewport);gl.GetIntegerv(0x8CA6,&drawFramebuffer);
+        gl.GetIntegerv(vl::GL_SCISSOR_TEST,&scissor);
+        const auto colorMask=reinterpret_cast<void (*)(unsigned,unsigned,unsigned char*)>(platform.resolve("glGetBooleani_v"));
+        unsigned char mask[4]{};colorMask(0x0C23,1,mask);
+        require(viewport[0]==13&&viewport[1]==17&&viewport[2]==600&&viewport[3]==300&&scissor&&
+                unsigned(drawFramebuffer)==framebuffer&&mask[0]==0&&mask[1]==1,"splash changed renderer GL state");
+        gl.Disable(vl::GL_SCISSOR_TEST);gl.ColorMaski(1,1,1,1,1);
+        gl.BindFramebuffer(0x8CA9,0);gl.DeleteFramebuffers(1,&framebuffer);
         auto image=pixels();unsigned low=255,high=0;for(std::size_t i=0;i<image.size();i+=4){low=std::min(low,unsigned(image[i]));high=std::max(high,unsigned(image[i]));}
         require(high-low>100,"loading splash is blank");require(gl.GetError()==vl::GL_NO_ERROR,"splash generated a GL error");
+        namespace shell=jsd::shell;
+        shell::Menu menu;
+        const shell::TitleItems title;
+        const shell::Page page{"UNRELATED GAME",title.items()};
+        shell::Input input;input.select=true;
+        const auto first=splash.present(menu,page,input);
+        require(first&&title.action(*first)==shell::TitleAction::NewGame,"Enter missed the default title action");
+        input.up=true;
+        const auto last=splash.present(menu,page,input);
+        require(last&&title.action(*last)==shell::TitleAction::Exit,"keyboard menu navigation failed to wrap");
+        input={};input.click=true;input.pointer={320,136};
+        const auto click=splash.present(menu,page,input);
+        require(click&&title.action(*click)==shell::TitleAction::NewGame,"drawable coordinates missed the menu button");
+        require(pixels()!=image&&gl.GetError()==vl::GL_NO_ERROR,"title menu did not render a new frame");
+        const shell::TitleItems withSave({false,true,true}), session({true,true,true});
+        require(withSave.action(0)==shell::TitleAction::Continue&&session.action(0)==shell::TitleAction::Resume&&
+                session.action(1)==shell::TitleAction::Save,"save and resume entries missing from title");
     }
     auto settings=GraphicsSettings::minimal();settings.viewDistance=100;
     unsigned callbacks=0;
@@ -26,8 +57,11 @@ int main(){try{
         renderer.begin(camera);renderer.primitive(Primitive::Box,{{0,0,0},{2,2,2},0});renderer.end();renderer.check();return pixels();};
     ShaderCacheStatistics cold,warm;std::vector<unsigned char> reference;
     {
-        game::runtime::StartupSplash splash(platform);
-        Renderer renderer(platform,settings,{true,root,[&](const ShaderBuildProgress& progress){++callbacks;splash.show(progress.phase,{},true);}});
+        jsd::shell::Window splash(platform,"SHADER REGRESSION");
+        auto startup=splash.rendererStartup();startup.cacheDirectory=root;
+        const auto progress=startup.progress;
+        startup.progress=[&](const ShaderBuildProgress& update){++callbacks;progress(update);};
+        Renderer renderer(platform,settings,std::move(startup));
         cold=renderer.shaderCacheStatistics();reference=render(renderer);
         require(callbacks>0&&cold.compiled>0,"startup did not compile/report programs");
     }

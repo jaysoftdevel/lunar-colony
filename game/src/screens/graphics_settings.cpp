@@ -203,8 +203,8 @@ void GameApp::render_graphics_settings(SceneRenderer& r){
         graphics_.path==GraphicsPath::Auto && (caps.ray_lighting || caps.visibility_buffer || caps.pages)?
             "OPENGL AUTO / COMPUTE AVAILABLE":"OPENGL DEFERRED RASTER";
 #endif
-    if(caps.external_jsd)status=mesh_layout_active()?"JSD 0.5.24 / DEBUG MESH":
-        graphics_.path==GraphicsPath::Classic?"JSD 0.5.24 / PERFORMANCE":"JSD 0.5.24 / DEFERRED PBR / SHARP FIRST PERSON";
+    if(caps.external_jsd)status=mesh_layout_active()?"JSD 0.5.25 / DEBUG MESH":
+        graphics_.path==GraphicsPath::Classic?"JSD 0.5.25 / PERFORMANCE":"JSD 0.5.25 / DEFERRED PBR / SHARP FIRST PERSON";
     const float bottom=panel.y+panel.h;
     const float footer=bottom-45.f;
     constexpr int benchmark_tab=static_cast<int>(tabs.size());

@@ -1,8 +1,10 @@
-# JSD Lunar Base v0.93.7
+# JSD Lunar Base v0.93.8
 
 JSD Lunar Base is a 3D lunar colony and mission simulation built on the JSD C++ game engine. Start with a space company, fund and design a lunar delivery mission, then build a surface base with a fleet of robots.
 
-The game renders through the external **JSD 3d-engine 0.5.24**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+The game renders through the external **JSD 3d-engine 0.5.25**, including first-person interiors and exteriors. Build with `./build.sh /path/to/3d-engine`; the engine stays in its own folder. See [ENGINE-INTEGRATION.md](ENGINE-INTEGRATION.md) for Linux/Windows commands, requirements, rendering details and tests.
+
+Version 0.93.8 uses the shared JSD title menu and startup splash. Use the arrow keys to select a title-menu item and Enter to open it.
 
 Version 0.93.7 adds **Auto Run** in debug builds under **New Game → Free Play → Robot Preparation**. It lands and unloads the cargo ship, then queues solar power, water extraction and oxygen production ahead of the reserve water tank. It builds a short airlock connection and waits for breathable pressure. It starts at the normal 4× game-speed setting and uses the selected rover counts. Auto Run expands small playfields to 96 × 96 for its layout.
 
@@ -156,7 +158,7 @@ Press **1–3** to select a simulation speed and **Space** to pause or resume in
 
 ## Build and run
 
-The game uses the external JSD 3d-engine 0.5.24 for rendering, platform, math,
+The game uses the external JSD 3d-engine 0.5.25 for rendering, platform, math,
 workers and audio. Its former in-game engine directory is removed. Game-specific
 bindings live under `game/src/runtime/` alongside the game code.
 

@@ -356,7 +356,10 @@ void GameApp::update_simulation(float dt,const InputState& in){
         pending_save_delete_.clear();
         // When the pause/game menu is open, ESC is a direct resume shortcut.
         // Sub-pages still use ESC to return one level to that menu first.
-        if(screen_==Screen::MainMenu && game_session_active_) screen_=Screen::Playfield;
+        if(screen_==Screen::MainMenu && game_session_active_){
+            title_menu_.reset();
+            screen_=Screen::Playfield;
+        }
         else if(screen_==Screen::GraphicsSettings){
             if(graphics_dropdown_>=0)graphics_dropdown_=-1;
             else screen_=Screen::Settings;

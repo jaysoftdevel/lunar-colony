@@ -1,7 +1,7 @@
 # Lunar Colony 0.66.0 architecture
 
 The standalone C++20 game has one external engine dependency: JSD 3d-engine
-0.5.24. Select it with `./build.sh /path/to/3d-engine`.
+0.5.25. Select it with `./build.sh /path/to/3d-engine`.
 
 - `game/src/runtime/`: game-specific scene submission, SDL input/event mapping,
   audio cue conversion, JSD worker access and graphics preference migration.

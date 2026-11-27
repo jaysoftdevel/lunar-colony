@@ -2,6 +2,7 @@
 """Bake smooth triangulated display outlines from the bundled OFL SDF atlas.
 Offline regeneration only: numpy, scikit-image, shapely >= 2.1.
 """
+import argparse
 from pathlib import Path
 import re
 import numpy as np
@@ -9,8 +10,12 @@ from skimage.measure import find_contours
 from shapely import Polygon, constrained_delaunay_triangles
 from shapely.geometry import GeometryCollection
 
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('engine',type=Path,help='JSD engine source directory')
+engine=parser.parse_args().engine
 root=Path(__file__).resolve().parents[1]
-packed=list(map(int,re.findall(r'\d+', (root/'game/src/runtime/ui_font_atlas.inc').read_text().split('\n',1)[1])))
+source=engine/'src/runtime/shell_font_atlas.inc'
+packed=list(map(int,re.findall(r'\d+',source.read_text().split('\n',1)[1])))
 pixels=[]; i=0
 while i<len(packed):
     packet=packed[i]; i+=1; count=(packet&127)+1

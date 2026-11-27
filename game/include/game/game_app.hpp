@@ -1,3 +1,4 @@
+#include <jsd/game_shell.hpp>
 #include <chrono>
 #pragma once
 #include "game/runtime/presentation.hpp"
@@ -112,6 +113,7 @@ private:
     Screen screen_=Screen::MainMenu;
     game::runtime::InputState input_{};
     game::runtime::InputState ui_input_{};
+    jsd::shell::Menu title_menu_;
     game::runtime::ui::Theme theme_{};
     game::runtime::GraphicsSettings graphics_;
     int graphics_tab_{},graphics_page_{},graphics_dropdown_{-1};

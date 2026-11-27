@@ -139,9 +139,7 @@ game/src/runtime/jsd_bridge.hpp
 game/src/runtime/jsd_lunar_terrain.hpp
 game/src/runtime/platform_jsd.cpp
 game/src/runtime/renderer_jsd.cpp
-game/src/runtime/startup_splash.hpp
 game/src/runtime/ui_batch.hpp
-game/src/runtime/ui_font_atlas.inc
 game/src/screens/credits.cpp
 game/src/screens/graphics_benchmark.cpp
 game/src/screens/graphics_settings.cpp
@@ -297,7 +295,6 @@ scripts/build-summary.cmake
 scripts/check-engine-sync.py
 scripts/common.sh
 scripts/generate-display-font.py
-scripts/generate-ui-font.py
 scripts/validate-windows-latest.bat
 scripts/windows-build.py
 SOURCE-MANIFEST.txt
